@@ -18,6 +18,7 @@ wheels/
 /.mcp.json
 /.update-logs
 /.dark-factory.lock
+/.dark-factory.log
 /prompts/log
 /specs/log
 /bin/
