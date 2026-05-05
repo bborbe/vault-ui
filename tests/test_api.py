@@ -208,9 +208,12 @@ def test_run_task_endpoint_no_project(
 
 def test_list_tasks_filters_deferred(test_client: TestClient, mock_vault_client: MagicMock) -> None:
     """Test that tasks with future defer_date are filtered out."""
+    from datetime import date, timedelta
+
+    future_date = (date.today() + timedelta(days=30)).isoformat()
     mock_vault_client._tasks.append(
         _make_task(
-            task_id="Deferred Task", status="in_progress", phase="todo", defer_date="2026-05-01"
+            task_id="Deferred Task", status="in_progress", phase="todo", defer_date=future_date
         )
     )
 
