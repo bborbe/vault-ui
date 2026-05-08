@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: [004-goal-session-resolution]
 summary: 'Extended cleanup_stale_sessions to process goals after the task loop with resolve_session_id for non-UUID session IDs, added 5 new goal-specific test cases, updated _run_cleanup to mock list_goals, and added CHANGELOG entry under ## Unreleased.'
 container: task-orchestrator-037-spec-004-goal-cleanup
@@ -7,6 +7,7 @@ dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-08T11:45:00Z"
 queued: "2026-05-08T11:54:43Z"
 started: "2026-05-08T11:56:13Z"
+completed: "2026-05-08T11:58:36Z"
 branch: dark-factory/goal-session-resolution
 ---
 
