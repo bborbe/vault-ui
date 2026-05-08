@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["003"]
+spec: [003-cleanup-resolve-renamed-sessions]
 summary: Added PATCH /tasks/{task_id}/session endpoint with eager UUID resolution and wired session resolution into the vault-cli watcher callback
 container: task-orchestrator-029-spec-003-watcher-resolution
 dark-factory-version: v0.57.5

@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["001"]
+spec: [001-stale-session-cleanup]
 summary: Removed duplicate stale_session_cleaner.py module and fixed vault name casing bug in cleanup.py
 container: task-orchestrator-019-cleanup-duplicate-session-cleaner
 dark-factory-version: v0.54.0

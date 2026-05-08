@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["001"]
+spec: [001-stale-session-cleanup]
 summary: Wired StaleSessionCleaner into the lifespan context manager in factory.py as a tracked asyncio.Task started at startup and cancelled gracefully on shutdown
 container: task-orchestrator-018-spec-001-startup-integration
 dark-factory-version: v0.54.0

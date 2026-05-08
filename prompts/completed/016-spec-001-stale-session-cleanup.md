@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["001"]
+spec: [001-stale-session-cleanup]
 summary: Created src/task_orchestrator/cleanup.py with derive_claude_project_dir, cleanup_stale_sessions, and run_cleanup_loop, then wired run_cleanup_loop into factory.py lifespan() as a background asyncio task
 container: task-orchestrator-016-spec-001-stale-session-cleanup
 dark-factory-version: v0.54.0

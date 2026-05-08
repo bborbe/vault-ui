@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["002"]
+spec: [002-date-urgency-visualization]
 summary: Added date-urgency colored left-border indicators and urgency-first sorting to Kanban task cards via getUrgencyTier() function in app.js and corresponding CSS classes in style.css.
 container: task-orchestrator-026-spec-002-date-urgency-visualization
 dark-factory-version: v0.55.1

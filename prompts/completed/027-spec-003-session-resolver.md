@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["003"]
+spec: [003-cleanup-resolve-renamed-sessions]
 summary: Created session_resolver.py with is_uuid() and resolve_session_id() pure functions, plus full test suite covering all specified cases
 container: task-orchestrator-027-spec-003-session-resolver
 dark-factory-version: v0.57.5

@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["001"]
+spec: [001-stale-session-cleanup]
 summary: Created StaleSessionCleaner class in src/task_orchestrator/stale_session_cleaner.py with run_once() and run_loop() async methods, helper functions for session file path derivation and existence checking, and vault-cli subprocess invocation following existing patterns
 container: task-orchestrator-017-spec-001-session-cleaner
 dark-factory-version: v0.54.0
