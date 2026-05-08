@@ -1,11 +1,12 @@
 ---
-status: committing
+status: completed
 summary: Downgraded missing Goals/ directory exception to debug log in cleanup.py; added test covering the new branch; updated CHANGELOG.md.
 container: task-orchestrator-038-silence-missing-goals-dir
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-08T12:30:00Z"
 queued: "2026-05-08T12:41:25Z"
 started: "2026-05-08T12:41:26Z"
+completed: "2026-05-08T12:42:46Z"
 ---
 
 <summary>
