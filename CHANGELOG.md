@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.20.1
+
+- fix: Suppress noisy traceback when a vault has no `Goals/` directory; downgraded to a debug log per cleanup cycle. Other `vault-cli goal list` failures still log at error level with traceback.
+
 ## v0.20.0
 
 - feat: Extend cleanup loop to resolve and clear stale `claude_session_id` values on goals, matching task parity — display names are resolved to UUIDs on each cleanup pass (up to one cleanup-cycle latency); unresolved names and stale UUIDs are cleared

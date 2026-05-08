@@ -1,5 +1,6 @@
 """Tests for stale session cleanup with assignee-aware logic."""
 
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -322,3 +323,36 @@ async def test_goal_list_failure_does_not_abort_task_pass() -> None:
 
     # Task was cleared successfully despite goal list failure
     assert cleared == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_list_missing_directory_logs_debug_not_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing Goals directory is logged at DEBUG level (no traceback), not ERROR."""
+    config = _make_config(current_user="alice")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(
+        side_effect=RuntimeError(
+            "vault-cli goal list failed: Error: list pages: read directory "
+            "/some/vault/Goals: open /some/vault/Goals: no such file or directory"
+        )
+    )
+
+    with (
+        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
+        caplog.at_level(logging.DEBUG, logger="task_orchestrator.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert not any("Exception processing goals" in r.message for r in error_records), (
+        "Missing-directory should not log at ERROR"
+    )
+    assert any("Goals directory not configured" in r.message for r in debug_records), (
+        "Missing-directory should log at DEBUG"
+    )

@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-05-08T11:38:22Z"
 generating: "2026-05-08T11:38:57Z"
 prompted: "2026-05-08T11:45:40Z"
+verifying: "2026-05-08T11:58:36Z"
 branch: dark-factory/goal-session-resolution
 ---
 

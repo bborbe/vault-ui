@@ -245,12 +245,19 @@ async def cleanup_stale_sessions(config: Config) -> int:
                         )
 
             except Exception as e:
-                logger.error(
-                    "[Cleanup] Exception processing goals for vault %s: %s",
-                    vault.name,
-                    e,
-                    exc_info=True,
-                )
+                error_text = str(e).lower()
+                if "no such file or directory" in error_text:
+                    logger.debug(
+                        "[Cleanup] Skipping goals for vault %s: Goals directory not configured",
+                        vault.name,
+                    )
+                else:
+                    logger.error(
+                        "[Cleanup] Exception processing goals for vault %s: %s",
+                        vault.name,
+                        e,
+                        exc_info=True,
+                    )
 
         except Exception as e:
             logger.error(
