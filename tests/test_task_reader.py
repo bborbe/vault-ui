@@ -272,3 +272,102 @@ async def test_parse_task_blocked_by_list() -> None:
         task = await client.show_task("t")
 
     assert task.blocked_by == ["[[Task A]]", "[[Task B]]"]
+
+
+def _goal_json(**kwargs: object) -> bytes:
+    goal = {
+        "name": "Share AI Knowledge at Seibert",
+        "title": "Share AI Knowledge at Seibert",
+        "claude_session_id": None,
+        "assignee": None,
+    }
+    goal.update(kwargs)  # type: ignore[arg-type]
+    return json.dumps(goal).encode()
+
+
+@pytest.mark.asyncio
+async def test_list_goals_empty() -> None:
+    """list_goals returns empty list when vault-cli returns empty array."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"[]")
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals()
+    assert goals == []
+
+
+@pytest.mark.asyncio
+async def test_list_goals_with_goal() -> None:
+    """list_goals parses goal with claude_session_id and assignee."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    payload = b"[" + _goal_json(claude_session_id="ai-knowledge-sharing", assignee="alice") + b"]"
+    proc = _make_proc(0, payload)
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals(show_all=True)
+    assert len(goals) == 1
+    assert goals[0].id == "Share AI Knowledge at Seibert"
+    assert goals[0].claude_session_id == "ai-knowledge-sharing"
+    assert goals[0].assignee == "alice"
+
+
+@pytest.mark.asyncio
+async def test_list_goals_null_response() -> None:
+    """list_goals returns empty list when vault-cli returns null (no goals)."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"null")
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals()
+    assert goals == []
+
+
+@pytest.mark.asyncio
+async def test_list_goals_error() -> None:
+    """list_goals raises RuntimeError on non-zero exit code."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"goal subcommand not found")
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError, match="vault-cli goal list failed"),
+    ):
+        await client.list_goals()
+
+
+@pytest.mark.asyncio
+async def test_set_goal_field_success() -> None:
+    """set_goal_field succeeds silently on zero exit code."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"")
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        await client.set_goal_field("my-goal", "claude_session_id", "abc-uuid-123")
+
+
+@pytest.mark.asyncio
+async def test_set_goal_field_error() -> None:
+    """set_goal_field raises RuntimeError on non-zero exit code."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"goal not found")
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError, match="vault-cli goal set failed"),
+    ):
+        await client.set_goal_field("my-goal", "claude_session_id", "abc-uuid-123")
+
+
+@pytest.mark.asyncio
+async def test_clear_goal_field_success() -> None:
+    """clear_goal_field succeeds silently on zero exit code."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"")
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        await client.clear_goal_field("my-goal", "claude_session_id")
+
+
+@pytest.mark.asyncio
+async def test_clear_goal_field_error() -> None:
+    """clear_goal_field raises RuntimeError on non-zero exit code."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"goal not found")
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError, match="vault-cli goal clear failed"),
+    ):
+        await client.clear_goal_field("my-goal", "claude_session_id")

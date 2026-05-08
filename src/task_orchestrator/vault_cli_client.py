@@ -7,7 +7,7 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-from task_orchestrator.api.models import Task
+from task_orchestrator.api.models import Goal, Task
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,67 @@ class VaultCLIClient:
         if proc.returncode != 0:
             raise RuntimeError(f"vault-cli task clear failed: {stderr.decode().strip()}")
 
+    async def list_goals(self, show_all: bool = False) -> list[Goal]:
+        """Call vault-cli goal list --output json, parse into Goal objects."""
+        args = [
+            self._vault_cli_path,
+            "goal",
+            "list",
+            "--vault",
+            self._vault_name,
+            "--output",
+            "json",
+        ]
+        if show_all:
+            args.append("--all")
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"vault-cli goal list failed: {stderr.decode().strip()}")
+
+        data: list[dict[str, Any]] | None = json.loads(stdout.decode())
+        return [self._parse_goal(item) for item in data] if data else []
+
+    async def set_goal_field(self, goal_id: str, key: str, value: str) -> None:
+        """Call vault-cli goal set <goal_id> <key> <value>."""
+        proc = await asyncio.create_subprocess_exec(
+            self._vault_cli_path,
+            "goal",
+            "set",
+            goal_id,
+            key,
+            value,
+            "--vault",
+            self._vault_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"vault-cli goal set failed: {stderr.decode().strip()}")
+
+    async def clear_goal_field(self, goal_id: str, key: str) -> None:
+        """Call vault-cli goal clear <goal_id> <key>."""
+        proc = await asyncio.create_subprocess_exec(
+            self._vault_cli_path,
+            "goal",
+            "clear",
+            goal_id,
+            key,
+            "--vault",
+            self._vault_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"vault-cli goal clear failed: {stderr.decode().strip()}")
+
     def _parse_task(self, data: dict[str, Any]) -> Task:
         """Parse vault-cli JSON task object into Task dataclass."""
         modified_date: datetime | None = None
@@ -167,4 +228,14 @@ class VaultCLIClient:
             claude_session_id=data.get("claude_session_id"),
             assignee=data.get("assignee"),
             blocked_by=blocked_by,
+        )
+
+    def _parse_goal(self, data: dict[str, Any]) -> Goal:
+        """Parse vault-cli JSON goal object into Goal dataclass."""
+        goal_id = str(data.get("name", data.get("id", "")))
+        return Goal(
+            id=goal_id,
+            title=str(data.get("title", goal_id)),
+            claude_session_id=data.get("claude_session_id") or None,
+            assignee=data.get("assignee") or None,
         )

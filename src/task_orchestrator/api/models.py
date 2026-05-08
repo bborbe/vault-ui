@@ -34,6 +34,16 @@ class Task:
     recently_completed: bool = False  # True if status=completed and modified within 8h
 
 
+@dataclass
+class Goal:
+    """Goal from Obsidian vault."""
+
+    id: str  # Filename without .md
+    title: str
+    claude_session_id: str | None  # From frontmatter: Claude Code session UUID or display name
+    assignee: str | None  # From frontmatter: Person assigned to the goal
+
+
 class TaskResponse(BaseModel):
     """API response model for tasks."""
 

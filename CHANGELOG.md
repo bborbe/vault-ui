@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.19.0
+
+- feat: Add `Goal` dataclass to models and extend `VaultCLIClient` with `list_goals`, `set_goal_field`, `clear_goal_field` methods for vault-cli goal subcommand integration
+
 ## v0.18.6
 
 - fix(test): replace hardcoded `defer_date="2026-05-01"` in `test_list_tasks_filters_deferred` with a dynamic future date (`date.today() + 30 days`). The hardcoded date was in the past as of 2026-05-05, so the deferred task was correctly returned by the API and the assertion failed.
