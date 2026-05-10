@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.21.0
+
+- feat: Unify GET /tasks filter syntax — status, phase, and assignee now accept both repeated (?x=a&x=b) and comma-separated (?x=a,b) forms; assignee empty-string token matches unassigned tasks; vault gains comma-split support alongside existing repeated-param support
+
 ## v0.20.1
 
 - fix: Suppress noisy traceback when a vault has no `Goals/` directory; downgraded to a debug log per cleanup cycle. Other `vault-cli goal list` failures still log at error level with traceback.

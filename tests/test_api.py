@@ -1059,3 +1059,324 @@ def test_build_resume_command_expands_tilde() -> None:
     result = _build_resume_command(vault_config, "abc123")
     home = str(Path.home())
     assert result == f'cd "{home}/Obsidian/Personal" && claude --resume abc123'
+
+
+def test_list_tasks_vault_comma_separated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GET /tasks?vault=Vault1,Vault2 returns tasks from both vaults (comma-separated form)."""
+    from task_orchestrator.config import VaultConfig
+
+    vault1 = tmp_path / "vault1"
+    vault2 = tmp_path / "vault2"
+    vault3 = tmp_path / "vault3"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="Vault1", vault_path=str(vault1), vault_name="Vault1", tasks_folder="24 Tasks"
+            ),
+            VaultConfig(
+                name="Vault2", vault_path=str(vault2), vault_name="Vault2", tasks_folder="24 Tasks"
+            ),
+            VaultConfig(
+                name="Vault3", vault_path=str(vault3), vault_name="Vault3", tasks_folder="24 Tasks"
+            ),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="Task1", status="in_progress")
+    task2 = _make_task(task_id="Task2", status="in_progress")
+    task3 = _make_task(task_id="Task3", status="in_progress")
+    clients = {
+        "Vault1": _make_vault_client([task1]),
+        "Vault2": _make_vault_client([task2]),
+        "Vault3": _make_vault_client([task3]),
+    }
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/tasks?vault=Vault1,Vault2")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Task1" in task_ids
+    assert "Task2" in task_ids
+    assert "Task3" not in task_ids
+
+
+def test_list_tasks_status_repeated_params(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?status=todo&status=in_progress behaves the same as ?status=todo,in_progress."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="In Progress Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=todo&status=in_progress")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Todo Task" in task_ids
+    assert "In Progress Task" in task_ids
+
+
+def test_list_tasks_status_comma_separated(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?status=todo,in_progress returns tasks for both statuses."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="In Progress Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=todo,in_progress")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Todo Task" in task_ids
+    assert "In Progress Task" in task_ids
+
+
+def test_list_tasks_status_mixed_form(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?status=todo,in_progress&status=completed returns tasks for all three statuses."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="In Progress Task", status="in_progress"))
+    recent_completed = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Done Task", status="completed", completed_date=recent_completed)
+    )
+
+    response = test_client.get(
+        "/api/tasks?vault=TestVault&status=todo,in_progress&status=completed"
+    )
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Todo Task" in task_ids
+    assert "In Progress Task" in task_ids
+    assert "Done Task" in task_ids
+
+
+def test_list_tasks_status_all_empty_uses_default(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?status= behaves as if status were omitted (default todo+in_progress+completed)."""
+    test_client.get("/api/tasks?vault=TestVault&status=")
+
+    call_args = mock_vault_client.list_tasks.call_args
+    assert call_args is not None
+    effective = call_args.kwargs["status_filter"]
+    assert set(effective) == {"todo", "in_progress", "completed"}
+
+
+def test_list_tasks_status_whitespace_trimmed(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """?status=todo, in_progress trims whitespace and returns both statuses."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="In Progress Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=todo, in_progress")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Todo Task" in task_ids
+    assert "In Progress Task" in task_ids
+
+
+def test_list_tasks_phase_repeated_params(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?phase=planning&phase=in_progress returns tasks in both phases."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Planning Task", status="in_progress", phase="planning")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="In Progress Phase Task", status="in_progress", phase="in_progress")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Review Task", status="in_progress", phase="human_review")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&phase=planning&phase=in_progress")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Planning Task" in task_ids
+    assert "In Progress Phase Task" in task_ids
+    assert "Review Task" not in task_ids
+
+
+def test_list_tasks_phase_comma_separated(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?phase=planning,in_progress returns tasks in both phases."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Planning Task", status="in_progress", phase="planning")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="In Progress Phase Task", status="in_progress", phase="in_progress")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Review Task", status="in_progress", phase="human_review")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&phase=planning,in_progress")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Planning Task" in task_ids
+    assert "In Progress Phase Task" in task_ids
+    assert "Review Task" not in task_ids
+
+
+def test_list_tasks_assignee_multi_repeated(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?assignee=alice&assignee=bob returns tasks for both assignees."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Alice Task", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Bob Task", status="in_progress", assignee="bob")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Carol Task", status="in_progress", assignee="carol")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&assignee=alice&assignee=bob")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Alice Task" in task_ids
+    assert "Bob Task" in task_ids
+    assert "Carol Task" not in task_ids
+
+
+def test_list_tasks_assignee_multi_comma(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?assignee=alice,bob returns the same result as repeated assignee params."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Alice Task", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Bob Task", status="in_progress", assignee="bob")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Carol Task", status="in_progress", assignee="carol")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&assignee=alice,bob")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Alice Task" in task_ids
+    assert "Bob Task" in task_ids
+    assert "Carol Task" not in task_ids
+
+
+def test_list_tasks_assignee_empty_matches_unassigned(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?assignee= returns tasks with no assignee (handles both None and empty string)."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Alice Task", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Unassigned None Task", status="in_progress", assignee=None)
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Unassigned Empty Task", status="in_progress", assignee="")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&assignee=")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Unassigned None Task" in task_ids
+    assert "Unassigned Empty Task" in task_ids
+    assert "Alice Task" not in task_ids
+
+
+def test_list_tasks_assignee_empty_plus_named(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?assignee=,alice returns unassigned tasks plus alice's tasks."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Alice Task", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Bob Task", status="in_progress", assignee="bob")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Unassigned Task", status="in_progress", assignee=None)
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&assignee=,alice")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Alice Task" in task_ids
+    assert "Unassigned Task" in task_ids
+    assert "Bob Task" not in task_ids
+
+
+def test_list_tasks_assignee_empty_and_named_repeated(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?assignee=&assignee=alice returns unassigned tasks plus alice's tasks."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Alice Task", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Bob Task", status="in_progress", assignee="bob")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Unassigned Task", status="in_progress", assignee=None)
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&assignee=&assignee=alice")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Alice Task" in task_ids
+    assert "Unassigned Task" in task_ids
+    assert "Bob Task" not in task_ids
+
+
+def test_list_tasks_assignee_whitespace_matches_unassigned(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /tasks?assignee=%20 (whitespace) is treated as empty token — matches unassigned tasks."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Alice Task", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Unassigned Task", status="in_progress", assignee=None)
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&assignee=%20")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Unassigned Task" in task_ids
+    assert "Alice Task" not in task_ids

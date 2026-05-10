@@ -139,12 +139,27 @@ def _parse_defer_date(defer_date: str) -> datetime:
         return dt
 
 
+def _flatten_filter(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+    flat = [token.strip() for v in values for token in v.split(",")]
+    non_empty = [t for t in flat if t]
+    return non_empty if non_empty else None
+
+
+def _flatten_assignee_filter(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+    flat = [token.strip() for v in values for token in v.split(",")]
+    return flat  # empty strings are valid (match unassigned tasks)
+
+
 @router.get("/tasks", response_model=list[TaskResponse])
 async def list_tasks(
     vault: Annotated[list[str] | None, Query()] = None,
-    status: str | None = None,
-    phase: str | None = None,
-    assignee: str | None = None,
+    status: Annotated[list[str] | None, Query()] = None,
+    phase: Annotated[list[str] | None, Query()] = None,
+    assignee: Annotated[list[str] | None, Query()] = None,
 ) -> list[TaskResponse]:
     """List tasks from Obsidian vault(s).
 
@@ -159,17 +174,11 @@ async def list_tasks(
     """
     # If no vault specified, get all vaults
     config = get_config()
-    vault_names = [v.name for v in config.vaults] if not vault or len(vault) == 0 else vault
+    vault_filter = _flatten_filter(vault)
+    vault_names = [v.name for v in config.vaults] if vault_filter is None else vault_filter
 
-    # Parse status filter
-    status_filter: list[str] | None = None
-    if status:
-        status_filter = [s.strip() for s in status.split(",")]
-
-    # Parse phase filter
-    phase_filter: list[str] | None = None
-    if phase:
-        phase_filter = [s.strip() for s in phase.split(",")]
+    status_filter = _flatten_filter(status)
+    phase_filter = _flatten_filter(phase)
 
     # Collect tasks from all specified vaults
     all_tasks: list[TaskResponse] = []
@@ -198,8 +207,16 @@ async def list_tasks(
             ]
 
         # Filter by assignee if specified
-        if assignee:
-            tasks = [t for t in tasks if t.assignee == assignee]
+        assignee_filter = _flatten_assignee_filter(assignee)
+        if assignee_filter is not None:
+            tasks = [
+                t
+                for t in tasks
+                if any(
+                    (token == "" and not t.assignee) or (token != "" and t.assignee == token)
+                    for token in assignee_filter
+                )
+            ]
 
         # Filter out deferred tasks; include upcoming (within 8h) with flag set
         now = datetime.now(UTC)
