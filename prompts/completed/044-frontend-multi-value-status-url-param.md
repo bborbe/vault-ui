@@ -1,11 +1,12 @@
 ---
-status: committing
+status: completed
 summary: Replaced hardcoded status filter with URL-driven multi-value currentStatuses array — reads ?status= params in parseURLParams, writes back in updateURL (omitting when default), and forwards via append in loadTasks.
 container: task-orchestrator-044-frontend-multi-value-status-url-param
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T21:01:50Z"
 queued: "2026-05-10T21:01:50Z"
 started: "2026-05-10T21:01:52Z"
+completed: "2026-05-10T21:03:16Z"
 ---
 <summary>
 - The Kanban board respects the `status` URL parameter instead of hardcoding `in_progress,completed`
