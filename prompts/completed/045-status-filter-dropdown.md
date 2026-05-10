@@ -1,11 +1,12 @@
 ---
-status: committing
+status: completed
 summary: Added multi-select status filter dropdown to the Kanban header — mirrors vault dropdown UX with checkboxes for todo/in_progress/completed/hold/aborted, URL writeback, and startup label sync via updateStatusLabel().
 container: task-orchestrator-045-status-filter-dropdown
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T17:30:00Z"
 queued: "2026-05-10T21:19:20Z"
 started: "2026-05-10T21:19:21Z"
+completed: "2026-05-10T21:21:17Z"
 ---
 <summary>
 - Operators get a status filter dropdown in the Kanban header next to the existing vault dropdown
