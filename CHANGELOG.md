@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.30.0
+
+- feat: Migrate vault-cli watcher subprocess from `task watch` to `watch` — dispatches events on the new `type` field; goal frontmatter changes now resolve display-name `claude_session_id` to UUID instantly via the watcher path instead of waiting up to 5 minutes for the cleanup loop. The cleanup loop stays as a backstop for events that arrive while the watcher is offline.
+
 ## v0.29.0
 
 - feat: Frontend reads goal filter from URL — ?goal= param round-trips end-to-end (parse on load, forward to /api/tasks, preserve through updateURL writebacks); URL-driven only, no new UI controls

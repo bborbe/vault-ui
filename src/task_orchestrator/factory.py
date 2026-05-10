@@ -109,6 +109,54 @@ async def _try_resolve_task_session(
         logger.debug("[Factory] Could not resolve session for task %s: %s", task_id, e)
 
 
+async def _try_resolve_goal_session(
+    vault_cli_path: str,
+    vault_name: str,
+    goal_id: str,
+    project_dir: Path,
+) -> None:
+    """Read a goal and resolve its claude_session_id if it is a display name.
+
+    Called from the watcher callback after a goal file change event.
+    Silently no-ops if the goal has no session ID, the ID is already a UUID,
+    the goal cannot be found, or the display name does not resolve to any
+    on-disk session file.
+    """
+    from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+
+    try:
+        client = VaultCLIClient(vault_cli_path, vault_name)
+        goals = await client.list_goals(show_all=True)
+        goal = next((g for g in goals if g.id == goal_id), None)
+        if goal is None:
+            logger.debug(
+                "[Factory] Watcher: goal %s not found in vault %s (deleted?)",
+                goal_id,
+                vault_name,
+            )
+            return
+        session_id = goal.claude_session_id
+        if not session_id or is_uuid(session_id):
+            return
+        resolved = resolve_session_id(session_id, project_dir)
+        if resolved is None:
+            logger.debug(
+                "[Factory] No resolution found for display name '%s' on goal %s",
+                session_id,
+                goal_id,
+            )
+            return
+        await client.set_goal_field(goal_id, "claude_session_id", resolved)
+        logger.info(
+            "[Factory] Watcher: resolved session '%s' -> '%s' for goal %s",
+            session_id,
+            resolved,
+            goal_id,
+        )
+    except Exception as e:
+        logger.debug("[Factory] Could not resolve session for goal %s: %s", goal_id, e)
+
+
 def start_task_watchers() -> None:
     """Start vault-cli watchers for all vaults."""
     global _watchers, _watcher_tasks
@@ -126,27 +174,48 @@ def start_task_watchers() -> None:
     for vault in config.vaults:
         try:
             # Wire callback to invalidate cache AND broadcast
-            def make_callback(vault_cfg: VaultConfig) -> Callable[[str, str, str], None]:
+            def make_callback(vault_cfg: VaultConfig) -> Callable[[str, str, str, str], None]:
                 project_dir = derive_claude_project_dir(
                     vault_cfg.vault_path, vault_cfg.session_project_dir
                 )
 
-                def callback(event_type: str, item_id: str, vault_arg: str) -> None:
-                    # Invalidate cache
+                def callback(event_type: str, item_id: str, vault_arg: str, item_kind: str) -> None:
+                    # Invalidate cache (unconditional — kind-agnostic; the cache stores
+                    # blocker statuses keyed by name, and any frontmatter change can
+                    # invalidate a downstream task that lists this item as a blocker)
                     cache.invalidate(vault_arg, item_id)
 
-                    # Broadcast to UI clients
+                    # Broadcast to UI clients (unconditional — the WebSocket message
+                    # "type" field is the vault-cli event "event" type, NOT the new
+                    # item_kind. Payload shape unchanged for backward compatibility.)
                     message = {"type": event_type, "task_id": item_id, "vault": vault_arg}
                     asyncio.run_coroutine_threadsafe(connection_manager.broadcast(message), loop)
 
-                    # Schedule session resolution for changed task
-                    # (no-op if session is UUID or absent)
-                    asyncio.run_coroutine_threadsafe(
-                        _try_resolve_task_session(
-                            vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
-                        ),
-                        loop,
-                    )
+                    # Dispatch session resolution based on the file's kind
+                    if item_kind == "task":
+                        asyncio.run_coroutine_threadsafe(
+                            _try_resolve_task_session(
+                                vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
+                            ),
+                            loop,
+                        )
+                    elif item_kind == "goal":
+                        asyncio.run_coroutine_threadsafe(
+                            _try_resolve_goal_session(
+                                vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
+                            ),
+                            loop,
+                        )
+                    else:
+                        # theme, objective, empty string, or any future kind: no resolver
+                        # today. The 5-minute cleanup loop in cleanup.py is the backstop
+                        # for any kind that grows a session-resolution requirement later.
+                        logger.debug(
+                            "[Factory] No session resolver for item_kind=%r (item=%s, vault=%s)",
+                            item_kind,
+                            item_id,
+                            vault_arg,
+                        )
 
                 return callback
 

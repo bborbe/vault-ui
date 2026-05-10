@@ -40,10 +40,13 @@ def _make_mock_process(*lines: str) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_watcher_calls_on_change_for_valid_event():
-    """VaultCLIWatcher calls on_change with (event_type, item_id, vault) for valid JSON."""
+    """VaultCLIWatcher calls on_change with (event_type, item_id, vault, item_kind) for valid JSON.
+
+    Tests that the fourth argument (item_kind) is correctly extracted from the 'type' field.
+    """
     watcher, on_change = _make_watcher()
 
-    event = {"event": "modified", "name": "My Task", "vault": "TestVault"}
+    event = {"event": "modified", "name": "My Task", "vault": "TestVault", "type": "task"}
     proc = _make_mock_process(json.dumps(event))
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
@@ -55,7 +58,7 @@ async def test_watcher_calls_on_change_for_valid_event():
 
         await run_one_pass()
 
-    on_change.assert_called_once_with("modified", "My Task", "TestVault")
+    on_change.assert_called_once_with("modified", "My Task", "TestVault", "task")
 
 
 @pytest.mark.asyncio
@@ -63,12 +66,14 @@ async def test_watcher_ignores_invalid_json():
     """VaultCLIWatcher logs warning and skips non-JSON lines."""
     watcher, on_change = _make_watcher()
 
-    proc = _make_mock_process("not valid json", '{"event":"created","name":"T","vault":"V"}')
+    proc = _make_mock_process(
+        "not valid json", '{"event":"created","name":"T","vault":"V","type":"task"}'
+    )
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
         await watcher._run_subprocess()
 
-    on_change.assert_called_once_with("created", "T", "V")
+    on_change.assert_called_once_with("created", "T", "V", "task")
 
 
 @pytest.mark.asyncio
@@ -76,12 +81,12 @@ async def test_watcher_ignores_empty_lines():
     """VaultCLIWatcher skips empty lines."""
     watcher, on_change = _make_watcher()
 
-    proc = _make_mock_process("", '{"event":"deleted","name":"Task","vault":"V"}')
+    proc = _make_mock_process("", '{"event":"deleted","name":"Task","vault":"V","type":"task"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
         await watcher._run_subprocess()
 
-    on_change.assert_called_once_with("deleted", "Task", "V")
+    on_change.assert_called_once_with("deleted", "Task", "V", "task")
 
 
 @pytest.mark.asyncio
@@ -89,7 +94,7 @@ async def test_watcher_ignores_events_without_name():
     """VaultCLIWatcher skips events with empty name."""
     watcher, on_change = _make_watcher()
 
-    proc = _make_mock_process('{"event":"modified","name":"","vault":"V"}')
+    proc = _make_mock_process('{"event":"modified","name":"","vault":"V","type":"task"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
         await watcher._run_subprocess()
@@ -102,12 +107,31 @@ async def test_watcher_uses_default_vault_name_when_missing():
     """VaultCLIWatcher falls back to vault_name when 'vault' key absent from event."""
     watcher, on_change = _make_watcher()
 
-    proc = _make_mock_process('{"event":"modified","name":"My Task"}')
+    proc = _make_mock_process('{"event":"modified","name":"My Task","type":"goal"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
         await watcher._run_subprocess()
 
-    on_change.assert_called_once_with("modified", "My Task", "TestVault")
+    on_change.assert_called_once_with("modified", "My Task", "TestVault", "goal")
+
+
+@pytest.mark.asyncio
+async def test_watcher_passes_empty_kind_when_type_missing():
+    """VaultCLIWatcher passes empty string for item_kind when 'type' key absent.
+
+    Backward-compat with any vault-cli event payload that omits the type field
+    (e.g. an older vault-cli on the path, or a future event type we don't yet
+    recognize). The factory dispatch treats empty kind as no-op for resolution
+    but still invalidates cache and broadcasts.
+    """
+    watcher, on_change = _make_watcher()
+
+    proc = _make_mock_process('{"event":"modified","name":"X","vault":"V"}')
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        await watcher._run_subprocess()
+
+    on_change.assert_called_once_with("modified", "X", "V", "")
 
 
 def test_terminate_sets_stopped_and_signals_process():

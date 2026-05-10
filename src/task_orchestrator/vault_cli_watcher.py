@@ -1,4 +1,4 @@
-"""Manages a vault-cli task watch subprocess for file change events."""
+"""Manages a vault-cli watch subprocess for file change events."""
 
 import asyncio
 import contextlib
@@ -14,20 +14,22 @@ _STOP_TIMEOUT_SECONDS = 5
 
 
 class VaultCLIWatcher:
-    """Watches a vault for task changes via vault-cli task watch subprocess."""
+    """Watches a vault for file changes (tasks, goals, themes, objectives) via vault-cli watch."""
 
     def __init__(
         self,
         vault_cli_path: str,
         vault_name: str,
-        on_change: Callable[[str, str, str], None],
+        on_change: Callable[[str, str, str, str], None],
     ) -> None:
         """Initialize the watcher.
 
         Args:
             vault_cli_path: Path to vault-cli binary
             vault_name: Vault name for --vault flag
-            on_change: Callback(event_type, item_id, vault_name) called on each event
+            on_change: Callback(event_type, item_id, vault_name, item_kind) called on each event.
+                        item_kind is one of "task", "goal", "theme", "objective" (from the
+                        vault-cli watch event "type" field, derived from the file's parent dir).
         """
         self._vault_cli_path = vault_cli_path
         self._vault_name = vault_name
@@ -60,13 +62,14 @@ class VaultCLIWatcher:
 
     async def _run_subprocess(self) -> None:
         """Run one instance of the vault-cli watch subprocess."""
-        logger.info("[VaultCLIWatcher] Starting vault-cli task watch --vault %s", self._vault_name)
+        logger.info("[VaultCLIWatcher] Starting vault-cli watch --vault %s", self._vault_name)
         self._process = await asyncio.create_subprocess_exec(
             self._vault_cli_path,
-            "task",
             "watch",
             "--vault",
             self._vault_name,
+            "--types",
+            "task,goal,theme,objective",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -103,11 +106,16 @@ class VaultCLIWatcher:
             event_type = event.get("event", "")
             item_id = event.get("name", "")
             vault = event.get("vault", self._vault_name)
+            item_kind = event.get("type", "")
             if event_type and item_id:
                 logger.debug(
-                    "[VaultCLIWatcher] Event %s: %s (vault: %s)", event_type, item_id, vault
+                    "[VaultCLIWatcher] Event %s: %s (vault: %s, kind: %s)",
+                    event_type,
+                    item_id,
+                    vault,
+                    item_kind,
                 )
-                self._on_change(event_type, item_id, vault)
+                self._on_change(event_type, item_id, vault, item_kind)
         except json.JSONDecodeError:
             logger.warning("[VaultCLIWatcher] Failed to parse event line: %r", line)
 
