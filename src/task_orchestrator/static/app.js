@@ -276,6 +276,25 @@ function filterByAssignee(assignee) {
     loadTasks();
 }
 
+async function assignToMe(taskId, vault) {
+    try {
+        const response = await fetch(
+            `/api/tasks/${encodeURIComponent(taskId)}/assign-to-me?vault=${encodeURIComponent(vault)}`,
+            { method: 'PATCH' }
+        );
+        if (!response.ok) {
+            const detail = await response.text();
+            console.error(`Assign to me failed: ${response.status} ${detail}`);
+            alert(`Failed to assign: ${response.status}`);
+            return;
+        }
+        await loadTasks();
+    } catch (err) {
+        console.error('Assign to me network error:', err);
+        alert('Failed to assign — see console.');
+    }
+}
+
 function updateURL() {
     const params = new URLSearchParams();
 
@@ -524,7 +543,7 @@ function createTaskCard(task) {
         ? `<span class="assignee-badge clickable ${isActiveFilter ? 'active' : ''}" onclick="filterByAssignee('${escapeHtml(task.assignee)}')" title="${isActiveFilter ? 'Clear filter' : 'Filter by ' + escapeHtml(task.assignee)}">
              <span class="assignee-icon">👤</span><span>${escapeHtml(task.assignee)}</span>
            </span>`
-        : '';
+        : `<a class="assign-to-me-link" onclick="assignToMe('${escapeHtml(task.id)}', '${escapeHtml(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
 
     card.innerHTML = `
         ${menuButton}

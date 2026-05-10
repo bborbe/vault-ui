@@ -404,6 +404,22 @@ h1 {
     flex-shrink: 0;
 }
 
+.assign-to-me-link {
+    display: inline-block;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: #96999e;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.assign-to-me-link:hover {
+    color: #4a5568;
+    text-decoration: underline;
+}
+
 .obsidian-icon {
     font-size: 0.875rem;
     color: #9ca3af;

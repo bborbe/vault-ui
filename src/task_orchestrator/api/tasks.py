@@ -451,6 +451,60 @@ async def execute_slash_command(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.patch("/tasks/{task_id}/assign-to-me")
+async def assign_task_to_me(
+    vault: str,
+    task_id: str,
+) -> dict[str, str]:
+    """Assign a task to the configured current_user via vault-cli.
+
+    Sets the task's `assignee` frontmatter field to `config.current_user`.
+    Overwrites any existing assignee — the UI only exposes this for unassigned
+    tasks, but the endpoint itself is idempotent and overwrites are allowed
+    (an operator may claim a task from another agent if needed).
+
+    Args:
+        vault: Vault name (query parameter)
+        task_id: Task ID (filename without .md)
+
+    Returns:
+        {"status": "success", "task_id": task_id, "assignee": <current_user>}
+
+    Raises:
+        HTTPException 400: if current_user is empty/unset in config
+        HTTPException 404: if vault not found, or task not found in vault
+        HTTPException 500: if vault-cli set fails for any other reason
+    """
+    config = get_config()
+    current_user = config.current_user
+    if not current_user:
+        raise HTTPException(
+            status_code=400,
+            detail="current_user is not configured; cannot assign task",
+        )
+
+    try:
+        get_vault_config(vault)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        await client.show_task(task_id)
+        await client.set_field(task_id, "assignee", current_user)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if _connection_manager:
+        await _connection_manager.broadcast({"type": "task_updated", "task_id": task_id})
+
+    return {"status": "success", "task_id": task_id, "assignee": current_user}
+
+
 @router.patch("/tasks/{task_id}/phase")
 async def update_task_phase(
     vault: str,

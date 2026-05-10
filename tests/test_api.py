@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from task_orchestrator import factory as _factory_module
 from task_orchestrator.__main__ import create_app
 from task_orchestrator.api.models import Task
 from task_orchestrator.api.tasks import _build_resume_command
@@ -1360,6 +1361,94 @@ def test_list_tasks_assignee_empty_and_named_repeated(
     assert "Alice Task" in task_ids
     assert "Unassigned Task" in task_ids
     assert "Bob Task" not in task_ids
+
+
+# --- assign-to-me endpoint tests ---
+
+
+def _set_current_user(value: str) -> None:
+    """Mutate the test config's current_user in place."""
+    cfg = _factory_module._config
+    assert cfg is not None, "test_client fixture must run first to populate _config"
+    cfg.current_user = value
+
+
+def test_assign_to_me_happy_path(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/assign-to-me sets assignee to current_user via vault-cli."""
+    _set_current_user("bborbe")
+
+    response = test_client.patch("/api/tasks/Test%20Task/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {"status": "success", "task_id": "Test Task", "assignee": "bborbe"}
+    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "assignee", "bborbe")
+
+
+def test_assign_to_me_overwrites_existing_assignee(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """The endpoint overwrites an existing assignee — by design.
+
+    The UI only exposes the link on unassigned cards, but the backend
+    accepts the call regardless; an operator can claim a task from another
+    agent if needed.
+    """
+    _set_current_user("bborbe")
+
+    response = test_client.patch("/api/tasks/Test%20Task/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 200
+    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "assignee", "bborbe")
+
+
+def test_assign_to_me_empty_current_user_returns_400(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """If current_user is unset, the endpoint must NOT call vault-cli with an empty value."""
+    _set_current_user("")
+
+    response = test_client.patch("/api/tasks/Test%20Task/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 400
+    assert "current_user" in response.json()["detail"]
+    mock_vault_client.set_field.assert_not_awaited()
+
+
+def test_assign_to_me_task_not_found_returns_404(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """show_task raising FileNotFoundError surfaces as HTTP 404; set_field is never called."""
+    _set_current_user("bborbe")
+    mock_vault_client.show_task.side_effect = FileNotFoundError("Task not found: NoSuchTask")
+
+    response = test_client.patch("/api/tasks/NoSuchTask/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+    mock_vault_client.set_field.assert_not_awaited()
+
+
+def test_assign_to_me_vault_cli_generic_failure_returns_500(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """vault-cli RuntimeError from set_field surfaces as HTTP 500."""
+    _set_current_user("bborbe")
+    mock_vault_client.set_field.side_effect = RuntimeError(
+        "vault-cli task set failed: permission denied"
+    )
+
+    response = test_client.patch("/api/tasks/Test%20Task/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 500
+    assert "permission denied" in response.json()["detail"]
 
 
 def test_list_tasks_assignee_whitespace_matches_unassigned(

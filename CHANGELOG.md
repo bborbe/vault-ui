@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.23.0
+
+- feat: One-click "Assign to me" on unassigned task cards — adds `PATCH /tasks/{id}/assign-to-me` endpoint and inline link rendered in the assignee badge slot when a card has no assignee; clicking sets `assignee` to the configured `current_user` via vault-cli and re-renders the board
+
 ## v0.22.0
 
 - feat: Support multi-value assignee URL params in Kanban board — repeated `?assignee=a&assignee=b` form is now read, stored, forwarded to the API, and written back to the URL; empty-token (`?assignee=`) unassigned marker round-trips correctly
