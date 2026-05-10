@@ -1,11 +1,12 @@
 ---
-status: committing
+status: completed
 summary: Replaced all 15 alert() calls in app.js with showToast(message, true), added requestAnimationFrame yields at the two modal-hiding catch sites, converted assignToMe to use parseErrorResponse, and added v0.25.0 CHANGELOG entry.
 container: task-orchestrator-043-replace-alert-with-toast
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T19:23:42Z"
 queued: "2026-05-10T19:23:42Z"
 started: "2026-05-10T19:23:44Z"
+completed: "2026-05-10T19:25:40Z"
 ---
 <summary>
 - All blocking browser-native `alert()` error dialogs in the Kanban UI are replaced with non-blocking error toasts via the existing `showToast()` helper
