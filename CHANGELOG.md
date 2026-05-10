@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.25.0
+
+- fix: Replace blocking alert() dialogs with non-blocking error toasts; drop redundant "Failed to X:" prefixes — backend stderr is now surfaced directly via showToast(message, true)
+
 ## v0.24.0
 
 - fix: Surface real backend error messages in UI alerts — adds `parseErrorResponse()` helper, replaces generic "Failed to execute command" with actual stderr (e.g. "Error: incomplete subtasks: 11 pending" from vault-cli refusals); also replaces raw `{"detail": "..."}` JSON envelopes shown verbatim at four other fetch callsites

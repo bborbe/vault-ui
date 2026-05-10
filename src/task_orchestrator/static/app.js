@@ -184,7 +184,7 @@ async function loadVaults() {
         await loadTasks();
     } catch (error) {
         console.error('Failed to load vaults:', error);
-        alert(`Failed to load vaults: ${error.message}`);
+        showToast(error.message, true);
     }
 }
 
@@ -300,15 +300,15 @@ async function assignToMe(taskId, vault) {
             { method: 'PATCH' }
         );
         if (!response.ok) {
-            const detail = await response.text();
+            const detail = await parseErrorResponse(response);
             console.error(`Assign to me failed: ${response.status} ${detail}`);
-            alert(`Failed to assign: ${response.status}`);
+            showToast(detail, true);
             return;
         }
         await loadTasks();
     } catch (err) {
         console.error('Assign to me network error:', err);
-        alert('Failed to assign — see console.');
+        showToast(err.message || 'Network error — see console.', true);
     }
 }
 
@@ -359,7 +359,7 @@ async function handleDrop(e) {
     const task = tasksCache[taskId];
 
     if (!task) {
-        alert('Task not found');
+        showToast('Task not found', true);
         return;
     }
 
@@ -382,7 +382,7 @@ async function handleDrop(e) {
         await loadTasks();
     } catch (error) {
         console.error('Failed to update task phase:', error);
-        alert(`Failed to update task: ${error.message}`);
+        showToast(error.message, true);
     }
 }
 
@@ -464,7 +464,7 @@ async function loadTasks() {
 
     } catch (error) {
         console.error('Failed to load tasks:', error);
-        alert(`Failed to load tasks: ${error.message}`);
+        showToast(error.message, true);
     }
 }
 
@@ -589,7 +589,7 @@ async function runTask(taskId) {
     // Look up task from cache
     const task = tasksCache[taskId];
     if (!task) {
-        alert('Task not found in cache');
+        showToast('Task not found in cache', true);
         return;
     }
 
@@ -674,8 +674,9 @@ async function runTask(taskId) {
         startingTasks.delete(taskId);
         const loadingModal = document.getElementById('loading-modal');
         loadingModal.classList.add('hidden');
+        await new Promise(r => requestAnimationFrame(r));  // ensure modal hides before toast renders
 
-        alert(`Failed to start session: ${error.message}`);
+        showToast(error.message, true);
 
         // Restore button
         if (event && event.target) {
@@ -780,7 +781,7 @@ async function copyCommand() {
         }, 2000);
     } catch (error) {
         console.error('Failed to copy:', error);
-        alert('Failed to copy to clipboard');
+        showToast('Failed to copy to clipboard', true);
     }
 }
 
@@ -985,7 +986,7 @@ function closeMenu() {
 async function handleMenuAction(taskId, action) {
     const task = tasksCache[taskId];
     if (!task) {
-        alert('Task not found');
+        showToast('Task not found', true);
         return;
     }
 
@@ -1014,7 +1015,7 @@ async function handleMenuAction(taskId, action) {
             await loadTasks();
         } catch (error) {
             console.error('Failed to update task phase:', error);
-            alert(`Failed to update task: ${error.message}`);
+            showToast(error.message, true);
         }
     }
 }
@@ -1059,7 +1060,7 @@ function showToast(message, isError = false) {
 async function executeSlashCommand(taskId, commandType) {
     const task = tasksCache[taskId];
     if (!task) {
-        alert('Task not found');
+        showToast('Task not found', true);
         return;
     }
 
@@ -1129,16 +1130,17 @@ async function executeSlashCommand(taskId, commandType) {
 
         // Hide loading modal
         loadingModal.classList.add('hidden');
+        await new Promise(r => requestAnimationFrame(r));  // ensure modal hides before toast renders
 
         console.error('Error executing slash command:', error);
-        alert(`Command failed: ${error.message}`);
+        showToast(error.message, true);
     }
 }
 
 async function clearTaskSession(taskId) {
     const task = tasksCache[taskId];
     if (!task) {
-        alert('Task not found');
+        showToast('Task not found', true);
         return;
     }
 
@@ -1160,7 +1162,7 @@ async function clearTaskSession(taskId) {
         await loadTasks();
     } catch (error) {
         console.error('Failed to clear session:', error);
-        alert(`Failed to clear session: ${error.message}`);
+        showToast(error.message, true);
     }
 }
 
