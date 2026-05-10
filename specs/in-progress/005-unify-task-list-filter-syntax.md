@@ -112,3 +112,24 @@ Manual smoke test against a running server:
 ## Do-Nothing Option
 
 Without this work, the upcoming "make stalled PR-reviewer tasks visible to operator" task cannot present the operator with a single board view that includes both their own tasks and escalated/unassigned ones. Workarounds (two requests merged client-side, or always assigning escalated tasks to a sentinel name) leak orchestration state into the UI and make the API harder to use from other clients. The current asymmetry across the four filters is also a long-standing papercut for anyone scripting against the API. Doing nothing is not acceptable, but the change is small enough to be done in a single PR.
+
+## Verification Result
+
+**Verified:** 2026-05-10T20:21:17Z (HEAD 0b8abad)
+**Binary:** installed `dark-factory` (task-orchestrator is Python; verified against running uvicorn at :8000 started 21:36 today, post-v0.21.0 deploy ac4cc69)
+**Scenario:** Live curl against running task-orchestrator API for all four filters, plus full pytest suite and OpenAPI introspection.
+**Evidence:**
+- Code: `src/task_orchestrator/api/tasks.py:142-219` shows `_flatten_filter`/`_flatten_assignee_filter` helpers and all four params declared `Annotated[list[str] | None, Query()]`.
+- 14 new tests at `tests/test_api.py:1065-1454` all PASS (`pytest tests/test_api.py` → 58 passed; full suite 137 passed).
+- Live: `?status=todo&status=in_progress` == `?status=todo,in_progress` → both 206 tasks, identical id set.
+- Live: `?vault=personal&vault=trading` == `?vault=personal,trading` → both 148.
+- Live: `?phase=planning&phase=human_review` == `?phase=planning,human_review` → both 27.
+- Live: `?assignee=bborbe&assignee=alice` == `?assignee=bborbe,alice` → both 121.
+- Live: `?assignee=` → 74 tasks, all with `assignee=None`.
+- Live: `?assignee=,bborbe` → 195 tasks (74 unassigned + 121 bborbe), distinct assignees `{'', 'bborbe'}`.
+- Live: `?status=todo, in_progress` (whitespace) → 206, matches no-whitespace.
+- Live: `?status=` → 225, identical to omitted.
+- Live: omitted status → 225 tasks with statuses exactly `{completed, in_progress, todo}`.
+- Live OpenAPI: `/api/tasks` parameters `vault`, `status`, `phase`, `assignee` all declared `array of string | null`.
+- `make precommit` exit 0 (137 passed, ruff clean, mypy clean).
+**Verdict:** PASS
