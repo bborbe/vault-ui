@@ -1,11 +1,12 @@
 ---
-status: committing
+status: completed
 summary: Converted currentAssignee (single string) to currentAssignees (array) across all six callsites in app.js — parse, toggle, updateURL, loadTasks URL builder, and chip highlight — enabling repeated ?assignee= URL parameters to round-trip end-to-end.
 container: task-orchestrator-040-frontend-multi-value-assignee-url-param
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T16:24:29Z"
 queued: "2026-05-10T16:24:29Z"
 started: "2026-05-10T16:24:31Z"
+completed: "2026-05-10T16:25:28Z"
 ---
 <summary>
 - The Kanban board respects every value of a repeated `assignee` URL parameter instead of silently dropping all but the first
