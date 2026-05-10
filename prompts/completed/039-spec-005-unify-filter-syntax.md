@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: [005-unify-task-list-filter-syntax]
 summary: 'Unified GET /tasks filter syntax: added _flatten_filter and _flatten_assignee_filter helpers, updated status/phase/assignee params to Annotated[list[str] | None, Query()], vault gains comma-split support, assignee empty-string token matches unassigned tasks, 14 new tests added, CHANGELOG updated.'
 container: task-orchestrator-039-spec-005-unify-filter-syntax
@@ -7,6 +7,7 @@ dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T15:45:00Z"
 queued: "2026-05-10T16:02:53Z"
 started: "2026-05-10T16:02:55Z"
+completed: "2026-05-10T16:04:36Z"
 branch: dark-factory/unify-task-list-filter-syntax
 ---
 
