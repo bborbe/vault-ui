@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: [006-goal-filter-on-tasks-endpoint]
 summary: Added goals field to Task dataclass and TaskResponse, parsed goals frontmatter with wiki-link bracket stripping in _parse_task, threaded goals through _task_to_response, added goal query parameter to list_tasks with _flatten_filter reuse and OR-semantics filtering, updated _make_task helper, added 11 new tests covering parser shapes and all query forms, and bumped CHANGELOG to v0.28.0.
 container: task-orchestrator-046-spec-006-goal-filter-backend
@@ -7,6 +7,7 @@ dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T21:38:00Z"
 queued: "2026-05-10T21:49:50Z"
 started: "2026-05-10T21:49:51Z"
+completed: "2026-05-10T21:52:14Z"
 branch: dark-factory/goal-filter-on-tasks-endpoint
 ---
 
