@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.26.0
+
+- feat: Frontend reads multi-value status from URL — supports `?status=todo,in_progress` and `?status=todo&status=in_progress`; default behavior (`in_progress,completed`) unchanged when no status param present
+
 ## v0.25.0
 
 - fix: Replace blocking alert() dialogs with non-blocking error toasts; drop redundant "Failed to X:" prefixes — backend stderr is now surfaced directly via showToast(message, true)

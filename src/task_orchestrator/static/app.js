@@ -2,6 +2,7 @@
 
 let currentVault = null; // null = "All", or vault name
 let currentAssignees = [];
+let currentStatuses = ['in_progress', 'completed']; // default — overridden by ?status= URL param
 let tasksCache = {}; // Map of task ID -> task data
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
@@ -57,6 +58,13 @@ function parseURLParams() {
 
     // Parse assignee parameter(s) — supports repeated form (?assignee=a&assignee=b)
     currentAssignees = params.getAll('assignee');
+
+    // Parse status parameter(s) — supports repeated form and comma-separated form
+    // (backend handles comma-split server-side); absent param keeps the default.
+    const statusParams = params.getAll('status');
+    if (statusParams.length > 0) {
+        currentStatuses = statusParams;
+    }
 }
 
 function setupEventListeners() {
@@ -327,6 +335,16 @@ function updateURL() {
     // Add assignee parameter(s) — emit one repeated param per value (preserves empty-token "unassigned" marker)
     currentAssignees.forEach(a => params.append('assignee', a));
 
+    // Add status parameter(s) — only emit when the filter differs from the default,
+    // so URLs stay clean for the common case (?vault=personal with no status param).
+    const defaultStatuses = ['in_progress', 'completed'];
+    const isDefaultStatuses =
+        currentStatuses.length === defaultStatuses.length &&
+        currentStatuses.every((s, i) => s === defaultStatuses[i]);
+    if (!isDefaultStatuses) {
+        currentStatuses.forEach(s => params.append('status', s));
+    }
+
     // Update URL without reload
     const newURL = params.toString() ? `?${params.toString()}` : window.location.pathname;
     window.history.replaceState({}, '', newURL);
@@ -401,7 +419,7 @@ async function loadTasks() {
         }
 
         // Add other filters — include completed so recently-completed tasks appear in Done lane
-        params.set('status', 'in_progress,completed');
+        currentStatuses.forEach(s => params.append('status', s));
         params.set('phase', 'todo,planning,in_progress,ai_review,human_review,done');
 
         // Add assignee parameter(s) — pass through every value the user selected
