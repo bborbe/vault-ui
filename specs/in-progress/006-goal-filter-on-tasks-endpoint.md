@@ -131,3 +131,18 @@ Manual smoke test against a running server (with the user's `~/Documents/Obsidia
 ## Do-Nothing Option
 
 Without this work, operators cannot focus the Kanban on a single goal as the goal hierarchy grows. Workarounds — visual scanning, multiple browser tabs filtered by other dimensions, or scripting against the unfiltered API and merging client-side — all push orchestration state into the user's head or into bespoke scripts. The follow-up goal-board view (which links a goal to its tasks) is blocked on this URL/API primitive: without a `?goal=` filter there is nowhere for a "view tasks for this goal" link to point. The change is small (one new model field, one parser branch, one filter, one frontend state variable) and naturally splits into a backend prompt and a frontend prompt. Doing nothing is not acceptable.
+
+## Verification Result
+
+**Verified:** 2026-05-11T15:38:44Z (HEAD e33c0c1)
+**Binary:** installed `dark-factory v0.156.1-1-g04f3863-dirty`; task-orchestrator running on 127.0.0.1:8000 from worktree HEAD
+**Scenario:** Live curl against running task-orchestrator + `make precommit` (149/149 tests pass) + operator-confirmed browser screenshot
+**Evidence:**
+- `?vault=personal` → 142 tasks (no regression); `?vault=personal&goal=Eliminate%20Agent%20Task%20Rot` → 5 tasks, all goals contain `Eliminate Agent Task Rot` (brackets stripped)
+- repeat-form `?goal=A&goal=B` ≡ comma-form `?goal=A,B` (sorted ID sets equal, n=5); mixed `?goal=A,B&goal=C` returns A∪B (n=5; C unknown)
+- whitespace `?goal=A , B` ≡ `?goal=A,B`; all-empty `?goal=&goal=&goal=` ≡ no filter (142)
+- `goals` field present on all 142 responses; 0 of `[]` (empty list normalised to null); 50/142 have `goals==null` unfiltered, 0/5 filtered
+- `/openapi.json` lists `goal` as `in:query, required:false, anyOf [array<string>, null]` — same shape as `assignee`
+- Frontend pass-through: `static/script.js` L71-72 (parse `getAll('goal')`), L477-478 (`updateURL` writeback), L560-561 (forward to `/api/tasks`); operator confirmed via browser screenshot board renders 5 in-progress + 1 done for `?vault=personal&vault=family&vault=openclaw&assignee=&assignee=bborbe&goal=Eliminate%20Agent%20Task%20Rot`
+- `make precommit`: ruff format + check, mypy, pytest 149/149 — all pass
+**Verdict:** PASS
