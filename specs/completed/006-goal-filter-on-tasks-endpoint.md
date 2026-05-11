@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-05-10T21:35:46Z"
 generating: "2026-05-10T21:35:47Z"
 prompted: "2026-05-10T21:41:19Z"
 verifying: "2026-05-10T21:54:01Z"
+completed: "2026-05-11T15:39:47Z"
 branch: dark-factory/goal-filter-on-tasks-endpoint
 ---
 
