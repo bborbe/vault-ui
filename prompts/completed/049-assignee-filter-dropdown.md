@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: [007-assignee-filter-dropdown]
 summary: Added multi-select Assignee filter dropdown to Kanban header, mirroring the Status dropdown UX, with dynamic options from loaded tasks, Unassigned row, XSS-safe DOM construction, URL writeback, and shared currentAssignees state with existing badge-click toggle.
 container: task-orchestrator-049-assignee-filter-dropdown
@@ -7,6 +7,7 @@ dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-13T06:50:00Z"
 queued: "2026-05-13T06:52:59Z"
 started: "2026-05-13T06:53:05Z"
+completed: "2026-05-13T06:54:55Z"
 ---
 <summary>
 - Operators get an Assignee filter dropdown in the Kanban header next to the Status dropdown
