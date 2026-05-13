@@ -83,6 +83,11 @@ function setupEventListeners() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeStatusDropdown();
     });
+    document.getElementById('assignee-selector-toggle').addEventListener('click', toggleAssigneeDropdown);
+    document.addEventListener('click', handleClickOutsideAssigneeDropdown);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeAssigneeDropdown();
+    });
     document.getElementById('refresh-btn').addEventListener('click', loadTasks);
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
@@ -224,6 +229,155 @@ function updateStatusLabel() {
     }
 }
 
+function toggleAssigneeDropdown() {
+    const dropdown = document.getElementById('assignee-selector-dropdown');
+    if (dropdown.classList.contains('hidden')) {
+        renderAssigneeDropdown();
+    }
+    dropdown.classList.toggle('hidden');
+}
+
+function closeAssigneeDropdown() {
+    const dropdown = document.getElementById('assignee-selector-dropdown');
+    if (dropdown) dropdown.classList.add('hidden');
+}
+
+function handleClickOutsideAssigneeDropdown(e) {
+    const container = document.getElementById('assignee-selector');
+    if (container && !container.contains(e.target)) {
+        closeAssigneeDropdown();
+    }
+}
+
+// Build the set of {namedAssignees, hasUnassigned} that the dropdown should offer.
+// Derived from the currently loaded tasksCache PLUS any currently-selected values that are
+// no longer present in the cache (so the user can always uncheck what they previously selected).
+function computeAssigneeOptions() {
+    const named = new Set();
+    let hasUnassigned = false;
+    Object.values(tasksCache).forEach(task => {
+        const raw = task && task.assignee;
+        if (typeof raw === 'string' && raw.trim() !== '') {
+            named.add(raw);
+        } else {
+            hasUnassigned = true;
+        }
+    });
+    // Preserve currently-selected values that are absent from the loaded data.
+    currentAssignees.forEach(a => {
+        if (a === '') {
+            hasUnassigned = true;
+        } else {
+            named.add(a);
+        }
+    });
+    const sortedNamed = Array.from(named).sort((a, b) => a.localeCompare(b));
+    return { namedAssignees: sortedNamed, hasUnassigned };
+}
+
+function renderAssigneeDropdown() {
+    const dropdown = document.getElementById('assignee-selector-dropdown');
+    if (!dropdown) return;
+    dropdown.innerHTML = '';
+
+    const { namedAssignees, hasUnassigned } = computeAssigneeOptions();
+    const allChecked = currentAssignees.length === 0;
+
+    // "All" row
+    const allItem = document.createElement('div');
+    allItem.className = 'assignee-selector-item' + (allChecked ? ' checked' : '');
+    const allCb = document.createElement('input');
+    allCb.type = 'checkbox';
+    allCb.id = 'assignee-cb-all';
+    allCb.value = '__all__';
+    allCb.checked = allChecked;
+    const allLabel = document.createElement('label');
+    allLabel.htmlFor = 'assignee-cb-all';
+    allLabel.textContent = 'All';
+    allItem.appendChild(allCb);
+    allItem.appendChild(allLabel);
+    allCb.addEventListener('change', handleAllAssigneeCheckbox);
+    dropdown.appendChild(allItem);
+
+    // Separator
+    const sep = document.createElement('hr');
+    sep.className = 'assignee-selector-separator';
+    dropdown.appendChild(sep);
+
+    // Named assignees first, alphabetical
+    namedAssignees.forEach((name, idx) => {
+        dropdown.appendChild(buildAssigneeRow(name, idx, currentAssignees.includes(name)));
+    });
+
+    // Unassigned row last
+    if (hasUnassigned) {
+        dropdown.appendChild(buildAssigneeRow('', namedAssignees.length, currentAssignees.includes('')));
+    }
+}
+
+// Build a single checkbox row. Uses textContent / value (not innerHTML) for assignee strings
+// to avoid HTML injection through frontmatter values.
+function buildAssigneeRow(value, index, isChecked) {
+    const item = document.createElement('div');
+    item.className = 'assignee-selector-item' + (isChecked ? ' checked' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = `assignee-cb-${index}`;
+    cb.value = value;
+    cb.checked = isChecked;
+    cb.dataset.assignee = value;
+    const label = document.createElement('label');
+    label.htmlFor = cb.id;
+    label.textContent = value === '' ? 'Unassigned' : value;
+    item.appendChild(cb);
+    item.appendChild(label);
+    cb.addEventListener('change', handleAssigneeCheckboxChange);
+    return item;
+}
+
+function handleAllAssigneeCheckbox(e) {
+    // "All" clears the filter. Clicking it while already checked is a no-op
+    // (the spec lists this as the documented behavior).
+    if (!e.target.checked) {
+        // User unchecked the "All" row directly — re-check it; "All" cannot be turned off this way.
+        e.target.checked = true;
+        e.target.closest('.assignee-selector-item').classList.add('checked');
+        return;
+    }
+    currentAssignees = [];
+    updateAssigneeLabel();
+    updateURL();
+    loadTasks();
+    // loadTasks will re-render the dropdown; no need to do it here.
+}
+
+function handleAssigneeCheckboxChange(e) {
+    const value = e.target.dataset.assignee;
+    e.target.closest('.assignee-selector-item').classList.toggle('checked', e.target.checked);
+
+    const idx = currentAssignees.indexOf(value);
+    if (e.target.checked && idx === -1) {
+        currentAssignees.push(value);
+    } else if (!e.target.checked && idx !== -1) {
+        currentAssignees.splice(idx, 1);
+    }
+
+    updateAssigneeLabel();
+    updateURL();
+    loadTasks();
+}
+
+function updateAssigneeLabel() {
+    const label = document.getElementById('assignee-selector-label');
+    if (!label) return;
+    if (currentAssignees.length === 0) {
+        label.textContent = 'All';
+        return;
+    }
+    const text = currentAssignees.map(a => a === '' ? 'Unassigned' : a).join(', ');
+    label.textContent = text.length > 30 ? text.slice(0, 30) + '...' : text;
+}
+
 async function loadVaults() {
     try {
         const response = await fetch('/api/vaults');
@@ -316,6 +470,7 @@ async function loadVaults() {
 
         updateVaultLabel();
         updateStatusLabel();
+        updateAssigneeLabel();
 
         // Load tasks
         await loadTasks();
@@ -614,6 +769,10 @@ async function loadTasks() {
                 doneContainer.appendChild(createTaskCard(task));
             });
         }
+
+        // Refresh the assignee dropdown so options reflect the freshly loaded data.
+        renderAssigneeDropdown();
+        updateAssigneeLabel();
 
     } catch (error) {
         console.error('Failed to load tasks:', error);

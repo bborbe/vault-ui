@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.31.0
+
+- feat: Assignee filter dropdown in the Kanban header — multi-select with one row per distinct assignee in the loaded task set, plus an "Unassigned" row for the empty-token filter; fixes the UX dead-end where `?assignee=` could not be cleared from the UI
+
 ## v0.30.0
 
 - feat: Migrate vault-cli watcher subprocess from `task watch` to `watch` — dispatches events on the new `type` field; goal frontmatter changes now resolve display-name `claude_session_id` to UUID instantly via the watcher path instead of waiting up to 5 minutes for the cleanup loop. The cleanup loop stays as a backstop for events that arrive while the watcher is offline.
