@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: ["007"]
 summary: Added GET /api/assignees endpoint returning full distinct assignee set, switched Kanban Assignee dropdown to read from this endpoint via availableAssignees cache, added 8 new tests for the endpoint covering all specified scenarios.
 container: task-orchestrator-050-assignee-options-endpoint
@@ -7,6 +7,7 @@ dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-13T07:05:00Z"
 queued: "2026-05-13T07:06:40Z"
 started: "2026-05-13T07:06:42Z"
+completed: "2026-05-13T07:10:49Z"
 ---
 <summary>
 - Fix follow-up to spec 007: the Assignee dropdown collapsed to "Unassigned + All" when the Unassigned filter was active, because options were derived from the filtered `tasksCache`
