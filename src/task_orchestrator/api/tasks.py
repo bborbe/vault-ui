@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from task_orchestrator.api.models import SessionResponse, Task, TaskResponse
+from task_orchestrator.api.models import AssigneesResponse, SessionResponse, Task, TaskResponse
 from task_orchestrator.cleanup import derive_claude_project_dir
 from task_orchestrator.config import VaultConfig
 from task_orchestrator.factory import (
@@ -121,6 +121,49 @@ async def list_vaults() -> list[VaultResponse]:
         )
         for vault in config.vaults
     ]
+
+
+@router.get("/assignees", response_model=AssigneesResponse)
+async def list_assignees(
+    vault: Annotated[list[str] | None, Query()] = None,
+) -> AssigneesResponse:
+    """List distinct assignees across the selected vault(s).
+
+    Returns the full assignee set independent of any task filter — used by the
+    Kanban Assignee dropdown so its options stay stable when the user narrows
+    the visible task list by assignee.
+
+    Args:
+        vault: Vault name(s) to read from. Empty/None means all configured vaults.
+
+    Returns:
+        AssigneesResponse with sorted named assignees and a has_unassigned flag.
+    """
+    config = get_config()
+    vault_filter = _flatten_filter(vault)
+    vault_names = [v.name for v in config.vaults] if vault_filter is None else vault_filter
+
+    named: set[str] = set()
+    has_unassigned = False
+
+    for vault_name in vault_names:
+        try:
+            client = get_vault_cli_client_for_vault(vault_name)
+        except ValueError:
+            continue  # Skip invalid vault names, matching list_tasks behavior
+
+        tasks = await client.list_tasks(show_all=True)
+        for task in tasks:
+            raw = task.assignee
+            if isinstance(raw, str) and raw.strip() != "":
+                named.add(raw)
+            else:
+                has_unassigned = True
+
+    return AssigneesResponse(
+        named=sorted(named, key=str.lower),
+        has_unassigned=has_unassigned,
+    )
 
 
 def _parse_defer_date(defer_date: str) -> datetime:

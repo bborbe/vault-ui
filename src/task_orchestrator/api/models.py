@@ -85,3 +85,10 @@ class SessionResponse(BaseModel):
     success: bool | None = None  # Whether the command succeeded
     error: str | None = None  # Error message if command failed
     response: str | None = None  # Stdout from vault-cli fast path
+
+
+class AssigneesResponse(BaseModel):
+    """API response model for distinct assignees across selected vaults."""
+
+    named: list[str]  # Distinct named assignees, alphabetically sorted
+    has_unassigned: bool  # True if any task has missing/empty/whitespace-only assignee

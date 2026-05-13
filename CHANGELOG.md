@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.32.0
+
+- fix: Assignee dropdown now lists all assignees from the selected vault(s), not just those visible in the current filter — new GET /api/assignees endpoint sources the option set independently of `/api/tasks`. Fixes collapse to "All + Unassigned" when the Unassigned filter was active.
+
 ## v0.31.0
 
 - feat: Assignee filter dropdown in the Kanban header — multi-select with one row per distinct assignee in the loaded task set, plus an "Unassigned" row for the empty-token filter; fixes the UX dead-end where `?assignee=` could not be cleared from the UI

@@ -1593,6 +1593,258 @@ def test_list_tasks_goal_filter_mixed_form(
     assert "Task D" not in task_ids
 
 
+# --- GET /api/assignees endpoint tests ---
+
+
+def test_list_assignees_returns_200_with_expected_shape(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /api/assignees returns 200 with named list and has_unassigned bool."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task1", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(_make_task(task_id="Task2", status="todo", assignee=None))
+
+    response = test_client.get("/api/assignees?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "named" in data
+    assert "has_unassigned" in data
+    assert isinstance(data["named"], list)
+    assert isinstance(data["has_unassigned"], bool)
+
+
+def test_list_assignees_deduplicates_and_sorts_case_insensitively(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Distinct assignees from multiple tasks are deduplicated and sorted case-insensitively."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task1", status="in_progress", assignee="Charlie")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task2", status="in_progress", assignee="alice")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task3", status="todo", assignee="alice")  # duplicate
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task4", status="in_progress", assignee="Bob")
+    )
+
+    response = test_client.get("/api/assignees?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["named"] == ["alice", "Bob", "Charlie"]  # sorted case-insensitively
+    assert data["has_unassigned"] is False
+
+
+def test_list_assignees_has_unassigned_true_for_none_assignee(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Task with None assignee sets has_unassigned=True."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task1", status="in_progress", assignee=None)
+    )
+
+    response = test_client.get("/api/assignees?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_unassigned"] is True
+    assert data["named"] == []
+
+
+def test_list_assignees_has_unassigned_true_for_empty_string(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Task with empty-string assignee sets has_unassigned=True."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Task1", status="in_progress", assignee=""))
+
+    response = test_client.get("/api/assignees?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_unassigned"] is True
+    assert data["named"] == []
+
+
+def test_list_assignees_has_unassigned_true_for_whitespace_only(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Task with whitespace-only assignee sets has_unassigned=True."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task1", status="in_progress", assignee="   ")
+    )
+
+    response = test_client.get("/api/assignees?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_unassigned"] is True
+    assert data["named"] == []
+
+
+def test_list_assignees_vault_filter_scopes_to_single_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """?vault=Vault1 returns only that vault's assignees."""
+    vault1 = tmp_path / "vault1"
+    vault2 = tmp_path / "vault2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="Vault1",
+                vault_path=str(vault1),
+                vault_name="Vault1",
+                tasks_folder="24 Tasks",
+            ),
+            VaultConfig(
+                name="Vault2",
+                vault_path=str(vault2),
+                vault_name="Vault2",
+                tasks_folder="24 Tasks",
+            ),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="Task1", status="in_progress", assignee="alice")
+    task2 = _make_task(task_id="Task2", status="in_progress", assignee="bob")
+    clients = {
+        "Vault1": _make_vault_client([task1]),
+        "Vault2": _make_vault_client([task2]),
+    }
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/assignees?vault=Vault1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "alice" in data["named"]
+    assert "bob" not in data["named"]
+
+
+def test_list_assignees_no_vault_returns_all_vaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ?vault= param returns assignees from all configured vaults."""
+    vault1 = tmp_path / "vault1"
+    vault2 = tmp_path / "vault2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="Vault1",
+                vault_path=str(vault1),
+                vault_name="Vault1",
+                tasks_folder="24 Tasks",
+            ),
+            VaultConfig(
+                name="Vault2",
+                vault_path=str(vault2),
+                vault_name="Vault2",
+                tasks_folder="24 Tasks",
+            ),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="Task1", status="in_progress", assignee="alice")
+    task2 = _make_task(task_id="Task2", status="in_progress", assignee="bob")
+    clients = {
+        "Vault1": _make_vault_client([task1]),
+        "Vault2": _make_vault_client([task2]),
+    }
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/assignees")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "alice" in data["named"]
+    assert "bob" in data["named"]
+
+
+def test_list_assignees_invalid_vault_silently_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid vault name in ?vault= is silently skipped (matches list_tasks behavior)."""
+    vault1 = tmp_path / "vault1"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="Vault1",
+                vault_path=str(vault1),
+                vault_name="Vault1",
+                tasks_folder="24 Tasks",
+            ),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="Task1", status="in_progress", assignee="alice")
+    good_client = _make_vault_client([task1])
+
+    def _get_client(vault_name: str) -> MagicMock:
+        if vault_name == "Vault1":
+            return good_client
+        raise ValueError(f"Unknown vault: {vault_name}")
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=_get_client,
+    ):
+        response = http_client.get("/api/assignees?vault=Vault1&vault=NonExistent")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "alice" in data["named"]
+
+
+def test_list_assignees_uses_show_all_true(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """list_assignees calls list_tasks with show_all=True to include all statuses."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Task1", status="in_progress", assignee="alice")
+    )
+
+    test_client.get("/api/assignees?vault=TestVault")
+
+    mock_vault_client.list_tasks.assert_awaited_once_with(show_all=True)
+
+
 def test_list_tasks_goal_filter_absent_returns_all(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:

@@ -4,6 +4,9 @@ let currentVault = null; // null = "All", or vault name
 let currentAssignees = [];
 let currentStatuses = ['in_progress', 'completed']; // default — overridden by ?status= URL param
 let currentGoals = []; // goal filter from URL — empty means no filter
+// Distinct assignees across the selected vaults — sourced from /api/assignees,
+// refreshed on startup and on every vault-selector change. Read by computeAssigneeOptions.
+let availableAssignees = { named: [], hasUnassigned: false };
 const ALL_STATUSES = ['todo', 'in_progress', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
 let tasksCache = {}; // Map of task ID -> task data
 let ws = null; // WebSocket connection
@@ -249,21 +252,10 @@ function handleClickOutsideAssigneeDropdown(e) {
     }
 }
 
-// Build the set of {namedAssignees, hasUnassigned} that the dropdown should offer.
-// Derived from the currently loaded tasksCache PLUS any currently-selected values that are
-// no longer present in the cache (so the user can always uncheck what they previously selected).
 function computeAssigneeOptions() {
-    const named = new Set();
-    let hasUnassigned = false;
-    Object.values(tasksCache).forEach(task => {
-        const raw = task && task.assignee;
-        if (typeof raw === 'string' && raw.trim() !== '') {
-            named.add(raw);
-        } else {
-            hasUnassigned = true;
-        }
-    });
-    // Preserve currently-selected values that are absent from the loaded data.
+    const named = new Set(availableAssignees.named);
+    let hasUnassigned = Boolean(availableAssignees.hasUnassigned);
+    // Preserve currently-selected values that are absent from the available set.
     currentAssignees.forEach(a => {
         if (a === '') {
             hasUnassigned = true;
@@ -463,6 +455,7 @@ async function loadVaults() {
                 saveVaultSelection();
                 updateVaultLabel();
                 updateURL();
+                loadAssignees();
                 loadTasks();
             });
             dropdown.appendChild(item);
@@ -472,11 +465,41 @@ async function loadVaults() {
         updateStatusLabel();
         updateAssigneeLabel();
 
+        // Load assignee options before tasks so the dropdown renders against the full set on first paint.
+        await loadAssignees();
+
         // Load tasks
         await loadTasks();
     } catch (error) {
         console.error('Failed to load vaults:', error);
         showToast(error.message, true);
+    }
+}
+
+async function loadAssignees() {
+    try {
+        const params = new URLSearchParams();
+        if (currentVault === null) {
+            // No vault param = all vaults; matches loadTasks behavior.
+        } else if (Array.isArray(currentVault)) {
+            currentVault.forEach(v => params.append('vault', v));
+        } else {
+            params.set('vault', currentVault);
+        }
+        const url = params.toString() ? `/api/assignees?${params.toString()}` : '/api/assignees';
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.warn(`Failed to load assignees: HTTP ${response.status}`);
+            return;
+        }
+        const data = await response.json();
+        availableAssignees = {
+            named: Array.isArray(data.named) ? data.named : [],
+            hasUnassigned: Boolean(data.has_unassigned),
+        };
+    } catch (err) {
+        console.warn('Failed to load assignees:', err);
+        // Keep previous cache; dropdown still works with last-known data.
     }
 }
 
@@ -509,6 +532,7 @@ function handleAllVaultCheckbox() {
     saveVaultSelection();
     updateVaultLabel();
     updateURL();
+    loadAssignees();  // refresh option set for the newly selected vault(s)
     loadTasks();
 }
 
@@ -541,6 +565,7 @@ function handleVaultCheckboxChange(e) {
     saveVaultSelection();
     updateVaultLabel();
     updateURL();
+    loadAssignees();
     loadTasks();
 }
 
