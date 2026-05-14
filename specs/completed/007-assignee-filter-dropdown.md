@@ -1,10 +1,11 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
 approved: "2026-05-13T06:45:16Z"
 generating: "2026-05-13T06:53:04Z"
+completed: "2026-05-14T15:14:41Z"
 branch: dark-factory/assignee-filter-dropdown
 ---
 
