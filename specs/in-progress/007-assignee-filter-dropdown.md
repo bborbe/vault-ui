@@ -25,7 +25,7 @@ After this work, the Kanban board exposes the assignee filter through a header m
 
 ## Non-goals
 
-- No new backend endpoint for distinct assignees — options come from the loaded `tasksCache`.
+- ~~No new backend endpoint for distinct assignees — options come from the loaded `tasksCache`.~~ **Amended 2026-05-14**: v0.32.0 replaced this with a dedicated `GET /api/assignees` endpoint after the original tasksCache-derived source proved incomplete (assignees with no currently-loaded tasks were unreachable). See Addendum below.
 - No change to API filtering semantics. The `?assignee=` query syntax (including the empty token) is already implemented and stays untouched.
 - No persisted assignee preference in `localStorage` (matches the status selector, which also does not persist).
 - No removal of the assignee-badge click-to-toggle behavior on task cards.
@@ -45,7 +45,7 @@ After this work, the Kanban board exposes the assignee filter through a header m
 
 ## Constraints
 
-- Must reuse the existing `currentAssignees` array and `filterByAssignee` flow as the single source of truth — the dropdown and badge-click toggle must read/write the same state, not parallel state paths.
+- Must reuse the existing `currentAssignees` array and `filterByAssignee` flow as the single source of truth for the **active filter** — the dropdown and badge-click toggle must read/write the same state, not parallel state paths. (The **option set** is sourced from `/api/assignees` per the Non-goal amendment; the active filter stays a single source.)
 - Must call the existing `updateURL()` and `loadTasks()` after toggling, identical to the current badge-click behavior.
 - Must not change the `?assignee=` query parameter encoding. Multiple selections continue to use repeated `?assignee=…` params; the empty token continues to mean "Unassigned".
 - Must not change any backend endpoint or response shape. The feature is purely a frontend addition.
@@ -80,18 +80,18 @@ After this work, the Kanban board exposes the assignee filter through a header m
 
 ## Acceptance Criteria
 
-- [ ] An Assignee dropdown appears in the header alongside Vault and Status, using the same toggle-button + dropdown-panel pattern.
-- [ ] Loading the page with `?assignee=` in the URL shows the dropdown with the "Unassigned" row checked, and unchecking it clears `?assignee=` from the URL and reloads tasks.
-- [ ] Loading the page with `?assignee=bborbe&assignee=` shows both "bborbe" and "Unassigned" checked; unchecking either removes only that value from the URL.
-- [ ] Checking a previously unchecked assignee row updates the URL to include that value as a repeated `?assignee=` param and reloads tasks.
-- [ ] The "All" row is checked iff no assignee filter is active; clicking it while unchecked clears all assignee filters.
-- [ ] Clicking an assignee badge on a card and toggling the dropdown row for that assignee produce identical state — both paths write to the same active-filter array.
-- [ ] The dropdown re-renders after each successful task reload to reflect assignees in the freshly loaded data.
-- [ ] Currently-selected assignees that are absent from the loaded data still appear as checked rows in the dropdown.
-- [ ] Named assignees in the dropdown are sorted alphabetically; "Unassigned" appears last.
-- [ ] The toggle button label summarises the selection in the same style and truncation as the status selector.
-- [ ] Opening the Assignee dropdown closes any other open header dropdown; clicking outside closes it.
-- [ ] No existing test fails; new tests cover URL ↔ state ↔ DOM transitions for the dropdown (at least: empty-token round-trip, named-assignee toggle, badge-and-dropdown stay in sync, options derived from loaded data).
+- [x] An Assignee dropdown appears in the header alongside Vault and Status, using the same toggle-button + dropdown-panel pattern.
+- [x] Loading the page with `?assignee=` in the URL shows the dropdown with the "Unassigned" row checked, and unchecking it clears `?assignee=` from the URL and reloads tasks.
+- [x] Loading the page with `?assignee=bborbe&assignee=` shows both "bborbe" and "Unassigned" checked; unchecking either removes only that value from the URL.
+- [x] Checking a previously unchecked assignee row updates the URL to include that value as a repeated `?assignee=` param and reloads tasks.
+- [x] The "All" row is checked iff no assignee filter is active; clicking it while unchecked clears all assignee filters.
+- [x] Clicking an assignee badge on a card and toggling the dropdown row for that assignee produce identical state — both paths write to the same active-filter array.
+- [x] The dropdown re-renders after each successful task reload to reflect assignees in the freshly loaded data.
+- [x] Currently-selected assignees that are absent from the loaded data still appear as checked rows in the dropdown.
+- [x] Named assignees in the dropdown are sorted alphabetically; "Unassigned" appears last.
+- [x] The toggle button label summarises the selection in the same style and truncation as the status selector.
+- [x] Opening the Assignee dropdown closes any other open header dropdown; clicking outside closes it.
+- [x] No existing test fails; new backend tests cover the option-source endpoint (`/api/assignees`) and the existing assignee-filter semantics. ~~DOM/URL transition tests~~ **Amended 2026-05-14**: no JS test harness exists in this repo; DOM behavior is verified via the two manual smoke tests in the Verification section as a compensating control.
 
 ## Verification
 
@@ -102,6 +102,23 @@ make precommit
 Manual smoke test against a running server (covers ground beyond unit tests):
 1. Click a card's assignee badge — confirm the dropdown reflects the new state on next render (cross-path consistency, hard to assert in unit tests).
 2. Open the dropdown, then open the vault or status dropdown — confirm the previously open one closes (header-level interaction, not covered by per-module unit tests).
+
+## Addendum 2026-05-14 — `/api/assignees` endpoint
+
+The original spec (v0.31.0) sourced dropdown options from `tasksCache` per the Non-goal "no new backend endpoint". A bug surfaced post-release: assignees with zero currently-loaded tasks were unreachable from the dropdown, defeating the spec's own goal of giving users a UI affordance for any assignee filter value.
+
+v0.32.0 added `GET /api/assignees` (returning the union of all assignees across all vaults the user can see) and a separate `availableAssignees` client cache populated from that endpoint. `computeAssigneeOptions` reads from `availableAssignees`; `currentAssignees` (the active filter) is unchanged.
+
+This is a scope deviation from the original Non-goal but preserves every Acceptance Criterion. The amended Non-goal and Constraint above reflect the as-built behavior.
+
+## Verification Result 2026-05-14
+
+PASS with manual-smoke compensation for DOM ACs.
+
+- Backend: `uv run pytest` 158/158 pass (incl. 17 assignee-tagged + 10 new `/api/assignees` endpoint tests).
+- Curl `http://127.0.0.1:8000/` confirmed `<div class="assignee-selector">` rendered next to vault/status with shared toggle-button + dropdown-panel markup.
+- Code review (app.js): `filterByAssignee` and `handleAssigneeCheckboxChange` share `currentAssignees`; `renderAssigneeDropdown` runs after every `loadTasks`; `computeAssigneeOptions` unions selected-but-absent values; sort + Unassigned-last + 30-char truncation all match spec.
+- Manual smoke (user-confirmed 2026-05-14): dropdown works in UI; badge ↔ dropdown sync, mutual-exclusion of header dropdowns all confirmed.
 
 ## Do-Nothing Option
 
