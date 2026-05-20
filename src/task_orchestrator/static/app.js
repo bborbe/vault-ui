@@ -7,7 +7,7 @@ let currentGoals = []; // goal filter from URL — empty means no filter
 // Distinct assignees across the selected vaults — sourced from /api/assignees,
 // refreshed on startup and on every vault-selector change. Read by computeAssigneeOptions.
 let availableAssignees = { named: [], hasUnassigned: false };
-const ALL_STATUSES = ['todo', 'in_progress', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
+const ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
 let tasksCache = {}; // Map of task ID -> task data
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
@@ -33,6 +33,14 @@ async function parseErrorResponse(response) {
 
 // Load tasks on page load
 document.addEventListener('DOMContentLoaded', () => {
+    // Rename in_progress column to the new canonical phase name.
+    // HTML is not modified; the rename happens at runtime so only app.js changes.
+    const execColumn = document.getElementById('cards-in_progress');
+    if (execColumn) {
+        execColumn.id = 'cards-execution';
+        const h2 = execColumn.closest('.kanban-column').querySelector('h2');
+        if (h2) h2.textContent = 'Execution';
+    }
     parseURLParams();
     loadVaults();
     setupEventListeners();
@@ -644,15 +652,9 @@ function updateURL() {
     // Add assignee parameter(s) — emit one repeated param per value (preserves empty-token "unassigned" marker)
     currentAssignees.forEach(a => params.append('assignee', a));
 
-    // Add status parameter(s) — only emit when the filter differs from the default,
-    // so URLs stay clean for the common case (?vault=personal with no status param).
-    const defaultStatuses = ['in_progress', 'completed'];
-    const isDefaultStatuses =
-        currentStatuses.length === defaultStatuses.length &&
-        currentStatuses.every((s, i) => s === defaultStatuses[i]);
-    if (!isDefaultStatuses) {
-        currentStatuses.forEach(s => params.append('status', s));
-    }
+    // Add status parameter(s) — always emit explicitly, even when selection equals the default.
+    // Omitted only when currentStatuses is empty (all deselected).
+    currentStatuses.forEach(s => params.append('status', s));
 
     // Add goal parameter(s) — emit one repeated param per value
     currentGoals.forEach(g => params.append('goal', g));
@@ -732,7 +734,7 @@ async function loadTasks() {
 
         // Add other filters — include completed so recently-completed tasks appear in Done lane
         currentStatuses.forEach(s => params.append('status', s));
-        params.set('phase', 'todo,planning,in_progress,ai_review,human_review,done');
+        params.set('phase', 'todo,planning,in_progress,execution,ai_review,human_review,done');
 
         // Add assignee parameter(s) — pass through every value the user selected
         currentAssignees.forEach(a => params.append('assignee', a));
@@ -755,7 +757,7 @@ async function loadTasks() {
         });
 
         // Clear existing cards
-        ['todo', 'planning', 'in_progress', 'ai_review', 'human_review', 'done'].forEach(phase => {
+        ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'].forEach(phase => {
             const container = document.getElementById(`cards-${phase}`);
             if (container) {
                 container.innerHTML = '';
@@ -777,10 +779,12 @@ async function loadTasks() {
         const recentlyCompletedTasks = tasks.filter(t => t.recently_completed);
 
         // Populate cards: active first, then upcoming per lane, recently-completed always at bottom of done
-        const validPhases = ['todo', 'planning', 'in_progress', 'ai_review', 'human_review', 'done'];
+        const validPhases = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'];
         [...activeTasks, ...upcomingTasks].forEach(task => {
+            // One-way display alias: on-disk in_progress renders in the execution column.
+            const displayPhase = task.phase === 'in_progress' ? 'execution' : task.phase;
             // Default to todo if phase is missing or invalid
-            const phase = task.phase && validPhases.includes(task.phase) ? task.phase : 'todo';
+            const phase = displayPhase && validPhases.includes(displayPhase) ? displayPhase : 'todo';
             const container = document.getElementById(`cards-${phase}`);
             if (container) {
                 const card = createTaskCard(task);
@@ -1178,7 +1182,8 @@ function formatPhase(phase) {
     const phaseNames = {
         'todo': 'Todo',
         'planning': 'Planning',
-        'in_progress': 'In Progress',
+        'in_progress': 'Execution',
+        'execution': 'Execution',
         'ai_review': 'AI Review',
         'human_review': 'Human Review',
         'done': 'Done'
@@ -1239,7 +1244,7 @@ function showTaskMenu(event, taskId) {
     // Add phase options
     menuItems.push({ label: 'Move to', action: 'move', disabled: false });
     menuItems.push({ label: 'Error', action: 'error', disabled: true });
-    menuItems.push({ label: 'In Progress', action: 'in_progress', disabled: false });
+    menuItems.push({ label: 'Execution', action: 'execution', disabled: false });
     menuItems.push({ label: 'AI Review', action: 'ai_review', disabled: false });
     menuItems.push({ label: 'Human Review', action: 'human_review', disabled: false });
     menuItems.push({ label: 'Done', action: 'done', disabled: false });

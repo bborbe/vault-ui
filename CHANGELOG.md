@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.34.0
+
+- feat: Flip Kanban board to canonical vocabulary — status dropdown shows `next`/`backlog` in place of `todo`; EXECUTION column replaces "In Progress"; right-click "Move to" emits `phase=execution`; old on-disk `in_progress` phase aliases to EXECUTION on display; status filter URL always emits explicit `?status=` params
+
 ## v0.33.0
 
 - feat: Accept status alias `next` alongside `todo` in default filter and `?status=next` queries; accept phase alias `execution` alongside `in_progress` in `?phase=execution` queries and valid-phase list — both old and new canonical values are first-class forever
