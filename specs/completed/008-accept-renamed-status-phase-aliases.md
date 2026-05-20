@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-05-20T16:36:43Z"
 generating: "2026-05-20T16:40:25Z"
 prompted: "2026-05-20T16:43:38Z"
 verifying: "2026-05-20T17:03:35Z"
+completed: "2026-05-20T18:33:57Z"
 branch: dark-factory/accept-renamed-status-phase-aliases
 ---
 
