@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: [009-frontend-canonical-status-phase-display]
 summary: Updated app.js to display canonical vocabulary — ALL_STATUSES now includes next/backlog, EXECUTION column renames in_progress at DOMContentLoaded, phase routing aliases in_progress→execution, formatPhase maps both values to 'Execution', right-click menu emits phase=execution, and updateURL always emits explicit ?status= params; CHANGELOG.md updated with Unreleased entry.
 container: task-orchestrator-exec-052-spec-009-frontend-canonical-status-phase
@@ -7,6 +7,7 @@ dark-factory-version: v0.162.0
 created: "2026-05-20T19:15:00Z"
 queued: "2026-05-20T18:54:20Z"
 started: "2026-05-20T18:54:21Z"
+completed: "2026-05-20T18:56:05Z"
 branch: dark-factory/frontend-canonical-status-phase-display
 ---
 <summary>
