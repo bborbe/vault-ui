@@ -961,13 +961,13 @@ def test_list_tasks_no_defer_date_unaffected(
 def test_list_tasks_default_status_filter_includes_completed(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """When no status query param is given, list_tasks is called with todo+in_progress+completed."""
+    """When no status query param is given, list_tasks uses todo+next+in_progress+completed."""
     test_client.get("/api/tasks?vault=TestVault")
 
     call_args = mock_vault_client.list_tasks.call_args
     assert call_args is not None
     effective = call_args.kwargs.get("status_filter") or call_args.args[0]
-    assert set(effective) == {"todo", "in_progress", "completed"}
+    assert set(effective) == {"todo", "next", "in_progress", "completed"}
 
 
 def test_list_tasks_recent_completed_date_is_visible(
@@ -1173,13 +1173,13 @@ def test_list_tasks_status_mixed_form(
 def test_list_tasks_status_all_empty_uses_default(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """GET /tasks?status= behaves as if status were omitted (default todo+in_progress+completed)."""
+    """GET /tasks?status= behaves as if omitted (default todo+next+in_progress+completed)."""
     test_client.get("/api/tasks?vault=TestVault&status=")
 
     call_args = mock_vault_client.list_tasks.call_args
     assert call_args is not None
     effective = call_args.kwargs["status_filter"]
-    assert set(effective) == {"todo", "in_progress", "completed"}
+    assert set(effective) == {"todo", "next", "in_progress", "completed"}
 
 
 def test_list_tasks_status_whitespace_trimmed(
@@ -1904,3 +1904,308 @@ def test_list_tasks_openapi_goal_param(test_client: TestClient) -> None:
         assert "array" in schema_types, f"anyOf should include array type, got {schema_types}"
     else:
         assert param_schema.get("type") == "array", f"expected array schema, got {param_schema}"
+
+
+# --- spec-008: next status alias and execution phase alias tests ---
+
+
+def _argv_has_pair(argv: tuple, key: str, value: str) -> bool:
+    """True iff argv contains contiguous (key, value) pair."""
+    return any(argv[i] == key and argv[i + 1] == value for i in range(len(argv) - 1))
+
+
+def test_list_tasks_status_todo_unchanged(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /api/tasks?status=todo returns only todo tasks — existing behavior unchanged."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="Next Task", status="next"))
+    mock_vault_client._tasks.append(_make_task(task_id="InProgress Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=todo")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Todo Task" in task_ids
+    assert "Next Task" not in task_ids
+    assert "InProgress Task" not in task_ids
+
+
+def test_list_tasks_status_next(test_client: TestClient, mock_vault_client: MagicMock) -> None:
+    """GET /api/tasks?status=next returns only tasks whose status field equals next."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="Next Task", status="next"))
+    mock_vault_client._tasks.append(_make_task(task_id="InProgress Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=next")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Next Task" in task_ids
+    assert "Todo Task" not in task_ids
+    assert "InProgress Task" not in task_ids
+
+
+def test_list_tasks_status_todo_and_next_union(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /api/tasks?status=todo,next returns the union of todo and next tasks."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="Next Task", status="next"))
+    mock_vault_client._tasks.append(_make_task(task_id="InProgress Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=todo,next")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Todo Task" in task_ids
+    assert "Next Task" in task_ids
+    assert "InProgress Task" not in task_ids
+
+
+def test_list_tasks_default_includes_next(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /api/tasks with no status param includes tasks with status: next."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="Next Task", status="next"))
+
+    response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Next Task" in task_ids
+    assert "Todo Task" in task_ids
+
+
+def test_list_tasks_phase_execution(test_client: TestClient, mock_vault_client: MagicMock) -> None:
+    """GET /api/tasks?phase=execution returns only tasks whose phase field equals execution."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Exec Task", status="in_progress", phase="execution")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="InProg Task", status="in_progress", phase="in_progress")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Planning Task", status="in_progress", phase="planning")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=in_progress&phase=execution")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Exec Task" in task_ids
+    assert "InProg Task" not in task_ids
+    assert "Planning Task" not in task_ids
+
+
+def test_list_tasks_phase_in_progress_unchanged(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /api/tasks?phase=in_progress returns only in_progress tasks — unchanged."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="InProg Task", status="in_progress", phase="in_progress")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Exec Task", status="in_progress", phase="execution")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Planning Task", status="in_progress", phase="planning")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=in_progress&phase=in_progress")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "InProg Task" in task_ids
+    assert "Exec Task" not in task_ids
+    assert "Planning Task" not in task_ids
+
+
+def test_list_tasks_phase_in_progress_and_execution_union(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """GET /api/tasks?phase=in_progress,execution returns the union of both phase values."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Exec Task", status="in_progress", phase="execution")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="InProg Task", status="in_progress", phase="in_progress")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Planning Task", status="in_progress", phase="planning")
+    )
+
+    response = test_client.get(
+        "/api/tasks?vault=TestVault&status=in_progress&phase=in_progress,execution"
+    )
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Exec Task" in task_ids
+    assert "InProg Task" in task_ids
+    assert "Planning Task" not in task_ids
+
+
+def test_list_tasks_phase_execution_not_invalid_fallback(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """phase: execution is valid — not routed into the invalid-phase todo fallback bucket."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Exec Task", status="in_progress", phase="execution")
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Invalid Phase Task", status="in_progress", phase="banana")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault&status=in_progress&phase=execution")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Exec Task" in task_ids
+    assert "Invalid Phase Task" not in task_ids
+
+    response2 = test_client.get("/api/tasks?vault=TestVault&status=in_progress&phase=todo")
+
+    assert response2.status_code == 200
+    task_ids2 = [t["id"] for t in response2.json()]
+    assert "Exec Task" not in task_ids2
+    assert "Invalid Phase Task" in task_ids2
+
+
+def test_update_phase_execution_writes_execution_to_vault_cli(test_client: TestClient) -> None:
+    """PATCH /api/tasks/{id}/phase with execution writes execution verbatim to vault-cli argv."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/phase?vault=TestVault",
+            json={"phase": "execution"},
+        )
+
+    assert response.status_code == 200
+
+    first_call_args = mock_exec.call_args_list[0][0]
+    assert _argv_has_pair(first_call_args, "phase", "execution"), (
+        f"Expected ('phase', 'execution') pair in argv: {first_call_args}"
+    )
+    assert not _argv_has_pair(first_call_args, "phase", "in_progress"), (
+        f"Expected NO ('phase', 'in_progress') pair in phase write argv: {first_call_args}"
+    )
+
+    second_call_args = mock_exec.call_args_list[1][0]
+    assert _argv_has_pair(second_call_args, "status", "in_progress"), (
+        f"Expected ('status', 'in_progress') pair in second argv: {second_call_args}"
+    )
+
+
+def test_update_phase_in_progress_writes_in_progress_to_vault_cli(test_client: TestClient) -> None:
+    """PATCH phase in_progress writes in_progress verbatim — old canonical passes through."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/phase?vault=TestVault",
+            json={"phase": "in_progress"},
+        )
+
+    assert response.status_code == 200
+
+    first_call_args = mock_exec.call_args_list[0][0]
+    assert _argv_has_pair(first_call_args, "phase", "in_progress"), (
+        f"Expected ('phase', 'in_progress') pair in argv: {first_call_args}"
+    )
+
+
+def test_update_phase_done_writes_completed_status(test_client: TestClient) -> None:
+    """PATCH /api/tasks/{id}/phase with done triggers status auto-write of completed."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/phase?vault=TestVault",
+            json={"phase": "done"},
+        )
+
+    assert response.status_code == 200
+
+    second_call_args = mock_exec.call_args_list[1][0]
+    assert _argv_has_pair(second_call_args, "status", "completed"), (
+        f"Expected ('status', 'completed') pair in status write argv: {second_call_args}"
+    )
+
+
+def test_old_canonical_task_visible_and_patchable(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Old canonical (status: todo, phase: in_progress) appears on default board and PATCHes."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Old Task", status="todo", phase="in_progress")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault")
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "Old Task" in task_ids
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        patch_response = test_client.patch(
+            "/api/tasks/Old%20Task/phase?vault=TestVault",
+            json={"phase": "in_progress"},
+        )
+
+    assert patch_response.status_code == 200
+
+
+def test_new_canonical_task_visible_and_patchable(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """New canonical (status: next, phase: execution) appears on default board and PATCHes."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="New Task", status="next", phase="execution")
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault")
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "New Task" in task_ids
+
+    response2 = test_client.get("/api/tasks?vault=TestVault&status=next")
+    assert response2.status_code == 200
+    assert "New Task" in [t["id"] for t in response2.json()]
+
+    response3 = test_client.get("/api/tasks?vault=TestVault&status=next&phase=execution")
+    assert response3.status_code == 200
+    assert "New Task" in [t["id"] for t in response3.json()]
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        patch_response = test_client.patch(
+            "/api/tasks/New%20Task/phase?vault=TestVault",
+            json={"phase": "execution"},
+        )
+
+    assert patch_response.status_code == 200

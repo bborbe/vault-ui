@@ -236,13 +236,23 @@ async def list_tasks(
 
         # Get tasks
         effective_status_filter = (
-            status_filter if status_filter is not None else ["todo", "in_progress", "completed"]
+            status_filter
+            if status_filter is not None
+            else ["todo", "next", "in_progress", "completed"]
         )
         tasks = await client.list_tasks(status_filter=effective_status_filter)
 
         # Filter by phase if specified (tasks with None/invalid phase default to todo)
         if phase_filter:
-            valid_phases = ["todo", "planning", "in_progress", "ai_review", "human_review", "done"]
+            valid_phases = [
+                "todo",
+                "planning",
+                "in_progress",
+                "execution",
+                "ai_review",
+                "human_review",
+                "done",
+            ]
             tasks = [
                 t
                 for t in tasks

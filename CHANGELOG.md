@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.23.0
+
+- feat: Accept status alias `next` alongside `todo` in default filter and `?status=next` queries; accept phase alias `execution` alongside `in_progress` in `?phase=execution` queries and valid-phase list — both old and new canonical values are first-class forever
+
 ## v0.32.0
 
 - fix: Assignee dropdown now lists all assignees from the selected vault(s), not just those visible in the current filter — new GET /api/assignees endpoint sources the option set independently of `/api/tasks`. Fixes collapse to "All + Unassigned" when the Unassigned filter was active.

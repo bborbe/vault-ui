@@ -1,10 +1,11 @@
 ---
-status: generating
+status: prompted
 tags:
     - dark-factory
     - spec
 approved: "2026-05-20T16:36:43Z"
 generating: "2026-05-20T16:40:25Z"
+prompted: "2026-05-20T16:43:38Z"
 branch: dark-factory/accept-renamed-status-phase-aliases
 ---
 
