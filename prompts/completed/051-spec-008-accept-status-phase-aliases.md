@@ -1,5 +1,5 @@
 ---
-status: committing
+status: completed
 spec: [008-accept-renamed-status-phase-aliases]
 summary: Added 'next' to default status filter and 'execution' to valid_phases in tasks.py; added 13 new test functions covering all spec-008 acceptance criteria; updated 2 existing tests whose exact-set assertions broke due to the intentional default filter change.
 container: task-orchestrator-exec-051-spec-008-accept-status-phase-aliases
@@ -7,6 +7,7 @@ dark-factory-version: v0.162.0
 created: "2026-05-20T16:41:58Z"
 queued: "2026-05-20T16:59:44Z"
 started: "2026-05-20T16:59:46Z"
+completed: "2026-05-20T17:03:35Z"
 branch: dark-factory/accept-renamed-status-phase-aliases
 ---
 <summary>
