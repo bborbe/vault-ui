@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["007"]
+spec: [007-assignee-filter-dropdown]
 summary: Added GET /api/assignees endpoint returning full distinct assignee set, switched Kanban Assignee dropdown to read from this endpoint via availableAssignees cache, added 8 new tests for the endpoint covering all specified scenarios.
 container: task-orchestrator-050-assignee-options-endpoint
 dark-factory-version: v0.156.1-1-g04f3863-dirty
