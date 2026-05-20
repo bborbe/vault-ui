@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-05-20T16:36:43Z"
 generating: "2026-05-20T16:40:25Z"
 prompted: "2026-05-20T16:43:38Z"
+verifying: "2026-05-20T17:03:35Z"
 branch: dark-factory/accept-renamed-status-phase-aliases
 ---
 
@@ -131,3 +132,15 @@ Manual smoke test against a running task-orchestrator with a real vault (operato
 ## Do-Nothing Option
 
 Skipping this work means: the moment vault-cli starts emitting `status: next` and `phase: execution`, every task with the new canonical disappears from the default Kanban view, because the hardcoded filter lists do not contain those strings. Operators see a board that silently omits work in flight. PATCH writes from task-orchestrator continue to emit old canonical, drifting away from vault-cli's writes on the same task over time and producing a vault whose history mixes both vocabularies in an arbitrary order with no easy way to reconcile. The vault-side rename — already specified and rolling out across six repos — cannot proceed gradually; task-orchestrator becomes the blocker. The cost of doing this work is small (two list additions and one literal forwarded to a subprocess argv) and naturally fits a single backend prompt. Doing nothing is not acceptable.
+
+## Verification Result
+
+**Verified:** 2026-05-20T18:26:43Z (HEAD 0087ef0)
+**Binary:** /Users/bborbe/Documents/workspaces/go/bin/dark-factory (v0.162.0)
+**Scenario:** No scenario file — spec explicitly forbids new scenario/E2E. Verified via pytest integration tests against current worktree.
+**Evidence:**
+- `make precommit` → `✓ All precommit checks passed`; pytest summary `171 passed in 0.65s`; ruff `All checks passed!`; mypy `Success: no issues found in 16 source files`.
+- 14 spec-008 tests all PASSED: `test_list_tasks_status_todo_unchanged`, `test_list_tasks_status_next`, `test_list_tasks_status_todo_and_next_union`, `test_list_tasks_default_includes_next`, `test_list_tasks_default_status_filter_includes_completed` (asserts `{"todo","next","in_progress","completed"}`), `test_list_tasks_phase_execution`, `test_list_tasks_phase_in_progress_unchanged`, `test_list_tasks_phase_in_progress_and_execution_union`, `test_list_tasks_phase_execution_not_invalid_fallback`, `test_update_phase_execution_writes_execution_to_vault_cli` (asserts `('phase','execution')` argv pair AND NOT `('phase','in_progress')`, plus follow-up `('status','in_progress')`), `test_update_phase_in_progress_writes_in_progress_to_vault_cli`, `test_update_phase_done_writes_completed_status` (asserts follow-up `('status','completed')`), `test_old_canonical_task_visible_and_patchable`, `test_new_canonical_task_visible_and_patchable`.
+- Implementation in `src/task_orchestrator/api/tasks.py`: default status filter is `["todo","next","in_progress","completed"]`; `valid_phases` includes `"execution"`; `update_task_phase` forwards `request.phase` verbatim to `vault-cli task set ... phase <phase>` argv; status auto-write logic unchanged (`"completed" if phase=="done" else "in_progress"`).
+- AC#15 (no new scenario/E2E): `git diff --name-only c599c25~1..HEAD | grep -E '^(scenarios/|tests/e2e/)'` returned empty. Neither directory exists in repo.
+**Verdict:** PASS
