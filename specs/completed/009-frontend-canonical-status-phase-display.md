@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-05-20T18:41:48Z"
 generating: "2026-05-20T18:41:49Z"
 prompted: "2026-05-20T18:48:04Z"
 verifying: "2026-05-20T18:56:05Z"
+completed: "2026-05-24T12:33:15Z"
 branch: dark-factory/frontend-canonical-status-phase-display
 ---
 
