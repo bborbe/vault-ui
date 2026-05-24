@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-05-20T18:41:48Z"
 generating: "2026-05-20T18:41:49Z"
 prompted: "2026-05-20T18:48:04Z"
+verifying: "2026-05-20T18:56:05Z"
 branch: dark-factory/frontend-canonical-status-phase-display
 ---
 
@@ -129,3 +130,20 @@ Manual smoke procedure:
 ## Do-Nothing Option
 
 If the frontend is not updated, operators continue to see the old vocabulary in dropdowns, column headers, and the right-click menu while the backend, URL params, and on-disk data move to the new canonical. The "IN PROGRESS" column header sits next to a status filter offering `in_progress` and a phase value `in_progress` — three meanings of one token on the same screen. This reproduces the exact dimension collision the rename rollout was designed to eliminate. The rollout is incomplete and visibly inconsistent until this frontend change ships.
+
+## Verification Result
+
+**Verified:** 2026-05-24T12:32:47Z (HEAD 0b8dd22)
+**Binary:** /Users/bborbe/Documents/workspaces/go/bin/dark-factory (v0.171.1-3-gd94f1fa)
+**Scenario:** grep checks against `src/task_orchestrator/static/app.js`, `make precommit`, live uvicorn server probe of served `app.js` and backend pass-through for legacy URL params.
+**Evidence:**
+- `ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']` at app.js:10 (single declaration, exact order); `'todo'` absent from that line.
+- Phase iterator `['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done']` at app.js:760 and 782; no `'in_progress'` token inside.
+- Column-routing alias at app.js:785 `const displayPhase = task.phase === 'in_progress' ? 'execution' : task.phase;` precedes `validPhases.includes(displayPhase)` at app.js:787.
+- Phase label map at app.js:1185-1186 contains both `'in_progress': 'Execution'` and `'execution': 'Execution'`.
+- Right-click menu at app.js:1247 `menuItems.push({ label: 'Execution', action: 'execution', disabled: false });`; `grep "'In Progress'.*'in_progress'"` returns 0 lines.
+- `isDefaultStatuses` grep returns 0 lines; `updateURL` at app.js:640-657 unconditionally iterates `currentStatuses.forEach(s => params.append('status', s))`.
+- DOMContentLoaded runtime patch at app.js:36-43 renames the `cards-in_progress` column id to `cards-execution` and sets its h2 textContent to `Execution` (HTML index.html untouched, satisfying the single-file constraint).
+- `make precommit` exit 0; 171 tests passed; ruff, mypy clean.
+- Served-file probe: `curl http://127.0.0.1:8765/app.js | grep` confirmed all critical lines present in the file the running server delivers; `GET /api/tasks?status=todo` → HTTP 200 (`[]` body); `GET /api/tasks?phase=in_progress` → HTTP 200.
+**Verdict:** PASS
