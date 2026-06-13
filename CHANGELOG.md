@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: `derive_claude_project_dir` now encodes `session_project_dir` to `~/.claude/projects/<encoded>` instead of returning it as-is. Previous behavior treated the obsidian vault path (e.g. `~/Documents/Obsidian/Personal`) as the claude project dir, so every cleanup pass cleared valid UUIDs in family/openclaw/trading tasks and the watcher resolver could never find a matching session.
+- fix: vault-cli `work-on` success-without-session now surfaces the underlying warnings (e.g. "claude session starter unavailable — claude script not found in PATH") instead of the opaque "returned no session_id" UI toast.
+
 ## v0.34.0
 
 - feat: Flip Kanban board to canonical vocabulary — status dropdown shows `next`/`backlog` in place of `todo`; EXECUTION column replaces "In Progress"; right-click "Move to" emits `phase=execution`; old on-disk `in_progress` phase aliases to EXECUTION on display; status filter URL always emits explicit `?status=` params

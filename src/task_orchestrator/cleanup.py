@@ -17,13 +17,17 @@ _CLEANUP_INTERVAL_SECONDS = 300
 def derive_claude_project_dir(vault_path: str, session_project_dir: str = "") -> Path:
     """Return the Claude project directory for session file lookup.
 
-    If session_project_dir is provided and non-empty, use it directly.
-    Otherwise derive from vault_path using the standard convention.
+    Claude stores session .jsonl files under ~/.claude/projects/<encoded-cwd>/,
+    where <encoded-cwd> is the session's working directory with "/" replaced by "-".
+
+    If session_project_dir is set, encode it (it is the working directory the
+    claude script cd's into for this vault's sessions, e.g. ~/Documents/Obsidian/Personal).
+    Otherwise encode vault_path. The result is ~/.claude/projects/<encoded>.
     """
-    if session_project_dir:
-        return Path(session_project_dir).expanduser()
-    derived = vault_path.replace("/", "-")
-    return Path.home() / ".claude" / "projects" / derived
+    source = session_project_dir or vault_path
+    expanded = str(Path(source).expanduser())
+    encoded = expanded.replace("/", "-")
+    return Path.home() / ".claude" / "projects" / encoded
 
 
 async def cleanup_stale_sessions(config: Config) -> int:

@@ -163,12 +163,23 @@ def test_derive_claude_project_dir_default() -> None:
 
 
 def test_derive_claude_project_dir_with_session_override() -> None:
-    """With session_project_dir set, uses it directly instead of deriving."""
+    """With session_project_dir set, encodes it as the claude project dir."""
     result = derive_claude_project_dir(
         "/Users/me/vault",
-        session_project_dir="/Users/me/.claude/projects/-Users-me-other",
+        session_project_dir="/Users/me/other",
     )
-    assert str(result) == "/Users/me/.claude/projects/-Users-me-other"
+    assert result == Path.home() / ".claude" / "projects" / "-Users-me-other"
+
+
+def test_derive_claude_project_dir_expands_tilde_in_session_dir() -> None:
+    """A ~-prefixed session_project_dir is expanded before encoding."""
+    result = derive_claude_project_dir(
+        "/Users/me/vault",
+        session_project_dir="~/Documents/Obsidian/Personal",
+    )
+    home_encoded = str(Path.home()).replace("/", "-")
+    expected = Path.home() / ".claude" / "projects" / f"{home_encoded}-Documents-Obsidian-Personal"
+    assert result == expected
 
 
 def test_derive_claude_project_dir_empty_session_falls_back() -> None:
