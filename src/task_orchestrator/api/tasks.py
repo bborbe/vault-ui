@@ -8,7 +8,7 @@ import logging
 from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -70,10 +70,12 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(f"vault-cli work-on failed: {stderr.decode().strip()}")
-    result: dict[str, str] = json.loads(stdout.decode())
-    session_id = result.get("session_id", "")
+    result: dict[str, Any] = json.loads(stdout.decode())
+    session_id: str = result.get("session_id") or ""
     if not session_id:
-        raise RuntimeError("vault-cli work-on returned no session_id")
+        warnings: list[str] = result.get("warnings") or []
+        detail = "; ".join(warnings) if warnings else "no warnings reported"
+        raise RuntimeError(f"vault-cli work-on did not start a claude session: {detail}")
     return session_id
 
 
