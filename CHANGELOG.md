@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.34.1
 
 - fix: `derive_claude_project_dir` now encodes `session_project_dir` to `~/.claude/projects/<encoded>` instead of returning it as-is. Previous behavior treated the obsidian vault path (e.g. `~/Documents/Obsidian/Personal`) as the claude project dir, so every cleanup pass cleared valid UUIDs in family/openclaw/trading tasks and the watcher resolver could never find a matching session.
 - fix: vault-cli `work-on` success-without-session now surfaces the underlying warnings (e.g. "claude session starter unavailable — claude script not found in PATH") instead of the opaque "returned no session_id" UI toast.
