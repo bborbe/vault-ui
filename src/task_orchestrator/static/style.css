@@ -744,6 +744,10 @@ h1 {
     margin: 0.25rem 0;
     font-family: "SF Mono", Monaco, monospace;
     font-size: 0.9rem;
+    /* Single click selects the entire content (UUID, command, task title) — no
+       overflow into surrounding "Session ID:" / "Task:" labels. */
+    user-select: all;
+    -webkit-user-select: all;
 }
 
 .modal-content .command-block {
@@ -757,6 +761,8 @@ h1 {
     word-break: break-all;
     white-space: pre-wrap;
     overflow-x: auto;
+    user-select: all;
+    -webkit-user-select: all;
 }
 
 .modal-buttons {
