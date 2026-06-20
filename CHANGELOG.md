@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Clear stale `startingTasks` Set entry on Executing-Command modal close + treat the Set as a hint rather than ground truth in the render guard so the Start button transitions to Resume once the backend's `claude_session_id` lands, even when the user dismisses the modal early
+
 ## v0.34.3
 
 - fix: Invalidate per-vault task cache from the vault-cli watcher callback so in-place frontmatter edits (drag-and-drop phase/status changes) appear in the UI on the next refresh; directory mtime alone does not detect such writes under POSIX semantics
