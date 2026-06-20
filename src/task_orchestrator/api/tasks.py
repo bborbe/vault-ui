@@ -391,8 +391,9 @@ async def list_tasks(
     for result in results:
         if isinstance(result, ValueError):
             continue  # unknown vault, skip (matches existing except ValueError: continue)
-        if isinstance(result, BaseException):
+        if isinstance(result, RuntimeError):
             raise result  # RuntimeError from vault-cli -> propagates -> HTTP 500
+        assert isinstance(result, list), f"unexpected gather result type: {type(result)}"
         all_tasks.extend(result)
 
     return all_tasks

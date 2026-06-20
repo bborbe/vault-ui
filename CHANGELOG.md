@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - perf: Add per-vault mtime-keyed in-process cache to GET /api/tasks; cache hit skips the vault-cli subprocess and invalidates automatically when a task file is created, modified, or deleted
 - refactor: Move per-vault task cache from module global to FastAPI app.state for constructor-injection; tests no longer reach into module private names
 - fix: Drop status_filter kwarg from cache-miss list_tasks call to make the cache contract explicit (stores unfiltered raw list); closes pr-reviewer cache-key-missing-status-filter finding on PR #6
+- fix: Narrow asyncio.gather result re-raise from BaseException to RuntimeError so KeyboardInterrupt / SystemExit / CancelledError do not accidentally surface through GET /api/tasks
 
 ## v0.34.1
 
