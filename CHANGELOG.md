@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.34.5
 
 - fix: Wrap Session Ready modal's task title in `<code>` so it gets the same dark-box styling as the other code boxes (visual consistency)
 - fix: Add `user-select: all` to Session Ready modal's code boxes so a single click selects only the boxed content (task title, session ID, executed command, handoff command) — previously double-click extended selection into surrounding labels like "Session ID:"
