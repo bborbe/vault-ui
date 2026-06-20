@@ -257,6 +257,27 @@ h1 {
     gap: 0.5rem;
 }
 
+#upcoming-window {
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+#upcoming-window:hover {
+    background: #4a4a4a;
+}
+
+#upcoming-window:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
 .assignee-selector-toggle:hover {
     background: #4a4a4a;
 }

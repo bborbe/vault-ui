@@ -32,6 +32,14 @@
                     </button>
                     <div class="assignee-selector-dropdown hidden" id="assignee-selector-dropdown"></div>
                 </div>
+                <select id="upcoming-window" title="How far ahead to show upcoming (greyed-out) deferred tasks">
+                    <option value="0">Upcoming: Off</option>
+                    <option value="2">Upcoming: 2h</option>
+                    <option value="4">Upcoming: 4h</option>
+                    <option value="8" selected>Upcoming: 8h</option>
+                    <option value="12">Upcoming: 12h</option>
+                    <option value="24">Upcoming: 24h</option>
+                </select>
                 <span id="ws-status" class="ws-status disconnected" title="WebSocket disconnected">●</span>
                 <button id="refresh-btn">↻ Refresh</button>
             </div>

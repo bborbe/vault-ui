@@ -4,6 +4,7 @@ let currentVault = null; // null = "All", or vault name
 let currentAssignees = [];
 let currentStatuses = ['in_progress', 'completed']; // default — overridden by ?status= URL param
 let currentGoals = []; // goal filter from URL — empty means no filter
+let upcomingHours = 8; // 0 = hide all deferred tasks; persists in localStorage
 // Distinct assignees across the selected vaults — sourced from /api/assignees,
 // refreshed on startup and on every vault-selector change. Read by computeAssigneeOptions.
 let availableAssignees = { named: [], hasUnassigned: false };
@@ -102,8 +103,29 @@ function setupEventListeners() {
     document.getElementById('refresh-btn').addEventListener('click', loadTasks);
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
+    setupUpcomingWindow();
     setupModalBackdropClose();
     setupDragAndDrop();
+}
+
+// Upcoming-window dropdown: restores the persisted value, syncs the select,
+// and reloads tasks on change so the backend re-applies the new cutoff.
+function setupUpcomingWindow() {
+    const select = document.getElementById('upcoming-window');
+    if (!select) return;
+    const saved = parseInt(localStorage.getItem('upcomingHours') ?? '8', 10);
+    if (Number.isFinite(saved) && saved >= 0 && saved <= 168) {
+        upcomingHours = saved;
+        select.value = String(saved);
+    }
+    select.addEventListener('change', () => {
+        const next = parseInt(select.value, 10);
+        if (Number.isFinite(next) && next >= 0 && next <= 168) {
+            upcomingHours = next;
+            localStorage.setItem('upcomingHours', String(next));
+            loadTasks();
+        }
+    });
 }
 
 // Click on the modal backdrop (the dimmed area around the centered card)
@@ -761,6 +783,9 @@ async function loadTasks() {
 
         // Add goal parameter(s) — pass through every value from the URL
         currentGoals.forEach(g => params.append('goal', g));
+
+        // Upcoming-window cutoff (hours ahead) — 0 hides all deferred tasks
+        params.set('upcoming_hours', String(upcomingHours));
 
         // Fetch tasks
         const response = await fetch(`/api/tasks?${params.toString()}`);

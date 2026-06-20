@@ -342,6 +342,7 @@ async def list_tasks(
     phase: Annotated[list[str] | None, Query()] = None,
     assignee: Annotated[list[str] | None, Query()] = None,
     goal: Annotated[list[str] | None, Query()] = None,
+    upcoming_hours: Annotated[int, Query(ge=0, le=168)] = 8,
 ) -> list[TaskResponse]:
     """List tasks from Obsidian vault(s).
 
@@ -365,7 +366,11 @@ async def list_tasks(
     assignee_filter_tokens = _flatten_assignee_filter(assignee)
     goal_filter = _flatten_filter(goal)
     now = datetime.now(UTC)
-    cutoff = now + timedelta(hours=8)
+    # cutoff bounds the "upcoming" window for deferred tasks (defer_date > now
+    # but <= cutoff renders as greyed-out). upcoming_hours=0 collapses the
+    # window so no deferred tasks leak through. lookback stays at 8h — it's
+    # the orthogonal "recently completed" window, unrelated to defer visibility.
+    cutoff = now + timedelta(hours=upcoming_hours)
     lookback = now - timedelta(hours=8)
 
     vault_task_cache: dict[str, tuple[float, list[Task]]] = request.app.state.vault_task_cache
