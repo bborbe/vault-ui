@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.34.6
 
 - fix: Click on the loading-modal or session-modal backdrop now closes the modal — previously only the small × button worked
 
