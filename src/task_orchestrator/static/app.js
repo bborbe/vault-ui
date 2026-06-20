@@ -102,7 +102,27 @@ function setupEventListeners() {
     document.getElementById('refresh-btn').addEventListener('click', loadTasks);
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
+    setupModalBackdropClose();
     setupDragAndDrop();
+}
+
+// Click on the modal backdrop (the dimmed area around the centered card)
+// closes the modal. For the loading modal we forward to its close button so
+// any dynamic closeHandler attached for that session still fires.
+function setupModalBackdropClose() {
+    const loadingModal = document.getElementById('loading-modal');
+    loadingModal.addEventListener('click', (e) => {
+        if (e.target === loadingModal) {
+            document.getElementById('close-loading-btn').click();
+        }
+    });
+
+    const sessionModal = document.getElementById('session-modal');
+    sessionModal.addEventListener('click', (e) => {
+        if (e.target === sessionModal) {
+            closeModal();
+        }
+    });
 }
 
 function toggleVaultDropdown() {

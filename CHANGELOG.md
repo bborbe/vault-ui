@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Click on the loading-modal or session-modal backdrop now closes the modal — previously only the small × button worked
+
 ## v0.34.5
 
 - fix: Wrap Session Ready modal's task title in `<code>` so it gets the same dark-box styling as the other code boxes (visual consistency)
