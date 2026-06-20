@@ -233,7 +233,9 @@ async def _process_vault(
     if current_mtime is not None and cached is not None and cached[0] == current_mtime:
         raw_tasks = list(cached[1])  # cache hit — no subprocess
     else:
-        raw_tasks = await client.list_tasks(show_all=True, status_filter=effective_status_filter)
+        # Fetch the full unfiltered list (show_all=True passes --all to vault-cli).
+        # Status filtering happens in Python below so the cache stays single-slot per vault.
+        raw_tasks = await client.list_tasks(show_all=True)
         if current_mtime is not None:
             vault_task_cache[vault_name] = (current_mtime, list(raw_tasks))
 

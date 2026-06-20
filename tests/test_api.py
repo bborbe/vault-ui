@@ -962,13 +962,20 @@ def test_list_tasks_no_defer_date_unaffected(
 def test_list_tasks_default_status_filter_includes_completed(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """When no status query param is given, list_tasks uses todo+next+in_progress+completed."""
-    test_client.get("/api/tasks?vault=TestVault")
+    """When no status query param is given, completed tasks are included in the response."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="Next Task", status="next"))
+    mock_vault_client._tasks.append(_make_task(task_id="InProgress Task", status="in_progress"))
+    recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Completed Task", status="completed", completed_date=recent)
+    )
 
-    call_args = mock_vault_client.list_tasks.call_args
-    assert call_args is not None
-    effective = call_args.kwargs.get("status_filter") or call_args.args[0]
-    assert set(effective) == {"todo", "next", "in_progress", "completed"}
+    response = test_client.get("/api/tasks?vault=TestVault")
+    assert response.status_code == 200
+    task_ids = {t["id"] for t in response.json()}
+    assert {"Todo Task", "Next Task", "InProgress Task", "Completed Task"}.issubset(task_ids)
 
 
 def test_list_tasks_recent_completed_date_is_visible(
@@ -1174,13 +1181,17 @@ def test_list_tasks_status_mixed_form(
 def test_list_tasks_status_all_empty_uses_default(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """GET /tasks?status= behaves as if omitted (default todo+next+in_progress+completed)."""
-    test_client.get("/api/tasks?vault=TestVault&status=")
+    """GET /tasks?status= behaves as if status were omitted (default filter applies)."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo"))
+    mock_vault_client._tasks.append(_make_task(task_id="Next Task", status="next"))
 
-    call_args = mock_vault_client.list_tasks.call_args
-    assert call_args is not None
-    effective = call_args.kwargs["status_filter"]
-    assert set(effective) == {"todo", "next", "in_progress", "completed"}
+    response_empty = test_client.get("/api/tasks?vault=TestVault&status=")
+    response_omit = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response_empty.status_code == 200
+    assert response_omit.status_code == 200
+    assert {t["id"] for t in response_empty.json()} == {t["id"] for t in response_omit.json()}
 
 
 def test_list_tasks_status_whitespace_trimmed(
@@ -2530,3 +2541,50 @@ def test_list_tasks_missing_tasks_dir_is_cache_miss(
 
     assert response.status_code == 200
     assert client.list_tasks.await_count == 1  # subprocess ran (missing dir = cache miss)
+
+
+def test_list_tasks_cache_does_not_leak_filtered_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cache stores unfiltered raw tasks; a different status filter on the next request
+    must apply against the full cached set, not against a previously-filtered subset.
+    Regression for PR #6 review (cache-key-missing-status-filter)."""
+    vault1 = tmp_path / "v1"
+    (vault1 / "Tasks").mkdir(parents=True)
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    todo_task = _make_task(task_id="A Todo", status="todo")
+    recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    completed_task = _make_task(task_id="A Completed", status="completed", completed_date=recent)
+
+    client = MagicMock()
+    client.list_tasks = AsyncMock(return_value=[todo_task, completed_task])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vn: client,
+    ):
+        # Request A — narrow filter
+        resp_a = http_client.get("/api/tasks?vault=V1&status=todo")
+        # Request B — default filter (no ?status= query)
+        resp_b = http_client.get("/api/tasks?vault=V1")
+
+    assert resp_a.status_code == 200
+    assert resp_b.status_code == 200
+    a_ids = {t["id"] for t in resp_a.json()}
+    b_ids = {t["id"] for t in resp_b.json()}
+    assert a_ids == {"A Todo"}  # request A filtered to just todo
+    assert "A Completed" in b_ids  # request B sees completed (cache stored unfiltered)
+    assert "A Todo" in b_ids
+    assert client.list_tasks.await_count == 1  # request B served from cache
