@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Invalidate per-vault task cache from the vault-cli watcher callback so in-place frontmatter edits (drag-and-drop phase/status changes) appear in the UI on the next refresh; directory mtime alone does not detect such writes under POSIX semantics
+
 ## v0.34.2
 
 - perf: Replace serial per-vault loop in GET /api/tasks with asyncio.gather concurrent fan-out; warm p50 drops from 270-330 ms to single-vault dominated latency
