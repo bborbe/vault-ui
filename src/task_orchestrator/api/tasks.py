@@ -199,6 +199,117 @@ def _flatten_assignee_filter(values: list[str] | None) -> list[str] | None:
     return flat  # empty strings are valid (match unassigned tasks)
 
 
+async def _process_vault(
+    vault_name: str,
+    status_filter: list[str] | None,
+    phase_filter: list[str] | None,
+    assignee_filter: list[str] | None,
+    goal_filter: list[str] | None,
+    now: datetime,
+    cutoff: datetime,
+    lookback: datetime,
+) -> list[TaskResponse]:
+    client = get_vault_cli_client_for_vault(vault_name)
+    vault_config = get_vault_config(vault_name)
+
+    # get tasks
+    effective_status_filter = (
+        status_filter if status_filter is not None else ["todo", "next", "in_progress", "completed"]
+    )
+    tasks = await client.list_tasks(status_filter=effective_status_filter)
+
+    # Filter by phase if specified (tasks with None/invalid phase default to todo)
+    if phase_filter:
+        valid_phases = [
+            "todo",
+            "planning",
+            "in_progress",
+            "execution",
+            "ai_review",
+            "human_review",
+            "done",
+        ]
+        tasks = [
+            t
+            for t in tasks
+            if (t.phase in valid_phases and t.phase in phase_filter)
+            or (t.phase not in valid_phases and "todo" in phase_filter)
+        ]
+
+    # Filter by assignee if specified
+    if assignee_filter is not None:
+        tasks = [
+            t
+            for t in tasks
+            if any(
+                (token == "" and not t.assignee) or (token != "" and t.assignee == token)
+                for token in assignee_filter
+            )
+        ]
+
+    # Filter by goal if specified
+    if goal_filter is not None:
+        tasks = [t for t in tasks if t.goals is not None and any(g in t.goals for g in goal_filter)]
+
+    # Filter out deferred tasks; include upcoming (within 8h) with flag set
+    visible_tasks = []
+    for t in tasks:
+        if t.status == "completed":
+            cutoff_dt: datetime | None = None
+            if t.completed_date:
+                with suppress(ValueError, TypeError):
+                    cutoff_dt = datetime.fromisoformat(str(t.completed_date))
+                    if cutoff_dt.tzinfo is None:
+                        cutoff_dt = cutoff_dt.replace(tzinfo=UTC)
+            if cutoff_dt is None and t.modified_date is not None:
+                cutoff_dt = (
+                    t.modified_date
+                    if t.modified_date.tzinfo
+                    else t.modified_date.replace(tzinfo=UTC)
+                )
+            if cutoff_dt is not None and cutoff_dt >= lookback:
+                t.recently_completed = True
+                t.phase = "done"
+                visible_tasks.append(t)
+        elif t.defer_date is None:
+            visible_tasks.append(t)
+        else:
+            defer_dt = _parse_defer_date(t.defer_date)
+            if defer_dt <= now:
+                visible_tasks.append(t)
+            elif defer_dt <= cutoff:
+                t.upcoming = True
+                visible_tasks.append(t)
+    tasks = visible_tasks
+
+    # Filter out blocked tasks (use cache for fast lookup)
+    cache = get_status_cache()
+    unblocked_tasks = []
+
+    for task in tasks:
+        if not task.blocked_by:
+            unblocked_tasks.append(task)
+            continue
+
+        has_uncompleted_blocker = False
+        for blocker_wikilink in task.blocked_by:
+            blocker_name = blocker_wikilink.strip("[]").strip()
+            blocker_status = cache.get_status(vault_config.name, blocker_name)
+            if blocker_status is None:
+                continue
+            if blocker_status != "completed":
+                has_uncompleted_blocker = True
+                break
+
+        if not has_uncompleted_blocker:
+            unblocked_tasks.append(task)
+
+    tasks = unblocked_tasks
+
+    # Convert to response models
+    return [_task_to_response(task, vault_config) for task in tasks]
+
+
 @router.get("/tasks", response_model=list[TaskResponse])
 async def list_tasks(
     vault: Annotated[list[str] | None, Query()] = None,
@@ -226,134 +337,36 @@ async def list_tasks(
     status_filter = _flatten_filter(status)
     phase_filter = _flatten_filter(phase)
 
-    # Collect tasks from all specified vaults
+    assignee_filter_tokens = _flatten_assignee_filter(assignee)
+    goal_filter = _flatten_filter(goal)
+    now = datetime.now(UTC)
+    cutoff = now + timedelta(hours=8)
+    lookback = now - timedelta(hours=8)
+
+    results = await asyncio.gather(
+        *[
+            _process_vault(
+                vault_name,
+                status_filter,
+                phase_filter,
+                assignee_filter_tokens,
+                goal_filter,
+                now,
+                cutoff,
+                lookback,
+            )
+            for vault_name in vault_names
+        ],
+        return_exceptions=True,
+    )
+
     all_tasks: list[TaskResponse] = []
-    for vault_name in vault_names:
-        try:
-            client = get_vault_cli_client_for_vault(vault_name)
-            vault_config = get_vault_config(vault_name)
-        except ValueError:
-            # Skip invalid vaults
-            continue
-
-        # Get tasks
-        effective_status_filter = (
-            status_filter
-            if status_filter is not None
-            else ["todo", "next", "in_progress", "completed"]
-        )
-        tasks = await client.list_tasks(status_filter=effective_status_filter)
-
-        # Filter by phase if specified (tasks with None/invalid phase default to todo)
-        if phase_filter:
-            valid_phases = [
-                "todo",
-                "planning",
-                "in_progress",
-                "execution",
-                "ai_review",
-                "human_review",
-                "done",
-            ]
-            tasks = [
-                t
-                for t in tasks
-                if (t.phase in valid_phases and t.phase in phase_filter)
-                or (t.phase not in valid_phases and "todo" in phase_filter)
-            ]
-
-        # Filter by assignee if specified
-        assignee_filter = _flatten_assignee_filter(assignee)
-        if assignee_filter is not None:
-            tasks = [
-                t
-                for t in tasks
-                if any(
-                    (token == "" and not t.assignee) or (token != "" and t.assignee == token)
-                    for token in assignee_filter
-                )
-            ]
-
-        # Filter by goal if specified
-        goal_filter = _flatten_filter(goal)
-        if goal_filter is not None:
-            tasks = [
-                t for t in tasks if t.goals is not None and any(g in t.goals for g in goal_filter)
-            ]
-
-        # Filter out deferred tasks; include upcoming (within 8h) with flag set
-        now = datetime.now(UTC)
-        cutoff = now + timedelta(hours=8)
-        lookback = now - timedelta(hours=8)
-        visible_tasks = []
-        for t in tasks:
-            if t.status == "completed":
-                # Use completed_date as primary signal; fall back to modified_date
-                cutoff_dt: datetime | None = None
-                if t.completed_date:
-                    with suppress(ValueError, TypeError):
-                        cutoff_dt = datetime.fromisoformat(str(t.completed_date))
-                        if cutoff_dt.tzinfo is None:
-                            cutoff_dt = cutoff_dt.replace(tzinfo=UTC)
-                if cutoff_dt is None and t.modified_date is not None:
-                    cutoff_dt = (
-                        t.modified_date
-                        if t.modified_date.tzinfo
-                        else t.modified_date.replace(tzinfo=UTC)
-                    )
-                if cutoff_dt is not None and cutoff_dt >= lookback:
-                    t.recently_completed = True
-                    t.phase = "done"
-                    visible_tasks.append(t)
-                # else: completed long ago or no date available, hidden
-            elif t.defer_date is None:
-                visible_tasks.append(t)
-            else:
-                defer_dt = _parse_defer_date(t.defer_date)
-                if defer_dt <= now:
-                    visible_tasks.append(t)  # available now
-                elif defer_dt <= cutoff:
-                    t.upcoming = True
-                    visible_tasks.append(t)  # upcoming within 8h
-                # else: hidden (defer > 8h away)
-        tasks = visible_tasks
-
-        # Filter out blocked tasks (use cache for fast lookup)
-        cache = get_status_cache()
-        unblocked_tasks = []
-
-        for task in tasks:
-            if not task.blocked_by:
-                # No blockers, include task
-                unblocked_tasks.append(task)
-                continue
-
-            # Check if all blockers are completed
-            has_uncompleted_blocker = False
-            for blocker_wikilink in task.blocked_by:
-                # Extract item name from wikilink [[Item Name]]
-                blocker_name = blocker_wikilink.strip("[]").strip()
-
-                # Fast cache lookup (O(1) dict access, no disk I/O)
-                blocker_status = cache.get_status(vault_config.name, blocker_name)
-
-                # If not found in cache, assume deleted/completed - don't block
-                if blocker_status is None:
-                    continue
-
-                # Hide only if blocker exists and is NOT completed
-                if blocker_status != "completed":
-                    has_uncompleted_blocker = True
-                    break
-
-            if not has_uncompleted_blocker:
-                # All blockers completed (or not found), include task
-                unblocked_tasks.append(task)
-
-        tasks = unblocked_tasks
-
-        # Convert to response models
-        all_tasks.extend([_task_to_response(task, vault_config) for task in tasks])
+    for result in results:
+        if isinstance(result, ValueError):
+            continue  # unknown vault, skip (matches existing except ValueError: continue)
+        if isinstance(result, BaseException):
+            raise result  # RuntimeError from vault-cli -> propagates -> HTTP 500
+        all_tasks.extend(result)
 
     return all_tasks
 

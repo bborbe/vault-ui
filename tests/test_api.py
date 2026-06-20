@@ -2209,3 +2209,203 @@ def test_new_canonical_task_visible_and_patchable(
         )
 
     assert patch_response.status_code == 200
+
+
+def test_list_tasks_concurrent_overlap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-vault list_tasks calls overlap in time, proving concurrent fan-out."""
+    import asyncio
+    import time
+
+    vault1 = tmp_path / "v1"
+    vault2 = tmp_path / "v2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+            VaultConfig(name="V2", vault_path=str(vault2), vault_name="V2", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    call_times: dict[str, tuple[float, float]] = {}
+
+    def make_client(name: str) -> MagicMock:
+        client = MagicMock()
+
+        async def list_tasks(**kwargs):
+            start = time.monotonic()
+            await asyncio.sleep(0.05)
+            call_times[name] = (start, time.monotonic())
+            return []
+
+        client.list_tasks = list_tasks
+        return client
+
+    clients = {"V1": make_client("V1"), "V2": make_client("V2")}
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vn: clients[vn],
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 200
+    assert "V1" in call_times and "V2" in call_times
+    # Concurrent: one vault's start is before the other vault's end
+    assert call_times["V2"][0] < call_times["V1"][1] or call_times["V1"][0] < call_times["V2"][1]
+
+
+def test_list_tasks_concurrent_preserves_vault_major_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """asyncio.gather result order matches vault_names order (vault-major)."""
+    vault1 = tmp_path / "v1"
+    vault2 = tmp_path / "v2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+            VaultConfig(name="V2", vault_path=str(vault2), vault_name="V2", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="V1Task", status="in_progress")
+    task2 = _make_task(task_id="V2Task", status="in_progress")
+    clients = {
+        "V1": _make_vault_client([task1]),
+        "V2": _make_vault_client([task2]),
+    }
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vn: clients[vn],
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert task_ids.index("V1Task") < task_ids.index("V2Task")
+
+
+def test_list_tasks_concurrent_skips_value_error_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ValueError from get_vault_cli_client_for_vault skips that vault; siblings return."""
+    vault1 = tmp_path / "v1"
+    vault2 = tmp_path / "v2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+            VaultConfig(name="V2", vault_path=str(vault2), vault_name="V2", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task2 = _make_task(task_id="SiblingTask", status="in_progress")
+
+    def get_client(vault_name: str) -> MagicMock:
+        if vault_name == "V1":
+            raise ValueError("Unknown vault: V1")
+        return _make_vault_client([task2])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=get_client,
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 200
+    task_ids = [t["id"] for t in response.json()]
+    assert "SiblingTask" in task_ids
+
+
+def test_list_tasks_concurrent_runtime_error_returns_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RuntimeError from list_tasks propagates and returns HTTP 500."""
+    vault1 = tmp_path / "v1"
+    vault2 = tmp_path / "v2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+            VaultConfig(name="V2", vault_path=str(vault2), vault_name="V2", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    bad_client = MagicMock()
+    bad_client.list_tasks = AsyncMock(side_effect=RuntimeError("vault-cli exited 1"))
+    good_client = _make_vault_client([_make_task(task_id="GoodTask", status="in_progress")])
+
+    def get_client(vault_name: str) -> MagicMock:
+        return bad_client if vault_name == "V1" else good_client
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=get_client,
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 500
+
+
+def test_list_tasks_concurrent_response_matches_sequential_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Response for two-vault request matches deterministic fixture."""
+    vault1 = tmp_path / "v1"
+    vault2 = tmp_path / "v2"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+            VaultConfig(name="V2", vault_path=str(vault2), vault_name="V2", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="FixtureV1Task", status="in_progress", phase="planning")
+    task2 = _make_task(task_id="FixtureV2Task", status="in_progress", phase="execution")
+    clients = {
+        "V1": _make_vault_client([task1]),
+        "V2": _make_vault_client([task2]),
+    }
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vn: clients[vn],
+    ):
+        response = http_client.get("/api/tasks?status=in_progress")
+
+    assert response.status_code == 200
+    tasks = response.json()
+    task_ids = [t["id"] for t in tasks]
+    assert task_ids == ["FixtureV1Task", "FixtureV2Task"]
+    assert all(t["status"] == "in_progress" for t in tasks)
