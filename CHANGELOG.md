@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.34.4
 
 - fix: Clear stale `startingTasks` Set entry on Executing-Command modal close + treat the Set as a hint rather than ground truth in the render guard so the Start button transitions to Resume once the backend's `claude_session_id` lands, even when the user dismisses the modal early
 
