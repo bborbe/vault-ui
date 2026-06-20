@@ -5,6 +5,16 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def clear_vault_task_cache():
+    """Clear the in-process vault task cache between tests."""
+    from task_orchestrator.api import tasks as tasks_module
+
+    tasks_module._vault_task_cache.clear()
+    yield
+    tasks_module._vault_task_cache.clear()
+
+
 @pytest.fixture
 def tmp_vault(tmp_path: Path) -> Path:
     """Create temporary Obsidian vault structure."""

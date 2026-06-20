@@ -5,6 +5,7 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -31,6 +32,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Per-vault unfiltered task cache, keyed on the vault tasks-directory mtime.
+# Single slot per vault; in-process only; empty at startup; dies with the process.
+_vault_task_cache: dict[str, tuple[float, list[Task]]] = {}
 
 # Global connection manager (injected via set_connection_manager)
 _connection_manager: "ConnectionManager | None" = None
@@ -216,7 +221,25 @@ async def _process_vault(
     effective_status_filter = (
         status_filter if status_filter is not None else ["todo", "next", "in_progress", "completed"]
     )
-    tasks = await client.list_tasks(status_filter=effective_status_filter)
+
+    tasks_dir = Path(vault_config.vault_path) / vault_config.tasks_folder
+
+    # Probe mtime (cache miss if directory absent — no exception escapes)
+    try:
+        current_mtime = os.stat(tasks_dir).st_mtime
+    except OSError:
+        current_mtime = None
+
+    cached = _vault_task_cache.get(vault_name)
+    if current_mtime is not None and cached is not None and cached[0] == current_mtime:
+        raw_tasks = list(cached[1])  # cache hit — no subprocess
+    else:
+        raw_tasks = await client.list_tasks(show_all=True, status_filter=effective_status_filter)
+        if current_mtime is not None:
+            _vault_task_cache[vault_name] = (current_mtime, list(raw_tasks))
+
+    # Apply the status filter in Python over the unfiltered cached list
+    tasks = [t for t in raw_tasks if t.status in effective_status_filter]
 
     # Filter by phase if specified (tasks with None/invalid phase default to todo)
     if phase_filter:

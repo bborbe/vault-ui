@@ -1,5 +1,6 @@
 """Tests for API endpoints."""
 
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -2409,3 +2410,123 @@ def test_list_tasks_concurrent_response_matches_sequential_fixture(
     task_ids = [t["id"] for t in tasks]
     assert task_ids == ["FixtureV1Task", "FixtureV2Task"]
     assert all(t["status"] == "in_progress" for t in tasks)
+
+
+# --- cache tests ---
+
+
+def test_list_tasks_cache_hit_skips_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cache hit: unchanged tasks-dir mtime means subprocess runs only once."""
+    vault1 = tmp_path / "v1"
+    tasks_dir = vault1 / "Tasks"
+    tasks_dir.mkdir(parents=True)
+
+    # Pin the mtime so it cannot drift between the two requests.
+    fixed_mtime = 1_000_000.0
+    os.utime(tasks_dir, (fixed_mtime, fixed_mtime))
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="CacheTask", status="in_progress")
+    client = MagicMock()
+    client.list_tasks = AsyncMock(return_value=[task1])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response1 = http_client.get("/api/tasks")
+        response2 = http_client.get("/api/tasks")
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert client.list_tasks.await_count == 1  # second request served from cache
+
+
+def test_list_tasks_cache_miss_on_mtime_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bumping the tasks-dir mtime invalidates the cache; subprocess runs twice."""
+    vault1 = tmp_path / "v1"
+    tasks_dir = vault1 / "Tasks"
+    tasks_dir.mkdir(parents=True)
+
+    first_mtime = 1_000_000.0
+    os.utime(tasks_dir, (first_mtime, first_mtime))
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="MtimeTask", status="in_progress")
+    client = MagicMock()
+    client.list_tasks = AsyncMock(return_value=[task1])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response1 = http_client.get("/api/tasks")
+
+        # Bump the mtime to simulate a task file change.
+        newer_mtime = first_mtime + 1.0
+        os.utime(tasks_dir, (newer_mtime, newer_mtime))
+
+        response2 = http_client.get("/api/tasks")
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert client.list_tasks.await_count == 2  # mtime change caused cache miss
+
+
+def test_list_tasks_missing_tasks_dir_is_cache_miss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing tasks directory is treated as cache miss; subprocess runs and response is 200."""
+    vault1 = tmp_path / "v1"
+    # Intentionally do NOT create vault1 / "Tasks"
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    task1 = _make_task(task_id="NoDirTask", status="in_progress")
+    client = MagicMock()
+    client.list_tasks = AsyncMock(return_value=[task1])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 200
+    assert client.list_tasks.await_count == 1  # subprocess ran (missing dir = cache miss)

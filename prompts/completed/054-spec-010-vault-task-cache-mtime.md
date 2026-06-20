@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [010-parallelize-vault-task-fanout]
+summary: Added per-vault mtime-keyed in-process cache to _process_vault in src/task_orchestrator/api/tasks.py; cache hit skips vault-cli subprocess, missing tasks dir falls back gracefully, autouse fixture clears cache between tests, 3 new cache tests added (100 total, up from 97).
+container: task-orchestrator-parallel-vaults-exec-054-spec-010-vault-task-cache-mtime
+dark-factory-version: v0.182.0
 created: "2026-06-20T13:07:03Z"
 queued: "2026-06-20T13:07:03Z"
+started: "2026-06-20T13:12:15Z"
+completed: "2026-06-20T13:23:28Z"
 branch: dark-factory/parallelize-vault-task-fanout
 ---
 <summary>
