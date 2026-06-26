@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-06-26T08:02:38Z"
 generating: "2026-06-26T08:09:02Z"
 prompted: "2026-06-26T08:09:02Z"
+verifying: "2026-06-26T08:36:39Z"
 branch: dark-factory/set-claude-session-name-to-task-title
 ---
 
