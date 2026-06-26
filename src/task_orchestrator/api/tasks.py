@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -43,13 +44,28 @@ def set_connection_manager(manager: "ConnectionManager") -> None:
     _connection_manager = manager
 
 
-def _build_resume_command(vault_config: VaultConfig, session_id: str) -> str:
-    """Build claude --resume command, prefixing with cd when session_project_dir is set."""
+def _build_resume_command(
+    vault_config: VaultConfig,
+    session_id: str,
+    *,
+    task_title: str | None = None,
+) -> str:
+    """Build claude --resume command, prefixing with cd when session_project_dir is set.
+
+    When ``task_title`` is non-empty (after stripping), the returned command also
+    appends ``-n <shlex.quote(task_title)>`` so the launched Claude Code session
+    shows the task title in its prompt box, /resume picker, and terminal title
+    from the first turn. When ``task_title`` is ``None``, empty, or whitespace-only,
+    the command is byte-identical to the pre-spec output.
+    """
     script = vault_config.claude_script
+    name_suffix = ""
+    if task_title is not None and task_title.strip() != "":
+        name_suffix = f" -n {shlex.quote(task_title)}"
     if vault_config.session_project_dir:
         cwd = vault_config.session_project_dir.replace("~", str(Path.home()))
-        return f'cd "{cwd}" && {script} --resume {session_id}'
-    return f"{script} --resume {session_id}"
+        return f'cd "{cwd}" && {script} --resume {session_id}{name_suffix}'
+    return f"{script} --resume {session_id}{name_suffix}"
 
 
 async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> str:
@@ -435,7 +451,7 @@ async def run_task(
         logger.info(f"Session {session_id} created")
 
         # Build command: use vault-specific script from config (handles cd internally)
-        command = _build_resume_command(vault_config, session_id)
+        command = _build_resume_command(vault_config, session_id, task_title=task.title)
 
         logger.info(f"Returning session response: session_id={session_id}, command={command}")
 
@@ -541,7 +557,7 @@ async def execute_slash_command(
         logger.info(f"Session {session_id} created via vault-cli")
 
         # Build resume command
-        command = _build_resume_command(vault_config, session_id)
+        command = _build_resume_command(vault_config, session_id, task_title=task.title)
 
         return SessionResponse(
             session_id=session_id,

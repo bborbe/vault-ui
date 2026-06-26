@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import os
+import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1071,6 +1072,56 @@ def test_build_resume_command_expands_tilde() -> None:
     result = _build_resume_command(vault_config, "abc123")
     home = str(Path.home())
     assert result == f'cd "{home}/Obsidian/Personal" && claude --resume abc123'
+
+
+def test_build_resume_command_includes_name() -> None:
+    """Appends -n '<title>' when task_title is provided."""
+    vault_config = _make_vault_config(session_project_dir="")
+    result = _build_resume_command(vault_config, "abc-123", task_title="My Test Task")
+    assert "-n 'My Test Task'" in result
+    assert result.endswith(" -n 'My Test Task'")
+
+
+def test_build_resume_command_without_name() -> None:
+    """Omits -n entirely when task_title is empty string (graceful degradation)."""
+    vault_config = _make_vault_config(session_project_dir="")
+    result = _build_resume_command(vault_config, "abc-123", task_title="")
+    assert " -n " not in result
+    # Also byte-identical to the no-title call
+    assert result == _build_resume_command(vault_config, "abc-123")
+
+
+def test_build_resume_command_quotes_special_chars() -> None:
+    """Title with apostrophes and spaces round-trips through shlex.split."""
+    vault_config = _make_vault_config(session_project_dir="")
+    title = "Title with 'apostrophe' and space"
+    result = _build_resume_command(vault_config, "abc-123", task_title=title)
+    tokens = shlex.split(result)
+    # The token immediately following the literal "-n" is the verbatim title
+    n_idx = tokens.index("-n")
+    assert tokens[n_idx + 1] == title
+
+
+def test_build_resume_command_keeps_cwd_prefix() -> None:
+    """cd "<cwd>" && prefix stays when session_project_dir is set; -n lands AFTER --resume."""
+    vault_config = _make_vault_config(
+        session_project_dir="/home/user/Obsidian/Personal",
+        claude_script="claude-personal.sh",
+    )
+    title = "Foo Bar"
+    result = _build_resume_command(vault_config, "abc-123", task_title=title)
+    assert result.startswith('cd "/home/user/Obsidian/Personal" && ')
+    assert "claude-personal.sh --resume abc-123 -n 'Foo Bar'" in result
+    # -n must come AFTER --resume <id>, not before
+    assert result.index("--resume abc-123") < result.index("-n 'Foo Bar'")
+
+
+def test_build_resume_command_omits_name_for_whitespace_and_none() -> None:
+    """task_title=None and task_title='   ' both omit -n entirely."""
+    vault_config = _make_vault_config(session_project_dir="")
+    baseline = _build_resume_command(vault_config, "abc-123")
+    assert _build_resume_command(vault_config, "abc-123", task_title=None) == baseline
+    assert _build_resume_command(vault_config, "abc-123", task_title="   ") == baseline
 
 
 def test_list_tasks_vault_comma_separated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2588,3 +2639,58 @@ def test_list_tasks_cache_does_not_leak_filtered_results(
     assert "A Completed" in b_ids  # request B sees completed (cache stored unfiltered)
     assert "A Todo" in b_ids
     assert client.list_tasks.await_count == 1  # request B served from cache
+
+
+def test_run_task_command_includes_task_title(test_client: TestClient) -> None:
+    """POST /api/tasks/{id}/run returns a command whose -n token is followed by the task title."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b'{"session_id": "test-session-id"}', b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 200
+    command = response.json()["command"]
+    tokens = shlex.split(command)
+    assert "-n" in tokens
+    n_idx = tokens.index("-n")
+    assert tokens[n_idx + 1] == "Test Task"
+
+
+def test_execute_work_on_task_command_includes_task_title(test_client: TestClient) -> None:
+    """POST /api/tasks/{id}/execute-command work-on-task returns a command with -n <task title>."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b'{"session_id": "test-session-id"}', b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.post(
+            "/api/tasks/Test%20Task/execute-command?vault=TestVault",
+            json={"command": "work-on-task"},
+        )
+
+    assert response.status_code == 200
+    command = response.json()["command"]
+    tokens = shlex.split(command)
+    assert "-n" in tokens
+    n_idx = tokens.index("-n")
+    assert tokens[n_idx + 1] == "Test Task"
+
+
+def test_execute_defer_task_command_unchanged(test_client: TestClient) -> None:
+    """Fast-path defer-task still uses vault-cli only — no -n token in the returned command."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"deferred ok\n", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.post(
+            "/api/tasks/Test%20Task/execute-command?vault=TestVault",
+            json={"command": "defer-task"},
+        )
+
+    assert response.status_code == 200
+    command = response.json()["command"]
+    tokens = shlex.split(command)
+    assert "-n" not in tokens

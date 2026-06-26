@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Embed task title as `-n <title>` in the resume command emitted by the orchestrator, so the launched Claude Code session shows the task title in its prompt box, `/resume` picker, and terminal title from the first turn — eliminates the per-session manual `/rename`. Empty / missing titles omit the flag, leaving the command byte-identical to before. Affects both the Start button (`POST /api/tasks/{id}/run`) and the `work-on-task` / `create-task` slash commands; fast-path `defer-task` / `complete-task` are unchanged.
+
 ## v0.35.0
 
 - feat: Add upcoming-window dropdown to kanban header (Off · 2h · 4h · 8h · 12h · 24h) so the operator picks how far ahead deferred tasks should appear as greyed-out upcoming cards. Setting persists in localStorage. New `upcoming_hours` query param on `/api/tasks` (int, 0–168, default 8 preserves current behavior). `upcoming_hours=0` hides all deferred tasks regardless of how soon they are due — fixes the cross-midnight asymmetry where deferring to tomorrow only hid the card if you did it before 16:00 local
