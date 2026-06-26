@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.37.0
 
 - feat: Add `LOG_LEVEL` env var (`DEBUG | INFO | WARNING | ERROR`, case-insensitive; default `INFO`) read at startup and applied to both Python's root logger and uvicorn — bump to `DEBUG` to trace HTTP requests and the long-running headless `vault-cli task work-on` subprocess live. Stream the headless subprocess's stdout/stderr line-by-line at DEBUG (1 MiB per-line buffer, non-UTF8 tolerated) instead of buffering in `communicate()` — operator no longer waits 60–180s in the dark when starting a session from the UI. Other short-running vault-cli call sites are unchanged.
 
