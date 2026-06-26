@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.36.0
 
 - feat: Embed task title as `-n <title>` in the resume command emitted by the orchestrator, so the launched Claude Code session shows the task title in its prompt box, `/resume` picker, and terminal title from the first turn — eliminates the per-session manual `/rename`. Empty / missing titles omit the flag, leaving the command byte-identical to before. Affects both the Start button (`POST /api/tasks/{id}/run`) and the `work-on-task` / `create-task` slash commands; fast-path `defer-task` / `complete-task` are unchanged.
 
