@@ -1,7 +1,11 @@
 """Tests for API endpoints."""
 
+import asyncio
+import itertools
+import logging
 import os
 import shlex
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -165,9 +169,7 @@ def test_run_task_endpoint_success(
     test_client: TestClient,
 ) -> None:
     """Test POST /api/tasks/{id}/run endpoint success."""
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b'{"session_id": "test-session-id"}', b""))
+    mock_proc = _make_streaming_proc(b'{"session_id": "test-session-id"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
         response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
@@ -199,9 +201,7 @@ def test_run_task_endpoint_no_project(
         _make_task(task_id="No Project Task", status="todo", project_path=None, priority=None)
     )
 
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b'{"session_id": "test-session-id"}', b""))
+    mock_proc = _make_streaming_proc(b'{"session_id": "test-session-id"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
         response = test_client.post("/api/tasks/No%20Project%20Task/run?vault=TestVault")
@@ -210,6 +210,81 @@ def test_run_task_endpoint_no_project(
     data = response.json()
     assert "session_id" in data
     assert "command" in data
+
+
+async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureFixture) -> None:
+    """Subprocess stdout is logged at DEBUG line-by-line as it arrives, not buffered at exit.
+
+    Fake subprocess emits 3 lines with 100ms sleeps between them, then a JSON envelope.
+    The test asserts BOTH:
+      (a) every emitted line shows up as a DEBUG record tagged with the task_id, AND
+      (b) the wall-clock delta between successive log records is >= 80ms, proving
+          the stream is drained as bytes arrive — a regression to `communicate()`
+          would emit all records back-to-back at process exit with sub-millisecond
+          gaps between them.
+    """
+    from task_orchestrator.api.tasks import start_vault_cli_session
+    from task_orchestrator.config import VaultConfig
+
+    vault_config = VaultConfig(
+        name="TestVault",
+        vault_path="/tmp/vault",
+        tasks_folder="24 Tasks",
+        claude_script="claude",
+        vault_cli_path="vault-cli",
+    )
+
+    class _FakeStream:
+        def __init__(self, lines: list[bytes]) -> None:
+            self._lines = list(lines)
+
+        async def readline(self) -> bytes:
+            if not self._lines:
+                return b""
+            await asyncio.sleep(0.1)  # 100ms inter-line gap
+            return self._lines.pop(0)
+
+    fake_stdout = _FakeStream(
+        [
+            b"line-A\n",
+            b"line-B\n",
+            b"line-C\n",
+            b'{"session_id": "abc-123"}\n',
+        ]
+    )
+    fake_stderr = _FakeStream([])
+
+    fake_proc = MagicMock()
+    fake_proc.stdout = fake_stdout
+    fake_proc.stderr = fake_stderr
+    fake_proc.wait = AsyncMock(return_value=0)
+
+    caplog.set_level(logging.DEBUG, logger="task_orchestrator.api.tasks")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)):
+        session_id = await start_vault_cli_session(vault_config, "Test Task")
+
+    assert session_id == "abc-123"
+
+    # (a) every emitted line shows up as a DEBUG record tagged with the task_id
+    stream_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "vault-cli stdout" in r.getMessage()
+    ]
+    assert len(stream_records) == 4, [r.getMessage() for r in stream_records]
+    messages = [r.getMessage() for r in stream_records]
+    assert all("Test Task" in m for m in messages), messages
+    assert any("line-A" in m for m in messages)
+    assert any("line-B" in m for m in messages)
+    assert any("line-C" in m for m in messages)
+
+    # (b) timestamp deltas between successive records >= 80ms (proving streaming,
+    # not buffered-at-exit). 80ms gives 20ms slack under the 100ms sleeps so a
+    # busy CI does not flake. A `communicate()` regression would produce <1ms gaps.
+    timestamps = [r.created for r in stream_records]
+    deltas = [b - a for a, b in itertools.pairwise(timestamps)]
+    assert all(d >= 0.08 for d in deltas), deltas
 
 
 def test_list_tasks_filters_deferred(test_client: TestClient, mock_vault_client: MagicMock) -> None:
@@ -1034,6 +1109,25 @@ def test_list_tasks_completed_no_completed_date_falls_back_to_modified_date(
     task_resp = next((t for t in tasks if t["id"] == "Fallback Done"), None)
     assert task_resp is not None
     assert task_resp["recently_completed"] is True
+
+
+def _make_streaming_proc(response_json: bytes = b'{"session_id": "test-session-id"}') -> MagicMock:
+    """Mock subprocess compatible with start_vault_cli_session's streaming interface."""
+
+    class _FakeStream:
+        def __init__(self, lines: list[bytes]) -> None:
+            self._lines = list(lines)
+
+        async def readline(self) -> bytes:
+            if not self._lines:
+                return b""
+            return self._lines.pop(0)
+
+    proc = MagicMock()
+    proc.stdout = _FakeStream([response_json + b"\n"])
+    proc.stderr = _FakeStream([])
+    proc.wait = AsyncMock(return_value=0)
+    return proc
 
 
 def _make_vault_config(
@@ -2277,7 +2371,6 @@ def test_new_canonical_task_visible_and_patchable(
 def test_list_tasks_concurrent_overlap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Per-vault list_tasks calls overlap in time, proving concurrent fan-out."""
     import asyncio
-    import time
 
     vault1 = tmp_path / "v1"
     vault2 = tmp_path / "v2"
@@ -2643,9 +2736,7 @@ def test_list_tasks_cache_does_not_leak_filtered_results(
 
 def test_run_task_command_includes_task_title(test_client: TestClient) -> None:
     """POST /api/tasks/{id}/run returns a command whose -n token is followed by the task title."""
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b'{"session_id": "test-session-id"}', b""))
+    mock_proc = _make_streaming_proc(b'{"session_id": "test-session-id"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
         response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
@@ -2660,9 +2751,7 @@ def test_run_task_command_includes_task_title(test_client: TestClient) -> None:
 
 def test_execute_work_on_task_command_includes_task_title(test_client: TestClient) -> None:
     """POST /api/tasks/{id}/execute-command work-on-task returns a command with -n <task title>."""
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b'{"session_id": "test-session-id"}', b""))
+    mock_proc = _make_streaming_proc(b'{"session_id": "test-session-id"}')
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
         response = test_client.post(

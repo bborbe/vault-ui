@@ -68,8 +68,59 @@ def _build_resume_command(
     return f"{script} --resume {session_id}{name_suffix}"
 
 
+async def _drain_stream(
+    stream: asyncio.StreamReader,
+    label: str,
+    task_id: str,
+    buffer: bytearray,
+) -> None:
+    """Tee a subprocess pipe to the logger line-by-line while accumulating raw bytes.
+
+    - Logs each line at DEBUG with the task_id prefix so concurrent Start clicks
+      are disambiguable in interleaved log output.
+    - Decodes for logging with ``errors='replace'`` so non-UTF8 bytes do not crash
+      the drain loop; the raw bytes are preserved verbatim in ``buffer`` so the
+      final ``json.loads`` sees byte-identical input.
+    - On an oversized single line (``asyncio.LimitOverrunError`` from the
+      ``StreamReader``'s 1 MiB buffer), logs a WARN and breaks out of the loop
+      so the caller can fall through to ``proc.communicate()`` for the remainder.
+    - End-of-stream (process exit or pipe closed) → ``readline()`` returns ``b""``
+      and the loop exits cleanly.
+    """
+    while True:
+        try:
+            line = await stream.readline()
+        except asyncio.LimitOverrunError:
+            logger.warning(
+                "vault-cli %s line exceeded buffer limit for task %s; "
+                "stopping line-streaming and falling back to bulk drain",
+                label,
+                task_id,
+            )
+            while True:
+                chunk = await stream.read(64 * 1024)
+                if not chunk:
+                    return
+                buffer.extend(chunk)
+        if not line:
+            return
+        buffer.extend(line)
+        logger.debug(
+            "vault-cli %s [%s]: %s",
+            label,
+            task_id,
+            line.decode("utf-8", errors="replace").rstrip(),
+        )
+
+
 async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> str:
-    """Start a Claude session via vault-cli, returns session_id."""
+    """Start a Claude session via vault-cli, returns session_id.
+
+    Streams subprocess stdout/stderr to the logger line-by-line at DEBUG while
+    accumulating raw bytes for the final JSON parse. Other (short-lived) vault-cli
+    subprocess sites in this codebase keep their ``communicate()`` semantics; only
+    this long-running ``task work-on --mode headless`` call streams (spec 012).
+    """
     proc = await asyncio.create_subprocess_exec(
         vault_config.vault_cli_path,
         "task",
@@ -83,11 +134,35 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
         "json",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=1
+        << 20,  # 1 MiB per-line buffer (default 64 KiB is too small for claude jsonl output)
     )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"vault-cli work-on failed: {stderr.decode().strip()}")
-    result: dict[str, Any] = json.loads(stdout.decode())
+    assert proc.stdout is not None  # PIPE always yields a StreamReader
+    assert proc.stderr is not None
+
+    stdout_buf = bytearray()
+    stderr_buf = bytearray()
+
+    await asyncio.gather(
+        _drain_stream(proc.stdout, "stdout", task_id, stdout_buf),
+        _drain_stream(proc.stderr, "stderr", task_id, stderr_buf),
+    )
+
+    returncode = await proc.wait()
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"vault-cli work-on failed: {bytes(stderr_buf).decode(errors='replace').strip()}"
+        )
+
+    stdout_text = bytes(stdout_buf).decode()
+    # vault-cli --output json emits a single JSON object, possibly preceded by
+    # JSONL progress lines; parse the last non-empty line to handle both formats.
+    last_line = next(
+        (line for line in reversed(stdout_text.splitlines()) if line.strip()),
+        stdout_text,
+    )
+    result: dict[str, Any] = json.loads(last_line)
     session_id: str = result.get("session_id") or ""
     if not session_id:
         warnings: list[str] = result.get("warnings") or []

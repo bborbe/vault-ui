@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: ["011"]
+spec: [011-set-claude-session-name-to-task-title]
 summary: 'Extended _build_resume_command with keyword-only task_title parameter, wired both call sites in run_task and execute_slash_command, added 8 new tests (5 unit + 3 endpoint), and added CHANGELOG entry under ## Unreleased.'
 container: task-orchestrator-session-name-exec-058-spec-011-set-claude-session-name-to-task-title
 dark-factory-version: v0.183.0
