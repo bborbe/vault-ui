@@ -112,6 +112,45 @@ launchctl load ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
 
 If dependencies changed (`pyproject.toml` / `uv.lock`), `uv run` resyncs on next start automatically.
 
+## 5. Log verbosity
+
+task-orchestrator reads `LOG_LEVEL` from the environment at startup. Valid values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`. Unset → `INFO` (default; same as before this knob existed). Invalid → falls back to `INFO` and logs a one-line WARN at startup.
+
+The same level drives both Python's root logger and uvicorn's logger — bumping to `DEBUG` surfaces router internals, every HTTP request, AND the per-line streaming output of the long-running `vault-cli task work-on` subprocess (so you can watch the headless claude's tool calls arrive live instead of waiting 60–180s for the buffered exit).
+
+**Set persistently via the plist** (preferred — survives `launchctl kickstart`):
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>PATH</key>
+    <string>/Users/YOUR_USER/.local/bin:/Users/YOUR_USER/Documents/workspaces/go/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <!-- Uncomment to enable verbose logging:
+    <key>LOG_LEVEL</key>
+    <string>DEBUG</string>
+    -->
+</dict>
+```
+
+Apply the plist edit by restarting the service (section 2).
+
+**Set transiently for a single restart** (clears on reboot or `launchctl unsetenv`):
+
+```bash
+launchctl setenv LOG_LEVEL DEBUG
+launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+# ... investigate ...
+launchctl unsetenv LOG_LEVEL
+launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+```
+
+Verify the level took effect:
+
+```bash
+tail -f /tmp/task-orchestrator.log
+# At DEBUG you should see per-request lines and "vault-cli stdout [<task_id>]: ..." lines while a Start is in flight.
+```
+
 ## Troubleshooting
 
 ### `launchctl list` shows non-zero exit / service keeps restarting
