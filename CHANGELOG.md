@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.39.0
+
+- feat: Add Tasks/Goals view toggle to the board — top-of-board control switches between the existing Tasks view and a new Goals view that renders goal cards in the same status columns. Active view encoded in URL as `?view=tasks` / `?view=goals`; deep-linking to `?view=goals` lands in the Goals view without first firing `/api/tasks` (single in-flight fetch). Goal cards are read-only (no Start/Resume button, no drag), reusing the existing task-card rendering path and the same `obsidian://` URL encoding. Per-view caches ensure editing a goal does NOT re-fetch tasks and vice versa.
+
 ## v0.38.0
 
 - feat: Add `GET /api/goals` endpoint mirroring `/api/tasks` (same `vault` / `status` / `assignee` query params; new `GoalResponse` shape with `status`, `priority`, `defer_date`, `target_date`, `completed_date`, `obsidian_url`, `vault`, `claude_session_id`, `assignee`; missing frontmatter fields surface as `null` per spec Failure Mode row 1). Per-vault mtime-keyed goal cache on `app.state.vault_goal_cache`, invalidated alongside the existing task cache by the vault-cli watcher. `Goal` dataclass gains the new fields with `None` defaults — backwards-compatible. `/api/tasks` and `TaskResponse` byte-identical to pre-spec.

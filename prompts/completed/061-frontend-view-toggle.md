@@ -1,9 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [013-task-orchestrator-goals-view]
-summary: Add a top-of-board Tasks/Goals view toggle to `index.html` and `app.js`, plumb `?view=tasks` / `?view=goals` through the URL, render goal cards by reusing the existing `createTaskCard` path with a `kind` discriminator, build `obsidian://` URLs that match the existing task-card encoding exactly, and guarantee that loading `?view=goals` does NOT first fire `/api/tasks` (single in-flight fetch; per-view caches; no flicker). Add a `tests/test_view_toggle.py` covering URL parsing, dispatcher behaviour, and source-level assertions that the toggle wiring exists. Browser-level evidence for spec AC#5 (`data-testid="view-toggle"`) and AC#7 (no `/api/tasks` fetch on `?view=goals`) is collected during spec verification — not inside this prompt's container.
+summary: Added Tasks/Goals view toggle to index.html, app.js dispatcher (loadCurrentView), goals cache, goal-card rendering, item_kind-routed WebSocket handler, CSS styles, README docs, CHANGELOG v0.39.0 entry, and 10 contract tests; all precommit checks pass.
+execution_id: task-orchestrator-goals-view-exec-061-frontend-view-toggle
+dark-factory-version: v0.187.5
 created: "2026-06-26T16:18:50Z"
 queued: "2026-06-26T16:18:59Z"
+started: "2026-06-26T16:28:16Z"
+completed: "2026-06-26T16:33:20Z"
 ---
 
 <summary>

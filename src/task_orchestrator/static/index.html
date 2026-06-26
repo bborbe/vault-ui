@@ -10,6 +10,10 @@
     <div class="app">
         <header>
             <h1>TaskOrchestrator</h1>
+            <div class="view-toggle" data-testid="view-toggle" role="tablist" aria-label="View">
+                <button type="button" class="view-toggle-btn" data-view="tasks" aria-selected="true">Tasks</button>
+                <button type="button" class="view-toggle-btn" data-view="goals" aria-selected="false">Goals</button>
+            </div>
             <div class="header-controls">
                 <div class="vault-selector" id="vault-selector">
                     <button class="vault-selector-toggle" id="vault-selector-toggle">
