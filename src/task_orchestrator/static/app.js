@@ -80,23 +80,33 @@ function parseURLParams() {
     // Parse assignee parameter(s) — supports repeated form (?assignee=a&assignee=b)
     currentAssignees = params.getAll('assignee');
 
-    // Parse status parameter(s) — supports repeated form and comma-separated form
-    // (backend handles comma-split server-side); absent param keeps the default.
-    const statusParams = params.getAll('status');
-    if (statusParams.length > 0) {
-        currentStatuses = statusParams;
-    }
-
     // Parse goal parameter(s) — supports repeated form (?goal=A&goal=B)
     currentGoals = params.getAll('goal');
 
-    // Parse view parameter — single string, not a list
+    // Parse view parameter — single string, not a list. Must precede the
+    // status-default block below so the kind-aware default knows which view it's on.
     const viewParam = params.get('view');
     if (viewParam === 'goals' || viewParam === 'tasks') {
         currentView = viewParam;
     } else {
         currentView = 'tasks';
     }
+
+    // Parse status parameter(s) — supports repeated form and comma-separated form
+    // (backend handles comma-split server-side). Absent param falls back to a
+    // KIND-AWARE default:
+    //   - Tasks view: ['in_progress', 'completed'] (current behaviour — operator
+    //     usually wants to see active + recent wins, not planning queue).
+    //   - Goals view: ['backlog', 'next', 'in_progress', 'completed'] — matches the
+    //     four visible status columns on the Goals board, so each column has its
+    //     items by default instead of two empty columns confusing the operator.
+    const statusParams = params.getAll('status');
+    if (statusParams.length > 0) {
+        currentStatuses = statusParams;
+    } else if (currentView === 'goals') {
+        currentStatuses = ['backlog', 'next', 'in_progress', 'completed'];
+    }
+    // else: keep the module-level default ['in_progress', 'completed'] for Tasks view.
 
     // Grouping is derived from view: tasks→phase, goals→status.
     // The groupBy UI selector + URL param were removed (the cross-axis combinations
@@ -1819,6 +1829,15 @@ function setView(newView) {
     currentView = newView;
     // Grouping follows the view: tasks→phase, goals→status. No user override.
     currentGroupBy = newView === 'goals' ? 'status' : 'phase';
+    // Reset the status filter to the kind-aware default when toggling views so
+    // that switching from Tasks (in_progress + completed) to Goals doesn't leave
+    // BACKLOG / NEXT columns empty (and vice versa). The operator can still
+    // narrow afterwards via the status dropdown.
+    currentStatuses = newView === 'goals'
+        ? ['backlog', 'next', 'in_progress', 'completed']
+        : ['in_progress', 'completed'];
+    updateStatusLabel();
+    renderStatusDropdown();
     updateViewToggle();
     renderColumnHeaders();
     updateURL();
