@@ -949,6 +949,17 @@ async function loadGoals() {
             if (container) container.innerHTML = '';
         });
 
+        // Sort goals by priority (1=highest, null=999=last), then alphabetically
+        // by id within same priority — mirrors the priority-first ordering tasks
+        // already use (see line ~865 task sort) so cards in each column read
+        // top-down from most-important to least.
+        goals.sort((a, b) => {
+            const pa = normalizePriority(a.priority);
+            const pb = normalizePriority(b.priority);
+            if (pa !== pb) return pa - pb;
+            return (a.id || '').localeCompare(b.id || '');
+        });
+
         goals.forEach(goal => {
             let containerId;
             if (currentGroupBy === 'status') {
@@ -1121,7 +1132,7 @@ function createGoalCard(goal) {
                     <span class="obsidian-icon">↗</span>
                 </a>
             </h3>
-            <p class="goal-meta">Status: ${escapeHtml(goal.status || 'unknown')}${goal.priority ? ` · Priority: ${escapeHtml(String(goal.priority))}` : ''}</p>
+            ${goal.priority ? `<p class="goal-meta">Priority: ${escapeHtml(String(goal.priority))}</p>` : ''}
         </div>
         <div class="card-footer">
             <div class="card-footer-left">
