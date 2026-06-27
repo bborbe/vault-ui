@@ -778,37 +778,48 @@ async function handleDrop(e) {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
 
-    const taskId = e.dataTransfer.getData('text/plain');
-    const task = tasksCache[taskId];
+    const itemId = e.dataTransfer.getData('text/plain');
+    const targetKey = e.currentTarget.id.replace('cards-', '');
 
-    if (!task) {
-        showToast('Task not found', true);
+    // Detect goal vs task by cache lookup. Tasks-view drops resolve via
+    // tasksCache (column id is the phase); Goals-view drops resolve via
+    // goalsCache (column id is the status).
+    const task = tasksCache[itemId];
+    const goal = goalsCache[itemId];
+
+    if (task) {
+        try {
+            const response = await fetch(`/api/tasks/${itemId}/phase?vault=${encodeURIComponent(task.vault)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phase: targetKey }),
+            });
+            if (!response.ok) throw new Error(await parseErrorResponse(response));
+            await loadCurrentView();
+        } catch (error) {
+            console.error('Failed to update task phase:', error);
+            showToast(error.message, true);
+        }
         return;
     }
 
-    const newPhase = e.currentTarget.id.replace('cards-', '');
-
-    try {
-        const response = await fetch(`/api/tasks/${taskId}/phase?vault=${encodeURIComponent(task.vault)}`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ phase: newPhase }),
-        });
-
-        if (!response.ok) {
-            throw new Error(await parseErrorResponse(response));
+    if (goal) {
+        try {
+            const response = await fetch(`/api/goals/${encodeURIComponent(itemId)}/status?vault=${encodeURIComponent(goal.vault)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: targetKey }),
+            });
+            if (!response.ok) throw new Error(await parseErrorResponse(response));
+            await loadCurrentView();
+        } catch (error) {
+            console.error('Failed to update goal status:', error);
+            showToast(error.message, true);
         }
-
-        // Reload the active view to reflect changes. Drag-drop is only
-        // triggered from task cards (Tasks view), so this resolves to
-        // loadTasks() — but using loadCurrentView() is safer / idempotent.
-        await loadCurrentView();
-    } catch (error) {
-        console.error('Failed to update task phase:', error);
-        showToast(error.message, true);
+        return;
     }
+
+    showToast('Item not found', true);
 }
 
 async function loadTasks() {
@@ -1121,6 +1132,19 @@ function createGoalCard(goal) {
     card.className = 'task-card goal-card';
     card.dataset.goalId = goal.id;
     card.dataset.kind = 'goal';
+    card.draggable = true;
+
+    // Drag handlers — mirror createTaskCard, set dataTransfer to the goal id
+    // so handleDrop can detect goal-vs-task via cache lookup (goalsCache hit
+    // → goal status update; tasksCache hit → task phase update).
+    card.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', goal.id);
+        card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => {
+        card.classList.remove('dragging');
+    });
 
     const { title } = extractJiraIssue(goal.title);
 

@@ -193,6 +193,12 @@ class UpdatePhaseRequest(BaseModel):
     phase: str
 
 
+class UpdateStatusRequest(BaseModel):
+    """Request model for updating an item's status (currently used for goals via drag-and-drop)."""
+
+    status: str
+
+
 class UpdateSessionRequest(BaseModel):
     """Request model for setting task claude_session_id."""
 
@@ -910,6 +916,59 @@ async def update_task_phase(
             )
 
         return {"status": "success", "task_id": task_id, "phase": request.phase}
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.patch("/goals/{goal_id}/status")
+async def update_goal_status(
+    vault: str,
+    goal_id: str,
+    request: UpdateStatusRequest,
+) -> dict[str, str]:
+    """Update goal status in frontmatter (drag-and-drop on the Goals view).
+
+    Args:
+        vault: Vault name
+        goal_id: Goal ID (filename without .md)
+        request: Status update request with the new status value
+
+    Returns:
+        Success payload with goal_id + new status
+
+    Raises:
+        HTTPException: If goal not found or update fails
+    """
+    try:
+        vault_config = get_vault_config(vault)
+
+        proc = await asyncio.create_subprocess_exec(
+            vault_config.vault_cli_path,
+            "goal",
+            "set",
+            goal_id,
+            "status",
+            request.status,
+            "--vault",
+            vault_config.name.lower(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            raise HTTPException(status_code=500, detail=stderr.decode())
+
+        if _connection_manager:
+            await _connection_manager.broadcast(
+                {"type": "goal_updated", "task_id": goal_id, "item_kind": "goal"}
+            )
+
+        return {"status": "success", "goal_id": goal_id, "new_status": request.status}
     except HTTPException:
         raise
     except FileNotFoundError as e:

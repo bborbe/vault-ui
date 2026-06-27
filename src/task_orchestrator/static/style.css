@@ -928,8 +928,14 @@ h1 {
 }
 
 .goal-card {
-    /* Goal cards are read-only — no drag, no Start button */
-    cursor: default;
+    /* Goal cards are draggable across status columns — drop flips the goal's
+       status via the backend. Title link still opens in Obsidian; no Start
+       button (no Claude session for goals). */
+    cursor: grab;
+}
+
+.goal-card.dragging {
+    cursor: grabbing;
 }
 
 /* Completed goal cards: grey out — same visual treatment as recently-completed tasks. */
