@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Eliminate cross-view leak on Tasks/Goals toggle — every sidebar interaction (vault switch, status filter, assignee filter, refresh button, periodic poll, WebSocket task event, drag-drop, slash command, clear session, assign-to-me) now routes through the `loadCurrentView()` dispatcher that fires only the active view's fetch. `handleTaskUpdate`'s task-event branch early-returns when `currentView === 'goals'` so a task event arriving while on Goals view does NOT mutate the goals DOM (spec AC#3). Regression test `tests/test_cross_view_leak.py` covers all migrated call sites.
+
 ## v0.40.0
 
 - feat: WebSocket payload now carries `item_kind: "task" | "goal"` on every broadcast — vault-cli watcher callback (which already received the kind from `vault_cli watch --types`) propagates it into the message dict, and the three explicit `broadcast` call sites in `api/tasks.py` (defer/complete fast path, assign-to-me, update phase) carry `"task"`. The frontend `handleTaskUpdate` reads the field and routes to the active view's cache only. Cache invalidation in the watcher callback is now kind-scoped: task events touch only `vault_task_cache`; goal events touch only `vault_goal_cache` — the inactive view does NOT re-fetch on every event (spec AC#9 invariant).

@@ -51,11 +51,14 @@ document.addEventListener('DOMContentLoaded', () => {
     startPolling();
 });
 
-// Fallback polling in case WebSocket misses updates
+// Fallback polling in case WebSocket misses updates.
+// Routes through loadCurrentView() so the periodic poll does NOT clobber
+// the Goals view with task cards when the operator is on ?view=goals
+// (spec 014 AC#1 — periodic poll is view-aware).
 function startPolling() {
     setInterval(() => {
-        console.log('Polling for task updates...');
-        loadTasks();
+        console.log('Polling for updates...');
+        loadCurrentView();
     }, POLL_INTERVAL_MS);
 }
 
@@ -110,7 +113,7 @@ function setupEventListeners() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeAssigneeDropdown();
     });
-    document.getElementById('refresh-btn').addEventListener('click', loadTasks);
+    document.getElementById('refresh-btn').addEventListener('click', loadCurrentView);
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
     setupUpcomingWindow();
@@ -146,7 +149,7 @@ function setupUpcomingWindow() {
         if (Number.isFinite(next) && next >= 0 && next <= 168) {
             upcomingHours = next;
             localStorage.setItem('upcomingHours', String(next));
-            loadTasks();
+            loadCurrentView();
         }
     });
 }
@@ -267,7 +270,7 @@ function handleAllStatusCheckbox() {
 
     updateStatusLabel();
     updateURL();
-    loadTasks();
+    loadCurrentView();
 }
 
 function handleStatusCheckboxChange(e) {
@@ -288,7 +291,7 @@ function handleStatusCheckboxChange(e) {
 
     updateStatusLabel();
     updateURL();
-    loadTasks();
+    loadCurrentView();
 }
 
 function updateStatusLabel() {
@@ -412,8 +415,8 @@ function handleAllAssigneeCheckbox(e) {
     currentAssignees = [];
     updateAssigneeLabel();
     updateURL();
-    loadTasks();
-    // loadTasks will re-render the dropdown; no need to do it here.
+    loadCurrentView();
+    // loadCurrentView will re-render the dropdown; no need to do it here.
 }
 
 function handleAssigneeCheckboxChange(e) {
@@ -429,7 +432,7 @@ function handleAssigneeCheckboxChange(e) {
 
     updateAssigneeLabel();
     updateURL();
-    loadTasks();
+    loadCurrentView();
 }
 
 function updateAssigneeLabel() {
@@ -529,7 +532,7 @@ async function loadVaults() {
                 updateVaultLabel();
                 updateURL();
                 loadAssignees();
-                loadTasks();
+                loadCurrentView();
             });
             dropdown.appendChild(item);
         });
@@ -606,7 +609,7 @@ function handleAllVaultCheckbox() {
     updateVaultLabel();
     updateURL();
     loadAssignees();  // refresh option set for the newly selected vault(s)
-    loadTasks();
+    loadCurrentView();
 }
 
 function handleVaultCheckboxChange(e) {
@@ -639,7 +642,7 @@ function handleVaultCheckboxChange(e) {
     updateVaultLabel();
     updateURL();
     loadAssignees();
-    loadTasks();
+    loadCurrentView();
 }
 
 function saveVaultSelection() {
@@ -679,8 +682,9 @@ function filterByAssignee(assignee) {
     // Update URL
     updateURL();
 
-    // Reload tasks
-    loadTasks();
+    // Reload the active view (so the operator on Goals does not get clobbered
+    // by a tasks re-fetch).
+    loadCurrentView();
 }
 
 async function assignToMe(taskId, vault) {
@@ -695,7 +699,7 @@ async function assignToMe(taskId, vault) {
             showToast(detail, true);
             return;
         }
-        await loadTasks();
+        await loadCurrentView();
     } catch (err) {
         console.error('Assign to me network error:', err);
         showToast(err.message || 'Network error — see console.', true);
@@ -778,8 +782,10 @@ async function handleDrop(e) {
             throw new Error(await parseErrorResponse(response));
         }
 
-        // Reload tasks to reflect changes
-        await loadTasks();
+        // Reload the active view to reflect changes. Drag-drop is only
+        // triggered from task cards (Tasks view), so this resolves to
+        // loadTasks() — but using loadCurrentView() is safer / idempotent.
+        await loadCurrentView();
     } catch (error) {
         console.error('Failed to update task phase:', error);
         showToast(error.message, true);
@@ -1534,7 +1540,7 @@ async function handleMenuAction(taskId, action) {
                 throw new Error(await parseErrorResponse(response));
             }
 
-            await loadTasks();
+            await loadCurrentView();
         } catch (error) {
             console.error('Failed to update task phase:', error);
             showToast(error.message, true);
@@ -1639,7 +1645,7 @@ async function executeSlashCommand(taskId, commandType) {
             } else {
                 const successMessage = commandType === 'defer_task' ? 'Task deferred' : 'Task completed';
                 showToast(successMessage);
-                loadTasks();
+                loadCurrentView();
             }
         } else if (!userDismissed) {
             // Only show session modal if user didn't dismiss loading modal
@@ -1680,8 +1686,8 @@ async function clearTaskSession(taskId) {
             tasksCache[taskId].claude_session_id = null;
         }
 
-        // Reload tasks to update UI
-        await loadTasks();
+        // Reload the active view to update UI
+        await loadCurrentView();
     } catch (error) {
         console.error('Failed to clear session:', error);
         showToast(error.message, true);
@@ -1756,14 +1762,21 @@ function handleTaskUpdate(data) {
         // else: user is on Tasks view, ignore the goal event
     } else {
         // kind === 'task' (or anything else — backwards compat)
+        if (currentView === 'goals') {
+            // Spec 014 AC#3: a task event arriving while on Goals view does
+            // NOT mutate the goals DOM and does NOT trigger any fetch. Return
+            // explicitly so future edits cannot accidentally re-fetch goals
+            // in response to a task event (and vice versa).
+            console.log(`Ignoring task event for ${task_id} — view is goals`);
+            return;
+        }
         if (currentView === 'tasks') {
             if (type === 'deleted') {
                 removeTaskCard(task_id);
             } else {
-                loadTasks();
+                loadCurrentView();
             }
         }
-        // else: user is on Goals view, ignore the task event
     }
 }
 
