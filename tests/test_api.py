@@ -913,6 +913,77 @@ def test_update_task_phase_vault_cli_failure_returns_500(
     assert "phase update failed" in response.json()["detail"]
 
 
+def test_update_goal_status_uses_vault_cli(test_client: TestClient) -> None:
+    """PATCH /goals/{id}/status calls vault-cli goal set <id> status <value> on the right vault."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.patch(
+            "/api/goals/Some%20Goal/status?vault=TestVault",
+            json={"status": "in_progress"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "goal_id": "Some Goal",
+        "new_status": "in_progress",
+    }
+    assert mock_exec.call_args.args == (
+        "vault-cli",
+        "goal",
+        "set",
+        "Some Goal",
+        "status",
+        "in_progress",
+        "--vault",
+        "testvault",
+    )
+
+
+def test_update_goal_status_invalid_status_returns_422(test_client: TestClient) -> None:
+    """Pydantic Literal rejects unknown status values with HTTP 422 before reaching vault-cli."""
+    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+        response = test_client.patch(
+            "/api/goals/Some%20Goal/status?vault=TestVault",
+            json={"status": "inprogres"},  # typo
+        )
+
+    assert response.status_code == 422
+    mock_exec.assert_not_called()
+
+
+def test_update_goal_status_leading_dash_rejected(test_client: TestClient) -> None:
+    """Goal IDs starting with '-' are rejected to prevent vault-cli argument injection."""
+    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+        response = test_client.patch(
+            "/api/goals/-help/status?vault=TestVault",
+            json={"status": "in_progress"},
+        )
+
+    assert response.status_code == 400
+    assert "goal_id must not start with '-'" in response.json()["detail"]
+    mock_exec.assert_not_called()
+
+
+def test_update_goal_status_vault_cli_failure_returns_500(test_client: TestClient) -> None:
+    """vault-cli failure during goal status update returns HTTP 500."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 1
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"goal not found\n"))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.patch(
+            "/api/goals/Missing/status?vault=TestVault",
+            json={"status": "in_progress"},
+        )
+
+    assert response.status_code == 500
+    assert "goal not found" in response.json()["detail"]
+
+
 def test_patch_session_uuid_stored_as_is(
     test_client: TestClient,
     mock_vault_client: MagicMock,

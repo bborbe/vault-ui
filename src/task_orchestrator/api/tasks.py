@@ -10,7 +10,7 @@ import shlex
 from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -194,9 +194,15 @@ class UpdatePhaseRequest(BaseModel):
 
 
 class UpdateStatusRequest(BaseModel):
-    """Request model for updating an item's status (currently used for goals via drag-and-drop)."""
+    """Request model for updating an item's status (currently used for goals via drag-and-drop).
 
-    status: str
+    Allowlist matches the canonical status enum (see Personal-vault CLAUDE.md
+    `Task status semantics`). Pydantic rejects any other value with HTTP 422
+    before it can reach vault-cli — prevents a frontend typo from writing
+    garbage into goal frontmatter.
+    """
+
+    status: Literal["next", "in_progress", "backlog", "completed", "hold", "aborted"]
 
 
 class UpdateSessionRequest(BaseModel):
@@ -943,6 +949,12 @@ async def update_goal_status(
     Raises:
         HTTPException: If goal not found or update fails
     """
+    # Reject goal IDs starting with `-` to prevent argument injection into
+    # vault-cli (e.g. `--help`, `--upload=…`). Separate-arg subprocess form
+    # already prevents shell injection; this guards the vault-cli arg parser.
+    if goal_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="goal_id must not start with '-'")
+
     try:
         vault_config = get_vault_config(vault)
 
@@ -958,7 +970,16 @@ async def update_goal_status(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _stdout, stderr = await proc.communicate()
+        # 10s timeout — vault-cli `goal set` is a single-file frontmatter edit;
+        # anything beyond this is a hang we want to surface as HTTP 504.
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except TimeoutError as e:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            raise HTTPException(
+                status_code=504, detail="vault-cli goal set timed out after 10s"
+            ) from e
 
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
