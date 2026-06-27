@@ -1870,13 +1870,14 @@ function renderColumnHeaders() {
         // Remove any pre-existing status columns (idempotent).
         board.querySelectorAll('[data-status]').forEach(el => el.remove());
         // Insert six status columns at the start of the board (in canonical enum order).
+        // Visible status columns (left → right, time-progression).
+        // Hold + aborted are intentionally hidden — they're rare edge states; the
+        // status filter dropdown still lists them so cards remain reachable via filter.
         const STATUS_COLUMNS = [
-            { id: 'in_progress', label: 'IN_PROGRESS' },
-            { id: 'next', label: 'NEXT' },
-            { id: 'backlog', label: 'BACKLOG' },
-            { id: 'completed', label: 'COMPLETED' },
-            { id: 'hold', label: 'HOLD' },
-            { id: 'aborted', label: 'ABORTED' },
+            { id: 'backlog', label: 'Backlog' },
+            { id: 'next', label: 'Next' },
+            { id: 'in_progress', label: 'In Progress' },
+            { id: 'completed', label: 'Completed' },
         ];
         STATUS_COLUMNS.forEach(col => {
             const div = document.createElement('div');

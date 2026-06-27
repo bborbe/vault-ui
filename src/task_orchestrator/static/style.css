@@ -932,6 +932,12 @@ h1 {
     cursor: default;
 }
 
+/* Completed goal cards: grey out — same visual treatment as recently-completed tasks. */
+[data-status="completed"] .goal-card {
+    opacity: 0.55;
+    border-left: 4px solid #86efac; /* green-300 — completed */
+}
+
 .goal-card .open-in-obsidian {
     display: inline-block;
     color: #60a5fa;
