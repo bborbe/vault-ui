@@ -10,6 +10,8 @@ let upcomingHours = 8; // 0 = hide all deferred tasks; persists in localStorage
 let availableAssignees = { named: [], hasUnassigned: false };
 const ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
 let tasksCache = {}; // Map of task ID -> task data
+let goalsCache = {}; // Map of goal ID -> goal data (mirrors tasksCache)
+let currentView = 'tasks'; // 'tasks' | 'goals' — synced to ?view= URL param, default 'tasks'
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
 
@@ -82,6 +84,14 @@ function parseURLParams() {
 
     // Parse goal parameter(s) — supports repeated form (?goal=A&goal=B)
     currentGoals = params.getAll('goal');
+
+    // Parse view parameter — single string, not a list
+    const viewParam = params.get('view');
+    if (viewParam === 'goals' || viewParam === 'tasks') {
+        currentView = viewParam;
+    } else {
+        currentView = 'tasks';
+    }
 }
 
 function setupEventListeners() {
@@ -106,6 +116,19 @@ function setupEventListeners() {
     setupUpcomingWindow();
     setupModalBackdropClose();
     setupDragAndDrop();
+
+    // View toggle: Tasks / Goals
+    const viewToggle = document.querySelector('.view-toggle');
+    if (viewToggle) {
+        viewToggle.addEventListener('click', (e) => {
+            const btn = e.target.closest('.view-toggle-btn');
+            if (!btn) return;
+            const newView = btn.dataset.view;
+            if (newView === currentView) return;
+            setView(newView);
+        });
+    }
+    updateViewToggle();
 }
 
 // Upcoming-window dropdown: restores the persisted value, syncs the select,
@@ -518,8 +541,8 @@ async function loadVaults() {
         // Load assignee options before tasks so the dropdown renders against the full set on first paint.
         await loadAssignees();
 
-        // Load tasks
-        await loadTasks();
+        // Load the active view (single fetch; no flicker)
+        await loadCurrentView();
     } catch (error) {
         console.error('Failed to load vaults:', error);
         showToast(error.message, true);
@@ -701,6 +724,9 @@ function updateURL() {
     // Add goal parameter(s) — emit one repeated param per value
     currentGoals.forEach(g => params.append('goal', g));
 
+    // Add view parameter — always emit explicitly (so reload lands in the same view)
+    params.set('view', currentView);
+
     // Update URL without reload
     const newURL = params.toString() ? `?${params.toString()}` : window.location.pathname;
     window.history.replaceState({}, '', newURL);
@@ -854,6 +880,76 @@ async function loadTasks() {
     }
 }
 
+async function loadGoals() {
+    try {
+        const params = new URLSearchParams();
+        if (currentVault === null) {
+            // No vault param = all vaults
+        } else if (Array.isArray(currentVault)) {
+            currentVault.forEach(v => params.append('vault', v));
+        } else {
+            params.set('vault', currentVault);
+        }
+        // Mirror task query params the user has set
+        currentStatuses.forEach(s => params.append('status', s));
+        currentAssignees.forEach(a => params.append('assignee', a));
+
+        const response = await fetch(`/api/goals?${params.toString()}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const goals = await response.json();
+        goalsCache = {};
+        goals.forEach(goal => {
+            goalsCache[goal.id] = goal;
+        });
+
+        // Goal status -> column id (same columns as tasks)
+        //   in_progress -> execution (alias), next -> todo,
+        //   backlog -> planning, completed -> done,
+        //   hold -> human_review (read-only "On Hold" view),
+        //   aborted -> done (read-only)
+        const statusToColumn = {
+            'in_progress': 'execution',
+            'next': 'todo',
+            'backlog': 'planning',
+            'completed': 'done',
+            'hold': 'human_review',
+            'aborted': 'done',
+        };
+        // Clear all card columns
+        ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'].forEach(phase => {
+            const container = document.getElementById(`cards-${phase}`);
+            if (container) container.innerHTML = '';
+        });
+
+        goals.forEach(goal => {
+            const columnId = statusToColumn[goal.status] || 'todo';
+            const container = document.getElementById(`cards-${columnId}`);
+            if (container) {
+                const card = createGoalCard(goal);
+                container.appendChild(card);
+            }
+        });
+    } catch (error) {
+        console.error('Failed to load goals:', error);
+        showToast(error.message, true);
+    }
+}
+
+async function loadCurrentView() {
+    // Single in-flight fetch for the active view only.
+    // On initial load with ?view=goals, this is the ONLY fetch issued —
+    // /api/tasks is NOT called. (Spec AC#7 evidence:
+    // performance.getEntriesByType('resource') must not contain /api/tasks.)
+    if (currentView === 'goals') {
+        await loadGoals();
+    } else {
+        await loadTasks();
+    }
+}
+
 function extractJiraIssue(title) {
     // Detect Jira issue key pattern: PROJECT-NUMBER
     const jiraKeyPattern = /\b([A-Z]+)-(\d+)\b/;
@@ -970,6 +1066,39 @@ function createTaskCard(task) {
         </div>
     `;
 
+    return card;
+}
+
+function createGoalCard(goal) {
+    const card = document.createElement('div');
+    card.className = 'task-card goal-card';
+    card.dataset.goalId = goal.id;
+    card.dataset.kind = 'goal';
+
+    const { title } = extractJiraIssue(goal.title);
+    const openInObsidian = `<a href="${goal.obsidian_url}" class="open-in-obsidian" title="Open goal in Obsidian">
+        Open in Obsidian →
+    </a>`;
+
+    card.innerHTML = `
+        <div class="card-content">
+            <h3 class="task-title">
+                <a href="${goal.obsidian_url}" class="task-title-link" title="Open in Obsidian">
+                    ${escapeHtml(title)}
+                    <span class="obsidian-icon">↗</span>
+                </a>
+            </h3>
+            <p class="goal-meta">Status: ${escapeHtml(goal.status || 'unknown')}${goal.priority ? ` · Priority: ${escapeHtml(String(goal.priority))}` : ''}</p>
+        </div>
+        <div class="card-footer">
+            <div class="card-footer-left">
+                ${goal.assignee ? `<span class="assignee-badge">👤 ${escapeHtml(goal.assignee)}</span>` : ''}
+            </div>
+            <div class="card-actions">
+                ${openInObsidian}
+            </div>
+        </div>
+    `;
     return card;
 }
 
@@ -1590,36 +1719,51 @@ function connectWebSocket() {
 }
 
 function handleTaskUpdate(data) {
-    const { type, task_id, vault } = data;
+    const { type, task_id, vault, item_kind } = data;
+    // Pre-prompt-3 payloads have no item_kind; default to "task" so
+    // pre-existing event types (task_updated etc.) keep working during
+    // the deploy window. With prompt 3 shipped, every payload from the
+    // running orchestrator carries item_kind; warn once if we see a
+    // payload that omits it (likely a pre-prompt-3 backend in flight).
+    let kind = item_kind;
+    if (!kind) {
+        console.warn('WebSocket payload missing item_kind; defaulting to "task" (pre-prompt-3 backend?)');
+        kind = 'task';
+    }
 
     // Check if update is for a vault we're displaying
-    const shouldUpdate = currentVault === null || // All vaults
-                         currentVault === vault || // Single vault match
-                         (Array.isArray(currentVault) && currentVault.includes(vault)); // Multiple vaults
-
+    const shouldUpdate = currentVault === null ||
+                         currentVault === vault ||
+                         (Array.isArray(currentVault) && currentVault.includes(vault));
     if (!shouldUpdate) {
-        console.log(`Ignoring update for vault ${vault} (current: ${JSON.stringify(currentVault)})`);
+        console.log(`Ignoring ${kind} update for vault ${vault} (current: ${JSON.stringify(currentVault)})`);
         return;
     }
 
-    console.log(`Handling ${type} event for task ${task_id}`);
+    console.log(`Handling ${type} event for ${kind} ${task_id}`);
 
-    switch (type) {
-        case 'modified':
-        case 'created':
-            // Reload all tasks to get updated data
-            loadTasks();
-            break;
-        case 'deleted':
-            // Remove task card from UI
-            removeTaskCard(task_id);
-            break;
-        case 'moved':
-            // Reload tasks (task renamed)
-            loadTasks();
-            break;
-        default:
-            console.warn(`Unknown event type: ${type}`);
+    // Dispatch by kind — only re-fetch the active view's data.
+    // This is the spec AC#9 invariant: editing a task does NOT trigger
+    // a goals re-fetch, and vice versa.
+    if (kind === 'goal') {
+        if (currentView === 'goals') {
+            if (type === 'deleted') {
+                removeGoalCard(task_id);
+            } else {
+                loadGoals();
+            }
+        }
+        // else: user is on Tasks view, ignore the goal event
+    } else {
+        // kind === 'task' (or anything else — backwards compat)
+        if (currentView === 'tasks') {
+            if (type === 'deleted') {
+                removeTaskCard(task_id);
+            } else {
+                loadTasks();
+            }
+        }
+        // else: user is on Goals view, ignore the task event
     }
 }
 
@@ -1635,6 +1779,29 @@ function removeTaskCard(taskId) {
     if (tasksCache[taskId]) {
         delete tasksCache[taskId];
     }
+}
+
+function removeGoalCard(goalId) {
+    const card = document.querySelector(`[data-goal-id="${goalId}"]`);
+    if (card) card.remove();
+    if (goalsCache[goalId]) delete goalsCache[goalId];
+}
+
+function setView(newView) {
+    if (newView !== 'tasks' && newView !== 'goals') return;
+    currentView = newView;
+    updateViewToggle();
+    updateURL();
+    loadCurrentView();
+}
+
+function updateViewToggle() {
+    const buttons = document.querySelectorAll('.view-toggle-btn');
+    buttons.forEach(btn => {
+        const isActive = btn.dataset.view === currentView;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
 }
 
 function updateConnectionStatus(connected) {

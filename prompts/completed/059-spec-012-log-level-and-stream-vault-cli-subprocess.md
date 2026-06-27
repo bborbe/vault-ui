@@ -1,8 +1,8 @@
 ---
 status: completed
-spec: ["012"]
+spec: [012-add-log-level-env-var-and-stream-vault-cli-subprocess]
 summary: Added LOG_LEVEL env var parsing to __main__.py and streaming refactor of start_vault_cli_session in api/tasks.py, with tests in tests/test_main.py and tests/test_api.py, docs in docs/launchd-service.md, and CHANGELOG entry.
-container: task-orchestrator-observability-exec-059-spec-012-log-level-and-stream-vault-cli-subprocess
+execution_id: task-orchestrator-observability-exec-059-spec-012-log-level-and-stream-vault-cli-subprocess
 dark-factory-version: v0.183.0
 created: "2026-06-26T14:00:00Z"
 queued: "2026-06-26T13:46:45Z"

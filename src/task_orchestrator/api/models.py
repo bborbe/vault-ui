@@ -45,6 +45,12 @@ class Goal:
     title: str
     claude_session_id: str | None  # From frontmatter: Claude Code session UUID or display name
     assignee: str | None  # From frontmatter: Person assigned to the goal
+    status: str | None = None  # From frontmatter: goal status (same enum as task status)
+    priority: int | str | None = None  # From frontmatter: 1-3 or "low"/"medium"/"high"/"highest"
+    defer_date: str | None = None  # From frontmatter: YYYY-MM-DD
+    target_date: str | None = None  # From frontmatter: YYYY-MM-DD
+    completed_date: str | None = None  # From frontmatter: ISO 8601 datetime
+    obsidian_url: str | None = None  # obsidian://open?vault=...&file=... (built by API layer)
 
 
 class TaskResponse(BaseModel):
@@ -72,6 +78,24 @@ class TaskResponse(BaseModel):
     recently_completed: bool = False
     vault: str  # Vault name this task belongs to
     goals: list[str] | None = None
+
+
+class GoalResponse(BaseModel):
+    """API response model for goals."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    title: str
+    status: str | None
+    priority: int | str | None
+    obsidian_url: str
+    defer_date: str | None
+    target_date: str | None
+    completed_date: str | None
+    vault: str  # Vault name this goal belongs to
+    claude_session_id: str | None = None
+    assignee: str | None = None
 
 
 class SessionResponse(BaseModel):

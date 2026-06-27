@@ -16,7 +16,14 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from task_orchestrator.api.models import AssigneesResponse, SessionResponse, Task, TaskResponse
+from task_orchestrator.api.models import (
+    AssigneesResponse,
+    Goal,
+    GoalResponse,
+    SessionResponse,
+    Task,
+    TaskResponse,
+)
 from task_orchestrator.cleanup import derive_claude_project_dir
 from task_orchestrator.config import VaultConfig
 from task_orchestrator.factory import (
@@ -495,6 +502,136 @@ async def list_tasks(
     return all_tasks
 
 
+def _goal_to_response(goal: Goal, vault_config: VaultConfig) -> GoalResponse:
+    """Convert Goal to GoalResponse.
+
+    Builds the obsidian_url the same way ``_task_to_response`` does (line
+    894): ``obsidian://open?vault=<quote(vault_name)>&file=<quote(goals_path)>``.
+    The goals folder name is discovered from the vault's parent directory
+    using the same suffix match the cache uses (``*Goals``).
+    """
+    # Goal files live under a *Goals folder in the vault root.
+    # Use the configured tasks_folder's parent (the vault root) and the
+    # standard "23 Goals" suffix; spec 013 keeps the existing
+    # folder-naming convention — the goals folder name is whatever the
+    # user has in their vault (e.g. "23 Goals", "37 Goals").
+    from task_orchestrator.hierarchy import discover_hierarchy_folders
+
+    vault_root = Path(vault_config.vault_path)
+    goals_folders = [f for f in discover_hierarchy_folders(vault_root) if f.name.endswith("Goals")]
+    goals_folder = goals_folders[0].name if goals_folders else "23 Goals"
+    file_path = f"{goals_folder}/{goal.id}.md"
+    obsidian_url = f"obsidian://open?vault={quote(vault_config.vault_name)}&file={quote(file_path)}"
+
+    return GoalResponse(
+        id=goal.id,
+        title=goal.title,
+        status=goal.status,
+        priority=goal.priority,
+        obsidian_url=obsidian_url,
+        defer_date=goal.defer_date,
+        target_date=goal.target_date,
+        completed_date=goal.completed_date,
+        vault=vault_config.name,
+        claude_session_id=goal.claude_session_id,
+        assignee=goal.assignee,
+    )
+
+
+async def _process_goal_vault(
+    vault_name: str,
+    status_filter: list[str] | None,
+    assignee_filter: list[str] | None,
+    vault_goal_cache: dict[str, tuple[float, list[Goal]]],
+) -> list[GoalResponse]:
+    """Fetch and filter goals for one vault (parallel to _process_vault).
+
+    Cache key is the parent of the goals folder (the vault root) mtime,
+    matching the per-vault task cache shape. Cache hit → skip subprocess.
+    Cache miss → call ``client.list_goals(show_all=True)`` and filter in
+    Python (vault-cli does not yet expose a multi-status flag for goals).
+    """
+    client = get_vault_cli_client_for_vault(vault_name)
+    vault_config = get_vault_config(vault_name)
+
+    vault_root = Path(vault_config.vault_path)
+    try:
+        current_mtime = os.stat(vault_root).st_mtime
+    except OSError:
+        current_mtime = None
+
+    cached = vault_goal_cache.get(vault_name)
+    if current_mtime is not None and cached is not None and cached[0] == current_mtime:
+        raw_goals = list(cached[1])
+    else:
+        raw_goals = await client.list_goals(show_all=True)
+        if current_mtime is not None:
+            vault_goal_cache[vault_name] = (current_mtime, list(raw_goals))
+
+    goals = raw_goals
+    if status_filter:
+        goals = [g for g in goals if g.status in status_filter]
+    if assignee_filter is not None:
+        goals = [
+            g
+            for g in goals
+            if any(
+                (token == "" and not g.assignee) or (token != "" and g.assignee == token)
+                for token in assignee_filter
+            )
+        ]
+
+    return [_goal_to_response(g, vault_config) for g in goals]
+
+
+@router.get("/goals", response_model=list[GoalResponse])
+async def list_goals(
+    request: Request,
+    vault: Annotated[list[str] | None, Query()] = None,
+    status: Annotated[list[str] | None, Query()] = None,
+    assignee: Annotated[list[str] | None, Query()] = None,
+) -> list[GoalResponse]:
+    """List goals from Obsidian vault(s).
+
+    Accepts the same ``vault``, ``status``, ``assignee`` query parameters as
+    ``GET /api/tasks`` (no ``defer_date`` filter on goals — defer_date is
+    surfaced on the response but not used as a filter for the first pass;
+    the spec marks "match /api/tasks filters verbatim" as best-effort, and
+    a per-status filter covers the operator's actual need to scope a view).
+
+    Returns:
+        List of goals matching the filter, in the same vault-major order
+        as ``list_tasks``.
+    """
+    # If no vault specified, get all vaults
+    config = get_config()
+    vault_filter = _flatten_filter(vault)
+    vault_names = [v.name for v in config.vaults] if vault_filter is None else vault_filter
+
+    status_filter = _flatten_filter(status)
+    assignee_filter_tokens = _flatten_assignee_filter(assignee)
+
+    vault_goal_cache: dict[str, tuple[float, list[Goal]]] = request.app.state.vault_goal_cache
+    results = await asyncio.gather(
+        *[
+            _process_goal_vault(vault_name, status_filter, assignee_filter_tokens, vault_goal_cache)
+            for vault_name in vault_names
+        ],
+        return_exceptions=True,
+    )
+
+    all_goals: list[GoalResponse] = []
+    for result in results:
+        if isinstance(result, ValueError):
+            continue  # unknown vault, skip (matches list_tasks behavior)
+        if isinstance(result, RuntimeError):
+            raise result  # vault-cli failure -> propagates -> HTTP 500
+        assert isinstance(result, list), f"unexpected gather result type: {type(result)}"
+        all_goals.extend(result)
+
+    return all_goals
+
+
 @router.post("/tasks/{task_id}/run", response_model=SessionResponse)
 async def run_task(
     vault: str,
@@ -611,7 +748,9 @@ async def execute_slash_command(
                 raise HTTPException(status_code=500, detail=stderr.decode())
 
             if _connection_manager:
-                await _connection_manager.broadcast({"type": "task_updated", "task_id": task_id})
+                await _connection_manager.broadcast(
+                    {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
+                )
 
             command_str = " ".join(vault_cli_args)
             logger.info(f"vault-cli fast path completed: {command_str}")
@@ -700,7 +839,9 @@ async def assign_task_to_me(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     if _connection_manager:
-        await _connection_manager.broadcast({"type": "task_updated", "task_id": task_id})
+        await _connection_manager.broadcast(
+            {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
+        )
 
     return {"status": "success", "task_id": task_id, "assignee": current_user}
 
@@ -764,7 +905,9 @@ async def update_task_phase(
             raise HTTPException(status_code=500, detail=stderr.decode())
 
         if _connection_manager:
-            await _connection_manager.broadcast({"type": "task_updated", "task_id": task_id})
+            await _connection_manager.broadcast(
+                {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
+            )
 
         return {"status": "success", "task_id": task_id, "phase": request.phase}
     except HTTPException:

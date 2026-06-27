@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from task_orchestrator import factory as _factory_module
 from task_orchestrator.__main__ import create_app
-from task_orchestrator.api.models import Task
+from task_orchestrator.api.models import Goal, Task
 from task_orchestrator.api.tasks import _build_resume_command
 from task_orchestrator.config import Config, VaultConfig
 from task_orchestrator.vault_cli_client import VaultCLIClient
@@ -72,6 +72,52 @@ def _make_sample_task() -> Task:
     )
 
 
+def _make_goal(
+    goal_id: str = "Test Goal",
+    status: str | None = "in_progress",
+    priority: int | str | None = 1,
+    defer_date: str | None = None,
+    target_date: str | None = None,
+    completed_date: str | None = None,
+    claude_session_id: str | None = None,
+    assignee: str | None = None,
+) -> Goal:
+    return Goal(
+        id=goal_id,
+        title=goal_id,
+        status=status,
+        priority=priority,
+        defer_date=defer_date,
+        target_date=target_date,
+        completed_date=completed_date,
+        obsidian_url=None,
+        claude_session_id=claude_session_id,
+        assignee=assignee,
+    )
+
+
+def _make_goal_client(goals: list[Goal] | None = None) -> MagicMock:
+    """Create a mock VaultCLIClient backed by a mutable goal list."""
+    goal_list: list[Goal] = (
+        list(goals)
+        if goals is not None
+        else [_make_goal(goal_id="Test Goal", status="in_progress")]
+    )
+    client = MagicMock()
+
+    async def _list_goals(
+        status_filter: list[str] | None = None, show_all: bool = False
+    ) -> list[Goal]:
+        result = list(goal_list)
+        if status_filter is not None:
+            result = [g for g in result if g.status in status_filter]
+        return result
+
+    client.list_goals = AsyncMock(side_effect=_list_goals)
+    client._goals = goal_list
+    return client
+
+
 def _make_vault_client(tasks: list[Task] | None = None) -> MagicMock:
     """Create a mock VaultCLIClient backed by a mutable task list."""
     task_list: list[Task] = list(tasks) if tasks is not None else [_make_sample_task()]
@@ -106,6 +152,25 @@ def mock_vault_client() -> MagicMock:
 
 
 @pytest.fixture
+def mock_vault_client_with_goals() -> MagicMock:
+    """Goal-capable mock VaultCLIClient: list_tasks AND list_goals."""
+    client = _make_vault_client()
+    goal_list: list[Goal] = [_make_goal(goal_id="Test Goal", status="in_progress")]
+    client._goals = goal_list
+
+    async def _list_goals(
+        status_filter: list[str] | None = None, show_all: bool = False
+    ) -> list[Goal]:
+        result = list(goal_list)
+        if status_filter is not None:
+            result = [g for g in result if g.status in status_filter]
+        return result
+
+    client.list_goals = AsyncMock(side_effect=_list_goals)
+    return client
+
+
+@pytest.fixture
 def test_client(
     tmp_vault: Path,
     sample_task_file: Path,
@@ -135,6 +200,40 @@ def test_client(
     with patch(
         "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
         return_value=mock_vault_client,
+    ):
+        yield TestClient(app)
+
+
+@pytest.fixture
+def test_client_with_goals(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    mock_vault_client_with_goals: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test client with a mock that supports list_goals."""
+    from task_orchestrator.config import VaultConfig
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    app = create_app()
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        return_value=mock_vault_client_with_goals,
     ):
         yield TestClient(app)
 
@@ -2783,3 +2882,209 @@ def test_execute_defer_task_command_unchanged(test_client: TestClient) -> None:
     command = response.json()["command"]
     tokens = shlex.split(command)
     assert "-n" not in tokens
+
+
+# ---- Goal dataclass + parser tests (spec 013 prompt 1) ----
+
+
+def test_parse_goal_status_present() -> None:
+    """_parse_goal returns the status field when present."""
+    client = object.__new__(VaultCLIClient)
+    goal = client._parse_goal({"name": "G1", "title": "Ship It", "status": "in_progress"})
+    assert goal.status == "in_progress"
+
+
+def test_parse_goal_status_missing_is_none() -> None:
+    """_parse_goal returns status=None when key is absent (spec Failure Mode row 1)."""
+    client = object.__new__(VaultCLIClient)
+    goal = client._parse_goal({"name": "G1", "title": "Ship It"})
+    assert goal.status is None
+
+
+def test_parse_goal_date_fields_missing_are_none() -> None:
+    """defer_date / target_date / completed_date surface as None when absent."""
+    client = object.__new__(VaultCLIClient)
+    goal = client._parse_goal({"name": "G1", "title": "Ship It"})
+    assert goal.defer_date is None
+    assert goal.target_date is None
+    assert goal.completed_date is None
+
+
+def test_parse_goal_priority_numeric_string_becomes_int() -> None:
+    """String priority that parses as int is coerced (mirrors _parse_task)."""
+    client = object.__new__(VaultCLIClient)
+    goal = client._parse_goal({"name": "G1", "title": "T", "priority": "2"})
+    assert goal.priority == 2
+
+
+def test_parse_goal_priority_text_stays_string() -> None:
+    """String priority that does not parse as int stays a string."""
+    client = object.__new__(VaultCLIClient)
+    goal = client._parse_goal({"name": "G1", "title": "T", "priority": "high"})
+    assert goal.priority == "high"
+
+
+def test_parse_goal_priority_bool_becomes_none() -> None:
+    """Boolean priority (bool subclasses int) is normalized to None."""
+    client = object.__new__(VaultCLIClient)
+    goal = client._parse_goal({"name": "G1", "title": "T", "priority": True})
+    assert goal.priority is None
+
+
+# ---- GET /api/goals endpoint tests ----
+
+
+def test_list_goals_endpoint(test_client_with_goals: TestClient) -> None:
+    """GET /api/goals returns HTTP 200 with a JSON array of goals."""
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+    assert response.status_code == 200
+    goals = response.json()
+    assert isinstance(goals, list)
+    assert len(goals) >= 1
+
+
+def test_list_goals_response_has_required_keys(test_client_with_goals: TestClient) -> None:
+    """Each goal response includes status, priority, obsidian_url, and the three date keys.
+
+    Mirrors spec 013 AC#2 evidence shape: `jq '.[0] | keys'` must include all six keys.
+    """
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+    assert response.status_code == 200
+    goal = response.json()[0]
+    keys = set(goal.keys())
+    for required in (
+        "status",
+        "priority",
+        "obsidian_url",
+        "defer_date",
+        "target_date",
+        "completed_date",
+    ):
+        assert required in keys, f"missing key: {required}; got: {keys}"
+
+
+def test_list_goals_obsidian_url_format(test_client_with_goals: TestClient) -> None:
+    """obsidian_url uses the same obsidian:// scheme and URL-encoding as task cards."""
+    from urllib.parse import quote
+
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+    goal = response.json()[0]
+    assert goal["obsidian_url"].startswith("obsidian://open?vault=")
+    # The goals folder is discovered; the test vault has no goals folder, so
+    # we fall back to the default "23 Goals" folder name. The URL must be
+    # quote()ed exactly like the task URL pattern.
+    assert quote("TestVault") in goal["obsidian_url"]
+    assert quote("23 Goals/Test Goal.md") in goal["obsidian_url"]
+
+
+def test_list_goals_status_filter(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """GET /api/goals?status=in_progress returns only goals with that status."""
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Active Goal", status="in_progress")
+    )
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="Done Goal", status="completed"))
+    # Re-attach the AsyncMock side-effect (clearing _goals above does not break it)
+    response = test_client_with_goals.get("/api/goals?vault=TestVault&status=in_progress")
+    assert response.status_code == 200
+    ids = [g["id"] for g in response.json()]
+    assert "Active Goal" in ids
+    assert "Done Goal" not in ids
+
+
+def test_list_goals_assignee_filter(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """GET /api/goals?assignee=alice returns only goals with that assignee."""
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="G-Alice", assignee="alice"))
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="G-Bob", assignee="bob"))
+    response = test_client_with_goals.get("/api/goals?vault=TestVault&assignee=alice")
+    assert response.status_code == 200
+    ids = [g["id"] for g in response.json()]
+    assert "G-Alice" in ids
+    assert "G-Bob" not in ids
+
+
+def test_list_goals_vault_cli_runtime_error_returns_500(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """vault-cli failure surfaces as HTTP 500 (mirrors list_tasks Failure Mode)."""
+    from task_orchestrator.config import VaultConfig
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+
+    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+
+    bad_client = MagicMock()
+
+    async def _explode(*_args: object, **_kwargs: object) -> list[Goal]:
+        raise RuntimeError("vault-cli goal list failed: synthetic")
+
+    bad_client.list_goals = AsyncMock(side_effect=_explode)
+    bad_client._goals = []
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        return_value=bad_client,
+    ):
+        response = http_client.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 500
+
+
+def test_list_tasks_response_unchanged(test_client: TestClient) -> None:
+    """/api/tasks response shape remains byte-identical to pre-spec (AC#3).
+
+    This is the no-regression half: every pre-existing key on the first task
+    must still be present, and no NEW key was added by this prompt (GoalResponse
+    lives on a separate endpoint).
+    """
+    response = test_client.get("/api/tasks?vault=TestVault")
+    assert response.status_code == 200
+    task = response.json()[0]
+    expected_keys = {
+        "id",
+        "title",
+        "status",
+        "phase",
+        "project_path",
+        "description",
+        "modified_date",
+        "completed_date",
+        "obsidian_url",
+        "defer_date",
+        "planned_date",
+        "due_date",
+        "priority",
+        "category",
+        "recurring",
+        "claude_session_id",
+        "assignee",
+        "blocked_by",
+        "upcoming",
+        "recently_completed",
+        "vault",
+        "goals",
+    }
+    assert expected_keys.issubset(set(task.keys())), (
+        f"missing pre-existing keys: {expected_keys - set(task.keys())}"
+    )

@@ -243,11 +243,33 @@ class VaultCLIClient:
         )
 
     def _parse_goal(self, data: dict[str, Any]) -> Goal:
-        """Parse vault-cli JSON goal object into Goal dataclass."""
+        """Parse vault-cli JSON goal object into Goal dataclass.
+
+        Missing frontmatter fields surface as ``None`` (spec 013 Failure Mode
+        row 1: date fields may be null in the API response; no per-goal
+        ``goal show`` fallback because vault-cli is frozen).
+        """
         goal_id = str(data.get("name", data.get("id", "")))
+
+        priority: int | str | None = data.get("priority")
+        if isinstance(priority, bool):
+            # bool is a subclass of int — guard before the int() check below
+            priority = None
+        elif isinstance(priority, str):
+            if not priority.strip():
+                priority = None
+            else:
+                with suppress(ValueError):
+                    priority = int(priority)
+
         return Goal(
             id=goal_id,
             title=str(data.get("title", goal_id)),
             claude_session_id=data.get("claude_session_id") or None,
             assignee=data.get("assignee") or None,
+            status=data.get("status"),
+            priority=priority,
+            defer_date=data.get("defer_date"),
+            target_date=data.get("target_date"),
+            completed_date=data.get("completed_date"),
         )

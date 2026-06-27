@@ -48,6 +48,23 @@ make watch
 
 Then open http://127.0.0.1:8000
 
+## Goals view
+
+The board has a top-of-board toggle that switches between the **Tasks** view (default) and the **Goals** view. Both views share the same status columns and live-update plumbing.
+
+- Click the toggle to switch views — the URL is updated to `?view=tasks` or `?view=goals` and the new view's data is fetched.
+- Deep-link to a specific view: open `http://127.0.0.1:8000/?view=goals` to land directly in the Goals view (no flash through the Tasks view).
+- Goal cards are read-only — they link back to the goal file in Obsidian. To edit a goal, click the title (or the "Open in Obsidian →" link) and edit in the vault.
+- Vault, status, and assignee filters apply to both views.
+
+Toggle sits above the columns:
+
+```
+[ Tasks | Goals ]  [Vault ▾]  [Status ▾]  [Assignee ▾]  [Upcoming: 8h ▾]
+```
+
+The active view is encoded in the URL as `?view=tasks` or `?view=goals` and survives reload.
+
 ## Development
 
 ```bash
