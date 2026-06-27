@@ -761,7 +761,12 @@ async def execute_slash_command(
 
             if _connection_manager:
                 await _connection_manager.broadcast(
-                    {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
+                    {
+                        "type": "task_updated",
+                        "task_id": task_id,
+                        "item_kind": "task",
+                        "vault": vault,
+                    }
                 )
 
             command_str = " ".join(vault_cli_args)
@@ -852,7 +857,7 @@ async def assign_task_to_me(
 
     if _connection_manager:
         await _connection_manager.broadcast(
-            {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
+            {"type": "task_updated", "task_id": task_id, "item_kind": "task", "vault": vault}
         )
 
     return {"status": "success", "task_id": task_id, "assignee": current_user}
@@ -892,7 +897,15 @@ async def update_task_phase(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _stdout, stderr = await proc.communicate()
+        # 10s timeout — same rationale as update_goal_status below.
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except TimeoutError as e:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            raise HTTPException(
+                status_code=504, detail="vault-cli task set (phase) timed out after 10s"
+            ) from e
 
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
@@ -911,14 +924,21 @@ async def update_task_phase(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _stdout, stderr = await status_proc.communicate()
+        try:
+            _stdout, stderr = await asyncio.wait_for(status_proc.communicate(), timeout=10.0)
+        except TimeoutError as e:
+            with suppress(ProcessLookupError):
+                status_proc.kill()
+            raise HTTPException(
+                status_code=504, detail="vault-cli task set (status) timed out after 10s"
+            ) from e
 
         if status_proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
 
         if _connection_manager:
             await _connection_manager.broadcast(
-                {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
+                {"type": "task_updated", "task_id": task_id, "item_kind": "task", "vault": vault}
             )
 
         return {"status": "success", "task_id": task_id, "phase": request.phase}
@@ -986,7 +1006,7 @@ async def update_goal_status(
 
         if _connection_manager:
             await _connection_manager.broadcast(
-                {"type": "goal_updated", "task_id": goal_id, "item_kind": "goal"}
+                {"type": "goal_updated", "task_id": goal_id, "item_kind": "goal", "vault": vault}
             )
 
         return {"status": "success", "goal_id": goal_id, "new_status": request.status}
