@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [014-goals-view-ux-hardening]
+summary: Added groupBy selector with URL plumbing, kind-aware default, phase/status column-set switch, goal-without-phase '—' fallback, and updated loadTasks/loadGoals to dispatch on currentGroupBy
+execution_id: task-orchestrator-goals-view-fixes-exec-064-spec-014-add-groupby-selector
+dark-factory-version: v0.187.5
 created: "2026-06-27T12:05:00Z"
 queued: "2026-06-27T12:31:48Z"
+started: "2026-06-27T12:40:02Z"
+completed: "2026-06-27T12:43:02Z"
 branch: dark-factory/goals-view-ux-hardening
 ---
 

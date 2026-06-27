@@ -65,6 +65,17 @@ Toggle sits above the columns:
 
 The active view is encoded in the URL as `?view=tasks` or `?view=goals` and survives reload.
 
+## Group columns by phase or status
+
+The kanban header has a `groupBy` selector that switches the columns between two dimensions:
+
+- **Phase** (default for Tasks view): TODO / PLANNING / EXECUTION / AI_REVIEW / HUMAN_REVIEW / DONE — the task-phase workflow.
+- **Status**: IN_PROGRESS / NEXT / BACKLOG / COMPLETED / HOLD / ABORTED — the canonical status taxonomy.
+
+The active value is encoded in the URL as `?groupBy=phase` or `?groupBy=status` and survives reload. The default depends on the view: `?view=tasks` opens with `groupBy=phase`; `?view=goals` opens with `groupBy=status`. Unknown values (e.g. `?groupBy=bogus`) fall back to the kind default and the URL is rewritten to the resolved value.
+
+Under `?view=goals&groupBy=phase`, goals without a `phase` field land in a single `—` column.
+
 ## Development
 
 ```bash

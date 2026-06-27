@@ -943,3 +943,46 @@ h1 {
 .goal-card .open-in-obsidian:hover {
     text-decoration: underline;
 }
+
+/* groupBy selector (Phase / Status) */
+.groupby-select,
+#groupby-select {
+    background: #2a2a2a;
+    color: #9ca3af;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+#groupby-select:hover {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+#groupby-select:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: -2px;
+}
+
+/* Status-mode: hide phase columns, show status columns */
+.kanban-board.status-mode [data-phase] {
+    display: none;
+}
+
+.kanban-board.status-mode [data-status] {
+    display: flex; /* override the kanban-board default */
+}
+
+/* Status columns are added dynamically; default style matches phase columns */
+.kanban-board [data-status] .cards {
+    min-height: 100px;
+    padding: 0.5rem;
+}
+
+/* "—" column for goals-without-phase under groupBy=phase on Goals view */
+.kanban-column[data-phase="unknown"] h2 {
+    color: #9ca3af;
+    font-style: italic;
+}
