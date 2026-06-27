@@ -12,7 +12,7 @@ const ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'ab
 let tasksCache = {}; // Map of task ID -> task data
 let goalsCache = {}; // Map of goal ID -> goal data (mirrors tasksCache)
 let currentView = 'tasks'; // 'tasks' | 'goals' — synced to ?view= URL param, default 'tasks'
-let currentGroupBy = 'phase'; // 'phase' | 'status' — synced to ?groupBy= URL param, default 'phase'
+let currentGroupBy = 'phase'; // 'phase' | 'status' — derived from currentView (tasks→phase, goals→status); not user-selectable
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
 
@@ -98,15 +98,11 @@ function parseURLParams() {
         currentView = 'tasks';
     }
 
-    // Parse groupBy parameter — single string, not a list
-    const groupByParam = params.get('groupBy');
-    if (groupByParam === 'phase' || groupByParam === 'status') {
-        currentGroupBy = groupByParam;
-    } else {
-        // Kind-aware default: tasks→phase, goals→status. The default
-        // only applies when the URL doesn't specify groupBy=.
-        currentGroupBy = currentView === 'goals' ? 'status' : 'phase';
-    }
+    // Grouping is derived from view: tasks→phase, goals→status.
+    // The groupBy UI selector + URL param were removed (the cross-axis combinations
+    // weren't useful: tasks-by-status duplicates the status filter dropdown; goals-by-phase
+    // is meaningless since goals have no phase).
+    currentGroupBy = currentView === 'goals' ? 'status' : 'phase';
 }
 
 function setupEventListeners() {
@@ -131,15 +127,6 @@ function setupEventListeners() {
     setupUpcomingWindow();
     setupModalBackdropClose();
     setupDragAndDrop();
-
-    // groupBy selector (Phase / Status)
-    const groupBySelect = document.getElementById('groupby-select');
-    if (groupBySelect) {
-        groupBySelect.addEventListener('change', (e) => {
-            setGroupBy(e.target.value);
-        });
-    }
-    updateGroupBySelector();
 
     // View toggle: Tasks / Goals
     const viewToggle = document.querySelector('.view-toggle');
@@ -752,8 +739,6 @@ function updateURL() {
     // Add view parameter — always emit explicitly (so reload lands in the same view)
     params.set('view', currentView);
 
-    // Add groupBy parameter — always emit explicitly (so reload lands in the same grouping)
-    params.set('groupBy', currentGroupBy);
 
     // Update URL without reload
     const newURL = params.toString() ? `?${params.toString()}` : window.location.pathname;
@@ -1832,32 +1817,12 @@ function removeGoalCard(goalId) {
 function setView(newView) {
     if (newView !== 'tasks' && newView !== 'goals') return;
     currentView = newView;
+    // Grouping follows the view: tasks→phase, goals→status. No user override.
+    currentGroupBy = newView === 'goals' ? 'status' : 'phase';
     updateViewToggle();
-    renderColumnHeaders();  // "—" column depends on view
-    updateURL();
-    loadCurrentView();
-}
-
-function setGroupBy(newGroupBy) {
-    if (newGroupBy !== 'phase' && newGroupBy !== 'status') {
-        // Unknown value → fall back to the kind-default (spec Failure Mode row 3).
-        newGroupBy = currentView === 'goals' ? 'status' : 'phase';
-    }
-    // Always call updateURL() so that ?groupBy=bogus on initial load gets rewritten
-    // to the resolved value (spec Failure Mode row 3). The early-return ONLY skips
-    // the re-render path when the value is genuinely unchanged.
-    const valueChanged = newGroupBy !== currentGroupBy;
-    currentGroupBy = newGroupBy;
-    updateGroupBySelector();
-    updateURL();
-    if (!valueChanged) return;
     renderColumnHeaders();
+    updateURL();
     loadCurrentView();
-}
-
-function updateGroupBySelector() {
-    const select = document.getElementById('groupby-select');
-    if (select) select.value = currentGroupBy;
 }
 
 function renderColumnHeaders() {
