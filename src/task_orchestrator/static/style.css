@@ -571,6 +571,13 @@ h1 {
     box-sizing: border-box;
 }
 
+.goal-meta {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: #96999e;
+    margin: 4px 0 0 0;
+}
+
 .assignee-badge span {
     display: block;
     overflow: hidden;
