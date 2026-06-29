@@ -332,7 +332,7 @@ def create_app() -> FastAPI:
     from vault_ui.api.websocket import router as ws_router
 
     app = FastAPI(
-        title="TaskOrchestrator",
+        title="Vault UI",
         description="Orchestrate Claude Code sessions from Obsidian tasks",
         version="0.1.0",
         lifespan=lifespan,

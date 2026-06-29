@@ -1,4 +1,4 @@
-"""TaskOrchestrator main application."""
+"""vault-ui main application."""
 
 import logging
 import os

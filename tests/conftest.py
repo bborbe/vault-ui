@@ -1,4 +1,4 @@
-"""Test fixtures for TaskOrchestrator."""
+"""Test fixtures for vault-ui."""
 
 from pathlib import Path
 

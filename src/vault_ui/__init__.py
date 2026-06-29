@@ -1,4 +1,4 @@
-"""TaskOrchestrator - Orchestrate Claude Code sessions from Obsidian tasks."""
+"""vault-ui - Orchestrate Claude Code sessions from Obsidian tasks."""
 
 from importlib.metadata import version
 

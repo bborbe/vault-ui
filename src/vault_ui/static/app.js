@@ -1,4 +1,4 @@
-// TaskOrchestrator Kanban Board
+// vault-ui Kanban Board
 
 let currentVault = null; // null = "All", or vault name
 let currentAssignees = [];
