@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.42.0
 
 - refactor: Rename project end-to-end `task-orchestrator` → `vault-ui` — pairs with `vault-cli` (two surfaces over the same vault). Python package `src/task_orchestrator/` → `src/vault_ui/`, all imports + tests + `pyproject.toml` (`[project.scripts] vault-ui = "vault_ui.__main__:main"`, `[tool.hatch.build.targets.wheel] packages = ["src/vault_ui"]`) updated. GitHub repo `bborbe/task-orchestrator` → `bborbe/vault-ui` (redirect intact). Mechanical diff: 116 files renamed (933 ins / 933 del), no behavior changes. Operators must update launchd plist `ProgramArguments` from `uv run task-orchestrator` to `uv run vault-ui` after pulling — old entry-point name no longer registered.
 
