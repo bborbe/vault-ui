@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.41.1
+
+- fix(goals): match goal card layout to task cards — Jira badge + assignee badge render side-by-side in `card-footer-left` (was: Jira badge inline with title; assignee alone in footer). Priority meta text now uses `.goal-meta` rule (12px / `#96999e`) matching the assignee-badge visual weight instead of inheriting paragraph-default size. Goal cards with frontmatter `jira: BRO-NNNN` (or BRO-NNNN prefix in title) now render the same 🔖 issue-key link tasks already had — `extractJiraIssue()` destructure was dropping `issueKey` / `issueUrl` on the goal-card path.
+
 ## v0.41.0
 
 - feat: Add `groupBy` selector to the kanban header — switches columns between the phase taxonomy (TODO / PLANNING / EXECUTION / AI_REVIEW / HUMAN_REVIEW / DONE, default for Tasks view) and the canonical status taxonomy (IN_PROGRESS / NEXT / BACKLOG / COMPLETED / HOLD / ABORTED, default for Goals view). Active value round-trips through the URL as `?groupBy=phase` / `?groupBy=status` and survives reload; defaults are kind-aware (tasks→phase, goals→status) and unknown values fall back to the kind default with the URL rewritten. The hard-coded `statusToColumn` aliasing map in `loadGoals` is removed in favor of a `currentGroupBy` dispatch; the `in_progress → execution` aliasing rule in `loadTasks` now applies only under `groupBy=phase`. Under `?view=goals&groupBy=phase`, goals without a `phase` field land in a single `—` column. New `tests/test_groupby_selector.py` covers selector markup, URL plumbing, kind-aware default, and the unknown-fallback rewrite.

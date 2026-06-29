@@ -1146,7 +1146,12 @@ function createGoalCard(goal) {
         card.classList.remove('dragging');
     });
 
-    const { title } = extractJiraIssue(goal.title);
+    const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
+    const jiraBadge = issueKey && issueUrl
+        ? `<a href="${issueUrl}" class="jira-badge" target="_blank" title="Open in Jira">
+             <span class="jira-icon">🔖</span><span>${escapeHtml(issueKey)}</span>
+           </a>`
+        : '';
 
     card.innerHTML = `
         <div class="card-content">
@@ -1160,7 +1165,8 @@ function createGoalCard(goal) {
         </div>
         <div class="card-footer">
             <div class="card-footer-left">
-                ${goal.assignee ? `<span class="assignee-badge">👤 ${escapeHtml(goal.assignee)}</span>` : ''}
+                ${jiraBadge}
+                ${goal.assignee ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>` : ''}
             </div>
         </div>
     `;

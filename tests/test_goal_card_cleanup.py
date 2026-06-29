@@ -33,23 +33,24 @@ def _slice_function(source: str, fn_name: str) -> str:
     return source[m.end() : i - 1]
 
 
-def test_goal_card_has_only_one_anchor() -> None:
-    """createGoalCard must render exactly one <a> element — the title link.
+def test_goal_card_has_only_one_obsidian_anchor() -> None:
+    """createGoalCard must render exactly one obsidian:// link — the title link.
 
-    Spec AC#9: 'document.querySelectorAll(\"[data-card-kind=\\\"goal\\\"] a\").length
-    is 1 (the title link) on a page with at least one goal card.'
-    The card body MUST NOT contain the redundant 'Open in Obsidian →'
-    affordance below the title.
+    Spec AC#9: redundant 'Open in Obsidian →' affordance below the title is
+    removed. A Jira badge `<a>` (BRO-NNNN → Jira) is allowed and matches the
+    task-card pattern — it points to atlassian.net, not obsidian://.
     """
     body = _slice_function(APP_JS, "createGoalCard")
-    # Count <a href="..."> occurrences in the card template.
-    # The title link and any remaining affordance would both match.
-    anchor_pattern = re.compile(r"<a\s+[^>]*href=", re.IGNORECASE)
-    anchors = anchor_pattern.findall(body)
-    assert len(anchors) == 1, (
-        f"createGoalCard must render exactly 1 anchor (the title link), "
-        f"found {len(anchors)}. Spec AC#9: redundant 'Open in Obsidian →' "
-        f"link below the title must be removed."
+    # Only one anchor should target goal.obsidian_url (the title link).
+    # A Jira badge anchor targeting ${issueUrl} is intentional and additive.
+    obsidian_anchor_pattern = re.compile(
+        r"<a\s+[^>]*href=\"\$\{goal\.obsidian_url\}\"", re.IGNORECASE
+    )
+    obsidian_anchors = obsidian_anchor_pattern.findall(body)
+    assert len(obsidian_anchors) == 1, (
+        f"createGoalCard must render exactly 1 obsidian:// anchor (the title "
+        f"link), found {len(obsidian_anchors)}. Spec AC#9: redundant 'Open in "
+        f"Obsidian →' link below the title must be removed."
     )
 
     # Belt-and-braces: the literal string "Open in Obsidian →" must NOT
