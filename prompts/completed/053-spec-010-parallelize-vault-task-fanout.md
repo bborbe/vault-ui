@@ -2,7 +2,7 @@
 status: completed
 spec: [010-parallelize-vault-task-fanout]
 summary: Replaced serial per-vault loop in list_tasks with asyncio.gather concurrent fan-out via new _process_vault coroutine; added 5 tests proving concurrency, ordering, ValueError skip, RuntimeError 500, and fixture match; updated CHANGELOG.md.
-container: task-orchestrator-parallel-vaults-exec-053-spec-010-parallelize-vault-task-fanout
+container: vault-ui-parallel-vaults-exec-053-spec-010-parallelize-vault-task-fanout
 dark-factory-version: v0.182.0
 created: "2026-06-20T13:07:03Z"
 queued: "2026-06-20T13:07:03Z"
@@ -20,7 +20,7 @@ branch: dark-factory/parallelize-vault-task-fanout
 </summary>
 
 <objective>
-Replace the serial `for vault_name in vault_names:` loop in `list_tasks` (`src/task_orchestrator/api/tasks.py`) with an `asyncio.gather` concurrent fan-out, preserving vault-major ordering, ValueError-skip semantics, and RuntimeError-propagation semantics, so a warm multi-vault `GET /api/tasks` tracks the slowest single vault instead of the sum. Then measure live p50 to determine whether prompt 054 (cache) is required.
+Replace the serial `for vault_name in vault_names:` loop in `list_tasks` (`src/vault_ui/api/tasks.py`) with an `asyncio.gather` concurrent fan-out, preserving vault-major ordering, ValueError-skip semantics, and RuntimeError-propagation semantics, so a warm multi-vault `GET /api/tasks` tracks the slowest single vault instead of the sum. Then measure live p50 to determine whether prompt 054 (cache) is required.
 </objective>
 
 <context>
@@ -32,19 +32,19 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 
 Read the spec at `specs/in-progress/010-parallelize-vault-task-fanout.md` — source of truth for behavior, constraints, failure modes, and acceptance criteria.
 
-Read `src/task_orchestrator/api/tasks.py` in full before editing. Focus on the `list_tasks` async function (around lines 202–358) — the serial `for vault_name in vault_names:` loop is the block to replace. Note these already-present imports near the top of the file: `asyncio`, `from contextlib import suppress`, `from datetime import UTC, date, datetime, timedelta`, `from pathlib import Path`, and the factory helpers `get_status_cache`, `get_vault_cli_client_for_vault`, `get_vault_config`. Note the module helpers `_flatten_filter`, `_flatten_assignee_filter`, `_parse_defer_date`, `_task_to_response`, and the response model `TaskResponse`.
+Read `src/vault_ui/api/tasks.py` in full before editing. Focus on the `list_tasks` async function (around lines 202–358) — the serial `for vault_name in vault_names:` loop is the block to replace. Note these already-present imports near the top of the file: `asyncio`, `from contextlib import suppress`, `from datetime import UTC, date, datetime, timedelta`, `from pathlib import Path`, and the factory helpers `get_status_cache`, `get_vault_cli_client_for_vault`, `get_vault_config`. Note the module helpers `_flatten_filter`, `_flatten_assignee_filter`, `_parse_defer_date`, `_task_to_response`, and the response model `TaskResponse`.
 
 Read `tests/test_api.py` in full before adding tests. Reuse these existing top-level helpers and fixtures (do NOT redefine them):
 - `_make_task(task_id, status, phase, ...)` (around line 19).
 - `_make_vault_client(tasks)` (around line 69) — builds a `MagicMock` whose `list_tasks` is an `AsyncMock` that status-filters.
-- `test_list_tasks_no_vault_returns_all_vaults` (around line 280) — reference pattern for multi-vault tests using `monkeypatch.setattr("task_orchestrator.factory._config", test_config)` plus `patch("task_orchestrator.api.tasks.get_vault_cli_client_for_vault", side_effect=...)`.
+- `test_list_tasks_no_vault_returns_all_vaults` (around line 280) — reference pattern for multi-vault tests using `monkeypatch.setattr("vault_ui.factory._config", test_config)` plus `patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", side_effect=...)`.
 
-These imports are ALREADY present at the top of `tests/test_api.py` (do NOT re-import): `pytest`, `Path` (from `pathlib`), `AsyncMock`/`MagicMock`/`patch` (from `unittest.mock`), `TestClient` (from `fastapi.testclient`), `create_app` (from `task_orchestrator.__main__`), `Config`/`VaultConfig` (from `task_orchestrator.config`).
+These imports are ALREADY present at the top of `tests/test_api.py` (do NOT re-import): `pytest`, `Path` (from `pathlib`), `AsyncMock`/`MagicMock`/`patch` (from `unittest.mock`), `TestClient` (from `fastapi.testclient`), `create_app` (from `vault_ui.__main__`), `Config`/`VaultConfig` (from `vault_ui.config`).
 </context>
 
 <requirements>
 
-### 1. Pre-compute filters before the fan-out (`src/task_orchestrator/api/tasks.py`, in `list_tasks`)
+### 1. Pre-compute filters before the fan-out (`src/vault_ui/api/tasks.py`, in `list_tasks`)
 
 In the current serial loop, `assignee_filter` (via `_flatten_assignee_filter(assignee)`) and `goal_filter` (via `_flatten_filter(goal)`) are recomputed on every iteration. Move both computations OUT of the loop so they are computed once before the gather. Also compute the time window once. Immediately before the loop is replaced, ensure these values exist in `list_tasks` scope:
 
@@ -60,7 +60,7 @@ lookback = now - timedelta(hours=8)
 
 ### 2. Add a module-level private coroutine `_process_vault`
 
-Add this function at module level in `src/task_orchestrator/api/tasks.py` (place it directly above `list_tasks`). The body is the EXACT per-vault block from the current loop, with two changes: `assignee` is replaced by the already-computed `assignee_filter` parameter, and `goal` is replaced by the already-computed `goal_filter` parameter (the inner `_flatten_assignee_filter(assignee)` and `_flatten_filter(goal)` calls are removed because they now happen in the caller). The client/config lookup stays INSIDE this function with NO try/except — a `ValueError` from `get_vault_cli_client_for_vault` or `get_vault_config` must propagate out so the caller can catch it via `return_exceptions=True`.
+Add this function at module level in `src/vault_ui/api/tasks.py` (place it directly above `list_tasks`). The body is the EXACT per-vault block from the current loop, with two changes: `assignee` is replaced by the already-computed `assignee_filter` parameter, and `goal` is replaced by the already-computed `goal_filter` parameter (the inner `_flatten_assignee_filter(assignee)` and `_flatten_filter(goal)` calls are removed because they now happen in the caller). The client/config lookup stays INSIDE this function with NO try/except — a `ValueError` from `get_vault_cli_client_for_vault` or `get_vault_config` must propagate out so the caller can catch it via `return_exceptions=True`.
 
 ```python
 async def _process_vault(
@@ -238,7 +238,7 @@ def test_list_tasks_concurrent_overlap(tmp_path: Path, monkeypatch: pytest.Monke
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     call_times: dict[str, tuple[float, float]] = {}
 
@@ -257,7 +257,7 @@ def test_list_tasks_concurrent_overlap(tmp_path: Path, monkeypatch: pytest.Monke
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=lambda vn: clients[vn],
     ):
         response = http_client.get("/api/tasks")
@@ -283,7 +283,7 @@ def test_list_tasks_concurrent_preserves_vault_major_order(
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     task1 = _make_task(task_id="V1Task", status="in_progress")
     task2 = _make_task(task_id="V2Task", status="in_progress")
@@ -296,7 +296,7 @@ def test_list_tasks_concurrent_preserves_vault_major_order(
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=lambda vn: clients[vn],
     ):
         response = http_client.get("/api/tasks")
@@ -321,7 +321,7 @@ def test_list_tasks_concurrent_skips_value_error_vault(
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     task2 = _make_task(task_id="SiblingTask", status="in_progress")
 
@@ -334,7 +334,7 @@ def test_list_tasks_concurrent_skips_value_error_vault(
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=get_client,
     ):
         response = http_client.get("/api/tasks")
@@ -359,7 +359,7 @@ def test_list_tasks_concurrent_runtime_error_returns_500(
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     bad_client = MagicMock()
     bad_client.list_tasks = AsyncMock(side_effect=RuntimeError("vault-cli exited 1"))
@@ -372,7 +372,7 @@ def test_list_tasks_concurrent_runtime_error_returns_500(
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=get_client,
     ):
         response = http_client.get("/api/tasks")
@@ -395,7 +395,7 @@ def test_list_tasks_concurrent_response_matches_sequential_fixture(
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     task1 = _make_task(task_id="FixtureV1Task", status="in_progress", phase="planning")
     task2 = _make_task(task_id="FixtureV2Task", status="in_progress", phase="execution")
@@ -408,7 +408,7 @@ def test_list_tasks_concurrent_response_matches_sequential_fixture(
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=lambda vn: clients[vn],
     ):
         response = http_client.get("/api/tasks?status=in_progress")
@@ -490,14 +490,14 @@ Expected: all pre-existing tests pass plus the 5 new tests.
 
 Confirm the gather replaced the serial loop:
 ```bash
-grep -n "asyncio.gather" src/task_orchestrator/api/tasks.py
-grep -n "_process_vault" src/task_orchestrator/api/tasks.py
+grep -n "asyncio.gather" src/vault_ui/api/tasks.py
+grep -n "_process_vault" src/vault_ui/api/tasks.py
 ```
 Expected: at least one `asyncio.gather` match and the `_process_vault` definition plus its call site.
 
 Confirm no scenario file was added:
 ```bash
-find . -path '*/scenarios/*.md' -newer src/task_orchestrator/api/tasks.py 2>/dev/null
+find . -path '*/scenarios/*.md' -newer src/vault_ui/api/tasks.py 2>/dev/null
 ```
 Expected: no output.
 

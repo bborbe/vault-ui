@@ -15,23 +15,23 @@ branch: dark-factory/accept-renamed-status-phase-aliases
 
 - The vault is renaming two task taxonomy values to remove a collision between the `status` dimension (scheduling) and the `phase` dimension (kind of work).
 - Canonical status flips from `todo` to `next`; canonical phase flips from `in_progress` to `execution`. Old values remain valid forever as permanent aliases.
-- task-orchestrator must accept BOTH old and new values in its filters and read paths, so tasks written under either name stay visible on the Kanban during and after the gradual rollout.
-- task-orchestrator's PATCH writes for `phase` must emit the new canonical (`execution` when the operator chooses that phase) so new writes match what vault-cli will emit.
+- vault-ui must accept BOTH old and new values in its filters and read paths, so tasks written under either name stay visible on the Kanban during and after the gradual rollout.
+- vault-ui's PATCH writes for `phase` must emit the new canonical (`execution` when the operator chooses that phase) so new writes match what vault-cli will emit.
 - vault frontmatter files are NOT bulk-migrated; old and new values coexist on disk indefinitely.
 
 ## Problem
 
-The parent goal renames task taxonomy so the same word never names both a status and a phase. The rename is rolling out additively across six independent repos; task-orchestrator is one of them. vault-cli (the source of truth) will start emitting `status: next` and `phase: execution` once its own rename lands. The moment that happens, task-orchestrator's hardcoded filter lists `["todo", "in_progress", "completed"]` and `["todo", "planning", "in_progress", "ai_review", "human_review", "done"]` silently drop every task carrying the new canonical from the Kanban board, because those strings are not in the lists. PATCH writes from task-orchestrator would still emit old canonical, creating drift between vault-cli writes (new canonical) and task-orchestrator writes (old canonical) on the same task over time. The rename cannot proceed gradually unless task-orchestrator accepts both old and new values on the read side and emits new canonical on the write side.
+The parent goal renames task taxonomy so the same word never names both a status and a phase. The rename is rolling out additively across six independent repos; vault-ui is one of them. vault-cli (the source of truth) will start emitting `status: next` and `phase: execution` once its own rename lands. The moment that happens, vault-ui's hardcoded filter lists `["todo", "in_progress", "completed"]` and `["todo", "planning", "in_progress", "ai_review", "human_review", "done"]` silently drop every task carrying the new canonical from the Kanban board, because those strings are not in the lists. PATCH writes from vault-ui would still emit old canonical, creating drift between vault-cli writes (new canonical) and vault-ui writes (old canonical) on the same task over time. The rename cannot proceed gradually unless vault-ui accepts both old and new values on the read side and emits new canonical on the write side.
 
 ## Goal
 
-After this work, task-orchestrator's `/api/tasks` endpoint accepts and returns tasks written under either the old or the new canonical for both `status` and `phase`, and its PATCH `/tasks/{id}/phase` endpoint writes the new canonical `execution` when the operator selects the execution phase. Existing vault files carrying `status: todo` or `phase: in_progress` continue to load, filter, update, and render exactly as they do today. New vault files carrying `status: next` or `phase: execution` are first-class. No vault file is migrated; the dual-acceptance behaviour is permanent.
+After this work, vault-ui's `/api/tasks` endpoint accepts and returns tasks written under either the old or the new canonical for both `status` and `phase`, and its PATCH `/tasks/{id}/phase` endpoint writes the new canonical `execution` when the operator selects the execution phase. Existing vault files carrying `status: todo` or `phase: in_progress` continue to load, filter, update, and render exactly as they do today. New vault files carrying `status: next` or `phase: execution` are first-class. No vault file is migrated; the dual-acceptance behaviour is permanent.
 
 ## Non-goals
 
 - No renaming of `ai_review`, `human_review`, `planning`, `done`, `completed`, `blocked`, `aborted`, or any other taxonomy value. Only `todo → next` (status) and `in_progress → execution` (phase) are in scope.
 - No bulk migration of vault frontmatter files. Old values remain on disk forever as permanent aliases.
-- No refactor to delegate normalisation to vault-cli (`NormalizeTask*` is Go-only; task-orchestrator's filter lists are plain Python string membership and stay that way).
+- No refactor to delegate normalisation to vault-cli (`NormalizeTask*` is Go-only; vault-ui's filter lists are plain Python string membership and stay that way).
 - No coupling to vault-cli's rename landing. This change ships independently and is correct whether vault-cli emits old, new, or mixed canonical.
 - No new UI controls, frontend strings, or column relabelling on the Kanban board. Frontend-side display naming is a separate concern.
 - No change to status-write auto-mapping semantics beyond what is required to keep the existing behaviour correct under the new vocabulary.
@@ -55,12 +55,12 @@ After this work, task-orchestrator's `/api/tasks` endpoint accepts and returns t
 
 ## Constraints
 
-- vault-cli is the sole interface for vault writes. task-orchestrator MUST NOT read or write vault frontmatter directly. All status and phase writes continue to shell out to `vault-cli task set` via subprocess.
-- task-orchestrator's filter lists are plain Python string-membership filters applied to JSON output from vault-cli AFTER the subprocess call. The change is purely additive: new strings are added to existing lists; no list is removed, renamed, or normalised through a wrapper.
+- vault-cli is the sole interface for vault writes. vault-ui MUST NOT read or write vault frontmatter directly. All status and phase writes continue to shell out to `vault-cli task set` via subprocess.
+- vault-ui's filter lists are plain Python string-membership filters applied to JSON output from vault-cli AFTER the subprocess call. The change is purely additive: new strings are added to existing lists; no list is removed, renamed, or normalised through a wrapper.
 - The existing four filters (`vault`, `status`, `phase`, `assignee`) and the `goal` filter must continue to work unchanged for every value they accept today. Every existing test must pass without modification.
 - No vault file on disk is read, written, or migrated by this change. Old canonical values remain valid frontmatter forever.
 - This change MUST NOT depend on vault-cli's own rename having landed. The behaviour is correct whether vault-cli emits `todo`, `next`, or a mix on the same day.
-- No new CLI is invoked by task-orchestrator beyond `vault-cli task set` (already in use). No `vault-cli migrate` or normalisation subcommand is called.
+- No new CLI is invoked by vault-ui beyond `vault-cli task set` (already in use). No `vault-cli migrate` or normalisation subcommand is called.
 - Test suite mocks the vault-cli subprocess per the repo's existing convention (no real subprocess execution in unit or integration tests).
 - Python 3.12+, FastAPI, pytest, ruff, mypy. `make precommit` must pass.
 - The status PATCH path (separate from phase PATCH) is out of scope: this spec touches the phase PATCH handler and the read-side filter lists only. Direct status PATCH semantics, if any, are unchanged.
@@ -70,7 +70,7 @@ After this work, task-orchestrator's `/api/tasks` endpoint accepts and returns t
 
 - vault-cli emits the frontmatter `status` and `phase` fields verbatim under JSON keys `status` and `phase` (already true today; the rename only adds new acceptable string values, not new field names).
 - A task's frontmatter contains at most one status value and at most one phase value (single-valued fields, not lists).
-- The hardcoded filter lists in `src/task_orchestrator/api/tasks.py` (in the `list_tasks` handler — anchor by name) are the only read-side touchpoints that gate values by string membership. No other module enumerates the legal status or phase strings.
+- The hardcoded filter lists in `src/vault_ui/api/tasks.py` (in the `list_tasks` handler — anchor by name) are the only read-side touchpoints that gate values by string membership. No other module enumerates the legal status or phase strings.
 - The status auto-mapping in `update_task_phase` writes a STATUS value (`in_progress` or `completed`), not a phase value. The string `in_progress` in that branch is a status value and is NOT being renamed by this rollout.
 
 ## Failure Modes
@@ -79,18 +79,18 @@ After this work, task-orchestrator's `/api/tasks` endpoint accepts and returns t
 |---|---|---|---|
 | `?status=foo` (unknown value) | Current behaviour unchanged — passed through to vault-cli's status filter; vault-cli decides. No new rejection added. | Empty response or vault-cli error surfaced as today | Caller corrects value |
 | `?phase=foo` (unknown value) | Current behaviour unchanged — value is not in `valid_phases`, so tasks with that phase fall into the existing invalid-phase fallback branch (bucketed with `todo` if `todo in phase_filter`). | Empty or fallback response as today | Caller corrects value |
-| PATCH phase with unknown value (e.g. `{"phase":"banana"}`) | Current behaviour unchanged — vault-cli rejects, task-orchestrator surfaces a 500 with vault-cli's stderr. | HTTP 500 with vault-cli stderr in body | Caller corrects value |
+| PATCH phase with unknown value (e.g. `{"phase":"banana"}`) | Current behaviour unchanged — vault-cli rejects, vault-ui surfaces a 500 with vault-cli's stderr. | HTTP 500 with vault-cli stderr in body | Caller corrects value |
 | Vault file with `status:` field missing or empty | Current behaviour unchanged — same code path as today. | Same as today | None |
 | Vault file with both `status: todo` AND a sibling task with `status: next` in the same vault | Both appear under the default Kanban filter; `?status=todo` returns only the `todo` task; `?status=next` returns only the `next` task; `?status=todo,next` returns both. | `curl` shows expected partition by id | None |
-| vault-cli emits `next` mid-request while task-orchestrator holds an older response in flight | The older response still renders against the old canonical via the alias; the next request picks up the new canonical via the same alias. Both values are first-class so neither response is wrong. | Operator refresh shows merged board | None |
-| Concurrent PATCH from two clients (one writes `execution`, one writes `in_progress`) on the same task | Last write wins (current behaviour — task-orchestrator does not introduce a lock; vault-cli's subprocess is the serialisation point). Both values are accepted on subsequent reads. | Final on-disk value reflects last subprocess invocation | None |
+| vault-cli emits `next` mid-request while vault-ui holds an older response in flight | The older response still renders against the old canonical via the alias; the next request picks up the new canonical via the same alias. Both values are first-class so neither response is wrong. | Operator refresh shows merged board | None |
+| Concurrent PATCH from two clients (one writes `execution`, one writes `in_progress`) on the same task | Last write wins (current behaviour — vault-ui does not introduce a lock; vault-cli's subprocess is the serialisation point). Both values are accepted on subsequent reads. | Final on-disk value reflects last subprocess invocation | None |
 | vault-cli subprocess returns non-zero on phase write | Current behaviour unchanged — HTTP 500 with stderr; status write is NOT attempted (existing short-circuit on phase failure). | HTTP 500 with stderr | Caller retries |
 | vault-cli subprocess returns non-zero on the auto-status write after a successful phase write | Current behaviour unchanged — HTTP 500 with stderr; phase has already been written. | HTTP 500 with stderr; subsequent GET reflects new phase but stale status | Caller retries the PATCH (idempotent) or accepts the partial state |
 
 ## Security / Abuse Cases
 
 - The `status` and `phase` query parameters cross the HTTP trust boundary. Values are used only for in-memory string-equality filtering against vault-cli's JSON output — never interpolated into a shell command, SQL, or filesystem path beyond the `vault-cli task set` argv (which is `asyncio.create_subprocess_exec` with a fixed argv list, not shell-interpolated).
-- The `phase` value in the PATCH body is passed as an argv element to `vault-cli task set`. vault-cli is responsible for validating the value; task-orchestrator does not add new validation. No new sink for the value is introduced.
+- The `phase` value in the PATCH body is passed as an argv element to `vault-cli task set`. vault-cli is responsible for validating the value; vault-ui does not add new validation. No new sink for the value is introduced.
 - No new logging of user-supplied values beyond what is logged today.
 - The new acceptable strings (`next`, `execution`) are static literals added to two filter lists; they cannot be influenced by an attacker.
 
@@ -122,7 +122,7 @@ Each AC below names its evidence shape.
 make precommit
 ```
 
-Manual smoke test against a running task-orchestrator with a real vault (operator-side, not required for AC pass):
+Manual smoke test against a running vault-ui with a real vault (operator-side, not required for AC pass):
 
 1. `curl 'http://localhost:8000/api/tasks?status=todo,next' | jq 'length'` — confirms both vocabularies merge into one response.
 2. `curl 'http://localhost:8000/api/tasks?phase=in_progress,execution' | jq 'length'` — confirms both vocabularies merge into one response.
@@ -132,7 +132,7 @@ Manual smoke test against a running task-orchestrator with a real vault (operato
 
 ## Do-Nothing Option
 
-Skipping this work means: the moment vault-cli starts emitting `status: next` and `phase: execution`, every task with the new canonical disappears from the default Kanban view, because the hardcoded filter lists do not contain those strings. Operators see a board that silently omits work in flight. PATCH writes from task-orchestrator continue to emit old canonical, drifting away from vault-cli's writes on the same task over time and producing a vault whose history mixes both vocabularies in an arbitrary order with no easy way to reconcile. The vault-side rename — already specified and rolling out across six repos — cannot proceed gradually; task-orchestrator becomes the blocker. The cost of doing this work is small (two list additions and one literal forwarded to a subprocess argv) and naturally fits a single backend prompt. Doing nothing is not acceptable.
+Skipping this work means: the moment vault-cli starts emitting `status: next` and `phase: execution`, every task with the new canonical disappears from the default Kanban view, because the hardcoded filter lists do not contain those strings. Operators see a board that silently omits work in flight. PATCH writes from vault-ui continue to emit old canonical, drifting away from vault-cli's writes on the same task over time and producing a vault whose history mixes both vocabularies in an arbitrary order with no easy way to reconcile. The vault-side rename — already specified and rolling out across six repos — cannot proceed gradually; vault-ui becomes the blocker. The cost of doing this work is small (two list additions and one literal forwarded to a subprocess argv) and naturally fits a single backend prompt. Doing nothing is not acceptable.
 
 ## Verification Result
 
@@ -142,6 +142,6 @@ Skipping this work means: the moment vault-cli starts emitting `status: next` an
 **Evidence:**
 - `make precommit` → `✓ All precommit checks passed`; pytest summary `171 passed in 0.65s`; ruff `All checks passed!`; mypy `Success: no issues found in 16 source files`.
 - 14 spec-008 tests all PASSED: `test_list_tasks_status_todo_unchanged`, `test_list_tasks_status_next`, `test_list_tasks_status_todo_and_next_union`, `test_list_tasks_default_includes_next`, `test_list_tasks_default_status_filter_includes_completed` (asserts `{"todo","next","in_progress","completed"}`), `test_list_tasks_phase_execution`, `test_list_tasks_phase_in_progress_unchanged`, `test_list_tasks_phase_in_progress_and_execution_union`, `test_list_tasks_phase_execution_not_invalid_fallback`, `test_update_phase_execution_writes_execution_to_vault_cli` (asserts `('phase','execution')` argv pair AND NOT `('phase','in_progress')`, plus follow-up `('status','in_progress')`), `test_update_phase_in_progress_writes_in_progress_to_vault_cli`, `test_update_phase_done_writes_completed_status` (asserts follow-up `('status','completed')`), `test_old_canonical_task_visible_and_patchable`, `test_new_canonical_task_visible_and_patchable`.
-- Implementation in `src/task_orchestrator/api/tasks.py`: default status filter is `["todo","next","in_progress","completed"]`; `valid_phases` includes `"execution"`; `update_task_phase` forwards `request.phase` verbatim to `vault-cli task set ... phase <phase>` argv; status auto-write logic unchanged (`"completed" if phase=="done" else "in_progress"`).
+- Implementation in `src/vault_ui/api/tasks.py`: default status filter is `["todo","next","in_progress","completed"]`; `valid_phases` includes `"execution"`; `update_task_phase` forwards `request.phase` verbatim to `vault-cli task set ... phase <phase>` argv; status auto-write logic unchanged (`"completed" if phase=="done" else "in_progress"`).
 - AC#15 (no new scenario/E2E): `git diff --name-only c599c25~1..HEAD | grep -E '^(scenarios/|tests/e2e/)'` returned empty. Neither directory exists in repo.
 **Verdict:** PASS

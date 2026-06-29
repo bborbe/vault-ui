@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Extracted _read_file helper and delegated update_task_phase to _update_task_frontmatter, eliminating duplicated UTF-8/latin-1 fallback read logic in ObsidianTaskReader
-container: task-orchestrator-013-g-deduplicate-task-reader
+container: vault-ui-013-g-deduplicate-task-reader
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -22,7 +22,7 @@ completed: "2026-03-11T21:32:45Z"
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/obsidian/task_reader.py` — the `ObsidianTaskReader` class.
+Read `src/vault_ui/obsidian/task_reader.py` — the `ObsidianTaskReader` class.
 
 `update_task_phase()` (~lines 64-101) duplicates all file read/parse/write logic from `_update_task_frontmatter()` (~lines 103-149). The UTF-8/latin-1 fallback read pattern appears in both methods and in `_parse_task()` (~lines 189-193).
 </context>

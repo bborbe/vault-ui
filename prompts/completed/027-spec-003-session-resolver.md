@@ -2,7 +2,7 @@
 status: completed
 spec: [003-cleanup-resolve-renamed-sessions]
 summary: Created session_resolver.py with is_uuid() and resolve_session_id() pure functions, plus full test suite covering all specified cases
-container: task-orchestrator-027-spec-003-session-resolver
+container: vault-ui-027-spec-003-session-resolver
 dark-factory-version: v0.57.5
 created: "2026-03-17T00:00:00Z"
 queued: "2026-03-17T13:10:15Z"
@@ -24,21 +24,21 @@ completed: "2026-03-17T13:11:55Z"
 </summary>
 
 <objective>
-Create `src/task_orchestrator/session_resolver.py` — a pure, self-contained module with `is_uuid()` and `resolve_session_id()` that later prompts will wire into the API, watcher, and cleanup. Nothing else changes in this prompt.
+Create `src/vault_ui/session_resolver.py` — a pure, self-contained module with `is_uuid()` and `resolve_session_id()` that later prompts will wire into the API, watcher, and cleanup. Nothing else changes in this prompt.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
 
 Read these files before making any changes:
-- `src/task_orchestrator/cleanup.py` — note `derive_claude_project_dir(vault_path)` (line 15) and understand the project directory layout (`~/.claude/projects/<derived>/`). The resolver does NOT call this function — callers are responsible for constructing the `Path` and passing it in.
-- `src/task_orchestrator/api/models.py` — confirm `Task.claude_session_id: str | None`.
+- `src/vault_ui/cleanup.py` — note `derive_claude_project_dir(vault_path)` (line 15) and understand the project directory layout (`~/.claude/projects/<derived>/`). The resolver does NOT call this function — callers are responsible for constructing the `Path` and passing it in.
+- `src/vault_ui/api/models.py` — confirm `Task.claude_session_id: str | None`.
 
 The `.jsonl` file format is owned by Claude Code. Each line is an independent JSON object. A `custom-title` line has at minimum `{"type": "custom-title", "customTitle": "<name>"}` but may contain additional fields. The UUID that identifies the session comes from the `.jsonl` filename stem (e.g. `abc123.jsonl` → UUID `abc123`), not from inside the JSON.
 </context>
 
 <requirements>
-1. Create `src/task_orchestrator/session_resolver.py` with this exact public interface:
+1. Create `src/vault_ui/session_resolver.py` with this exact public interface:
 
 ```python
 """Resolve Claude session display names to their real UUIDs."""
@@ -129,7 +129,7 @@ def resolve_session_id(display_name: str, project_dir: Path) -> str | None:
 <constraints>
 - Do NOT commit — dark-factory handles git
 - Existing tests must still pass
-- `session_resolver.py` must have NO imports from `task_orchestrator.*` — it is a pure utility module depending only on stdlib
+- `session_resolver.py` must have NO imports from `vault_ui.*` — it is a pure utility module depending only on stdlib
 - The resolver accepts `project_dir: Path` directly; it does NOT call `derive_claude_project_dir` or import from `cleanup.py`
 - Do NOT modify `cleanup.py`, `api/tasks.py`, `factory.py`, or any other existing module in this prompt — only create the new module and its tests
 - `is_uuid` must use the compiled regex `_UUID_RE`, not `uuid.UUID()` — parsing may raise on malformed input, regex is safer here

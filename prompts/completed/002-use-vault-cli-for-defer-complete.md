@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced defer-task and complete-task Claude Code session path with direct vault-cli subprocess calls, added configurable vault_cli_path to VaultConfig, added WebSocket broadcast after successful vault-cli execution, and added tests for all new paths.
-container: task-orchestrator-002-use-vault-cli-for-defer-complete
+container: vault-ui-002-use-vault-cli-for-defer-complete
 dark-factory-version: v0.26.0
 created: "2026-03-07T22:06:05Z"
 queued: "2026-03-07T22:06:05Z"
@@ -22,10 +22,10 @@ Replace the Claude Code session path for defer-task and complete-task with direc
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/api/tasks.py` — the `execute_slash_command` function (~line 258, decorated with `@router.post("/tasks/{task_id}/execute-command")`) currently routes all commands through Claude Code sessions via `_session_manager.send_prompt`.
-Read `src/task_orchestrator/config.py` — `VaultConfig` is a dataclass (line ~11). The vault name is available as `vault_config.name`.
-Read `src/task_orchestrator/websocket/connection_manager.py` — `ConnectionManager` has a `broadcast()` method.
-Read `src/task_orchestrator/api/websocket.py` — shows the pattern for accessing `ConnectionManager` via a module-level global with a `set_connection_manager()` injector.
+Read `src/vault_ui/api/tasks.py` — the `execute_slash_command` function (~line 258, decorated with `@router.post("/tasks/{task_id}/execute-command")`) currently routes all commands through Claude Code sessions via `_session_manager.send_prompt`.
+Read `src/vault_ui/config.py` — `VaultConfig` is a dataclass (line ~11). The vault name is available as `vault_config.name`.
+Read `src/vault_ui/websocket/connection_manager.py` — `ConnectionManager` has a `broadcast()` method.
+Read `src/vault_ui/api/websocket.py` — shows the pattern for accessing `ConnectionManager` via a module-level global with a `set_connection_manager()` injector.
 
 vault-cli command signatures:
 - `vault-cli task defer <task-name> <date> --vault <vault-name>` — date is ISO format like `2026-03-09` or relative like `+1d`
@@ -35,7 +35,7 @@ Both commands accept `--vault <name>` to specify which vault to operate on.
 </context>
 
 <requirements>
-1. In `src/task_orchestrator/api/tasks.py`, in the `execute_slash_command` function (~line 258), add a fast path for `defer-task` and `complete-task` that calls vault-cli via `asyncio.create_subprocess_exec` instead of going through `_session_manager.send_prompt`
+1. In `src/vault_ui/api/tasks.py`, in the `execute_slash_command` function (~line 258), add a fast path for `defer-task` and `complete-task` that calls vault-cli via `asyncio.create_subprocess_exec` instead of going through `_session_manager.send_prompt`
 2. For `defer-task`: run `vault-cli task defer <task-name> <tomorrow-date> --vault <vault-name>` where tomorrow is computed as `(date.today() + timedelta(days=1)).isoformat()` (matching current behavior at line ~297)
 3. For `complete-task`: run `vault-cli task complete <task-name> --vault <vault-name>`
 4. The vault name comes from `vault_config.name` (the `VaultConfig.name` field)

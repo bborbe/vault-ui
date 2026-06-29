@@ -2,7 +2,7 @@
 status: completed
 spec: [011-set-claude-session-name-to-task-title]
 summary: 'Extended _build_resume_command with keyword-only task_title parameter, wired both call sites in run_task and execute_slash_command, added 8 new tests (5 unit + 3 endpoint), and added CHANGELOG entry under ## Unreleased.'
-container: task-orchestrator-session-name-exec-058-spec-011-set-claude-session-name-to-task-title
+container: vault-ui-session-name-exec-058-spec-011-set-claude-session-name-to-task-title
 dark-factory-version: v0.183.0
 created: "2026-06-26T08:15:00Z"
 queued: "2026-06-26T08:33:34Z"
@@ -10,7 +10,7 @@ started: "2026-06-26T08:33:36Z"
 completed: "2026-06-26T08:36:39Z"
 ---
 <summary>
-- Every resume command emitted by the task-orchestrator now embeds the task title as the launched Claude Code session's display name, so the title shows up in the prompt box, `/resume` picker, and terminal title from the first turn.
+- Every resume command emitted by the vault-ui now embeds the task title as the launched Claude Code session's display name, so the title shows up in the prompt box, `/resume` picker, and terminal title from the first turn.
 - The operator no longer needs to run `/rename <task title>` manually after starting a session from the orchestrator.
 - Both the Start path (Run button → `POST /api/tasks/{id}/run`) and the slash-command path (`work-on-task` / `create-task`) inject the name.
 - Fast-path commands that never launch Claude (`defer-task`, `complete-task`) are unchanged — they still shell out to vault-cli only.
@@ -20,7 +20,7 @@ completed: "2026-06-26T08:36:39Z"
 </summary>
 
 <objective>
-Add an optional `task_title` keyword argument to `_build_resume_command` in `src/task_orchestrator/api/tasks.py` and wire its two callers (`run_task`, `execute_slash_command`) to pass `task.title` through, so the returned resume command embeds `-n <shlex.quote(task_title)>` after `--resume <session_id>` whenever the title is non-empty. Fast-path commands inside `execute_slash_command` (`defer-task`, `complete-task`) remain unchanged.
+Add an optional `task_title` keyword argument to `_build_resume_command` in `src/vault_ui/api/tasks.py` and wire its two callers (`run_task`, `execute_slash_command`) to pass `task.title` through, so the returned resume command embeds `-n <shlex.quote(task_title)>` after `--resume <session_id>` whenever the title is non-empty. Fast-path commands inside `execute_slash_command` (`defer-task`, `complete-task`) remain unchanged.
 </objective>
 
 <context>
@@ -32,7 +32,7 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 
 Read the spec at `specs/in-progress/011-set-claude-session-name-to-task-title.md` — source of truth for behaviour, constraints, failure modes, and acceptance criteria.
 
-Read `src/task_orchestrator/api/tasks.py` in full before editing. Focus on:
+Read `src/vault_ui/api/tasks.py` in full before editing. Focus on:
 - `_build_resume_command(vault_config: VaultConfig, session_id: str) -> str` (around lines 46–52) — the only function whose signature changes.
 - `run_task` (around lines 407–454) — the Start-button endpoint. It already does `task = await client.show_task(task_id)` before calling `_build_resume_command`.
 - `execute_slash_command` (around lines 457–560) — has TWO branches: (a) the `defer-task` / `complete-task` fast-path that returns early with `command_str = " ".join(vault_cli_args)` (unchanged by this spec), and (b) the `work-on-task` / `create-task` session path that calls `_build_resume_command(vault_config, session_id)` near line 544 (this call site must pass `task.title`). `task = await client.show_task(task_id)` is already in scope at both branches.
@@ -45,14 +45,14 @@ Read `tests/test_api.py` in full before adding tests:
 
 These imports are ALREADY present at the top of `tests/test_api.py` — do NOT re-import: `pytest`, `Path`, `AsyncMock`/`MagicMock`/`patch`, `TestClient`, `create_app`, `Config`/`VaultConfig`, `_build_resume_command`. The new tests need `shlex` — add `import shlex` at the top of the file with the other stdlib imports.
 
-NOTE on the spec's evidence paths: the spec's Acceptance Criteria reference `tests/api/test_tasks.py` (mirroring the source layout `src/task_orchestrator/api/tasks.py`). That directory does NOT exist in this project — all API tests live in `tests/test_api.py`. Place every new test in `tests/test_api.py` next to the existing siblings. The acceptance criteria use `pytest -k <name>` so the evidence still resolves cleanly when run as `uv run pytest tests/test_api.py -k <name> -v`.
+NOTE on the spec's evidence paths: the spec's Acceptance Criteria reference `tests/api/test_tasks.py` (mirroring the source layout `src/vault_ui/api/tasks.py`). That directory does NOT exist in this project — all API tests live in `tests/test_api.py`. Place every new test in `tests/test_api.py` next to the existing siblings. The acceptance criteria use `pytest -k <name>` so the evidence still resolves cleanly when run as `uv run pytest tests/test_api.py -k <name> -v`.
 
 Read `CHANGELOG.md` — the current top section is `## v0.35.0`. There is NO `## Unreleased` section; create one above `## v0.35.0`.
 </context>
 
 <requirements>
 
-### 1. Extend `_build_resume_command` in `src/task_orchestrator/api/tasks.py`
+### 1. Extend `_build_resume_command` in `src/vault_ui/api/tasks.py`
 
 Add `shlex` to the existing stdlib imports at the top of the file (alphabetical position between `os` and `from contextlib import suppress` is fine).
 
@@ -297,7 +297,7 @@ Each must report `PASSED`.
 
 Confirm `_build_resume_command` now accepts the new keyword argument:
 ```bash
-grep -n "task_title" src/task_orchestrator/api/tasks.py
+grep -n "task_title" src/vault_ui/api/tasks.py
 ```
 Expected: at least three matches — one in the signature, two at the call sites in `run_task` and `execute_slash_command`.
 

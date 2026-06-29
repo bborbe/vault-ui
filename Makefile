@@ -34,9 +34,9 @@ precommit: sync format test check
 # Run server
 .PHONY: run
 run: sync
-	uv run task-orchestrator
+	uv run vault-ui
 
 # Run server with auto-reload on code changes
 .PHONY: watch
 watch: sync
-	uv run uvicorn task_orchestrator.__main__:app --reload --host 127.0.0.1 --port 8000
+	uv run uvicorn vault_ui.__main__:app --reload --host 127.0.0.1 --port 8000

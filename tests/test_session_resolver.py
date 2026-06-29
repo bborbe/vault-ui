@@ -5,7 +5,7 @@ import os
 import stat
 from pathlib import Path
 
-from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+from vault_ui.session_resolver import is_uuid, resolve_session_id
 
 # ---------------------------------------------------------------------------
 # is_uuid tests

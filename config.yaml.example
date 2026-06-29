@@ -2,7 +2,7 @@ vault_cli_path: vault-cli  # optional, defaults to "vault-cli"
 host: 127.0.0.1
 port: 8000
 vaults:
-  # List vaults task-orchestrator should manage.
+  # List vaults vault-ui should manage.
   # claude_script is inherited automatically from vault-cli's registry — no need to repeat it here.
   # vault_name overrides the Obsidian URL name (optional, defaults to name.title()).
   personal:

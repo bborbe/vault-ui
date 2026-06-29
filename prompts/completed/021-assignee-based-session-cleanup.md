@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: 'Added assignee-aware stale session cleanup: other users'' sessions always cleared, current user''s sessions only cleared when .jsonl file missing; added discover_current_user to config and current_user field to Config dataclass.'
-container: task-orchestrator-021-assignee-based-session-cleanup
+container: vault-ui-021-assignee-based-session-cleanup
 dark-factory-version: v0.54.0
 created: "2026-03-12T18:30:00Z"
 queued: "2026-03-12T19:13:29Z"
@@ -23,20 +23,20 @@ Add assignee-aware logic to stale session cleanup so that sessions belonging to 
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/cleanup.py` — find `cleanup_stale_sessions` function and the per-task loop.
-Read `src/task_orchestrator/config.py` — find the `Config` dataclass and `load_config` function.
-Read `src/task_orchestrator/config.py` — find `discover_vaults_from_cli` as the pattern for subprocess calls to vault-cli.
+Read `src/vault_ui/cleanup.py` — find `cleanup_stale_sessions` function and the per-task loop.
+Read `src/vault_ui/config.py` — find the `Config` dataclass and `load_config` function.
+Read `src/vault_ui/config.py` — find `discover_vaults_from_cli` as the pattern for subprocess calls to vault-cli.
 Read `tests/test_config.py` — understand existing test patterns and mocking of `subprocess.run`.
 </context>
 
 <requirements>
-1. Add `discover_current_user(vault_cli_path: str) -> str` function to `src/task_orchestrator/config.py`, following the same pattern as `discover_vaults_from_cli`. It calls `[vault_cli_path, "config", "current-user"]` via `subprocess.run`, returns `result.stdout.strip()`, raises `RuntimeError` on failure.
+1. Add `discover_current_user(vault_cli_path: str) -> str` function to `src/vault_ui/config.py`, following the same pattern as `discover_vaults_from_cli`. It calls `[vault_cli_path, "config", "current-user"]` via `subprocess.run`, returns `result.stdout.strip()`, raises `RuntimeError` on failure.
 
-2. Add `current_user: str` field to the `Config` dataclass in `src/task_orchestrator/config.py` (default `""`).
+2. Add `current_user: str` field to the `Config` dataclass in `src/vault_ui/config.py` (default `""`).
 
 3. In `load_config()`, call `discover_current_user(vault_cli_path)` and pass the result as `current_user` to the `Config` constructor. Use the same `vault_cli_path` variable already resolved from `data.get("vault_cli_path", "vault-cli")`.
 
-4. In `cleanup_stale_sessions` in `src/task_orchestrator/cleanup.py`, after the path-traversal guard (`if "/" in session_id or "\\" in session_id`) and before `session_file = project_dir / ...`, insert the assignee check:
+4. In `cleanup_stale_sessions` in `src/vault_ui/cleanup.py`, after the path-traversal guard (`if "/" in session_id or "\\" in session_id`) and before `session_file = project_dir / ...`, insert the assignee check:
    - If `task.assignee` is set AND differs from `config.current_user`: always clear the session ID (skip the file-existence check), log reason as "assigned to {task.assignee}, not current user {config.current_user}".
    - Otherwise (assignee matches current user, or assignee is None): fall through to existing session-file-existence check.
 
@@ -67,7 +67,7 @@ mock_run.side_effect = mock_side_effect
 - Do NOT commit — dark-factory handles git
 - Existing tests must still pass
 - All file paths are repo-relative (no absolute paths)
-- The task model field is `task.assignee` (type `str | None`) from `src/task_orchestrator/api/models.py`
+- The task model field is `task.assignee` (type `str | None`) from `src/vault_ui/api/models.py`
 - `vault-cli config current-user` prints the username to stdout with a trailing newline — always `.strip()` the result
 - If `discover_current_user` fails at startup, `load_config()` should raise (fail fast)
 </constraints>

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from task_orchestrator.config import load_config
+from vault_ui.config import load_config
 
 
 def _mock_run(vaults: list[dict] | None = None) -> MagicMock:

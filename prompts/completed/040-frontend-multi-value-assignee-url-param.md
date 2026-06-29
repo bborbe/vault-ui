@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Converted currentAssignee (single string) to currentAssignees (array) across all six callsites in app.js — parse, toggle, updateURL, loadTasks URL builder, and chip highlight — enabling repeated ?assignee= URL parameters to round-trip end-to-end.
-container: task-orchestrator-040-frontend-multi-value-assignee-url-param
+container: vault-ui-040-frontend-multi-value-assignee-url-param
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T16:24:29Z"
 queued: "2026-05-10T16:24:29Z"
@@ -20,14 +20,14 @@ completed: "2026-05-10T16:25:28Z"
 </summary>
 
 <objective>
-Convert `src/task_orchestrator/static/app.js` from single-value to multi-value assignee filtering so that repeated `?assignee=` URL parameters are read end-to-end (parse → filter state → API request → URL writeback → chip highlight). Pass-through only — no new UI controls.
+Convert `src/vault_ui/static/app.js` from single-value to multi-value assignee filtering so that repeated `?assignee=` URL parameters are read end-to-end (parse → filter state → API request → URL writeback → chip highlight). Pass-through only — no new UI controls.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/static/app.js` — entire file (~1200 lines, all changes are in this single file)
+- `src/vault_ui/static/app.js` — entire file (~1200 lines, all changes are in this single file)
 - `prompts/completed/039-spec-005-unify-filter-syntax.md` — the BACKEND prompt for the same feature; explains the server-side semantics this frontend prompt is making reachable. In particular note that the backend already accepts `?assignee=&assignee=bborbe` (repeated form) and `?assignee=,bborbe` (comma form) and treats an empty token as "match unassigned". This frontend change does NOT need to do any comma-splitting itself — it just needs to stop dropping repeated params and faithfully forward whatever it reads.
 
 **Relevant assumptions (verified by reading the file):**
@@ -39,7 +39,7 @@ Read these files in full before making any changes:
 </context>
 
 <requirements>
-All edits are in `src/task_orchestrator/static/app.js`. No other files change.
+All edits are in `src/vault_ui/static/app.js`. No other files change.
 
 ### 1. Rename the state variable (line 4)
 
@@ -141,7 +141,7 @@ This means a chip is highlighted ("active") whenever the task's assignee value i
 
 After making the edits, run:
 ```
-grep -n 'currentAssignee\b' src/task_orchestrator/static/app.js
+grep -n 'currentAssignee\b' src/vault_ui/static/app.js
 ```
 Expected: zero matches. Every reference to the old singular name must be gone. If anything matches, fix it before declaring done.
 </requirements>
@@ -149,7 +149,7 @@ Expected: zero matches. Every reference to the old singular name must be gone. I
 <constraints>
 - Do NOT commit — dark-factory handles git
 - Do NOT add any new UI elements (no checkbox, no toggle button, no chip rework). This prompt is URL-driven pass-through only.
-- Do NOT change anything outside `src/task_orchestrator/static/app.js`
+- Do NOT change anything outside `src/vault_ui/static/app.js`
 - Do NOT change the backend, the API contract, or any Python code
 - Do NOT add comma-splitting in JS — the backend already comma-splits server-side; the frontend just forwards the raw values it reads from `URLSearchParams.getAll`
 - The single-value URL `?assignee=bborbe` must continue to filter to exactly bborbe's tasks (backwards-compat with existing bookmarks)
@@ -164,7 +164,7 @@ Expected: zero matches. Every reference to the old singular name must be gone. I
 
 2. Confirm the rename is complete:
    ```
-   grep -n 'currentAssignee\b' src/task_orchestrator/static/app.js
+   grep -n 'currentAssignee\b' src/vault_ui/static/app.js
    ```
    Expected: zero matches.
 

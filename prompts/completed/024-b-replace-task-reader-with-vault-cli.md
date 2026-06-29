@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced ObsidianTaskReader direct file access with VaultCLIClient async subprocess wrapper for all task list/read/update operations; removed task_reader.py and updated all dependent modules and tests
-container: task-orchestrator-024-b-replace-task-reader-with-vault-cli
+container: vault-ui-024-b-replace-task-reader-with-vault-cli
 dark-factory-version: v0.54.0
 created: "2026-03-12T22:00:00Z"
 queued: "2026-03-12T22:04:39Z"
@@ -18,21 +18,21 @@ completed: "2026-03-12T22:27:37Z"
 </summary>
 
 <objective>
-Replace direct Obsidian file reading (ObsidianTaskReader) with vault-cli subprocess calls for listing and reading tasks, so task-orchestrator never reads vault files directly for task operations.
+Replace direct Obsidian file reading (ObsidianTaskReader) with vault-cli subprocess calls for listing and reading tasks, so vault-ui never reads vault files directly for task operations.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/obsidian/task_reader.py` — find `TaskReader` protocol and `ObsidianTaskReader` class with methods: `list_tasks`, `read_task`, `update_task_session_id`, `update_task_session_status`, `update_task_session_fields`, `update_task_phase`.
-Read `src/task_orchestrator/api/tasks.py` — find all calls to `reader.list_tasks()`, `reader.read_task()`, and `reader.update_task_*()`. Note that `list_tasks(status_filter=...)` receives a `list[str]` (comma-split by the API endpoint at ~line 126).
-Read `src/task_orchestrator/api/models.py` — find `Task` dataclass that `list_tasks` and `read_task` return.
-Read `src/task_orchestrator/cleanup.py` — find `ObsidianTaskReader` usage in `cleanup_stale_sessions`.
-Read `src/task_orchestrator/factory.py` — find `get_task_reader_for_vault` and `ObsidianTaskReader` imports.
-Read `src/task_orchestrator/status_cache.py` — note it reads files directly via `_extract_status` using `Path.read_text` and `yaml.safe_load`. This is OUT OF SCOPE for this prompt — StatusCache stays as-is.
+Read `src/vault_ui/obsidian/task_reader.py` — find `TaskReader` protocol and `ObsidianTaskReader` class with methods: `list_tasks`, `read_task`, `update_task_session_id`, `update_task_session_status`, `update_task_session_fields`, `update_task_phase`.
+Read `src/vault_ui/api/tasks.py` — find all calls to `reader.list_tasks()`, `reader.read_task()`, and `reader.update_task_*()`. Note that `list_tasks(status_filter=...)` receives a `list[str]` (comma-split by the API endpoint at ~line 126).
+Read `src/vault_ui/api/models.py` — find `Task` dataclass that `list_tasks` and `read_task` return.
+Read `src/vault_ui/cleanup.py` — find `ObsidianTaskReader` usage in `cleanup_stale_sessions`.
+Read `src/vault_ui/factory.py` — find `get_task_reader_for_vault` and `ObsidianTaskReader` imports.
+Read `src/vault_ui/status_cache.py` — note it reads files directly via `_extract_status` using `Path.read_text` and `yaml.safe_load`. This is OUT OF SCOPE for this prompt — StatusCache stays as-is.
 </context>
 
 <requirements>
-1. Create `src/task_orchestrator/vault_cli_client.py` as a thin async wrapper around vault-cli subprocess calls:
+1. Create `src/vault_ui/vault_cli_client.py` as a thin async wrapper around vault-cli subprocess calls:
 
 ```python
 class VaultCLIClient:
@@ -81,7 +81,7 @@ class VaultCLIClient:
    - Remove `ObsidianTaskReader` import
    - Remove the `TaskReader` protocol import
 
-7. Delete `src/task_orchestrator/obsidian/task_reader.py`. Keep `src/task_orchestrator/obsidian/task_watcher.py` and `src/task_orchestrator/obsidian/__init__.py` if they exist.
+7. Delete `src/vault_ui/obsidian/task_reader.py`. Keep `src/vault_ui/obsidian/task_watcher.py` and `src/vault_ui/obsidian/__init__.py` if they exist.
 
 8. Update all tests:
    - `tests/test_task_reader.py` → delete (tests direct file reading which no longer exists) or convert to test `VaultCLIClient` (mocking subprocess)

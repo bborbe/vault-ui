@@ -9,13 +9,13 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from task_orchestrator.api.models import Goal, Task
-from task_orchestrator.cleanup import derive_claude_project_dir, run_cleanup_loop
-from task_orchestrator.config import Config, VaultConfig, load_config
-from task_orchestrator.status_cache import StatusCache
-from task_orchestrator.vault_cli_client import VaultCLIClient
-from task_orchestrator.vault_cli_watcher import VaultCLIWatcher
-from task_orchestrator.websocket.connection_manager import ConnectionManager
+from vault_ui.api.models import Goal, Task
+from vault_ui.cleanup import derive_claude_project_dir, run_cleanup_loop
+from vault_ui.config import Config, VaultConfig, load_config
+from vault_ui.status_cache import StatusCache
+from vault_ui.vault_cli_client import VaultCLIClient
+from vault_ui.vault_cli_watcher import VaultCLIWatcher
+from vault_ui.websocket.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ async def _try_resolve_task_session(
     Called from the watcher callback after a file change event.
     Silently no-ops if the task has no session ID or it is already a UUID.
     """
-    from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+    from vault_ui.session_resolver import is_uuid, resolve_session_id
 
     try:
         client = VaultCLIClient(vault_cli_path, vault_name)
@@ -123,7 +123,7 @@ async def _try_resolve_goal_session(
     the goal cannot be found, or the display name does not resolve to any
     on-disk session file.
     """
-    from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+    from vault_ui.session_resolver import is_uuid, resolve_session_id
 
     try:
         client = VaultCLIClient(vault_cli_path, vault_name)
@@ -328,11 +328,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     """Create FastAPI application (composition root)."""
-    from task_orchestrator.api.tasks import router as tasks_router
-    from task_orchestrator.api.websocket import router as ws_router
+    from vault_ui.api.tasks import router as tasks_router
+    from vault_ui.api.websocket import router as ws_router
 
     app = FastAPI(
-        title="TaskOrchestrator",
+        title="Vault UI",
         description="Orchestrate Claude Code sessions from Obsidian tasks",
         version="0.1.0",
         lifespan=lifespan,

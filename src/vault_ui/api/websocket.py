@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
-    from task_orchestrator.websocket.connection_manager import ConnectionManager
+    from vault_ui.websocket.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 

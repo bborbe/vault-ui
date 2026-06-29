@@ -14,13 +14,13 @@ branch: dark-factory/goal-session-resolution
 ## Summary
 
 - Goals (`page_type: goal`) carry a `claude_session_id` frontmatter field, just like tasks
-- Today task-orchestrator only auto-resolves display-name session IDs on tasks; goals are ignored
+- Today vault-ui only auto-resolves display-name session IDs on tasks; goals are ignored
 - This spec extends eager resolution + cleanup parity to goals
 - Net effect: a goal with `claude_session_id: ai-knowledge-sharing` resolves to the matching `.jsonl` UUID exactly like the task path does
 
 ## Problem
 
-Users (e.g. on the goal `[[Share AI Knowledge at Seibert]]`) set `claude_session_id` to a human-readable display name to group related Claude sessions across tasks and the parent goal. On task files this gets resolved to a UUID by task-orchestrator's `_try_resolve_task_session` and survives the cleanup loop. On goal files nothing happens — the display name persists indefinitely (no resolution) and there is no parity mechanism. This causes the goal to stay disconnected from its actual Claude session in any UI / tooling that reads it back, and makes the convention silently asymmetric ("works for tasks, breaks for goals").
+Users (e.g. on the goal `[[Share AI Knowledge at Seibert]]`) set `claude_session_id` to a human-readable display name to group related Claude sessions across tasks and the parent goal. On task files this gets resolved to a UUID by vault-ui's `_try_resolve_task_session` and survives the cleanup loop. On goal files nothing happens — the display name persists indefinitely (no resolution) and there is no parity mechanism. This causes the goal to stay disconnected from its actual Claude session in any UI / tooling that reads it back, and makes the convention silently asymmetric ("works for tasks, breaks for goals").
 
 ## Goal
 
@@ -68,7 +68,7 @@ After this work, goals are first-class for session resolution: setting `claude_s
 ## Security / Abuse Cases
 
 - **Path traversal in display name**: Same protection as tasks — `customTitle` is never used to construct file paths, only string-compared. The existing `is_uuid` + invalid-char checks in cleanup apply identically to goals.
-- **Goal frontmatter injection**: vault-cli is the only writer; task-orchestrator passes string values to `vault-cli goal set`. No shell interpolation must be introduced when extending this path.
+- **Goal frontmatter injection**: vault-cli is the only writer; vault-ui passes string values to `vault-cli goal set`. No shell interpolation must be introduced when extending this path.
 - **Resource exhaustion via many goals**: Cleanup loop pass over goals must be bounded by the number of goals, not by `.jsonl` content scanning (resolution scanning happens only once per non-UUID encountered, same as tasks).
 
 ## Acceptance Criteria

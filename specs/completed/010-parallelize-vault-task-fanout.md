@@ -30,7 +30,7 @@ Linked vault task (traceability): `[[Speed Up Task-Orchestrator Api Tasks Endpoi
 - FastAPI / Pydantic response serialization: ~30-50 ms.
 - Warm p50 end-to-end: 270-330 ms.
 
-The dominant fixable cost is the sequential `for vault_name in vault_names:` loop in `src/task_orchestrator/api/tasks.py` that awaits one `client.list_tasks()` per vault before starting the next. Each call is an independent subprocess against an independent vault; nothing forces them to be serial. Vaults already run in parallel processes — the orchestrator just refuses to overlap them.
+The dominant fixable cost is the sequential `for vault_name in vault_names:` loop in `src/vault_ui/api/tasks.py` that awaits one `client.list_tasks()` per vault before starting the next. Each call is an independent subprocess against an independent vault; nothing forces them to be serial. Vaults already run in parallel processes — the orchestrator just refuses to overlap them.
 
 Until the fan-out is concurrent (and, if necessary, results are cached on a stable mtime key), every board refresh, drag-and-drop reload, and filter change pays the full sequential bill.
 
@@ -151,7 +151,7 @@ Empty diff confirms response-shape preservation under live data.
 
 ## Suggested Decomposition
 
-This spec touches at most two layers (the endpoint handler in `src/task_orchestrator/api/tasks.py` and, conditionally, a new cache helper module). The Desired Behaviors split cleanly into a "definitely ship" half and a "only if needed" half. Implementer should run the prompts in order and stop early if Prompt 1 alone meets the latency goal.
+This spec touches at most two layers (the endpoint handler in `src/vault_ui/api/tasks.py` and, conditionally, a new cache helper module). The Desired Behaviors split cleanly into a "definitely ship" half and a "only if needed" half. Implementer should run the prompts in order and stop early if Prompt 1 alone meets the latency goal.
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|

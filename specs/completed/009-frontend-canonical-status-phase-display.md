@@ -13,7 +13,7 @@ branch: dark-factory/frontend-canonical-status-phase-display
 
 ## Summary
 
-- Frontend single-file change to `src/task_orchestrator/static/app.js` only — no Python, no backend tests, no vault migration.
+- Frontend single-file change to `src/vault_ui/static/app.js` only — no Python, no backend tests, no vault migration.
 - Status dropdown and phase column headers display only the new canonical vocabulary: `next` (was `todo`) and `execution` (was `in_progress`); `backlog` joins the status dropdown.
 - Right-click "Move to" menu emits new canonical phase `execution` — the frontend never writes old vocabulary back to the backend.
 - Alias normalize is one-way at display only: tasks on disk with `phase: in_progress` render in the EXECUTION column; URL params `?status=todo` and `?phase=in_progress` pass through unchanged to v0.33.0 backend which accepts both.
@@ -57,7 +57,7 @@ After this work the task board UI displays the new canonical vocabulary only, wh
 
 ## Constraints
 
-- Only `src/task_orchestrator/static/app.js` is modified. No other file in the repository changes.
+- Only `src/vault_ui/static/app.js` is modified. No other file in the repository changes.
 - The on-disk values `todo`, `planning`, `ai_review`, `human_review`, `done` for phase are not touched — only `in_progress → execution` is renamed at the frontend display layer.
 - The on-disk values `in_progress`, `backlog`, `completed`, `hold`, `aborted` for status are not touched — only `todo → next` is renamed at the frontend display layer.
 - The default selected status filter remains `['in_progress', 'completed']`. The default must NOT be widened to include `next` or `backlog`.
@@ -85,15 +85,15 @@ Not applicable — this is a display-only change to client-side static JavaScrip
 
 ## Acceptance Criteria
 
-This is a JavaScript-only frontend change. Acceptance evidence is a mix of `grep` checks against `src/task_orchestrator/static/app.js`, `make precommit` for backend regression, and manual visual checks against a running server. Each criterion declares its evidence shape explicitly.
+This is a JavaScript-only frontend change. Acceptance evidence is a mix of `grep` checks against `src/vault_ui/static/app.js`, `make precommit` for backend regression, and manual visual checks against a running server. Each criterion declares its evidence shape explicitly.
 
-- [ ] `ALL_STATUSES` constant contains exactly `next, in_progress, backlog, completed, hold, aborted` in that order — evidence: `grep -n "ALL_STATUSES" src/task_orchestrator/static/app.js` shows a single declaration whose array literal matches the six tokens in that exact order.
-- [ ] The token `'todo'` no longer appears inside the `ALL_STATUSES` array literal — evidence: `grep -c "'todo'" src/task_orchestrator/static/app.js` returns 0 within the line range of the `ALL_STATUSES` declaration (manual visual inspection of the matched line is acceptable supporting evidence).
-- [ ] The phase column iterator lists exactly `todo, planning, execution, ai_review, human_review, done` in that order — evidence: `grep -n "planning.*execution.*ai_review" src/task_orchestrator/static/app.js` returns one matching line; the literal `'in_progress'` does not appear within that array.
-- [ ] The column-routing line maps tasks whose `task.phase === 'in_progress'` to the `execution` bucket before the `validPhases` includes check — evidence: `grep -n "task.phase === 'in_progress'" src/task_orchestrator/static/app.js` returns at least one line, and the matching expression appears textually before the `validPhases.includes` call in the same function body (manual inspection of the surrounding function confirms the ordering).
-- [ ] The phase label map contains the entry `'execution': 'Execution'` and retains `'in_progress': 'Execution'` as a backwards alias label — evidence: `grep -n "'execution': 'Execution'" src/task_orchestrator/static/app.js` returns one line AND `grep -n "'in_progress': 'Execution'" src/task_orchestrator/static/app.js` returns one line.
-- [ ] The right-click "Move to" menu definition contains the action label "Execution" with action value `execution` and no longer contains "In Progress" with action value `in_progress` — evidence: `grep -n "'Execution'" src/task_orchestrator/static/app.js` returns at least one menu entry; `grep -n "'In Progress'.*'in_progress'" src/task_orchestrator/static/app.js` returns 0 lines within the right-click menu block.
-- [ ] `updateURL()` always emits `?status=` for the current `currentStatuses` selection without a default-suppression conditional — evidence: `grep -n "isDefaultStatuses" src/task_orchestrator/static/app.js` returns 0 lines; the surrounding block iterates `currentStatuses` and pushes each value into the URL search params unconditionally.
+- [ ] `ALL_STATUSES` constant contains exactly `next, in_progress, backlog, completed, hold, aborted` in that order — evidence: `grep -n "ALL_STATUSES" src/vault_ui/static/app.js` shows a single declaration whose array literal matches the six tokens in that exact order.
+- [ ] The token `'todo'` no longer appears inside the `ALL_STATUSES` array literal — evidence: `grep -c "'todo'" src/vault_ui/static/app.js` returns 0 within the line range of the `ALL_STATUSES` declaration (manual visual inspection of the matched line is acceptable supporting evidence).
+- [ ] The phase column iterator lists exactly `todo, planning, execution, ai_review, human_review, done` in that order — evidence: `grep -n "planning.*execution.*ai_review" src/vault_ui/static/app.js` returns one matching line; the literal `'in_progress'` does not appear within that array.
+- [ ] The column-routing line maps tasks whose `task.phase === 'in_progress'` to the `execution` bucket before the `validPhases` includes check — evidence: `grep -n "task.phase === 'in_progress'" src/vault_ui/static/app.js` returns at least one line, and the matching expression appears textually before the `validPhases.includes` call in the same function body (manual inspection of the surrounding function confirms the ordering).
+- [ ] The phase label map contains the entry `'execution': 'Execution'` and retains `'in_progress': 'Execution'` as a backwards alias label — evidence: `grep -n "'execution': 'Execution'" src/vault_ui/static/app.js` returns one line AND `grep -n "'in_progress': 'Execution'" src/vault_ui/static/app.js` returns one line.
+- [ ] The right-click "Move to" menu definition contains the action label "Execution" with action value `execution` and no longer contains "In Progress" with action value `in_progress` — evidence: `grep -n "'Execution'" src/vault_ui/static/app.js` returns at least one menu entry; `grep -n "'In Progress'.*'in_progress'" src/vault_ui/static/app.js` returns 0 lines within the right-click menu block.
+- [ ] `updateURL()` always emits `?status=` for the current `currentStatuses` selection without a default-suppression conditional — evidence: `grep -n "isDefaultStatuses" src/vault_ui/static/app.js` returns 0 lines; the surrounding block iterates `currentStatuses` and pushes each value into the URL search params unconditionally.
 - [ ] `make precommit` exits 0 — evidence: exit code 0.
 - [ ] Manual visual check: with a running server, load the board and observe column headers, left to right, read TODO, PLANNING, EXECUTION, AI REVIEW, HUMAN REVIEW, DONE — evidence: operator confirms the six header strings in that order; no "IN PROGRESS" column header is visible.
 - [ ] Manual visual check: the status filter dropdown lists exactly `next, in_progress, backlog, completed, hold, aborted` in that order — evidence: operator opens the dropdown and confirms the six options in the stated order.
@@ -109,19 +109,19 @@ No new scenario test is added — unit and integration coverage is not feasible 
 Manual command checks against the modified source:
 
 ```
-grep -n "ALL_STATUSES" src/task_orchestrator/static/app.js
-grep -n "'todo'" src/task_orchestrator/static/app.js
-grep -n "planning.*execution.*ai_review" src/task_orchestrator/static/app.js
-grep -n "task.phase === 'in_progress'" src/task_orchestrator/static/app.js
-grep -n "'execution': 'Execution'" src/task_orchestrator/static/app.js
-grep -n "'in_progress': 'Execution'" src/task_orchestrator/static/app.js
-grep -n "isDefaultStatuses" src/task_orchestrator/static/app.js
+grep -n "ALL_STATUSES" src/vault_ui/static/app.js
+grep -n "'todo'" src/vault_ui/static/app.js
+grep -n "planning.*execution.*ai_review" src/vault_ui/static/app.js
+grep -n "task.phase === 'in_progress'" src/vault_ui/static/app.js
+grep -n "'execution': 'Execution'" src/vault_ui/static/app.js
+grep -n "'in_progress': 'Execution'" src/vault_ui/static/app.js
+grep -n "isDefaultStatuses" src/vault_ui/static/app.js
 make precommit
 ```
 
 Manual smoke procedure:
 
-1. Start the task-orchestrator server locally.
+1. Start the vault-ui server locally.
 2. Open the board in a browser; confirm column headers and dropdown order.
 3. Right-click a task; confirm "Move to" submenu lists "Execution".
 4. Use "Move to Execution" on a task whose on-disk file shows `phase: in_progress`; reload; confirm the task is still in the EXECUTION column and its on-disk phase has been written as `execution`.
@@ -136,7 +136,7 @@ If the frontend is not updated, operators continue to see the old vocabulary in 
 
 **Verified:** 2026-05-24T12:32:47Z (HEAD 0b8dd22)
 **Binary:** /Users/bborbe/Documents/workspaces/go/bin/dark-factory (v0.171.1-3-gd94f1fa)
-**Scenario:** grep checks against `src/task_orchestrator/static/app.js`, `make precommit`, live uvicorn server probe of served `app.js` and backend pass-through for legacy URL params.
+**Scenario:** grep checks against `src/vault_ui/static/app.js`, `make precommit`, live uvicorn server probe of served `app.js` and backend pass-through for legacy URL params.
 **Evidence:**
 - `ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']` at app.js:10 (single declaration, exact order); `'todo'` absent from that line.
 - Phase iterator `['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done']` at app.js:760 and 782; no `'in_progress'` token inside.

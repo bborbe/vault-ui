@@ -2,7 +2,7 @@
 status: completed
 spec: [001-stale-session-cleanup]
 summary: Removed duplicate stale_session_cleaner.py module and fixed vault name casing bug in cleanup.py
-container: task-orchestrator-019-cleanup-duplicate-session-cleaner
+container: vault-ui-019-cleanup-duplicate-session-cleaner
 dark-factory-version: v0.54.0
 created: "2026-03-12T16:00:00Z"
 queued: "2026-03-12T15:02:16Z"
@@ -21,9 +21,9 @@ Remove the duplicate `stale_session_cleaner.py` and fix the `.lower()` bug in `c
 <context>
 Read these files before making changes:
 
-- `src/task_orchestrator/factory.py` — has both `_cleanup_task` (cleanup.py) and `_stale_session_task` (stale_session_cleaner.py) wired in lifespan
-- `src/task_orchestrator/cleanup.py` — the CORRECT implementation, but uses `vault.name.lower()` on line 59 which breaks for vault names like "Family"
-- `src/task_orchestrator/stale_session_cleaner.py` — the DUPLICATE that must be deleted entirely
+- `src/vault_ui/factory.py` — has both `_cleanup_task` (cleanup.py) and `_stale_session_task` (stale_session_cleaner.py) wired in lifespan
+- `src/vault_ui/cleanup.py` — the CORRECT implementation, but uses `vault.name.lower()` on line 59 which breaks for vault names like "Family"
+- `src/vault_ui/stale_session_cleaner.py` — the DUPLICATE that must be deleted entirely
 
 The bug: `vault-cli --vault family` fails with "vault not found: family" because vault-cli expects the exact vault name from config (e.g. "Family", "Personal", "Brogrammers"). The `.lower()` call is wrong.
 
@@ -31,10 +31,10 @@ Check how the existing vault-cli fast path in `api/tasks.py` handles the vault n
 </context>
 
 <requirements>
-1. Delete `src/task_orchestrator/stale_session_cleaner.py` entirely.
+1. Delete `src/vault_ui/stale_session_cleaner.py` entirely.
 
-2. In `src/task_orchestrator/factory.py`:
-   a. Remove the import: `from task_orchestrator.stale_session_cleaner import StaleSessionCleaner`
+2. In `src/vault_ui/factory.py`:
+   a. Remove the import: `from vault_ui.stale_session_cleaner import StaleSessionCleaner`
    b. Remove the global: `_stale_session_task: asyncio.Task[None] | None = None`
    c. In `lifespan()`, remove `_stale_session_task` from the `global` statement
    d. Remove the StaleSessionCleaner instantiation and task creation:
@@ -52,7 +52,7 @@ Check how the existing vault-cli fast path in `api/tasks.py` handles the vault n
           logger.info("Stale session cleanup task stopped")
       ```
 
-3. In `src/task_orchestrator/cleanup.py`, line 59:
+3. In `src/vault_ui/cleanup.py`, line 59:
    Change `vault.name.lower()` to `vault.name` in the vault_cli_args list.
 
 4. Update CHANGELOG.md — add entry under current unreleased section:

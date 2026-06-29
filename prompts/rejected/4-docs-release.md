@@ -1,7 +1,7 @@
 ---
 status: rejected
 originalStatus: draft
-spec: [013-task-orchestrator-goals-view]
+spec: [013-vault-ui-goals-view]
 summary: Update README.md with a comprehensive "Goals view" section documenting the `?view=goals` URL, the top-of-board toggle, the read-only goal cards, the same-column rule, and the no-cross-rerender behaviour; consolidate the three prompt-level CHANGELOG entries (v0.38.0 / v0.39.0 / v0.40.0) into a single `## v0.38.0` "Goals view" entry per `changelog-guide.md` rules; cut a `v0.38.0` git tag and verify `uv sync` resolves cleanly; dogfood the running orchestrator against the Personal vault end-to-end.
 created: "2026-06-26T16:18:50Z"
 rejected: "2026-06-26T16:19:23Z"
@@ -34,8 +34,8 @@ Read these source files in full before editing (paths are absolute, host-side):
 - `/workspace/README.md` — full file is 95 lines. The "## Features" section (lines 16–23) has five bullets; add a sixth. The "## Usage" section (line 37) hosts the new "## Goals view" subsection.
 - `/workspace/CHANGELOG.md` — full file is 200+ lines. The current top entry is `## v0.37.0`. The three intermediate entries from prompts 1/2/3 (`## v0.38.0`, `## v0.39.0`, `## v0.40.0`) MUST be replaced with a single `## v0.38.0` "Goals view" entry that consolidates the three bullets. All three prompts' bullets are present (backend, frontend, websocket) under one version heading.
 - `/workspace/pyproject.toml` — line 40 declares `dynamic = ["version"]`; line 41 uses `tool.hatch.version` with `path = "..."` for `hatch-vcs` to read the tag. The version in the running orchestrator's `FastAPI(title=..., version=...)` (factory.py:312 — `version="0.1.0"`) is NOT updated by this prompt (it has been a constant since v0.1.0; changing it is out of scope for spec 013).
-- `/workspace/src/task_orchestrator/__main__.py` — references the FastAPI `version` field; no changes.
-- `/workspace/src/task_orchestrator/factory.py` — `create_app` (line 304) sets `version="0.1.0"`. The release tag v0.38.0 is the user-facing version; the `version=` field in `create_app` is a separate historical constant. **Do not change it.** The spec does not require updating it.
+- `/workspace/src/vault_ui/__main__.py` — references the FastAPI `version` field; no changes.
+- `/workspace/src/vault_ui/factory.py` — `create_app` (line 304) sets `version="0.1.0"`. The release tag v0.38.0 is the user-facing version; the `version=` field in `create_app` is a separate historical constant. **Do not change it.** The spec does not require updating it.
 
 **Verified assumptions** (READ before writing any code):
 - `changelog-guide.md` says one version per release; the three intermediate entries from prompts 1/2/3 are a dark-factory convention for per-prompt traceability that gets rolled up at release time. **Roll them up.**
@@ -243,7 +243,7 @@ In the DARK-FACTORY-REPORT block, include:
 ```json
 {
   "status": "success",
-  "spec": "013-task-orchestrator-goals-view",
+  "spec": "013-vault-ui-goals-view",
   "release_tag": "v0.38.0",
   "tag_pushed": false,
   "tag_push_owner": "management_session",

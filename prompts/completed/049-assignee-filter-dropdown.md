@@ -2,7 +2,7 @@
 status: completed
 spec: [007-assignee-filter-dropdown]
 summary: Added multi-select Assignee filter dropdown to Kanban header, mirroring the Status dropdown UX, with dynamic options from loaded tasks, Unassigned row, XSS-safe DOM construction, URL writeback, and shared currentAssignees state with existing badge-click toggle.
-container: task-orchestrator-049-assignee-filter-dropdown
+container: vault-ui-049-assignee-filter-dropdown
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-13T06:50:00Z"
 queued: "2026-05-13T06:52:59Z"
@@ -37,8 +37,8 @@ Read the spec file at `specs/in-progress/007-assignee-filter-dropdown.md` — it
 
 Read these files in full before editing — the new code is a near-mechanical mirror of the Status selector pattern, so read it as the canonical reference:
 
-- `src/task_orchestrator/static/index.html` (~95 lines) — the existing Vault selector lives at lines 14-20 inside `<div class="header-controls">` and the Status selector at lines 21-27. The new Assignee selector goes immediately after the Status selector, before `<span id="ws-status">` on line 28.
-- `src/task_orchestrator/static/app.js` — the file is the canonical reference for the dropdown pattern. Required reading sections:
+- `src/vault_ui/static/index.html` (~95 lines) — the existing Vault selector lives at lines 14-20 inside `<div class="header-controls">` and the Status selector at lines 21-27. The new Assignee selector goes immediately after the Status selector, before `<span id="ws-status">` on line 28.
+- `src/vault_ui/static/app.js` — the file is the canonical reference for the dropdown pattern. Required reading sections:
   - Lines 1-10: globals (`currentVault`, `currentAssignees`, `currentStatuses`, `ALL_STATUSES` already exist — DO NOT redeclare any of them)
   - Lines 30-46: `DOMContentLoaded` init + polling
   - Lines 48-73: `parseURLParams` — already populates `currentAssignees = params.getAll('assignee')`, including the empty-token form. DO NOT change.
@@ -48,7 +48,7 @@ Read these files in full before editing — the new code is a near-mechanical mi
   - Lines 452-483: `updateURL()` — already emits repeated `?assignee=` params for each entry in `currentAssignees` (line 465). DO NOT change.
   - Lines 540-622: `loadTasks()` — already forwards `currentAssignees` to the API (line 558). DO NOT change the fetch wiring. You WILL add a single call near the end of the try block to re-render the Assignee dropdown so its options reflect the just-loaded task set.
   - Lines 709-715: the existing assignee badge in `createTaskCard` (`<span class="assignee-badge clickable ...">`) — DO NOT change.
-- `src/task_orchestrator/static/style.css` lines 152-237 — the Status selector CSS. The Assignee selector reuses the same dark-theme rules; copy the block verbatim and rename `status-selector` → `assignee-selector`. The class names contain the word "status" but the rule bodies use only generic colors and spacing — duplication is safe and matches the precedent set by prompt 045.
+- `src/vault_ui/static/style.css` lines 152-237 — the Status selector CSS. The Assignee selector reuses the same dark-theme rules; copy the block verbatim and rename `status-selector` → `assignee-selector`. The class names contain the word "status" but the rule bodies use only generic colors and spacing — duplication is safe and matches the precedent set by prompt 045.
 - `prompts/completed/045-status-filter-dropdown.md` — the canonical multi-select dropdown prompt for the same project. The Assignee prompt mirrors it, with the dynamic-options twist and the empty-token Unassigned row.
 - `prompts/completed/041-assign-to-me-card-link.md` — the "+ Assign to me" link that appears on unassigned cards (line 715 of `app.js`). DO NOT touch it. The link must keep working; it is unrelated to filter UI.
 - `CHANGELOG.md` — top of file is `## v0.30.0`. Add the new section above it as `## v0.31.0`. If another prompt has already landed `v0.31.0` by the time this runs, use the next available `v0.NN.0`.
@@ -65,9 +65,9 @@ Read these files in full before editing — the new code is a near-mechanical mi
 
 <requirements>
 
-All edits are in three files: `src/task_orchestrator/static/index.html`, `src/task_orchestrator/static/app.js`, `src/task_orchestrator/static/style.css`, plus a `CHANGELOG.md` entry.
+All edits are in three files: `src/vault_ui/static/index.html`, `src/vault_ui/static/app.js`, `src/vault_ui/static/style.css`, plus a `CHANGELOG.md` entry.
 
-### 1. HTML — add the assignee selector block (`src/task_orchestrator/static/index.html`)
+### 1. HTML — add the assignee selector block (`src/vault_ui/static/index.html`)
 
 Find the existing Status selector block (lines 21-27):
 
@@ -324,7 +324,7 @@ await loadTasks();
 
 Rationale: `loadVaults` runs once on startup after `parseURLParams`. Calling `updateAssigneeLabel()` here guarantees the header label matches the URL-derived state on first paint (e.g. `?assignee=bborbe` shows `bborbe` in the label, not the static `All` from the HTML). `renderAssigneeDropdown` does NOT need to be called here — the very next `await loadTasks()` will trigger it (step 4).
 
-### 6. CSS — duplicate the Status rules under `assignee-selector*` (`src/task_orchestrator/static/style.css`)
+### 6. CSS — duplicate the Status rules under `assignee-selector*` (`src/vault_ui/static/style.css`)
 
 After the existing `.status-selector-separator { ... }` block (ends around line 237) and before `.ws-status { ... }` (around line 239), add a new block. Copy each Status rule verbatim and rename `status-selector` → `assignee-selector`.
 
@@ -434,32 +434,32 @@ Do NOT modify any existing section. If `v0.31.0` is already taken when this prom
 After the edits, run these to confirm wiring (each is a single grep):
 
 ```
-grep -n "assignee-selector" src/task_orchestrator/static/index.html
+grep -n "assignee-selector" src/vault_ui/static/index.html
 ```
 Expected: ≥6 matches inside the new block (`assignee-selector` outer div + `assignee-selector-toggle` × 2 + `assignee-selector-label` + `assignee-selector-arrow` + `assignee-selector-dropdown`); no matches outside the lines added in step 1.
 
 ```
-grep -n "assignee-selector" src/task_orchestrator/static/app.js
+grep -n "assignee-selector" src/vault_ui/static/app.js
 ```
 Expected: matches inside `toggleAssigneeDropdown`, `closeAssigneeDropdown`, `handleClickOutsideAssigneeDropdown`, `renderAssigneeDropdown`, `buildAssigneeRow`, `handleAllAssigneeCheckbox`, `handleAssigneeCheckboxChange`, `updateAssigneeLabel`, and the `setupEventListeners` wiring — all introduced in steps 2-3.
 
 ```
-grep -n "assignee-selector" src/task_orchestrator/static/style.css
+grep -n "assignee-selector" src/vault_ui/static/style.css
 ```
 Expected: matches only inside the new CSS block added in step 6.
 
 ```
-grep -n "currentAssignees" src/task_orchestrator/static/app.js
+grep -n "currentAssignees" src/vault_ui/static/app.js
 ```
 Expected: original 5 sites (declaration, parseURLParams, filterByAssignee, updateURL, loadTasks/fetch) PLUS the new reads/writes inside `computeAssigneeOptions`, `renderAssigneeDropdown`, `handleAllAssigneeCheckbox`, `handleAssigneeCheckboxChange`, `updateAssigneeLabel`. The original 5 sites must be byte-identical to before — this prompt is purely additive to those.
 
 ```
-grep -n "filterByAssignee" src/task_orchestrator/static/app.js
+grep -n "filterByAssignee" src/vault_ui/static/app.js
 ```
 Expected: 2 matches — the declaration at line ~417 and the badge onclick at line ~712. Both must be unchanged.
 
 ```
-grep -n "renderAssigneeDropdown\|updateAssigneeLabel" src/task_orchestrator/static/app.js
+grep -n "renderAssigneeDropdown\|updateAssigneeLabel" src/vault_ui/static/app.js
 ```
 Expected: declarations + the calls added at the end of `loadTasks` (step 4) and inside `loadVaults` (step 5).
 
@@ -497,15 +497,15 @@ Expected: declarations + the calls added at the end of `loadTasks` (step 4) and 
 
 3. Confirm that Vault and Status selector code is unchanged:
    ```
-   grep -n "vault-selector" src/task_orchestrator/static/index.html
-   grep -n "status-selector" src/task_orchestrator/static/index.html
-   grep -n "toggleVaultDropdown\|toggleStatusDropdown\|loadVaults" src/task_orchestrator/static/app.js
+   grep -n "vault-selector" src/vault_ui/static/index.html
+   grep -n "status-selector" src/vault_ui/static/index.html
+   grep -n "toggleVaultDropdown\|toggleStatusDropdown\|loadVaults" src/vault_ui/static/app.js
    ```
    Each must reference only the existing functions/classes; no rename or removal.
 
 4. Confirm the assignee badge and "+ Assign to me" link are unchanged:
    ```
-   grep -n "assignee-badge\|assign-to-me-link" src/task_orchestrator/static/app.js
+   grep -n "assignee-badge\|assign-to-me-link" src/vault_ui/static/app.js
    ```
    The matched lines must be byte-identical to before this prompt (no class rename, no onclick change).
 

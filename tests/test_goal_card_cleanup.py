@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-APP_JS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "app.js").read_text()
+APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
 
 
 def _slice_function(source: str, fn_name: str) -> str:

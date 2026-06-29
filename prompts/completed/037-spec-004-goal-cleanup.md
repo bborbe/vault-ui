@@ -2,7 +2,7 @@
 status: completed
 spec: [004-goal-session-resolution]
 summary: 'Extended cleanup_stale_sessions to process goals after the task loop with resolve_session_id for non-UUID session IDs, added 5 new goal-specific test cases, updated _run_cleanup to mock list_goals, and added CHANGELOG entry under ## Unreleased.'
-container: task-orchestrator-037-spec-004-goal-cleanup
+container: vault-ui-037-spec-004-goal-cleanup
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-08T11:45:00Z"
 queued: "2026-05-08T11:54:43Z"
@@ -33,8 +33,8 @@ Extend `cleanup_stale_sessions` in `cleanup.py` to process goals after the task 
 Read CLAUDE.md for project conventions.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/cleanup.py` — full file. The goal section is inserted **inside** the per-vault `try` block, immediately after the end of the `for task in tasks_with_session:` loop and **before** the outer `except Exception as e:` for the vault. The "Pass complete" log is OUTSIDE the per-vault loop and is unrelated. Study the existing task loop structure carefully — the goal loop mirrors it with three key differences: (1) non-UUID values are resolved first before clearing; (2) subprocess uses `goal` instead of `task`; (3) the goal section is wrapped in its own inner try/except.
-- `src/task_orchestrator/session_resolver.py` — `is_uuid(value: str) -> bool` and `resolve_session_id(display_name: str, project_dir: Path) -> str | None`. Both are needed in the goal loop.
+- `src/vault_ui/cleanup.py` — full file. The goal section is inserted **inside** the per-vault `try` block, immediately after the end of the `for task in tasks_with_session:` loop and **before** the outer `except Exception as e:` for the vault. The "Pass complete" log is OUTSIDE the per-vault loop and is unrelated. Study the existing task loop structure carefully — the goal loop mirrors it with three key differences: (1) non-UUID values are resolved first before clearing; (2) subprocess uses `goal` instead of `task`; (3) the goal section is wrapped in its own inner try/except.
+- `src/vault_ui/session_resolver.py` — `is_uuid(value: str) -> bool` and `resolve_session_id(display_name: str, project_dir: Path) -> str | None`. Both are needed in the goal loop.
 - `tests/test_cleanup.py` — full file. Study `_make_task`, `_make_config`, `_run_cleanup`, and all existing tests before modifying. You must update `_run_cleanup` to also mock `client.list_goals`.
 
 **Precondition**: Prompt 1 has already added `Goal` to `models.py` and `list_goals`/`set_goal_field`/`clear_goal_field` to `VaultCLIClient`. Read those files as they exist after prompt 1 before writing any code.
@@ -72,28 +72,28 @@ for goal in goals_with_session:
 </context>
 
 <requirements>
-### 1. Update imports in `src/task_orchestrator/cleanup.py`
+### 1. Update imports in `src/vault_ui/cleanup.py`
 
 **a.** Add `Goal` to the models import (needed for type annotation of the goal list variable):
 
 ```python
-from task_orchestrator.api.models import Goal
+from vault_ui.api.models import Goal
 ```
 
-Add this as a new import line after the existing imports (or inline with other `task_orchestrator` imports).
+Add this as a new import line after the existing imports (or inline with other `vault_ui` imports).
 
 **b.** Add `resolve_session_id` to the session_resolver import:
 
 Change:
 ```python
-from task_orchestrator.session_resolver import is_uuid
+from vault_ui.session_resolver import is_uuid
 ```
 to:
 ```python
-from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+from vault_ui.session_resolver import is_uuid, resolve_session_id
 ```
 
-### 2. Add goal processing to `cleanup_stale_sessions` in `src/task_orchestrator/cleanup.py`
+### 2. Add goal processing to `cleanup_stale_sessions` in `src/vault_ui/cleanup.py`
 
 Insert the goal section **inside the per-vault `try:` block**, immediately after the end of the `for task in tasks_with_session:` loop and **before** the outer `except Exception as e:` that logs `"[Cleanup] Exception processing vault %s"`. Anchor by structure (the end of the task loop), not by line number.
 
@@ -311,10 +311,10 @@ async def _run_cleanup_with_goals(
         return proc
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=session_file_exists),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=session_file_exists),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             side_effect=_make_proc,
         ),
     ):
@@ -339,14 +339,14 @@ async def test_goal_display_name_resolved_to_uuid(tmp_path: Path) -> None:
     set_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=set_proc,
         ),
         patch(
-            "task_orchestrator.cleanup.resolve_session_id",
+            "vault_ui.cleanup.resolve_session_id",
             return_value="abcdef12-1234-1234-1234-abcdef123456",
         ),
     ):
@@ -389,14 +389,14 @@ async def test_goal_set_error_path_no_clear() -> None:
     set_proc.communicate = AsyncMock(return_value=(b"", b"goal not found"))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=set_proc,
         ),
         patch(
-            "task_orchestrator.cleanup.resolve_session_id",
+            "vault_ui.cleanup.resolve_session_id",
             return_value="abcdef12-1234-1234-1234-abcdef123456",
         ),
     ):
@@ -423,10 +423,10 @@ async def test_goal_list_failure_does_not_abort_task_pass() -> None:
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=mock_proc,
         ),
     ):
@@ -436,9 +436,9 @@ async def test_goal_list_failure_does_not_abort_task_pass() -> None:
     assert cleared == 1
 ```
 
-**Import addition**: Add `from task_orchestrator.api.models import Goal` at the top of `tests/test_cleanup.py`, alongside the existing `from task_orchestrator.api.models import Task` import. Change that line to:
+**Import addition**: Add `from vault_ui.api.models import Goal` at the top of `tests/test_cleanup.py`, alongside the existing `from vault_ui.api.models import Task` import. Change that line to:
 ```python
-from task_orchestrator.api.models import Goal, Task
+from vault_ui.api.models import Goal, Task
 ```
 
 ### 4. Add CHANGELOG entry in `CHANGELOG.md`

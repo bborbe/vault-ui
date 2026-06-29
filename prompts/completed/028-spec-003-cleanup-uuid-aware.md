@@ -2,7 +2,7 @@
 status: completed
 spec: [003-cleanup-resolve-renamed-sessions]
 summary: Updated cleanup.py to clear non-UUID display-name session IDs immediately, added is_uuid import, updated test default session_id to a real UUID, and added two new test cases.
-container: task-orchestrator-028-spec-003-cleanup-uuid-aware
+container: vault-ui-028-spec-003-cleanup-uuid-aware
 dark-factory-version: v0.57.5
 created: "2026-03-17T00:00:00Z"
 queued: "2026-03-17T13:10:15Z"
@@ -27,16 +27,16 @@ Update `cleanup.py` to clear `claude_session_id` values that are not UUID-format
 Read CLAUDE.md for project conventions.
 
 Read these files before making any changes:
-- `src/task_orchestrator/cleanup.py` — the full cleanup loop. Focus on the per-task loop starting at line 35. The current logic: check for invalid chars → check assignee → check file existence. The new logic inserts a UUID check between "invalid chars" and "assignee".
-- `src/task_orchestrator/session_resolver.py` — the `is_uuid(value: str) -> bool` function created in the prior prompt (spec-003 prompt 1). Import it here.
+- `src/vault_ui/cleanup.py` — the full cleanup loop. Focus on the per-task loop starting at line 35. The current logic: check for invalid chars → check assignee → check file existence. The new logic inserts a UUID check between "invalid chars" and "assignee".
+- `src/vault_ui/session_resolver.py` — the `is_uuid(value: str) -> bool` function created in the prior prompt (spec-003 prompt 1). Import it here.
 - `tests/test_cleanup.py` — all existing tests; they must continue to pass. The test helper `_make_task(session_id=...)` uses `"abc123"` as the default session_id — note this is NOT a UUID, so after this change, existing tests that use the default session_id may need to be updated to use a real UUID to keep testing UUID-based behavior. Read the tests carefully before making changes.
 </context>
 
 <requirements>
-1. In `src/task_orchestrator/cleanup.py`, add an import for `is_uuid`:
+1. In `src/vault_ui/cleanup.py`, add an import for `is_uuid`:
 
 ```python
-from task_orchestrator.session_resolver import is_uuid
+from vault_ui.session_resolver import is_uuid
 ```
 
 2. Inside the per-task loop in `cleanup_stale_sessions`, after the existing "invalid chars" guard and before the `if task.assignee` block, add a non-UUID branch:

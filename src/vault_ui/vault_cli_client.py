@@ -7,7 +7,7 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-from task_orchestrator.api.models import Goal, Task
+from vault_ui.api.models import Goal, Task
 
 logger = logging.getLogger(__name__)
 

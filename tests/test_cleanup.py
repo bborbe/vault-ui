@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from task_orchestrator.api.models import Goal, Task
-from task_orchestrator.cleanup import cleanup_stale_sessions, derive_claude_project_dir
-from task_orchestrator.config import Config, VaultConfig
+from vault_ui.api.models import Goal, Task
+from vault_ui.cleanup import cleanup_stale_sessions, derive_claude_project_dir
+from vault_ui.config import Config, VaultConfig
 
 
 def _make_task(
@@ -72,10 +72,10 @@ async def _run_cleanup(config: Config, tasks: list[Task], session_file_exists: b
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=session_file_exists),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=session_file_exists),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=mock_proc,
         ),
     ):
@@ -214,10 +214,10 @@ async def _run_cleanup_with_goals(
         return proc
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=session_file_exists),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=session_file_exists),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             side_effect=_make_proc,
         ),
     ):
@@ -239,14 +239,14 @@ async def test_goal_display_name_resolved_to_uuid(tmp_path: Path) -> None:
     set_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=set_proc,
         ),
         patch(
-            "task_orchestrator.cleanup.resolve_session_id",
+            "vault_ui.cleanup.resolve_session_id",
             return_value="abcdef12-1234-1234-1234-abcdef123456",
         ),
     ):
@@ -289,14 +289,14 @@ async def test_goal_set_error_path_no_clear() -> None:
     set_proc.communicate = AsyncMock(return_value=(b"", b"goal not found"))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=set_proc,
         ),
         patch(
-            "task_orchestrator.cleanup.resolve_session_id",
+            "vault_ui.cleanup.resolve_session_id",
             return_value="abcdef12-1234-1234-1234-abcdef123456",
         ),
     ):
@@ -323,10 +323,10 @@ async def test_goal_list_failure_does_not_abort_task_pass() -> None:
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        patch("task_orchestrator.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
-            "task_orchestrator.cleanup.asyncio.create_subprocess_exec",
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=mock_proc,
         ),
     ):
@@ -353,8 +353,8 @@ async def test_goal_list_missing_directory_logs_debug_not_error(
     )
 
     with (
-        patch("task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client),
-        caplog.at_level(logging.DEBUG, logger="task_orchestrator.cleanup"),
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        caplog.at_level(logging.DEBUG, logger="vault_ui.cleanup"),
     ):
         cleared = await cleanup_stale_sessions(config)
 

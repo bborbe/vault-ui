@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced vault config discovery with vault-cli subprocess call in load_config(), updated config.yaml/config.yaml.example to slim dict format, removed dead claude_cli field, rewrote test_config.py for new format
-container: task-orchestrator-020-inherit-vault-config-from-vault-cli
+container: vault-ui-020-inherit-vault-config-from-vault-cli
 dark-factory-version: v0.54.0
 created: "2026-03-12T17:00:00Z"
 queued: "2026-03-12T16:59:28Z"
@@ -24,10 +24,10 @@ Replace duplicated vault configuration in task-orch with discovery from `vault-c
 Read CLAUDE.md for project conventions.
 Read these files before making changes:
 
-- `src/task_orchestrator/config.py` — current `VaultConfig` and `Config` dataclasses, `load_config()` function
-- `src/task_orchestrator/factory.py` — how config is used at startup (lifespan, watchers, cache)
-- `src/task_orchestrator/api/tasks.py` — how VaultConfig fields are accessed (vault_path, claude_script, vault_name, vault_cli_path, tasks_folder)
-- `src/task_orchestrator/cleanup.py` — how VaultConfig fields are accessed (vault_path, vault_cli_path, name, tasks_folder)
+- `src/vault_ui/config.py` — current `VaultConfig` and `Config` dataclasses, `load_config()` function
+- `src/vault_ui/factory.py` — how config is used at startup (lifespan, watchers, cache)
+- `src/vault_ui/api/tasks.py` — how VaultConfig fields are accessed (vault_path, claude_script, vault_name, vault_cli_path, tasks_folder)
+- `src/vault_ui/cleanup.py` — how VaultConfig fields are accessed (vault_path, vault_cli_path, name, tasks_folder)
 - `config.yaml` — current config format
 - `config.yaml.example` — example config
 
@@ -88,7 +88,7 @@ Orch-specific fields NOT in vault-cli (remain in task-orch config):
 </context>
 
 <requirements>
-1. Modify `src/task_orchestrator/config.py`:
+1. Modify `src/vault_ui/config.py`:
 
    a. Add a function to discover vaults from vault-cli:
    ```python

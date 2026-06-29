@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Added session_project_dir field to VaultConfig, populated it from vault-cli JSON, and updated all three derive_claude_project_dir call sites to pass the override; added tests for the new behavior.
-container: task-orchestrator-034-use-session-project-dir-in-cleanup
+container: vault-ui-034-use-session-project-dir-in-cleanup
 dark-factory-version: v0.57.5
 created: "2026-03-19T10:52:03Z"
 queued: "2026-03-19T11:03:07Z"
@@ -25,15 +25,15 @@ Fix stale-session cleanup for vaults whose Claude sessions land in a different p
 Read `CLAUDE.md` for project conventions.
 
 Files to read before making changes:
-- `src/task_orchestrator/config.py` — `VaultConfig` dataclass and `load_config` function (especially the `vaults.append(VaultConfig(...))` block around line 109)
-- `src/task_orchestrator/cleanup.py` — `derive_claude_project_dir` function (line 16) and its call site in `cleanup_stale_sessions` (line 34)
-- `src/task_orchestrator/factory.py` — `make_callback` closure in `start_task_watchers` (line 130) where `derive_claude_project_dir` is called
-- `src/task_orchestrator/api/tasks.py` — `set_task_session` endpoint (around line 555) where `derive_claude_project_dir` is called
+- `src/vault_ui/config.py` — `VaultConfig` dataclass and `load_config` function (especially the `vaults.append(VaultConfig(...))` block around line 109)
+- `src/vault_ui/cleanup.py` — `derive_claude_project_dir` function (line 16) and its call site in `cleanup_stale_sessions` (line 34)
+- `src/vault_ui/factory.py` — `make_callback` closure in `start_task_watchers` (line 130) where `derive_claude_project_dir` is called
+- `src/vault_ui/api/tasks.py` — `set_task_session` endpoint (around line 555) where `derive_claude_project_dir` is called
 - `tests/test_cleanup.py` — existing cleanup tests and `_make_config` helper
 </context>
 
 <requirements>
-### 1. Add `session_project_dir` field to `VaultConfig` in `src/task_orchestrator/config.py`
+### 1. Add `session_project_dir` field to `VaultConfig` in `src/vault_ui/config.py`
 
 In the `VaultConfig` dataclass, add a new field after `vault_cli_path`:
 
@@ -66,7 +66,7 @@ class VaultConfig:
     session_project_dir: str = ""  # Override Claude project dir for session file lookup
 ```
 
-### 2. Populate `session_project_dir` from vault-cli JSON in `load_config` in `src/task_orchestrator/config.py`
+### 2. Populate `session_project_dir` from vault-cli JSON in `load_config` in `src/vault_ui/config.py`
 
 In the `load_config` function, find the `VaultConfig(...)` constructor call (around line 109-117). Add `session_project_dir` from the CLI vault JSON:
 
@@ -99,7 +99,7 @@ New:
         )
 ```
 
-### 3. Update `derive_claude_project_dir` in `src/task_orchestrator/cleanup.py`
+### 3. Update `derive_claude_project_dir` in `src/vault_ui/cleanup.py`
 
 Change the function signature to accept an optional `session_project_dir` parameter. When it is non-empty, use it directly instead of deriving from `vault_path`.
 
@@ -125,7 +125,7 @@ def derive_claude_project_dir(vault_path: str, session_project_dir: str = "") ->
     return Path.home() / ".claude" / "projects" / derived
 ```
 
-### 4. Update the call site in `cleanup_stale_sessions` in `src/task_orchestrator/cleanup.py`
+### 4. Update the call site in `cleanup_stale_sessions` in `src/vault_ui/cleanup.py`
 
 In the `cleanup_stale_sessions` function, find the line that calls `derive_claude_project_dir` (line 34):
 
@@ -139,7 +139,7 @@ New:
             project_dir = derive_claude_project_dir(vault.vault_path, vault.session_project_dir)
 ```
 
-### 5. Update the call site in `start_task_watchers` in `src/task_orchestrator/factory.py`
+### 5. Update the call site in `start_task_watchers` in `src/vault_ui/factory.py`
 
 In the `make_callback` closure inside `start_task_watchers`, find the `derive_claude_project_dir` call (line 130):
 
@@ -153,7 +153,7 @@ New:
                 project_dir = derive_claude_project_dir(vault_cfg.vault_path, vault_cfg.session_project_dir)
 ```
 
-### 6. Update the call site in `set_task_session` endpoint in `src/task_orchestrator/api/tasks.py`
+### 6. Update the call site in `set_task_session` endpoint in `src/vault_ui/api/tasks.py`
 
 Find the `derive_claude_project_dir` call (around line 555):
 
@@ -205,7 +205,7 @@ def _make_config(current_user: str = "alice", session_project_dir: str = "") -> 
 b. Add a unit test for `derive_claude_project_dir` with and without `session_project_dir`:
 
 ```python
-from task_orchestrator.cleanup import derive_claude_project_dir
+from vault_ui.cleanup import derive_claude_project_dir
 
 def test_derive_claude_project_dir_default() -> None:
     """Without session_project_dir, derives from vault_path."""

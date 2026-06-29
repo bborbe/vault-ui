@@ -1,4 +1,4 @@
-"""TaskOrchestrator main application."""
+"""vault-ui main application."""
 
 import logging
 import os
@@ -6,9 +6,9 @@ import sys
 
 import uvicorn
 
-from task_orchestrator.api.tasks import set_connection_manager as tasks_set_connection_manager
-from task_orchestrator.api.websocket import set_connection_manager
-from task_orchestrator.factory import (
+from vault_ui.api.tasks import set_connection_manager as tasks_set_connection_manager
+from vault_ui.api.websocket import set_connection_manager
+from vault_ui.factory import (
     create_app,
     get_config,
     get_connection_manager,

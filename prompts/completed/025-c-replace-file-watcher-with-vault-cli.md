@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced watchdog TaskWatcher with VaultCLIWatcher subprocess wrapper around vault-cli task watch, removed watchdog dependency and obsidian/ package
-container: task-orchestrator-025-c-replace-file-watcher-with-vault-cli
+container: vault-ui-025-c-replace-file-watcher-with-vault-cli
 dark-factory-version: v0.54.0
 created: "2026-03-12T22:15:00Z"
 queued: "2026-03-12T22:04:39Z"
@@ -18,22 +18,22 @@ completed: "2026-03-12T22:30:49Z"
 </summary>
 
 <objective>
-Replace the Python watchdog-based file watcher with a vault-cli task watch subprocess, so task-orchestrator does not directly watch vault filesystem paths.
+Replace the Python watchdog-based file watcher with a vault-cli task watch subprocess, so vault-ui does not directly watch vault filesystem paths.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/obsidian/task_watcher.py` — find `TaskWatcher` class that uses watchdog to watch folders and call `on_change` callbacks.
-Read `src/task_orchestrator/factory.py` — find `start_task_watchers()` (~line 74) and `stop_task_watchers()` (~line 132). Note:
+Read `src/vault_ui/obsidian/task_watcher.py` — find `TaskWatcher` class that uses watchdog to watch folders and call `on_change` callbacks.
+Read `src/vault_ui/factory.py` — find `start_task_watchers()` (~line 74) and `stop_task_watchers()` (~line 132). Note:
   - `start_task_watchers()` is a **sync** function that grabs the running event loop via `asyncio.get_running_loop()` and uses `asyncio.run_coroutine_threadsafe` for async callbacks.
   - The callback signature is `Callable[[str, str, str], None]` with arguments `(event_type, item_id, vault_name)` — three arguments, not two.
   - Currently creates one `TaskWatcher` per folder per vault. The replacement uses one `VaultCLIWatcher` per vault.
-Read `src/task_orchestrator/status_cache.py` — find `invalidate(vault_name, item_id)` method that watchers trigger.
-Read `src/task_orchestrator/websocket/connection_manager.py` — find `broadcast(message)` coroutine triggered on file changes.
+Read `src/vault_ui/status_cache.py` — find `invalidate(vault_name, item_id)` method that watchers trigger.
+Read `src/vault_ui/websocket/connection_manager.py` — find `broadcast(message)` coroutine triggered on file changes.
 </context>
 
 <requirements>
-1. Create `src/task_orchestrator/vault_cli_watcher.py` with a class that manages a `vault-cli task watch` subprocess:
+1. Create `src/vault_ui/vault_cli_watcher.py` with a class that manages a `vault-cli task watch` subprocess:
 
 ```python
 class VaultCLIWatcher:
@@ -75,11 +75,11 @@ class VaultCLIWatcher:
    - Schedule each watcher's async `stop()` via `asyncio.run_coroutine_threadsafe` or equivalent
    - Remove the per-folder watcher loop — now one watcher per vault
 
-5. Delete `src/task_orchestrator/obsidian/task_watcher.py`.
+5. Delete `src/vault_ui/obsidian/task_watcher.py`.
 
 6. Remove `watchdog` from `pyproject.toml` dependencies.
 
-7. Delete `src/task_orchestrator/obsidian/` directory if it is empty after removing `task_watcher.py`. Check whether `task_reader.py` still exists (it may have been removed by the prior prompt `b-replace-task-reader-with-vault-cli.md`). If `task_reader.py` is already gone and `__init__.py` is the only remaining file, delete the entire `obsidian/` directory. If `task_reader.py` still exists (prior prompt not yet applied), leave the directory and only delete `task_watcher.py`.
+7. Delete `src/vault_ui/obsidian/` directory if it is empty after removing `task_watcher.py`. Check whether `task_reader.py` still exists (it may have been removed by the prior prompt `b-replace-task-reader-with-vault-cli.md`). If `task_reader.py` is already gone and `__init__.py` is the only remaining file, delete the entire `obsidian/` directory. If `task_reader.py` still exists (prior prompt not yet applied), leave the directory and only delete `task_watcher.py`.
 
 8. Update tests to mock the subprocess instead of watchdog observers.
 </requirements>

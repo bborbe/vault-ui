@@ -2,7 +2,7 @@
 status: completed
 spec: [006-goal-filter-on-tasks-endpoint]
 summary: Added goals field to Task dataclass and TaskResponse, parsed goals frontmatter with wiki-link bracket stripping in _parse_task, threaded goals through _task_to_response, added goal query parameter to list_tasks with _flatten_filter reuse and OR-semantics filtering, updated _make_task helper, added 11 new tests covering parser shapes and all query forms, and bumped CHANGELOG to v0.28.0.
-container: task-orchestrator-046-spec-006-goal-filter-backend
+container: vault-ui-046-spec-006-goal-filter-backend
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T21:38:00Z"
 queued: "2026-05-10T21:49:50Z"
@@ -34,9 +34,9 @@ Read CLAUDE.md for project conventions.
 Read `test-pyramid-triggers.md` in `~/.claude/plugins/marketplaces/coding/docs/` for which test types to write for each code change.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/api/models.py` — the `Task` dataclass and `TaskResponse` Pydantic model. Note `blocked_by: list[str] | None` at the end of `Task` — `goals` mirrors that shape. `TaskResponse` has `blocked_by: list[str] | None` near the bottom; `goals` goes after `recently_completed`.
-- `src/task_orchestrator/vault_cli_client.py` — the `_parse_task` method (lines 185–231). Note how `blocked_by` is parsed: the field is read from `data.get("blocked_by")`, cast to `list[str]`, and stored without bracket-stripping. The `goals` field is similar but adds bracket-stripping at parse time.
-- `src/task_orchestrator/api/tasks.py` — the `list_tasks` function and `_task_to_response` helper. Note `_flatten_filter` (line 142) and `_flatten_assignee_filter` (line 150) already exist; `_flatten_filter` must be reused unchanged for `goal`. The `assignee` filter block (lines 210–218) shows the pattern for in-memory post-fetch filtering.
+- `src/vault_ui/api/models.py` — the `Task` dataclass and `TaskResponse` Pydantic model. Note `blocked_by: list[str] | None` at the end of `Task` — `goals` mirrors that shape. `TaskResponse` has `blocked_by: list[str] | None` near the bottom; `goals` goes after `recently_completed`.
+- `src/vault_ui/vault_cli_client.py` — the `_parse_task` method (lines 185–231). Note how `blocked_by` is parsed: the field is read from `data.get("blocked_by")`, cast to `list[str]`, and stored without bracket-stripping. The `goals` field is similar but adds bracket-stripping at parse time.
+- `src/vault_ui/api/tasks.py` — the `list_tasks` function and `_task_to_response` helper. Note `_flatten_filter` (line 142) and `_flatten_assignee_filter` (line 150) already exist; `_flatten_filter` must be reused unchanged for `goal`. The `assignee` filter block (lines 210–218) shows the pattern for in-memory post-fetch filtering.
 - `tests/test_api.py` — all existing tests. Study `_make_task` (line 18), `_make_vault_client` (line 66), `test_client` fixture (line 99), and the recent filter tests (`test_list_tasks_status_*`, `test_list_tasks_assignee_*`) before adding new test cases.
 
 **Relevant assumptions (verified):**
@@ -49,7 +49,7 @@ Read these files in full before making any changes:
 </context>
 
 <requirements>
-### 1. Add `goals` field to the `Task` dataclass in `src/task_orchestrator/api/models.py`
+### 1. Add `goals` field to the `Task` dataclass in `src/vault_ui/api/models.py`
 
 Append a new field at the very end of the `Task` dataclass, after `recently_completed`:
 
@@ -65,7 +65,7 @@ recently_completed: bool = False  # True if status=completed and modified within
 goals: list[str] | None = None  # From frontmatter: list of goal names with [[ ]] brackets stripped
 ```
 
-### 2. Add `goals` field to `TaskResponse` in `src/task_orchestrator/api/models.py`
+### 2. Add `goals` field to `TaskResponse` in `src/vault_ui/api/models.py`
 
 Add after the `recently_completed` field in `TaskResponse`:
 
@@ -81,7 +81,7 @@ vault: str  # Vault name this task belongs to
 goals: list[str] | None = None
 ```
 
-### 3. Parse `goals` frontmatter in `_parse_task` in `src/task_orchestrator/vault_cli_client.py`
+### 3. Parse `goals` frontmatter in `_parse_task` in `src/vault_ui/vault_cli_client.py`
 
 Insert the following block in `_parse_task` immediately before the `task_id = str(...)` line (line 211 area). Place it after the `blocked_by` parsing block:
 
@@ -131,7 +131,7 @@ return Task(
 )
 ```
 
-### 4. Thread `goals` through `_task_to_response` in `src/task_orchestrator/api/tasks.py`
+### 4. Thread `goals` through `_task_to_response` in `src/vault_ui/api/tasks.py`
 
 In `_task_to_response` (line 689), add `goals=task.goals` to the `TaskResponse(...)` constructor call. Place it after `blocked_by=task.blocked_by`:
 
@@ -162,7 +162,7 @@ return TaskResponse(
 )
 ```
 
-### 5. Add `goal` parameter to `list_tasks` in `src/task_orchestrator/api/tasks.py`
+### 5. Add `goal` parameter to `list_tasks` in `src/vault_ui/api/tasks.py`
 
 **a. Extend the function signature** — add `goal` after `assignee`:
 
@@ -238,7 +238,7 @@ Add `goals=goals` to the `Task(...)` constructor call inside `_make_task`.
 
 ### 7. Add tests to `tests/test_api.py`
 
-Add `from task_orchestrator.vault_cli_client import VaultCLIClient` to the module-level import block at the top of `tests/test_api.py` (alongside the existing `from task_orchestrator.api.models import Task` at ~line 13). Then add the following test functions at the end of the file:
+Add `from vault_ui.vault_cli_client import VaultCLIClient` to the module-level import block at the top of `tests/test_api.py` (alongside the existing `from vault_ui.api.models import Task` at ~line 13). Then add the following test functions at the end of the file:
 
 **Parser — goals key missing:**
 ```python
@@ -444,7 +444,7 @@ In `CHANGELOG.md`, project convention is versioned headings (no `## Unreleased`)
 <constraints>
 - Do NOT commit — dark-factory handles git
 - The existing four filters (`vault`, `status`, `phase`, `assignee`) must continue to work unchanged — all existing tests must pass without modification
-- The `_flatten_filter` helper at `src/task_orchestrator/api/tasks.py:142` must be reused for the `goal` parameter — do NOT write a new comma-flatten helper
+- The `_flatten_filter` helper at `src/vault_ui/api/tasks.py:142` must be reused for the `goal` parameter — do NOT write a new comma-flatten helper
 - The `goal` query parameter name is singular (matching `vault`, `status`, `phase`, `assignee`), even though the frontmatter field and model field are plural (`goals`) — this asymmetry is intentional
 - Bracket stripping happens only in `_parse_task`; the filter in `list_tasks` uses plain string equality against already-stripped goal names
 - Empty `goals: []` in frontmatter must serialise as `null` on the wire (not `[]`) — ensured by the `and raw_goals` guard in the parsing block

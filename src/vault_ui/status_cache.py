@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from task_orchestrator.hierarchy import discover_hierarchy_folders_for_vault
+from vault_ui.hierarchy import discover_hierarchy_folders_for_vault
 
 logger = logging.getLogger(__name__)
 

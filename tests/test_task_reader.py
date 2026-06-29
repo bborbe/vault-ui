@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from task_orchestrator.vault_cli_client import VaultCLIClient
+from vault_ui.vault_cli_client import VaultCLIClient
 
 
 def _make_proc(returncode: int, stdout: bytes, stderr: bytes = b"") -> AsyncMock:

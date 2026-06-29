@@ -2,7 +2,7 @@
 status: completed
 spec: [004-goal-session-resolution]
 summary: Added Goal dataclass to models.py and extended VaultCLIClient with list_goals, set_goal_field, clear_goal_field methods plus _parse_goal, with 8 new tests covering all paths.
-container: task-orchestrator-036-spec-004-goal-client
+container: vault-ui-036-spec-004-goal-client
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-08T11:45:00Z"
 queued: "2026-05-08T11:54:43Z"
@@ -32,15 +32,15 @@ Add a `Goal` dataclass to `models.py` and extend `VaultCLIClient` with goal-spec
 Read CLAUDE.md for project conventions.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/api/models.py` — contains `Task` dataclass; add `Goal` after it
-- `src/task_orchestrator/vault_cli_client.py` — full file; mirror the task methods for goals
+- `src/vault_ui/api/models.py` — contains `Task` dataclass; add `Goal` after it
+- `src/vault_ui/vault_cli_client.py` — full file; mirror the task methods for goals
 - `tests/test_task_reader.py` — existing VaultCLIClient tests; add goal tests following the same pattern
 
 The `vault-cli goal` subcommand is already present in vault-cli (per `vault-cli goal --help`). Its JSON output follows the same conventions as `vault-cli task`: the array contains objects with `name` (or `id`), `title`, `claude_session_id`, and `assignee` fields. The `name` field is the filename stem (same as `task`).
 </context>
 
 <requirements>
-### 1. Add `Goal` dataclass to `src/task_orchestrator/api/models.py`
+### 1. Add `Goal` dataclass to `src/vault_ui/api/models.py`
 
 Add the following after the closing of the `Task` dataclass and before `TaskResponse`:
 
@@ -57,17 +57,17 @@ class Goal:
 
 No other changes to `models.py`.
 
-### 2. Extend `src/task_orchestrator/vault_cli_client.py`
+### 2. Extend `src/vault_ui/vault_cli_client.py`
 
 **a. Update the import at the top of the file:**
 
 Change:
 ```python
-from task_orchestrator.api.models import Task
+from vault_ui.api.models import Task
 ```
 to:
 ```python
-from task_orchestrator.api.models import Goal, Task
+from vault_ui.api.models import Goal, Task
 ```
 
 **b. Add `_parse_goal` private method** (add after `_parse_task`):
@@ -271,7 +271,7 @@ async def test_clear_goal_field_error() -> None:
 - `_parse_goal` must normalize empty strings to `None` via `or None` for `claude_session_id` and `assignee`
 - `_parse_goal` derives `goal_id` from `data.get("name", data.get("id", ""))` — same fallback as `_parse_task`
 - Do NOT add a `completed_date` field or any task-specific fields to `Goal`
-- The `Goal` import in `vault_cli_client.py` belongs at the top-level import, not inline — extend the existing `from task_orchestrator.api.models import Task` line
+- The `Goal` import in `vault_cli_client.py` belongs at the top-level import, not inline — extend the existing `from vault_ui.api.models import Task` line
 </constraints>
 
 <verification>

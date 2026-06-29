@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Extracted _build_resume_command helper that prefixes cd <session_project_dir> when set, replaced both inline resume command builds, and added 3 unit tests
-container: task-orchestrator-035-fix-resume-command-cd-prefix
+container: vault-ui-035-fix-resume-command-cd-prefix
 dark-factory-version: v0.57.5
 created: "2026-03-19T12:00:00Z"
 queued: "2026-03-19T11:17:28Z"
@@ -25,13 +25,13 @@ Extract a shared helper that builds the resume command string and prefixes it wi
 Read `CLAUDE.md` for project conventions.
 
 Read these files before making changes:
-- `src/task_orchestrator/api/tasks.py` — contains both resume-command call sites
-- `src/task_orchestrator/config.py` — defines `VaultConfig` with `session_project_dir` field
+- `src/vault_ui/api/tasks.py` — contains both resume-command call sites
+- `src/vault_ui/config.py` — defines `VaultConfig` with `session_project_dir` field
 - `CHANGELOG.md` — prepend new entry
 </context>
 
 <requirements>
-1. Add a module-level helper function `_build_resume_command` in `src/task_orchestrator/api/tasks.py`:
+1. Add a module-level helper function `_build_resume_command` in `src/vault_ui/api/tasks.py`:
 
 ```python
 def _build_resume_command(vault_config: VaultConfig, session_id: str) -> str:

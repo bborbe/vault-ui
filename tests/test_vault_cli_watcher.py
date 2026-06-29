@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from task_orchestrator.vault_cli_watcher import VaultCLIWatcher
+from vault_ui.vault_cli_watcher import VaultCLIWatcher
 
 
 def _make_watcher(on_change=None):

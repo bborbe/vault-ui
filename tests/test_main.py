@@ -1,10 +1,10 @@
-"""Tests for src/task_orchestrator/__main__.py."""
+"""Tests for src/vault_ui/__main__.py."""
 
 import logging
 
 import pytest
 
-from task_orchestrator.__main__ import _parse_log_level
+from vault_ui.__main__ import _parse_log_level
 
 
 def test_log_level_default_info() -> None:

@@ -16,7 +16,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from task_orchestrator.api.models import (
+from vault_ui.api.models import (
     AssigneesResponse,
     Goal,
     GoalResponse,
@@ -24,18 +24,18 @@ from task_orchestrator.api.models import (
     Task,
     TaskResponse,
 )
-from task_orchestrator.cleanup import derive_claude_project_dir
-from task_orchestrator.config import VaultConfig
-from task_orchestrator.factory import (
+from vault_ui.cleanup import derive_claude_project_dir
+from vault_ui.config import VaultConfig
+from vault_ui.factory import (
     get_config,
     get_status_cache,
     get_vault_cli_client_for_vault,
     get_vault_config,
 )
-from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+from vault_ui.session_resolver import is_uuid, resolve_session_id
 
 if TYPE_CHECKING:
-    from task_orchestrator.websocket.connection_manager import ConnectionManager
+    from vault_ui.websocket.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -527,7 +527,7 @@ def _goal_to_response(goal: Goal, vault_config: VaultConfig) -> GoalResponse:
     # standard "23 Goals" suffix; spec 013 keeps the existing
     # folder-naming convention — the goals folder name is whatever the
     # user has in their vault (e.g. "23 Goals", "37 Goals").
-    from task_orchestrator.hierarchy import discover_hierarchy_folders
+    from vault_ui.hierarchy import discover_hierarchy_folders
 
     vault_root = Path(vault_config.vault_path)
     goals_folders = [f for f in discover_hierarchy_folders(vault_root) if f.name.endswith("Goals")]

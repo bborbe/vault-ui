@@ -2,7 +2,7 @@
 status: completed
 spec: [012-add-log-level-env-var-and-stream-vault-cli-subprocess]
 summary: Added LOG_LEVEL env var parsing to __main__.py and streaming refactor of start_vault_cli_session in api/tasks.py, with tests in tests/test_main.py and tests/test_api.py, docs in docs/launchd-service.md, and CHANGELOG entry.
-execution_id: task-orchestrator-observability-exec-059-spec-012-log-level-and-stream-vault-cli-subprocess
+execution_id: vault-ui-observability-exec-059-spec-012-log-level-and-stream-vault-cli-subprocess
 dark-factory-version: v0.183.0
 created: "2026-06-26T14:00:00Z"
 queued: "2026-06-26T13:46:45Z"
@@ -21,7 +21,7 @@ completed: "2026-06-26T13:55:06Z"
 </summary>
 
 <objective>
-Land two diagnostics in task-orchestrator: (1) a `LOG_LEVEL` env var read at startup that drives both `logging.basicConfig(level=...)` and `uvicorn.run(..., log_level=...)`, defaulting to `INFO` with byte-identical pre-spec output when unset; and (2) a streaming refactor of `start_vault_cli_session` in `src/task_orchestrator/api/tasks.py` so subprocess stdout/stderr are tee'd to the logger line-by-line at DEBUG while still being accumulated for the final `json.loads` parse. The 14 other `communicate()` call sites stay untouched.
+Land two diagnostics in vault-ui: (1) a `LOG_LEVEL` env var read at startup that drives both `logging.basicConfig(level=...)` and `uvicorn.run(..., log_level=...)`, defaulting to `INFO` with byte-identical pre-spec output when unset; and (2) a streaming refactor of `start_vault_cli_session` in `src/vault_ui/api/tasks.py` so subprocess stdout/stderr are tee'd to the logger line-by-line at DEBUG while still being accumulated for the final `json.loads` parse. The 14 other `communicate()` call sites stay untouched.
 </objective>
 
 <context>
@@ -35,16 +35,16 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 Read the spec at `specs/in-progress/012-add-log-level-env-var-and-stream-vault-cli-subprocess.md` — source of truth for behaviour, constraints, failure modes, and acceptance criteria. The Failure Modes table is load-bearing: every row maps to a requirement step below.
 
 Read these source files in full before editing:
-- `src/task_orchestrator/__main__.py` — entry point. `main()` body is short. Two hard-coded levels today: `logging.basicConfig(level=logging.INFO, ...)` at lines 23–27 and `uvicorn.run(..., log_level="info")` at line 41. The module-level `app = create_app()` at line 17 must stay (it backs `make watch` / `uvicorn --reload`).
-- `src/task_orchestrator/api/tasks.py` — the only file whose `start_vault_cli_session` (lines 71–96) needs the streaming refactor. Note: there are TWO other `await proc.communicate()` calls in this same file — `execute_slash_command` fast path around line 533 and `update_task_phase` around lines 667 and 686. Those MUST stay untouched (spec Constraint + Non-goal: only `start_vault_cli_session` streams).
-- `src/task_orchestrator/vault_cli_client.py` — list it but DO NOT modify. The 14-ish short-running `communicate()` call sites here are explicitly out-of-scope (spec Non-goal #1, Acceptance Criterion `git diff` line).
-- `src/task_orchestrator/cleanup.py` — list it but DO NOT modify (same Non-goal).
+- `src/vault_ui/__main__.py` — entry point. `main()` body is short. Two hard-coded levels today: `logging.basicConfig(level=logging.INFO, ...)` at lines 23–27 and `uvicorn.run(..., log_level="info")` at line 41. The module-level `app = create_app()` at line 17 must stay (it backs `make watch` / `uvicorn --reload`).
+- `src/vault_ui/api/tasks.py` — the only file whose `start_vault_cli_session` (lines 71–96) needs the streaming refactor. Note: there are TWO other `await proc.communicate()` calls in this same file — `execute_slash_command` fast path around line 533 and `update_task_phase` around lines 667 and 686. Those MUST stay untouched (spec Constraint + Non-goal: only `start_vault_cli_session` streams).
+- `src/vault_ui/vault_cli_client.py` — list it but DO NOT modify. The 14-ish short-running `communicate()` call sites here are explicitly out-of-scope (spec Non-goal #1, Acceptance Criterion `git diff` line).
+- `src/vault_ui/cleanup.py` — list it but DO NOT modify (same Non-goal).
 
 Read these test files in full before adding tests:
 - `tests/test_api.py` — particularly `test_run_task_endpoint_success` (around line 164), the `mock_vault_client` fixture (line 99), and the `test_client` fixture (line 105). The streaming test must follow the `MagicMock` + `AsyncMock` + `patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc))` pattern these use. `_make_task` (line 21) and `_make_sample_task` (line 60) give pre-built tasks; the sample task's id/title is `"Test Task"`.
 - `tests/conftest.py` — shared fixtures (`tmp_vault`, `sample_task_file`). The new tests do not need these but knowing they exist prevents accidental fixture duplication.
 
-NOTE on the spec's evidence paths: the spec's Acceptance Criteria reference `tests/api/test_tasks.py` (mirroring the source layout `src/task_orchestrator/api/tasks.py`). That directory does NOT exist in this project — all API tests live in `tests/test_api.py`. Place the streaming test in `tests/test_api.py` next to `test_run_task_endpoint_success` (around line 164). The spec uses `pytest -k <name>` selectors so evidence still resolves cleanly when run as `uv run pytest tests/test_api.py -k test_start_vault_cli_session_streams_output -v`.
+NOTE on the spec's evidence paths: the spec's Acceptance Criteria reference `tests/api/test_tasks.py` (mirroring the source layout `src/vault_ui/api/tasks.py`). That directory does NOT exist in this project — all API tests live in `tests/test_api.py`. Place the streaming test in `tests/test_api.py` next to `test_run_task_endpoint_success` (around line 164). The spec uses `pytest -k <name>` selectors so evidence still resolves cleanly when run as `uv run pytest tests/test_api.py -k test_start_vault_cli_session_streams_output -v`.
 
 The spec's Acceptance Criteria reference `tests/test_main.py` for the LOG_LEVEL tests. That file does NOT exist yet — create it. Put the LOG_LEVEL parsing tests there (they test a `__main__.py` helper).
 
@@ -55,7 +55,7 @@ Read `docs/launchd-service.md` in full — the new "Log Verbosity" section will 
 
 <requirements>
 
-### 1. Add LOG_LEVEL parsing helper to `src/task_orchestrator/__main__.py`
+### 1. Add LOG_LEVEL parsing helper to `src/vault_ui/__main__.py`
 
 Add `import os` at the top of the file alongside the existing stdlib imports.
 
@@ -131,7 +131,7 @@ Requirements honoured:
 - Same parsed level drives BOTH Python's root logger AND uvicorn (Desired Behaviour 2). Uvicorn requires the lowercase string form (`"debug"` / `"info"` / `"warning"` / `"error"`), so the helper returns it pre-lowercased.
 - `getattr(logging, "DEBUG")` is a safe attribute lookup — only used for names already validated against `_VALID_LOG_LEVELS`.
 
-### 2. Refactor `start_vault_cli_session` in `src/task_orchestrator/api/tasks.py` to stream stdout/stderr
+### 2. Refactor `start_vault_cli_session` in `src/vault_ui/api/tasks.py` to stream stdout/stderr
 
 The function lives at lines 71–96 today. Replace its body with the streaming implementation below. Keep the signature, docstring purpose, return type, and the final `json.loads` + `session_id` validation behaviour unchanged.
 
@@ -256,13 +256,13 @@ DO NOT touch `execute_slash_command` (lines 473–576) or `update_task_phase` (l
 Create `tests/test_main.py` with:
 
 ```python
-"""Tests for src/task_orchestrator/__main__.py."""
+"""Tests for src/vault_ui/__main__.py."""
 
 import logging
 
 import pytest
 
-from task_orchestrator.__main__ import _parse_log_level
+from vault_ui.__main__ import _parse_log_level
 
 
 def test_log_level_default_info() -> None:
@@ -339,8 +339,8 @@ async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureF
           would emit all records back-to-back at process exit with sub-millisecond
           gaps between them.
     """
-    from task_orchestrator.api.tasks import start_vault_cli_session
-    from task_orchestrator.config import VaultConfig
+    from vault_ui.api.tasks import start_vault_cli_session
+    from vault_ui.config import VaultConfig
 
     vault_config = VaultConfig(
         name="TestVault",
@@ -378,7 +378,7 @@ async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureF
     fake_proc.stderr = fake_stderr
     fake_proc.wait = AsyncMock(return_value=0)
 
-    caplog.set_level(logging.DEBUG, logger="task_orchestrator.api.tasks")
+    caplog.set_level(logging.DEBUG, logger="vault_ui.api.tasks")
 
     with patch(
         "asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)
@@ -420,7 +420,7 @@ Insert a new section between section "## 4. Upgrade flow" (ends at line 113 toda
 ```markdown
 ## 5. Log verbosity
 
-task-orchestrator reads `LOG_LEVEL` from the environment at startup. Valid values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`. Unset → `INFO` (default; same as before this knob existed). Invalid → falls back to `INFO` and logs a one-line WARN at startup.
+vault-ui reads `LOG_LEVEL` from the environment at startup. Valid values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`. Unset → `INFO` (default; same as before this knob existed). Invalid → falls back to `INFO` and logs a one-line WARN at startup.
 
 The same level drives both Python's root logger and uvicorn's logger — bumping to `DEBUG` surfaces router internals, every HTTP request, AND the per-line streaming output of the long-running `vault-cli task work-on` subprocess (so you can watch the headless claude's tool calls arrive live instead of waiting 60–180s for the buffered exit).
 
@@ -444,16 +444,16 @@ Apply the plist edit by restarting the service (section 2).
 
 ```bash
 launchctl setenv LOG_LEVEL DEBUG
-launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 # ... investigate ...
 launchctl unsetenv LOG_LEVEL
-launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 ```
 
 Verify the level took effect:
 
 ```bash
-tail -f /tmp/task-orchestrator.log
+tail -f /tmp/vault-ui.log
 # At DEBUG you should see per-request lines and "vault-cli stdout [<task_id>]: ..." lines while a Start is in flight.
 ```
 ```
@@ -476,17 +476,17 @@ The acceptance criterion `awk '/^## Unreleased/,/^## v/' CHANGELOG.md | grep -ni
 
 Confirm by `grep`/`git diff` that ALL of the following hold — these are explicit Acceptance Criteria from the spec:
 
-- `git diff origin/master...HEAD -- src/task_orchestrator/vault_cli_client.py` produces empty output (no edits there).
-- `git diff origin/master...HEAD -- src/task_orchestrator/cleanup.py` produces empty output (no edits there).
-- In `src/task_orchestrator/api/tasks.py`, exactly ONE function body was rewritten (`start_vault_cli_session`); the function `_drain_stream` was added. `execute_slash_command` and `update_task_phase` still call `await proc.communicate()` unchanged. Confirm with `grep -n "await proc.communicate" src/task_orchestrator/api/tasks.py` — must return at least 3 occurrences (1 in `execute_slash_command`, 2 in `update_task_phase`) and must NOT include any line inside `start_vault_cli_session`.
-- `_parse_log_level` lives at module scope in `__main__.py` so the test can import it via `from task_orchestrator.__main__ import _parse_log_level`.
+- `git diff origin/master...HEAD -- src/vault_ui/vault_cli_client.py` produces empty output (no edits there).
+- `git diff origin/master...HEAD -- src/vault_ui/cleanup.py` produces empty output (no edits there).
+- In `src/vault_ui/api/tasks.py`, exactly ONE function body was rewritten (`start_vault_cli_session`); the function `_drain_stream` was added. `execute_slash_command` and `update_task_phase` still call `await proc.communicate()` unchanged. Confirm with `grep -n "await proc.communicate" src/vault_ui/api/tasks.py` — must return at least 3 occurrences (1 in `execute_slash_command`, 2 in `update_task_phase`) and must NOT include any line inside `start_vault_cli_session`.
+- `_parse_log_level` lives at module scope in `__main__.py` so the test can import it via `from vault_ui.__main__ import _parse_log_level`.
 
 </requirements>
 
 <constraints>
 - Must not change the public HTTP API shape (`SessionResponse`, endpoint paths, status codes).
 - Must not change the JSON-parse semantics at end of `start_vault_cli_session` — captured stdout bytes round-trip through the new accumulator to `json.loads` byte-for-byte for valid UTF-8 input.
-- Must not change `src/task_orchestrator/vault_cli_client.py` or `src/task_orchestrator/cleanup.py`. Streaming is opt-in per call site, applied only to `start_vault_cli_session`. The `git diff` against master for those two files MUST be empty.
+- Must not change `src/vault_ui/vault_cli_client.py` or `src/vault_ui/cleanup.py`. Streaming is opt-in per call site, applied only to `start_vault_cli_session`. The `git diff` against master for those two files MUST be empty.
 - Must not introduce a third-party logging library (stick with stdlib `logging`).
 - Must not regress any existing test in `tests/`.
 - Default behaviour (no `LOG_LEVEL` env var) must be byte-identical to today's logs at INFO level — same line format, same content.
@@ -504,10 +504,10 @@ Additionally, confirm the spec-level acceptance evidence resolves:
 uv run pytest tests/test_main.py -k test_log_level_default_info -v
 uv run pytest tests/test_main.py -k test_log_level -v
 uv run pytest tests/test_api.py -k test_start_vault_cli_session_streams_output -v
-git diff origin/master...HEAD -- src/task_orchestrator/vault_cli_client.py   # empty
-git diff origin/master...HEAD -- src/task_orchestrator/cleanup.py            # empty
+git diff origin/master...HEAD -- src/vault_ui/vault_cli_client.py   # empty
+git diff origin/master...HEAD -- src/vault_ui/cleanup.py            # empty
 grep -n "LOG_LEVEL" docs/launchd-service.md                                  # >= 1 line
 awk '/^## Unreleased/,/^## v/' CHANGELOG.md | grep -niE 'LOG_LEVEL|streaming.*subprocess|debug.*logging' | head -1   # >= 1 line
-grep -cE 'await (proc|status_proc)\.communicate' src/task_orchestrator/api/tasks.py  # == 3 (execute_slash_command + update_task_phase x2). start_vault_cli_session must NOT match.
+grep -cE 'await (proc|status_proc)\.communicate' src/vault_ui/api/tasks.py  # == 3 (execute_slash_command + update_task_phase x2). start_vault_cli_session must NOT match.
 ```
 </verification>

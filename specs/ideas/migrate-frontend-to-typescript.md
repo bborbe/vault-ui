@@ -79,7 +79,7 @@ After this work, the frontend source is TypeScript with strict typing, compiled 
 | `make watch` foreground process is killed but background process keeps running | Both processes must terminate together on Ctrl-C; spec failure if not | Implementation must trap signals or use a wrapper; verify during acceptance |
 | FastAPI serves `.map` with wrong content type | DevTools fails to load source map silently or with a console warning; functionality unaffected | Adjust static-files mount; covered by acceptance criterion |
 | esbuild or typescript upgrade introduces a breaking change | Lockfile pins versions; upgrade is an explicit operator action; failure surfaces in `make js-check` / `make js-build` | Operator pins or updates as a separate change |
-| Operator forgets to run the build before opening the browser | `make run` and `make watch` invoke the build, so this should not happen; bare `uv run task-orchestrator` would serve a stale or missing bundle | `make run` is the documented entry point |
+| Operator forgets to run the build before opening the browser | `make run` and `make watch` invoke the build, so this should not happen; bare `uv run vault-ui` would serve a stale or missing bundle | `make run` is the documented entry point |
 | Bundled output not present in a fresh checkout | First `make` target that needs the bundle runs the build; no developer-visible breakage | None — this is the expected flow |
 
 ## Security / Abuse Cases
@@ -91,7 +91,7 @@ After this work, the frontend source is TypeScript with strict typing, compiled 
 
 ## Acceptance Criteria
 
-- [ ] `make js-build` produces `src/task_orchestrator/static/dist/app.js` and `src/task_orchestrator/static/dist/app.js.map`.
+- [ ] `make js-build` produces `src/vault_ui/static/dist/app.js` and `src/vault_ui/static/dist/app.js.map`.
 - [ ] `make js-check` exits 0 against the converted source.
 - [ ] `make precommit` runs both `js-check` and `js-build` alongside the existing Python checks, and passes.
 - [ ] `make watch` starts both Python auto-reload and esbuild watch mode; Ctrl-C stops both cleanly.
@@ -99,7 +99,7 @@ After this work, the frontend source is TypeScript with strict typing, compiled 
 - [ ] `index.html` loads exactly one `<script>` tag pointing at the bundled output. The browser console is free of errors on initial load.
 - [ ] DevTools opens the original `.ts` source via the source map and a stack trace from a thrown error maps back to `.ts` line numbers.
 - [ ] The prior `static/app.js` source file is removed; the source of truth is the new `.ts` file.
-- [ ] `node_modules/` and `src/task_orchestrator/static/dist/` are gitignored.
+- [ ] `node_modules/` and `src/vault_ui/static/dist/` are gitignored.
 - [ ] `package.json` declares Node engines `>=22` and lists `esbuild` and `typescript` as dev dependencies. `package-lock.json` is committed.
 - [ ] `tsconfig.json` enables strict mode (`"strict": true`); any `any` in the converted source carries an inline comment justifying it.
 - [ ] TypeScript interfaces exist for `Task`, `Goal`, `Vault`, and the WebSocket event payloads, mirroring the fields declared in `api/models.py`.

@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Moved all function-body imports in tasks.py to module level and added get_status_cache to the factory import block
-container: task-orchestrator-007-a-fix-lint-and-move-imports
+container: vault-ui-007-a-fix-lint-and-move-imports
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -22,7 +22,7 @@ All imports in tasks.py are at module level and `make precommit` passes with no 
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/api/tasks.py` — the file with all issues.
+Read `src/vault_ui/api/tasks.py` — the file with all issues.
 </context>
 
 <requirements>
@@ -41,13 +41,13 @@ Read `src/task_orchestrator/api/tasks.py` — the file with all issues.
 4. Add `get_status_cache` to the existing module-level factory import. Change:
    ```python
    # OLD
-   from task_orchestrator.factory import (
+   from vault_ui.factory import (
        get_config,
        get_task_reader_for_vault,
        get_vault_config,
    )
    # NEW
-   from task_orchestrator.factory import (
+   from vault_ui.factory import (
        get_config,
        get_status_cache,
        get_task_reader_for_vault,
@@ -55,9 +55,9 @@ Read `src/task_orchestrator/api/tasks.py` — the file with all issues.
    )
    ```
 
-5. Remove the inner import `from task_orchestrator.factory import get_status_cache` inside `list_tasks()` (~line 163).
+5. Remove the inner import `from vault_ui.factory import get_status_cache` inside `list_tasks()` (~line 163).
 
-6. Remove the inner import `from task_orchestrator.factory import get_config, get_status_cache` inside `reload_cache()` (~line 526). Both are now available from the module-level import.
+6. Remove the inner import `from vault_ui.factory import get_config, get_status_cache` inside `reload_cache()` (~line 526). Both are now available from the module-level import.
 </requirements>
 
 <constraints>

@@ -12,7 +12,7 @@ rejectedReason: 'Same operator/container mix pattern as rejected spec 013 prompt
 - All four fixes are documented in `CHANGELOG.md` under a new `## v0.X.Y` section (v0.41.0 if prompt 2's `feat:` makes it a minor bump; v0.40.1 if only `fix:` bullets land — verifier picks based on the existing `## Unreleased` content).
 - `README.md` gains a "Group columns by phase or status" section (added by prompt 2; verified still present) and the existing "Goals view" section is checked for accuracy post-prompt 2 changes (the `?view=tasks` default no longer applies to status columns if `?view=tasks&groupBy=status` is explicit).
 - A new release tag matching `v[0-9]+\.[0-9]+\.[0-9]+` is pushed to the remote.
-- Operator dogfoods: `uv sync` resolves to the new tag, `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator` restarts the launchd service, the operator exercises all four fixes by hand and posts before/after screenshots in the PR.
+- Operator dogfoods: `uv sync` resolves to the new tag, `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui` restarts the launchd service, the operator exercises all four fixes by hand and posts before/after screenshots in the PR.
 - The PR description includes the red→green regression test transcript from prompt 1, the column-header snapshot from prompt 2's kind-aware defaults, and the operator's screenshot pair.
 - No Go or JS code changes — this prompt is docs + release + verification only.
 </summary>
@@ -42,11 +42,11 @@ Read these files in full before editing (paths are absolute, host-side):
   - Line 68: `## Group columns by phase or status` section (added by prompt 2).
   Verify both are present. The "Goals view" section may need a small clarification: the selector default depends on view (added by prompt 2). No content edit required if prompt 2's text is accurate.
 
-- `/workspace/pyproject.toml` — line 31: `task-orchestrator = "task_orchestrator.__main__:main"`. The hatch-vcs build backend reads version from VCS tags (`source = "vcs"` at line 41). `uv sync` after a new tag will resolve to the new version automatically — no manual version bump in `pyproject.toml` required.
+- `/workspace/pyproject.toml` — line 31: `vault-ui = "vault_ui.__main__:main"`. The hatch-vcs build backend reads version from VCS tags (`source = "vcs"` at line 41). `uv sync` after a new tag will resolve to the new version automatically — no manual version bump in `pyproject.toml` required.
 
 - `/workspace/Makefile` — `make sync` runs `uv sync --all-extras`. `make precommit` runs the full check suite (sync, format, test, lint, typecheck).
 
-- `/workspace/docs/launchd-service.md` — the operator's launchd reference. Lines 121–145 cover the `LOG_LEVEL` env var via `launchctl setenv` and `launchctl kickstart -k gui/$UID/<label>`. The operator's dogfood command from the spec (`launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator`) matches the pattern at line 141 with `$(id -u)` replacing `$UID` (functionally equivalent).
+- `/workspace/docs/launchd-service.md` — the operator's launchd reference. Lines 121–145 cover the `LOG_LEVEL` env var via `launchctl setenv` and `launchctl kickstart -k gui/$UID/<label>`. The operator's dogfood command from the spec (`launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui`) matches the pattern at line 141 with `$(id -u)` replacing `$UID` (functionally equivalent).
 
 - `/home/node/.claude/plugins/marketplaces/coding/docs/changelog-guide.md` — full file. Rules: preamble frozen, conventional prefix required, newest version first, no `### Added`/`### Fixed` categories.
 
@@ -54,7 +54,7 @@ Read these files in full before editing (paths are absolute, host-side):
 
 **Verified assumptions** (READ before writing any code):
 - The tag format is `vX.Y.Z` per spec AC#14. Existing tags are `v0.40.0` (spec 013 prompt 3), `v0.39.0` (spec 013 prompt 2), `v0.38.0` (spec 013 prompt 1).
-- `uv sync` resolves to the VCS tag automatically. The operator's existing plist (`~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist`) calls `uv run --directory <repo> task-orchestrator`. After `uv sync` against the new tag and `launchctl kickstart`, the service restarts on the new code.
+- `uv sync` resolves to the VCS tag automatically. The operator's existing plist (`~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`) calls `uv run --directory <repo> vault-ui`. After `uv sync` against the new tag and `launchctl kickstart`, the service restarts on the new code.
 - The PR description must include:
   - Link to the spec (specs/in-progress/014-goals-view-ux-hardening.md → once merged, specs/completed/)
   - Reference to the four umbrella task pages
@@ -167,7 +167,7 @@ Four fixes in one PR:
 
 ## Dogfood evidence
 
-[Operator attaches screenshots here after running `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator`.]
+[Operator attaches screenshots here after running `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui`.]
 
 - Screenshot 1: `?view=goals` BEFORE this PR — task cards bleed in after sidebar interaction (spec 013 state).
 - Screenshot 2: `?view=goals` AFTER this PR — columns stay clean across all four interactions.
@@ -175,7 +175,7 @@ Four fixes in one PR:
 ## Related
 
 - Spec: specs/in-progress/014-goals-view-ux-hardening.md
-- Precedent: specs/completed/013-task-orchestrator-goals-view.md (PR #14)
+- Precedent: specs/completed/013-vault-ui-goals-view.md (PR #14)
 - Task pages: `Fix Task Cards Leaking into Goals View`, `Add GroupBy Selector to Task Orchestrator Kanban`, `Remove Redundant Open in Obsidian Link from Goal Cards`, `Remove Ignored Goal Filter Param from loadGoals`
 ```
 
@@ -213,7 +213,7 @@ After `make precommit` exits 0, the operator (or management session) creates the
 git tag v0.40.1
 git push origin v0.40.1
 uv sync                                                       # against the new tag
-launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 # Operator visits http://127.0.0.1:8000, exercises all 4 fixes, attaches screenshots to PR.
 ```
 
@@ -228,10 +228,10 @@ Run these steps after `uv sync` resolves to the new tag. Mark each item with a s
 
 ## Step 1: Restart the launchd service
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/
 # Expected: 200
-launchctl list | grep task-orchestrator
+launchctl list | grep vault-ui
 # Expected: status column = 0 (healthy)
 ```
 
@@ -334,7 +334,7 @@ The operator runs the post-tag steps manually:
 git tag v0.40.1   # or v0.41.0 if the bump is minor
 git push origin v0.40.1
 uv sync
-launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 # ... exercise all 4 fixes, attach screenshots to PR.
 ```
 </verification>
@@ -368,7 +368,7 @@ launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator
 
 <cross_references>
 - Spec: `/workspace/specs/in-progress/014-goals-view-ux-hardening.md`
-- Precedent: `specs/in-progress/013-task-orchestrator-goals-view.md` (merged via PR #14, commit `37bcf16`)
+- Precedent: `specs/in-progress/013-vault-ui-goals-view.md` (merged via PR #14, commit `37bcf16`)
 - Siblings: prompts 1 (`1-spec-014-fix-cross-view-leak.md`), 2 (`2-spec-014-add-groupby-selector.md`), 3 (`3-spec-014-cleanups.md`)
 - Operator reference: `/workspace/docs/launchd-service.md` (launchd management), `/workspace/docs/definition-of-done.md` (DoD)
 - Coding plugin docs: `/home/node/.claude/plugins/marketplaces/coding/docs/changelog-guide.md`, `/home/node/.claude/plugins/marketplaces/coding/docs/definition-of-done.md`

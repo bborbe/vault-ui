@@ -2,7 +2,7 @@
 status: completed
 spec: [003-cleanup-resolve-renamed-sessions]
 summary: Added PATCH /tasks/{task_id}/session endpoint with eager UUID resolution and wired session resolution into the vault-cli watcher callback
-container: task-orchestrator-029-spec-003-watcher-resolution
+container: vault-ui-029-spec-003-watcher-resolution
 dark-factory-version: v0.57.5
 created: "2026-03-17T00:00:00Z"
 queued: "2026-03-17T13:10:15Z"
@@ -28,16 +28,16 @@ Wire eager session ID resolution into the API (new PATCH endpoint) and the vault
 Read CLAUDE.md for project conventions.
 
 Read these files before making any changes:
-- `src/task_orchestrator/api/tasks.py` — full file. Note the existing `DELETE /tasks/{task_id}/session` endpoint (around line 428) — the new PATCH endpoint is a companion to it. Also note `get_vault_cli_client_for_vault` and `get_vault_config` imports from `factory.py`.
-- `src/task_orchestrator/cleanup.py` — find `derive_claude_project_dir(vault_path: str) -> Path` (line 15). This function is imported into `api/tasks.py` and `factory.py` for constructing the project directory from a vault path.
-- `src/task_orchestrator/factory.py` — find `start_task_watchers()` (line 74) and `make_callback` closure (line 91). The callback currently calls `cache.invalidate` and `asyncio.run_coroutine_threadsafe(connection_manager.broadcast(...), loop)`. The resolution pass will be a second `run_coroutine_threadsafe` call in the same callback.
-- `src/task_orchestrator/session_resolver.py` — `is_uuid(value: str) -> bool` and `resolve_session_id(display_name: str, project_dir: Path) -> str | None` (created in prompt 1).
-- `src/task_orchestrator/vault_cli_client.py` — `VaultCLIClient` with `show_task`, `set_field`, `clear_field` methods.
+- `src/vault_ui/api/tasks.py` — full file. Note the existing `DELETE /tasks/{task_id}/session` endpoint (around line 428) — the new PATCH endpoint is a companion to it. Also note `get_vault_cli_client_for_vault` and `get_vault_config` imports from `factory.py`.
+- `src/vault_ui/cleanup.py` — find `derive_claude_project_dir(vault_path: str) -> Path` (line 15). This function is imported into `api/tasks.py` and `factory.py` for constructing the project directory from a vault path.
+- `src/vault_ui/factory.py` — find `start_task_watchers()` (line 74) and `make_callback` closure (line 91). The callback currently calls `cache.invalidate` and `asyncio.run_coroutine_threadsafe(connection_manager.broadcast(...), loop)`. The resolution pass will be a second `run_coroutine_threadsafe` call in the same callback.
+- `src/vault_ui/session_resolver.py` — `is_uuid(value: str) -> bool` and `resolve_session_id(display_name: str, project_dir: Path) -> str | None` (created in prompt 1).
+- `src/vault_ui/vault_cli_client.py` — `VaultCLIClient` with `show_task`, `set_field`, `clear_field` methods.
 - `tests/test_api.py` — existing API tests. Understand the mock pattern used before adding new tests.
 </context>
 
 <requirements>
-### 1. New PATCH endpoint in `src/task_orchestrator/api/tasks.py`
+### 1. New PATCH endpoint in `src/vault_ui/api/tasks.py`
 
 Add a request model:
 
@@ -81,11 +81,11 @@ Implementation steps inside the endpoint:
 
 Add these imports to `api/tasks.py`:
 ```python
-from task_orchestrator.cleanup import derive_claude_project_dir
-from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+from vault_ui.cleanup import derive_claude_project_dir
+from vault_ui.session_resolver import is_uuid, resolve_session_id
 ```
 
-### 2. Watcher-triggered resolution in `src/task_orchestrator/factory.py`
+### 2. Watcher-triggered resolution in `src/vault_ui/factory.py`
 
 Add a module-level async helper function (place it before `start_task_watchers`):
 
@@ -101,7 +101,7 @@ async def _try_resolve_task_session(
     Called from the watcher callback after a file change event.
     Silently no-ops if the task has no session ID or it is already a UUID.
     """
-    from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+    from vault_ui.session_resolver import is_uuid, resolve_session_id
 
     try:
         client = VaultCLIClient(vault_cli_path, vault_name)
@@ -168,8 +168,8 @@ Add these imports to `factory.py`:
 ```python
 from pathlib import Path
 
-from task_orchestrator.cleanup import derive_claude_project_dir
-from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+from vault_ui.cleanup import derive_claude_project_dir
+from vault_ui.session_resolver import is_uuid, resolve_session_id
 ```
 
 Note: `is_uuid` and `resolve_session_id` are imported inside `_try_resolve_task_session` to avoid a circular import risk — keep the local imports as shown.
@@ -188,7 +188,7 @@ c. `test_patch_session_display_name_no_match` — supply `"unknown-session"` as 
 
 d. `test_patch_session_vault_not_found` — supply an unknown vault name; response is HTTP 422 or 404 (whichever the endpoint raises).
 
-Mock `resolve_session_id` at `task_orchestrator.api.tasks.resolve_session_id` and `is_uuid` at `task_orchestrator.api.tasks.is_uuid`.
+Mock `resolve_session_id` at `vault_ui.api.tasks.resolve_session_id` and `is_uuid` at `vault_ui.api.tasks.is_uuid`.
 </requirements>
 
 <constraints>
@@ -196,8 +196,8 @@ Mock `resolve_session_id` at `task_orchestrator.api.tasks.resolve_session_id` an
 - Existing tests must still pass
 - The watcher resolution is fire-and-forget — exceptions inside `_try_resolve_task_session` must be caught and logged (never propagated to the callback)
 - `_try_resolve_task_session` must not block the callback — it is always scheduled via `asyncio.run_coroutine_threadsafe`, never called directly
-- `derive_claude_project_dir` is imported from `task_orchestrator.cleanup` — do NOT copy or redefine it
-- `is_uuid` and `resolve_session_id` are imported from `task_orchestrator.session_resolver`
+- `derive_claude_project_dir` is imported from `vault_ui.cleanup` — do NOT copy or redefine it
+- `is_uuid` and `resolve_session_id` are imported from `vault_ui.session_resolver`
 - The existing `DELETE /tasks/{task_id}/session` endpoint must not change
 - The PATCH response must reflect the value actually persisted to the frontmatter, not the original input value
 - Do NOT add rate limiting, caching of resolution results, or resolution retry logic — those are explicitly out of scope

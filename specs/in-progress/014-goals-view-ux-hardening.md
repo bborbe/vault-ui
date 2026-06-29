@@ -62,7 +62,7 @@ The Goals view is trustworthy enough for the operator to use as the primary "wha
 - The existing Tasks-view UX MUST be preserved: opening `/` or `?view=tasks` with no `groupBy=` param renders the phase columns it renders today.
 - The existing status taxonomy (`in_progress / next / backlog / completed / hold / aborted`) and phase taxonomy (`todo / planning / execution / ai_review / human_review / done`) are reused verbatim — no new values.
 - `make precommit` MUST stay green in the changed module.
-- Cross-references: parent goal `[[Task Orchestrator Display Tasks and Goals]]`; precedent spec at `specs/in-progress/013-task-orchestrator-goals-view.md` (merged via PR #14, commit `37bcf16`); four umbrella task pages — `[[Fix Task Cards Leaking into Goals View on Task Orchestrator]]`, `[[Add GroupBy Selector to Task Orchestrator Kanban]]`, `[[Remove Redundant Open in Obsidian Link from Goal Cards]]`, `[[Remove Ignored Goal Filter Param from loadGoals]]`.
+- Cross-references: parent goal `[[Task Orchestrator Display Tasks and Goals]]`; precedent spec at `specs/in-progress/013-vault-ui-goals-view.md` (merged via PR #14, commit `37bcf16`); four umbrella task pages — `[[Fix Task Cards Leaking into Goals View on Task Orchestrator]]`, `[[Add GroupBy Selector to Task Orchestrator Kanban]]`, `[[Remove Redundant Open in Obsidian Link from Goal Cards]]`, `[[Remove Ignored Goal Filter Param from loadGoals]]`.
 
 ## Failure Modes
 
@@ -74,7 +74,7 @@ The Goals view is trustworthy enough for the operator to use as the primary "wha
 | Goal lacks a `phase` field and view is `?view=goals&groupBy=phase` | Goal renders in a single "—" column; other phase columns render empty; no JS console error | Operator switches to `groupBy=status` if desired | DOM shows the "—" column populated; `console.error` empty for the load |
 | Two browser tabs open on different views; user edits a task in the vault | Tasks-view tab updates; Goals-view tab does NOT re-render its columns with tasks | Automatic | Tab-A (tasks) DOM diff shows the edit; Tab-B (goals) DOM is byte-equal before/after |
 | `/api/goals` request URL inspected | Query string contains only `vault`, `status`, `assignee` keys (no `goal=`) | n/a | Network panel shows clean URL; server access log records the same |
-| `uv sync` after release tag | Resolves to the new version; orchestrator restarts cleanly under launchd | Operator reruns `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator`. **Reversibility**: a bad tag cannot be re-pushed at the same version (tags are immutable on the registry once consumed) — recovery is a new patch tag (`v0.X.Y+1`); a forced re-tag is explicitly out of bounds. | `uv sync` exits 0; `launchctl list` shows the service running on the new version |
+| `uv sync` after release tag | Resolves to the new version; orchestrator restarts cleanly under launchd | Operator reruns `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui`. **Reversibility**: a bad tag cannot be re-pushed at the same version (tags are immutable on the registry once consumed) — recovery is a new patch tag (`v0.X.Y+1`); a forced re-tag is explicitly out of bounds. | `uv sync` exits 0; `launchctl list` shows the service running on the new version |
 
 ## Security / Abuse Cases
 
@@ -98,11 +98,11 @@ The Goals view is trustworthy enough for the operator to use as the primary "wha
 - [ ] `/?view=goals&groupBy=phase` with at least one goal lacking a `phase` field renders that goal in a single "—" column; no JS console error — evidence: DOM contains a column with header text `—` and at least one card inside; `console.error` count for the page load is 0. `console.warn` is permitted (legitimate deprecation / fallback warnings exist in app.js today; tightening to warn-free is out of scope for this spec).
 - [ ] Goal cards do NOT contain a "Open in Obsidian" link below the title — evidence: `document.querySelectorAll('[data-card-kind="goal"] a').length` is 1 (the title link) on a page with at least one goal card.
 - [ ] Clicking the goal card title still opens the goal file in Obsidian — evidence: card title `href` matches `^obsidian://open\?vault=.+&file=.+` for every rendered goal card.
-- [ ] `loadGoals()` request URL contains no `goal=` parameter — evidence: browser Network panel screenshot in PR; `grep -n "params.append('goal'" src/task_orchestrator/static/app.js` returns zero lines inside `loadGoals`.
+- [ ] `loadGoals()` request URL contains no `goal=` parameter — evidence: browser Network panel screenshot in PR; `grep -n "params.append('goal'" src/vault_ui/static/app.js` returns zero lines inside `loadGoals`.
 - [ ] README documents the `?groupBy=` URL param and the selector — evidence: `grep -n 'groupBy' README.md` returns ≥1 line.
 - [ ] CHANGELOG `## Unreleased` (or the new release section) names all four fixes — evidence: `grep -n -i -E 'leak|groupby|obsidian link|goal= param' CHANGELOG.md` returns ≥4 distinct lines.
 - [ ] A new release tag matching `v[0-9]+\.[0-9]+\.[0-9]+` is pushed and `uv sync` against it exits 0 — evidence: `git tag --list 'v*' | tail -n1` shows the new tag; `uv sync` exit code 0.
-- [ ] Operator dogfood: after `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator`, the operator exercises all four fixes by hand and posts a before/after screenshot pair in the PR — evidence: PR contains two screenshots (Goals view leak before/clean after) AND mentions selector toggling on both views.
+- [ ] Operator dogfood: after `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui`, the operator exercises all four fixes by hand and posts a before/after screenshot pair in the PR — evidence: PR contains two screenshots (Goals view leak before/clean after) AND mentions selector toggling on both views.
 - [ ] `make precommit` exits 0 in the changed module — evidence: exit code 0.
 
 Scenario coverage: NO new scenario. The leak fix is a unit + integration test (mocked sidebar interaction → assert no `/api/tasks` fetch). The groupBy selector and the two cleanups are unit + DOM-level integration tests. None of these need real Docker, real `gh`, or a real cluster — the existing `test_websocket_routing.py` style is the right altitude. The dogfood step is a one-shot operator verification captured as a PR screenshot, not an automated scenario.
@@ -135,7 +135,7 @@ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8000/?view=tasks&grou
 # Release + operator dogfood
 git tag v0.X.Y && git push origin v0.X.Y
 uv sync                                                       # against the new tag
-launchctl kickstart -k gui/$(id -u)/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 # Operator visits 127.0.0.1:8000, exercises all 4 fixes, attaches before/after screenshots to PR.
 ```
 

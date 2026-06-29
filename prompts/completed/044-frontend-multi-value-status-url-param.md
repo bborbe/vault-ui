@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced hardcoded status filter with URL-driven multi-value currentStatuses array — reads ?status= params in parseURLParams, writes back in updateURL (omitting when default), and forwards via append in loadTasks.
-container: task-orchestrator-044-frontend-multi-value-status-url-param
+container: vault-ui-044-frontend-multi-value-status-url-param
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T21:01:50Z"
 queued: "2026-05-10T21:01:50Z"
@@ -20,14 +20,14 @@ completed: "2026-05-10T21:03:16Z"
 </summary>
 
 <objective>
-Convert `src/task_orchestrator/static/app.js` from a hardcoded status filter to a URL-driven multi-value status filter so that `?status=...` (repeated and comma-separated forms) round-trips end-to-end (parse → filter state → API request → URL writeback). Pass-through only — no new UI controls. Behavior when no `status` param is present is unchanged.
+Convert `src/vault_ui/static/app.js` from a hardcoded status filter to a URL-driven multi-value status filter so that `?status=...` (repeated and comma-separated forms) round-trips end-to-end (parse → filter state → API request → URL writeback). Pass-through only — no new UI controls. Behavior when no `status` param is present is unchanged.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/static/app.js` — entire file (~1200 lines, all changes are in this single file)
+- `src/vault_ui/static/app.js` — entire file (~1200 lines, all changes are in this single file)
 - `prompts/completed/040-frontend-multi-value-assignee-url-param.md` — the canonical pattern this prompt mirrors. The assignee feature shipped exactly the same shape (state array, `getAll` in parseURLParams, `forEach`+`append` in updateURL and loadTasks) — copy that style for symmetry.
 - `prompts/completed/039-spec-005-unify-filter-syntax.md` — the BACKEND prompt that made this reachable. Note: backend already accepts `?status=a,b` (comma form) AND `?status=a&status=b` (repeated form). This frontend change does NOT need to do any comma-splitting itself — it just needs to stop hardcoding the param and faithfully forward whatever it reads.
 
@@ -42,7 +42,7 @@ Read these files in full before making any changes:
 </context>
 
 <requirements>
-All edits are in `src/task_orchestrator/static/app.js`. No other files change.
+All edits are in `src/vault_ui/static/app.js`. No other files change.
 
 ### 1. Add the `currentStatuses` global state (line 4 area)
 
@@ -132,13 +132,13 @@ Notes:
 
 After the edits, run:
 ```
-grep -n "in_progress,completed" src/task_orchestrator/static/app.js
+grep -n "in_progress,completed" src/vault_ui/static/app.js
 ```
 Expected result: matches appear ONLY inside the new code added in steps 1 and 3 (the default-array literal and the default-comparison literal). The old `params.set('status', 'in_progress,completed');` on line 404 must be gone.
 
 Also run:
 ```
-grep -n 'currentStatuses' src/task_orchestrator/static/app.js
+grep -n 'currentStatuses' src/vault_ui/static/app.js
 ```
 Expected: exactly four sites — global declaration (step 1), parseURLParams read (step 2), updateURL writeback (step 3), and loadTasks URL builder (step 4). Anything else means a stray reference; fix it before declaring done.
 
@@ -158,7 +158,7 @@ Insert the new section between the `# Changelog` header / preamble block and the
 <constraints>
 - Do NOT commit — dark-factory handles git
 - Do NOT add any new UI elements (no checkbox, no dropdown, no chip rework). This prompt is URL-driven pass-through only.
-- Do NOT change anything outside `src/task_orchestrator/static/app.js` and `CHANGELOG.md`
+- Do NOT change anything outside `src/vault_ui/static/app.js` and `CHANGELOG.md`
 - Do NOT change the backend, the API contract, or any Python code
 - Do NOT add comma-splitting in JS — the backend already comma-splits server-side; the frontend just forwards the raw values it reads from `URLSearchParams.getAll`
 - Do NOT change the `phase` filter on line 405 — phase is out of scope (separate prompt if needed)
@@ -176,13 +176,13 @@ Insert the new section between the `# Changelog` header / preamble block and the
 
 2. Confirm the literal `params.set('status', 'in_progress,completed');` is gone from `loadTasks`:
    ```
-   grep -n "params.set('status'" src/task_orchestrator/static/app.js
+   grep -n "params.set('status'" src/vault_ui/static/app.js
    ```
    Expected: zero matches.
 
 3. Confirm `currentStatuses` appears exactly four times (declaration + parseURLParams + updateURL + loadTasks):
    ```
-   grep -n 'currentStatuses' src/task_orchestrator/static/app.js
+   grep -n 'currentStatuses' src/vault_ui/static/app.js
    ```
    Expected: four matches, no more, no fewer.
 

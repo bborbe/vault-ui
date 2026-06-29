@@ -2,7 +2,7 @@
 status: completed
 spec: [010-parallelize-vault-task-fanout]
 summary: 'Narrowed asyncio.gather result re-raise from BaseException to RuntimeError in list_tasks, added assert isinstance(result, list) to satisfy mypy type narrowing, and appended CHANGELOG entry under ## Unreleased.'
-container: task-orchestrator-parallel-vaults-exec-057-fix-narrow-gather-exception-type
+container: vault-ui-parallel-vaults-exec-057-fix-narrow-gather-exception-type
 dark-factory-version: v0.182.0
 created: "2026-06-20T15:40:57Z"
 queued: "2026-06-20T15:40:57Z"
@@ -11,12 +11,12 @@ completed: "2026-06-20T15:42:15Z"
 ---
 <summary>
 - Narrows the `isinstance(result, BaseException)` re-raise check in `list_tasks` to `isinstance(result, RuntimeError)` so KeyboardInterrupt / SystemExit / CancelledError are not accidentally re-raised through the HTTP path.
-- Addresses pr-reviewer NIT on PR #6 (`src/task_orchestrator/api/tasks.py:394`).
+- Addresses pr-reviewer NIT on PR #6 (`src/vault_ui/api/tasks.py:394`).
 - Behavior change is intentional but minimal: only `RuntimeError` is expected from `_process_vault`; the previous broader catch was over-permissive.
 </summary>
 
 <objective>
-In `src/task_orchestrator/api/tasks.py` inside `list_tasks`, change the `gather`-result loop's exception re-raise check from `isinstance(result, BaseException)` to `isinstance(result, RuntimeError)`. Update or add a test that asserts only RuntimeError still propagates as HTTP 500. Make `make precommit` exit 0.
+In `src/vault_ui/api/tasks.py` inside `list_tasks`, change the `gather`-result loop's exception re-raise check from `isinstance(result, BaseException)` to `isinstance(result, RuntimeError)`. Update or add a test that asserts only RuntimeError still propagates as HTTP 500. Make `make precommit` exit 0.
 </objective>
 
 <context>
@@ -26,7 +26,7 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 - `definition-of-done.md` — coverage and completion rules.
 
 Read the full file before editing:
-- `src/task_orchestrator/api/tasks.py` — focus on the `list_tasks` route handler's `asyncio.gather(..., return_exceptions=True)` block (~line 390-400). The current code path is roughly:
+- `src/vault_ui/api/tasks.py` — focus on the `list_tasks` route handler's `asyncio.gather(..., return_exceptions=True)` block (~line 390-400). The current code path is roughly:
   ```python
   for result in results:
       if isinstance(result, ValueError):
@@ -44,7 +44,7 @@ Read the full file before editing:
 
 ### 1. Narrow the re-raise check
 
-In `src/task_orchestrator/api/tasks.py`, in `list_tasks`, change:
+In `src/vault_ui/api/tasks.py`, in `list_tasks`, change:
 
 ```python
 if isinstance(result, BaseException):
@@ -101,13 +101,13 @@ All must pass.
 <verification>
 Confirm the narrow check is in place:
 ```bash
-grep -n "isinstance(result, RuntimeError)" src/task_orchestrator/api/tasks.py
+grep -n "isinstance(result, RuntimeError)" src/vault_ui/api/tasks.py
 ```
 Expected: one match.
 
 Confirm `BaseException` no longer appears in this loop:
 ```bash
-grep -n "isinstance(result, BaseException)" src/task_orchestrator/api/tasks.py
+grep -n "isinstance(result, BaseException)" src/vault_ui/api/tasks.py
 ```
 Expected: no matches.
 

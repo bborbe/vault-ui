@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced all 15 alert() calls in app.js with showToast(message, true), added requestAnimationFrame yields at the two modal-hiding catch sites, converted assignToMe to use parseErrorResponse, and added v0.25.0 CHANGELOG entry.
-container: task-orchestrator-043-replace-alert-with-toast
+container: vault-ui-043-replace-alert-with-toast
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T19:23:42Z"
 queued: "2026-05-10T19:23:42Z"
@@ -20,22 +20,22 @@ completed: "2026-05-10T19:25:40Z"
 </summary>
 
 <objective>
-Replace every `alert()` error dialog in `src/task_orchestrator/static/app.js` with the existing `showToast(message, true)` helper, drop redundant "Failed to X:" / "Command failed:" prefixes (backend stderr is self-describing), and add a single-frame `requestAnimationFrame` yield before toasts that follow a freshly-hidden loading modal so the modal vanishes before the toast renders. Frontend-only, single source file, no new dependencies.
+Replace every `alert()` error dialog in `src/vault_ui/static/app.js` with the existing `showToast(message, true)` helper, drop redundant "Failed to X:" / "Command failed:" prefixes (backend stderr is self-describing), and add a single-frame `requestAnimationFrame` yield before toasts that follow a freshly-hidden loading modal so the modal vanishes before the toast renders. Frontend-only, single source file, no new dependencies.
 </objective>
 
 <context>
 Read `CLAUDE.md` for project conventions: dark-factory pipeline (never code outside it), `make precommit` for verification (Python only — JS is not linted), vault-cli is the sole vault interface.
 
 Read these files in full before editing:
-- `src/task_orchestrator/static/app.js` — entire file (~1256 lines, all changes are in this single file)
+- `src/vault_ui/static/app.js` — entire file (~1256 lines, all changes are in this single file)
 - `prompts/completed/042-surface-real-backend-error-messages.md` — the prerequisite that introduced `parseErrorResponse()` and routed real backend stderr into `error.message`. This prompt is the direct follow-up: now that the right TEXT is being shown, swap the `alert()` chrome for the existing `showToast()` helper and drop the now-redundant prefixes.
 - `prompts/completed/041-assign-to-me-card-link.md` — most recent sibling frontend prompt for shape reference
 - `CHANGELOG.md` — top-of-file conventions; current top section is `## v0.24.0`. Bump to `## v0.25.0` for this entry (or whatever the next minor is if a later prompt has shipped a section ahead — verify by reading the first 15 lines). Note: project's `docs/dod.md` says "under `## Unreleased`" but actual CHANGELOG uses versioned headings directly — follow actual project practice (versioned headings), not the literal docs/dod.md wording.
 
-**Verified facts** (from a fresh read of `src/task_orchestrator/static/app.js` at prompt-creation time):
+**Verified facts** (from a fresh read of `src/vault_ui/static/app.js` at prompt-creation time):
 - The `showToast(message, isError = false)` helper is defined at lines 1022–1057. It injects its own CSS on first use (top-right fixed-position div), uses class `.toast.error` (red `#c0392b` background) when `isError` is truthy, auto-dismisses after 4000ms for errors / 2000ms for success, and is already used by the success branch of `executeSlashCommand` at lines 1115 and 1118. No changes to `showToast` itself.
 - `parseErrorResponse(response)` is defined at lines 11–26 and extracts the FastAPI `{"detail": "..."}` envelope into a plain string (already used by 5 callsites; the `assignToMe` handler is the one place that still uses raw `await response.text()` for user-facing messaging — that's what step 6 below converts).
-- The seven `alert()` callsites that show backend/network errors to the user are at these exact line numbers (reconfirm with `grep -n 'alert(' src/task_orchestrator/static/app.js` before editing — the file is ~1256 lines and any prior edit could shift numbers):
+- The seven `alert()` callsites that show backend/network errors to the user are at these exact line numbers (reconfirm with `grep -n 'alert(' src/vault_ui/static/app.js` before editing — the file is ~1256 lines and any prior edit could shift numbers):
   - **Line 187** — `loadVaults` catch handler: `alert(\`Failed to load vaults: ${error.message}\`);`
   - **Line 305** — `assignToMe` non-OK branch: `alert(\`Failed to assign: ${response.status}\`);` (currently shows a raw HTTP status, NOT the backend detail; convert to use `parseErrorResponse` so users see the actual reason)
   - **Line 311** — `assignToMe` network-error catch: `alert('Failed to assign — see console.');`
@@ -57,7 +57,7 @@ Read these files in full before editing:
 </context>
 
 <requirements>
-All edits are in `src/task_orchestrator/static/app.js` plus one entry in `CHANGELOG.md`. No other files change.
+All edits are in `src/vault_ui/static/app.js` plus one entry in `CHANGELOG.md`. No other files change.
 
 ### 1. Convert backend-error `alert()` calls to `showToast(error.message, true)` — drop the prefix
 
@@ -135,7 +135,7 @@ New:
         showToast(error.message, true);
 ```
 
-(`runTask` is already `async` — confirm with `grep -n 'async function runTask\|async runTask' src/task_orchestrator/static/app.js`. If for some reason it is not, the function must be made `async` for the `await` to work.)
+(`runTask` is already `async` — confirm with `grep -n 'async function runTask\|async runTask' src/vault_ui/static/app.js`. If for some reason it is not, the function must be made `async` for the `await` to work.)
 
 #### 2b. Line 1134 (`executeSlashCommand` catch — modal hidden at line 1131)
 
@@ -263,7 +263,7 @@ These are defensive guards for an internal cache-miss invariant, not backend err
 
 After all the above edits, run:
 ```
-grep -n 'alert(' src/task_orchestrator/static/app.js
+grep -n 'alert(' src/vault_ui/static/app.js
 ```
 Expected: zero matches. If any remain, either (a) the callsite was missed and must be converted using the same pattern (`showToast(error.message, true)` for backend errors with `error.message`, or `showToast('literal text', true)` for guards), or (b) it is a legitimate non-error use such as a `confirm()`-style dialog — in that case, document the rationale in a one-line `// ...` comment immediately above the line. Per the verified inventory above, no legitimate `alert()` use exists in this file, so the expected outcome is "convert it".
 
@@ -290,8 +290,8 @@ If a later prompt has already shipped `## v0.25.0`, bump to the next available m
 - Do NOT touch the WebSocket reconnection logic, the loading-modal flow, the modal close button, or any non-error code path
 - Successful responses (200 OK) MUST behave identically to today — they keep using their existing `showToast(success_message)` calls
 - The doubled-prefix anti-pattern MUST be eliminated — never `showToast(\`Failed to X: ${error.message}\`, true)`; always `showToast(error.message, true)` since `error.message` is the parsed backend `detail`
-- After the change, `grep -n 'alert(' src/task_orchestrator/static/app.js` MUST return 0 matches
-- After the change, `grep -n 'await response.text()' src/task_orchestrator/static/app.js` MUST return exactly 1 match (the one inside `parseErrorResponse` itself) — the `assignToMe` callsite is converted in step 3
+- After the change, `grep -n 'alert(' src/vault_ui/static/app.js` MUST return 0 matches
+- After the change, `grep -n 'await response.text()' src/vault_ui/static/app.js` MUST return exactly 1 match (the one inside `parseErrorResponse` itself) — the `assignToMe` callsite is converted in step 3
 - The `requestAnimationFrame` yield is REQUIRED only at the two modal-hiding catch sites (steps 2a and 2b). Do NOT add it to other catch handlers — it adds an unnecessary microtask delay when no modal is involved
 - `make precommit` must pass (it only covers Python — the JS edit cannot affect it, but run it to confirm nothing else regressed)
 - No automated frontend tests — there is no JS test infrastructure in this repo. Verification is manual browser checks (see below)
@@ -299,35 +299,35 @@ If a later prompt has already shipped `## v0.25.0`, bump to the next available m
 </constraints>
 
 <verification>
-1. Run `make precommit` from `~/Documents/workspaces/task-orchestrator` — must exit 0. (This only covers Python; the JS edit cannot affect it, but confirm no incidental regression.)
+1. Run `make precommit` from `~/Documents/workspaces/vault-ui` — must exit 0. (This only covers Python; the JS edit cannot affect it, but confirm no incidental regression.)
 
 2. Confirm zero remaining `alert(` calls:
    ```
-   grep -n 'alert(' src/task_orchestrator/static/app.js
+   grep -n 'alert(' src/vault_ui/static/app.js
    ```
    Expected: zero matches.
 
 3. Confirm error-toast conversions are in place — exactly 16 `showToast(..., true)` calls:
    ```
-   grep -c 'showToast(.*true)' src/task_orchestrator/static/app.js
+   grep -c 'showToast(.*true)' src/vault_ui/static/app.js
    ```
    Expected: exactly 16 (5 from step 1 + 2 from step 2 + 2 from step 3+4 in `assignToMe` + 1 from step 5 + 5 from step 6 + 1 pre-existing `showToast(data.error || 'Command failed', true)` at line 1115 in the success-fast-path branch). Anything other than 16 is a missed conversion or an accidental duplicate.
 
 4. Confirm `await response.text()` only remains inside `parseErrorResponse`:
    ```
-   grep -n 'await response.text()' src/task_orchestrator/static/app.js
+   grep -n 'await response.text()' src/vault_ui/static/app.js
    ```
    Expected: exactly 1 match (the one on line ~20 inside `parseErrorResponse`).
 
 5. Confirm the `requestAnimationFrame` yield is in place at exactly the two modal-hiding catch sites:
    ```
-   grep -n 'requestAnimationFrame' src/task_orchestrator/static/app.js
+   grep -n 'requestAnimationFrame' src/vault_ui/static/app.js
    ```
    Expected: exactly 2 matches — one in `runTask` (line ~677) and one in `executeSlashCommand` (line ~1132).
 
 6. Confirm the redundant prefixes are gone:
    ```
-   grep -nE "'(Command failed|Failed to (load|update|start|clear|assign))[: ]" src/task_orchestrator/static/app.js
+   grep -nE "'(Command failed|Failed to (load|update|start|clear|assign))[: ]" src/vault_ui/static/app.js
    ```
    Expected: **exactly one match** — the pre-existing `'Command failed'` literal at line ~1115 inside `showToast(data.error || 'Command failed', true)` (this is the success-path-but-result-failed fallback, NOT a user-typed error prefix; leave it). All other matches must be eliminated. The `console.error('...')` log strings can stay — they are diagnostic, not user-facing.
 

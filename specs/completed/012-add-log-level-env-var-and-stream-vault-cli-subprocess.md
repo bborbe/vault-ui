@@ -10,18 +10,18 @@ branch: dark-factory/add-log-level-env-var-and-stream-vault-cli-subprocess
 
 ## Summary
 
-- Add a `LOG_LEVEL` env var to task-orchestrator (DEBUG / INFO / WARNING / ERROR). Read at startup, applied to both Python's root logger AND uvicorn's `log_level=`. Default `INFO` (current behaviour byte-identical when unset).
+- Add a `LOG_LEVEL` env var to vault-ui (DEBUG / INFO / WARNING / ERROR). Read at startup, applied to both Python's root logger AND uvicorn's `log_level=`. Default `INFO` (current behaviour byte-identical when unset).
 - For the long-running `start_vault_cli_session` subprocess call (the 60–120s+ `vault-cli task work-on --mode headless` path that runs the entire `/vault-cli:work-on-task` Claude skill), stream stdout/stderr line-by-line as they arrive — at any log level — instead of buffering in `communicate()`. Stdout still needs to be captured for JSON parsing at end; the streaming is an additive log feed.
 - Other shorter vault-cli subprocess calls (`task list`, `task show`, `task set`, cleanup loops) keep their existing `communicate()` semantics — they're fast and don't need streaming.
 - Document the env var in the launchd plist with a commented-out `LOG_LEVEL` entry showing valid values.
 
 ## Problem
 
-Today task-orchestrator's `start_vault_cli_session` (`api/tasks.py:55-80`) spawns a subprocess via `asyncio.create_subprocess_exec(..., stdout=PIPE, stderr=PIPE)` and blocks on `proc.communicate()`. The subprocess runs `vault-cli task work-on --mode headless` which in turn runs `claude --print -p /vault-cli:work-on-task <task.md>` — the full work-on-task skill non-interactively. Wall time: 60–120s typical, 3+ min observed today.
+Today vault-ui's `start_vault_cli_session` (`api/tasks.py:55-80`) spawns a subprocess via `asyncio.create_subprocess_exec(..., stdout=PIPE, stderr=PIPE)` and blocks on `proc.communicate()`. The subprocess runs `vault-cli task work-on --mode headless` which in turn runs `claude --print -p /vault-cli:work-on-task <task.md>` — the full work-on-task skill non-interactively. Wall time: 60–120s typical, 3+ min observed today.
 
 `proc.communicate()` buffers stdout/stderr until the subprocess exits. So for the entire ~2-3 min wait:
 - The frontend modal (`app.js:1031`) shows `⏳ Starting...` then times out at ~2min, button resets to `▶ Start`.
-- task-orchestrator's log emits exactly two lines: `run_task called` (start) and `Returning session response` (after subprocess exits). Nothing in between.
+- vault-ui's log emits exactly two lines: `run_task called` (start) and `Returning session response` (after subprocess exits). Nothing in between.
 - When the headless claude hangs (real today: PID 35294 ran for ~5min before manual kill), the only diagnostic is `ps aux | grep claude`, then reading the claude session jsonl directly to see which tool call is stuck.
 
 Today's verification gate on the [[Automatically Name Claude Sessions Started by Task Orchestrator]] goal sits stuck for exactly this reason: clicked Start, modal closed, button reset, no log signal — we cannot tell if vault-cli's headless `-n` plumbing is actually firing without manual archaeology.
@@ -32,7 +32,7 @@ Python's `logging.basicConfig(level=logging.INFO)` is hard-coded in `__main__.py
 
 After this work, two diagnostics are routinely available without code changes or archaeology:
 
-1. **`LOG_LEVEL=DEBUG` env var** lets the operator restart task-orchestrator (`launchctl kickstart`) and immediately see every router log + uvicorn request-trace + subprocess-stream line in `/tmp/task-orchestrator.log`. At default `INFO` the verbosity is byte-identical to today.
+1. **`LOG_LEVEL=DEBUG` env var** lets the operator restart vault-ui (`launchctl kickstart`) and immediately see every router log + uvicorn request-trace + subprocess-stream line in `/tmp/vault-ui.log`. At default `INFO` the verbosity is byte-identical to today.
 2. **Streaming subprocess output** for the long-running headless `task work-on` subprocess — operator sees the headless claude's tool calls arrive live (e.g. "now calling `mcp__semantic-search`", "now calling `mcp__atlassian__getJiraIssue`") instead of a 2-3 min black box. Works at any log level (the stream itself logs at DEBUG; at INFO and above the line-arrival is unlogged but the stream still flushes promptly so the subprocess doesn't block on a full pipe buffer).
 
 This unblocks the verification gate on the naming goal AND gives a durable diagnostic for any future "Start should work but doesn't" failure mode.
@@ -49,11 +49,11 @@ This unblocks the verification gate on the naming goal AND gives a durable diagn
 
 ## Acceptance Criteria
 
-- [ ] `LOG_LEVEL=DEBUG uv run task-orchestrator` (or any unset case) produces Python root-logger DEBUG output AND uvicorn DEBUG output. Evidence: `LOG_LEVEL=DEBUG uv run task-orchestrator &  sleep 3  &&  curl -s http://127.0.0.1:8000/  &&  grep -cE 'DEBUG|debug' /tmp/test-orch.log` returns ≥1 (paired with a pytest that asserts `logging.getLogger().getEffectiveLevel() == logging.DEBUG` after parsing env).
+- [ ] `LOG_LEVEL=DEBUG uv run vault-ui` (or any unset case) produces Python root-logger DEBUG output AND uvicorn DEBUG output. Evidence: `LOG_LEVEL=DEBUG uv run vault-ui &  sleep 3  &&  curl -s http://127.0.0.1:8000/  &&  grep -cE 'DEBUG|debug' /tmp/test-orch.log` returns ≥1 (paired with a pytest that asserts `logging.getLogger().getEffectiveLevel() == logging.DEBUG` after parsing env).
 - [ ] `LOG_LEVEL` unset → root logger level is `INFO` (default unchanged). Evidence: `uv run pytest tests/test_main.py -k test_log_level_default_info -v` reports `PASSED`.
 - [ ] `LOG_LEVEL=DEBUG | INFO | WARNING | ERROR` parses correctly (case-insensitive). Invalid values fall back to `INFO` with a one-line WARN. Evidence: `uv run pytest tests/test_main.py -k test_log_level -v` reports all parametrized cases `PASSED`.
 - [ ] `start_vault_cli_session` streams subprocess stdout/stderr line-by-line. Verified via a unit test that runs a fake subprocess emitting 5 lines with 100ms sleeps between them; the test asserts BOTH (a) caplog captures DEBUG records for each line, AND (b) the timestamp delta between successive records is ≥ 80ms (proving non-buffered behaviour — a `communicate()` regression would emit all records at exit with sub-millisecond gaps). Evidence: `uv run pytest tests/api/test_tasks.py -k test_start_vault_cli_session_streams_output -v` reports `PASSED`.
-- [ ] Other call sites in `vault_cli_client.py` (`list`, `show`, `set_field`, `clear_field`, watch) are untouched — file is byte-identical to master. Evidence: `git diff origin/master...HEAD -- src/task_orchestrator/vault_cli_client.py` produces empty output.
+- [ ] Other call sites in `vault_cli_client.py` (`list`, `show`, `set_field`, `clear_field`, watch) are untouched — file is byte-identical to master. Evidence: `git diff origin/master...HEAD -- src/vault_ui/vault_cli_client.py` produces empty output.
 - [ ] launchd plist (`docs/launchd-service.md` or equivalent) documents the `LOG_LEVEL` env var with example values. Evidence: `grep -n "LOG_LEVEL" docs/launchd-service.md` returns ≥1 line.
 - [ ] `make precommit` exits 0 (format + lint + mypy + full test suite).
 - [ ] `CHANGELOG.md` has a new bullet under `## Unreleased`. Evidence: `awk '/^## Unreleased/,/^## v/' CHANGELOG.md | grep -niE 'LOG_LEVEL|streaming.*subprocess|debug.*logging' | head -1` returns ≥1 line.
@@ -68,17 +68,17 @@ Plus a live smoke (out-of-spec but documented in the Goal DoD):
 
 ```
 launchctl setenv LOG_LEVEL DEBUG
-launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
-# click Start in UI → tail /tmp/task-orchestrator.log → see streaming output
+launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
+# click Start in UI → tail /tmp/vault-ui.log → see streaming output
 launchctl unsetenv LOG_LEVEL
-launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 ```
 
 ## Desired Behavior
 
-1. `src/task_orchestrator/__main__.py` reads `LOG_LEVEL` from `os.environ` at the top of `main()`. Recognised values: `DEBUG | INFO | WARNING | ERROR` (case-insensitive). Unrecognised values produce a one-line WARN and default to `INFO`. Unset defaults to `INFO`.
+1. `src/vault_ui/__main__.py` reads `LOG_LEVEL` from `os.environ` at the top of `main()`. Recognised values: `DEBUG | INFO | WARNING | ERROR` (case-insensitive). Unrecognised values produce a one-line WARN and default to `INFO`. Unset defaults to `INFO`.
 2. The parsed level is passed to `logging.basicConfig(level=...)` AND used as `uvicorn.run(..., log_level=<lowercase string>)`. Both Python's root logger and uvicorn's logger respect the same value.
-3. `src/task_orchestrator/api/tasks.py::start_vault_cli_session` is refactored: instead of `await proc.communicate()`, spawn two concurrent tasks via `asyncio.gather` — one that `await proc.stdout.readline()` in a loop, logging each line at DEBUG and accumulating bytes; another that does the same for `proc.stderr` (logging at DEBUG, accumulating). Subprocess exit is awaited; final accumulated stdout is JSON-parsed exactly as today.
+3. `src/vault_ui/api/tasks.py::start_vault_cli_session` is refactored: instead of `await proc.communicate()`, spawn two concurrent tasks via `asyncio.gather` — one that `await proc.stdout.readline()` in a loop, logging each line at DEBUG and accumulating bytes; another that does the same for `proc.stderr` (logging at DEBUG, accumulating). Subprocess exit is awaited; final accumulated stdout is JSON-parsed exactly as today.
 4. The streaming wrapper logs each line via `logger.debug("vault-cli stdout: %s", line.rstrip())` (and `stderr: %s` for the err pipe). At default INFO level these are filtered out by the standard handler; at DEBUG they appear in real time.
 5. The line-arrival timing is observable in tests: a fake subprocess emitting "A\n", sleep 100ms, "B\n", sleep 100ms, exit MUST produce log records for "A" before the 100ms elapse — proving non-buffered behaviour.
 6. Other call sites in `vault_cli_client.py` (`task list`, `task show`, `set_field`, `clear_field`, watch, cleanup) keep their existing `proc.communicate()` calls untouched.

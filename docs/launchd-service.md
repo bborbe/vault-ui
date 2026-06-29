@@ -1,6 +1,6 @@
-# Run task-orchestrator as a macOS launchd service
+# Run vault-ui as a macOS launchd service
 
-Use this setup when you want `task-orchestrator` running continuously so the Kanban UI is always reachable at `http://127.0.0.1:8000` without manually running `make run` in a terminal.
+Use this setup when you want `vault-ui` running continuously so the Kanban UI is always reachable at `http://127.0.0.1:8000` without manually running `make run` in a terminal.
 
 ## Why use a launchd service?
 
@@ -14,19 +14,19 @@ Use this setup when you want `task-orchestrator` running continuously so the Kan
 - `uv` installed at `~/.local/bin/uv` (or adjust the plist)
 - `vault-cli` on `PATH` — typically `~/Documents/workspaces/go/bin/vault-cli`
 - A populated `config.yaml` in the repo root (`cp config.yaml.example config.yaml`)
-- Repo cloned at `~/Documents/workspaces/task-orchestrator`
+- Repo cloned at `~/Documents/workspaces/vault-ui`
 
 Verify:
 
 ```bash
 command -v uv
 command -v vault-cli
-ls ~/Documents/workspaces/task-orchestrator/config.yaml
+ls ~/Documents/workspaces/vault-ui/config.yaml
 ```
 
 ## 1. Create the launch agent
 
-Create `~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist`:
+Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,17 +34,17 @@ Create `~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist`:
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.github.bborbe.task-orchestrator</string>
+    <string>com.github.bborbe.vault-ui</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/YOUR_USER/.local/bin/uv</string>
         <string>run</string>
         <string>--directory</string>
-        <string>/Users/YOUR_USER/Documents/workspaces/task-orchestrator</string>
-        <string>task-orchestrator</string>
+        <string>/Users/YOUR_USER/Documents/workspaces/vault-ui</string>
+        <string>vault-ui</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/YOUR_USER/Documents/workspaces/task-orchestrator</string>
+    <string>/Users/YOUR_USER/Documents/workspaces/vault-ui</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -55,9 +55,9 @@ Create `~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist`:
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/task-orchestrator.log</string>
+    <string>/tmp/vault-ui.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/task-orchestrator.log</string>
+    <string>/tmp/vault-ui.log</string>
 </dict>
 </plist>
 ```
@@ -65,13 +65,13 @@ Create `~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist`:
 **Important:**
 
 - launchd does **not** expand `~` — use absolute paths everywhere.
-- `uv run --directory <repo>` is required because `config.yaml` is loaded relative to the source tree (`src/task_orchestrator/../../../config.yaml`). A bare `task-orchestrator` invocation from a `uv tool install` would not find the config.
+- `uv run --directory <repo>` is required because `config.yaml` is loaded relative to the source tree (`src/vault_ui/../../../config.yaml`). A bare `vault-ui` invocation from a `uv tool install` would not find the config.
 - The `PATH` env var must include the directory holding `vault-cli`, otherwise the watchers fail with `[Errno 2] No such file or directory: 'vault-cli'`.
 
 Load and start:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
+launchctl load ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
 
 ## 2. Manage the service
@@ -79,22 +79,22 @@ launchctl load ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
 Stop:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
+launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
 
 Restart (stop + start, required after editing the plist or `config.yaml`):
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
-launchctl load ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
+launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+launchctl load ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
 
 ## 3. Verify
 
 ```bash
-launchctl list | grep task-orchestrator         # status column 0 = healthy
+launchctl list | grep vault-ui         # status column 0 = healthy
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/   # expect 200
-tail -f /tmp/task-orchestrator.log
+tail -f /tmp/vault-ui.log
 ```
 
 A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and one `Started vault-cli watcher for vault: <name>` line per configured vault.
@@ -104,17 +104,17 @@ A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and one `Start
 Code changes are picked up on restart (no install step — `uv run` resolves the local source):
 
 ```bash
-cd ~/Documents/workspaces/task-orchestrator
+cd ~/Documents/workspaces/vault-ui
 git pull
-launchctl unload ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
-launchctl load ~/Library/LaunchAgents/com.github.bborbe.task-orchestrator.plist
+launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+launchctl load ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
 
 If dependencies changed (`pyproject.toml` / `uv.lock`), `uv run` resyncs on next start automatically.
 
 ## 5. Log verbosity
 
-task-orchestrator reads `LOG_LEVEL` from the environment at startup. Valid values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`. Unset → `INFO` (default; same as before this knob existed). Invalid → falls back to `INFO` and logs a one-line WARN at startup.
+vault-ui reads `LOG_LEVEL` from the environment at startup. Valid values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`. Unset → `INFO` (default; same as before this knob existed). Invalid → falls back to `INFO` and logs a one-line WARN at startup.
 
 The same level drives both Python's root logger and uvicorn's logger — bumping to `DEBUG` surfaces router internals, every HTTP request, AND the per-line streaming output of the long-running `vault-cli task work-on` subprocess (so you can watch the headless claude's tool calls arrive live instead of waiting 60–180s for the buffered exit).
 
@@ -138,16 +138,16 @@ Apply the plist edit by restarting the service (section 2).
 
 ```bash
 launchctl setenv LOG_LEVEL DEBUG
-launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 # ... investigate ...
 launchctl unsetenv LOG_LEVEL
-launchctl kickstart -k gui/$UID/com.github.bborbe.task-orchestrator
+launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 ```
 
 Verify the level took effect:
 
 ```bash
-tail -f /tmp/task-orchestrator.log
+tail -f /tmp/vault-ui.log
 # At DEBUG you should see per-request lines and "vault-cli stdout [<task_id>]: ..." lines while a Start is in flight.
 ```
 
@@ -155,7 +155,7 @@ tail -f /tmp/task-orchestrator.log
 
 ### `launchctl list` shows non-zero exit / service keeps restarting
 
-Check `/tmp/task-orchestrator.log`. Common causes:
+Check `/tmp/vault-ui.log`. Common causes:
 
 - `uv` path wrong in the plist (`command -v uv` should match)
 - `vault-cli` not in the `PATH` env var → `[Errno 2] No such file or directory: 'vault-cli'`

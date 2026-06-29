@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Fixed Done column by defaulting status filter to include completed tasks, parsing completed_date field, and using repeated --status flags for multi-value filters
-container: task-orchestrator-033-fix-done-column-fetch-completed-tasks
+container: vault-ui-033-fix-done-column-fetch-completed-tasks
 dark-factory-version: v0.57.5
 created: "2026-03-18T20:19:32Z"
 queued: "2026-03-18T21:18:10Z"
@@ -26,19 +26,19 @@ Fix the Done column in the Kanban board being permanently empty. Two root causes
 Read `CLAUDE.md` for project conventions.
 
 Files to read before making changes:
-- `src/task_orchestrator/api/models.py` — Task dataclass (add completed_date field)
-- `src/task_orchestrator/vault_cli_client.py` — list_tasks method (fix multi-status args, parse completed_date)
-- `src/task_orchestrator/api/tasks.py` — list_tasks endpoint (default status filter, completed_date cutoff logic)
+- `src/vault_ui/api/models.py` — Task dataclass (add completed_date field)
+- `src/vault_ui/vault_cli_client.py` — list_tasks method (fix multi-status args, parse completed_date)
+- `src/vault_ui/api/tasks.py` — list_tasks endpoint (default status filter, completed_date cutoff logic)
 - `tests/test_api.py` — all test helpers and existing tests (update Task constructors, add new tests)
 </context>
 
 <requirements>
-1. **Add `completed_date` field to `Task` and `TaskResponse`** in `src/task_orchestrator/api/models.py`:
+1. **Add `completed_date` field to `Task` and `TaskResponse`** in `src/vault_ui/api/models.py`:
    - In the `Task` dataclass, add `completed_date: str | None = None` after the existing `modified_date` field (use default `None` to avoid breaking existing constructors).
    - In the `TaskResponse` Pydantic model, add `completed_date: str | None = None` after `modified_date`.
    - These fields hold an ISO 8601 datetime string from vault-cli JSON, representing when the task was completed.
 
-2. **Fix multi-value status filtering in `VaultCLIClient.list_tasks`** in `src/task_orchestrator/vault_cli_client.py`:
+2. **Fix multi-value status filtering in `VaultCLIClient.list_tasks`** in `src/vault_ui/vault_cli_client.py`:
    - In the `list_tasks` method, find the `else` branch that currently does `args.append("--all")` and sets `needs_python_filter = True` (the branch handling multiple status values).
    - Replace it with a loop that appends repeated `--status` flags:
      ```python
@@ -50,14 +50,14 @@ Files to read before making changes:
    - Remove the `needs_python_filter` variable declaration (currently `needs_python_filter = False` near the top of the method).
    - Remove the post-filter block that checks `if needs_python_filter and status_filter:` and filters tasks in Python.
 
-3. **Parse `completed_date` in `VaultCLIClient._parse_task`** in `src/task_orchestrator/vault_cli_client.py`:
+3. **Parse `completed_date` in `VaultCLIClient._parse_task`** in `src/vault_ui/vault_cli_client.py`:
    - In the `_parse_task` method, after the `modified_date` parsing block, add:
      ```python
      completed_date: str | None = data.get("completed_date") or None
      ```
    - In the `Task(...)` constructor call at the end of `_parse_task`, add `completed_date=completed_date,` after `modified_date=modified_date,`.
 
-4. **Default status filter to include completed tasks** in `src/task_orchestrator/api/tasks.py`:
+4. **Default status filter to include completed tasks** in `src/vault_ui/api/tasks.py`:
    - In the `list_tasks` endpoint function, find the line:
      ```python
      tasks = await client.list_tasks(status_filter=status_filter)
@@ -69,7 +69,7 @@ Files to read before making changes:
      ```
    - This ensures that when no `?status=` query param is given, todo, in_progress, and completed tasks are all fetched. `todo` must be included to preserve the existing Kanban Todo column behavior.
 
-5. **Use `completed_date` for the 8-hour cutoff filter** in `src/task_orchestrator/api/tasks.py`:
+5. **Use `completed_date` for the 8-hour cutoff filter** in `src/vault_ui/api/tasks.py`:
    - In the `list_tasks` endpoint, find the block that handles `if t.status == "completed":` (currently checks `t.modified_date`).
    - Replace the entire block with:
      ```python
@@ -111,7 +111,7 @@ Files to read before making changes:
 
    d. **Test completed task with `completed_date=None` falls back to `modified_date`**: Create a task with `status="completed"`, `completed_date=None`, and `modified_date` set to 2 hours ago. Verify the task is still included (fallback works).
 
-8. **Update `_task_to_response`** in `src/task_orchestrator/api/tasks.py`:
+8. **Update `_task_to_response`** in `src/vault_ui/api/tasks.py`:
    - In the `_task_to_response` function, add `completed_date=task.completed_date,` to the `TaskResponse(...)` constructor call so the field is serialized in API responses.
 </requirements>
 

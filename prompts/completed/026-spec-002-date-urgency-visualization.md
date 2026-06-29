@@ -2,7 +2,7 @@
 status: completed
 spec: [002-date-urgency-visualization]
 summary: Added date-urgency colored left-border indicators and urgency-first sorting to Kanban task cards via getUrgencyTier() function in app.js and corresponding CSS classes in style.css.
-container: task-orchestrator-026-spec-002-date-urgency-visualization
+container: vault-ui-026-spec-002-date-urgency-visualization
 dark-factory-version: v0.55.1
 created: "2026-03-16T14:00:00Z"
 queued: "2026-03-16T13:50:42Z"
@@ -30,8 +30,8 @@ Add date-urgency visualization to the Kanban board: a colored left-edge band on 
 Read CLAUDE.md for project conventions.
 
 Read these files before making any changes:
-- `src/task_orchestrator/static/app.js` — find `createTaskCard(task)` (line 314), the sort block in `loadTasks()` (lines 263–267), and `normalizePriority(priority)` (line 600). The `task` object has `due_date` and `planned_date` fields (strings in YYYY-MM-DD format, or null/empty when absent).
-- `src/task_orchestrator/static/style.css` — find `.task-card` (line 169) to understand existing card styling. The dark theme background is `#3a3a3a` for cards and `#1a1a1a` for the page. Existing column header border colors use `#94a3b8` (slate), `#60a5fa` (blue), `#a78bfa` (purple), `#fbbf24` (amber), `#f97316` (orange), `#34d399` (green) — urgency colors must not clash with these.
+- `src/vault_ui/static/app.js` — find `createTaskCard(task)` (line 314), the sort block in `loadTasks()` (lines 263–267), and `normalizePriority(priority)` (line 600). The `task` object has `due_date` and `planned_date` fields (strings in YYYY-MM-DD format, or null/empty when absent).
+- `src/vault_ui/static/style.css` — find `.task-card` (line 169) to understand existing card styling. The dark theme background is `#3a3a3a` for cards and `#1a1a1a` for the page. Existing column header border colors use `#94a3b8` (slate), `#60a5fa` (blue), `#a78bfa` (purple), `#fbbf24` (amber), `#f97316` (orange), `#34d399` (green) — urgency colors must not clash with these.
 
 The `Task` API response already contains `due_date` and `planned_date` (confirmed in spec assumptions). Dates are YYYY-MM-DD strings when present, or null/undefined/empty when absent.
 </context>

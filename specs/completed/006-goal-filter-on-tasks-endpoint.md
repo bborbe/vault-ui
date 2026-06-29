@@ -21,7 +21,7 @@ branch: dark-factory/goal-filter-on-tasks-endpoint
 
 ## Problem
 
-The Kanban board lists every task across every vault and assignee, with no way to slice by the goal a task belongs to. Operators tracking multiple goals in parallel cannot focus on the subset of work for one goal without manually eyeballing tags on each card. As the goal hierarchy grows, the board becomes unusable for goal-focused work. The `goals:` frontmatter exists on tasks already, but task-orchestrator ignores it: the Task model has no `goals` field, the parser does not read it, and the `/tasks` endpoint exposes no filter. A future goal-board view (out of scope) will need both the API filter and the URL primitive that this spec establishes.
+The Kanban board lists every task across every vault and assignee, with no way to slice by the goal a task belongs to. Operators tracking multiple goals in parallel cannot focus on the subset of work for one goal without manually eyeballing tags on each card. As the goal hierarchy grows, the board becomes unusable for goal-focused work. The `goals:` frontmatter exists on tasks already, but vault-ui ignores it: the Task model has no `goals` field, the parser does not read it, and the `/tasks` endpoint exposes no filter. A future goal-board view (out of scope) will need both the API filter and the URL primitive that this spec establishes.
 
 ## Goal
 
@@ -36,7 +36,7 @@ After this work, `GET /tasks` accepts an optional repeatable `goal` query parame
 - No reverse view (goals listed with their tasks).
 - No partial / fuzzy / case-insensitive goal matching.
 - No backfilling `goals:` frontmatter on existing tasks (operator-side hygiene).
-- No change to how `goals:` is persisted or written back; task-orchestrator only reads it.
+- No change to how `goals:` is persisted or written back; vault-ui only reads it.
 
 ## Desired Behavior
 
@@ -136,8 +136,8 @@ Without this work, operators cannot focus the Kanban on a single goal as the goa
 ## Verification Result
 
 **Verified:** 2026-05-11T15:38:44Z (HEAD e33c0c1)
-**Binary:** installed `dark-factory v0.156.1-1-g04f3863-dirty`; task-orchestrator running on 127.0.0.1:8000 from worktree HEAD
-**Scenario:** Live curl against running task-orchestrator + `make precommit` (149/149 tests pass) + operator-confirmed browser screenshot
+**Binary:** installed `dark-factory v0.156.1-1-g04f3863-dirty`; vault-ui running on 127.0.0.1:8000 from worktree HEAD
+**Scenario:** Live curl against running vault-ui + `make precommit` (149/149 tests pass) + operator-confirmed browser screenshot
 **Evidence:**
 - `?vault=personal` → 142 tasks (no regression); `?vault=personal&goal=Eliminate%20Agent%20Task%20Rot` → 5 tasks, all goals contain `Eliminate Agent Task Rot` (brackets stripped)
 - repeat-form `?goal=A&goal=B` ≡ comma-form `?goal=A,B` (sorted ID sets equal, n=5); mixed `?goal=A,B&goal=C` returns A∪B (n=5; C unknown)

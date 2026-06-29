@@ -1,8 +1,8 @@
 ---
 status: completed
-spec: [013-task-orchestrator-goals-view]
+spec: [013-vault-ui-goals-view]
 summary: Added Tasks/Goals view toggle to index.html, app.js dispatcher (loadCurrentView), goals cache, goal-card rendering, item_kind-routed WebSocket handler, CSS styles, README docs, CHANGELOG v0.39.0 entry, and 10 contract tests; all precommit checks pass.
-execution_id: task-orchestrator-goals-view-exec-061-frontend-view-toggle
+execution_id: vault-ui-goals-view-exec-061-frontend-view-toggle
 dark-factory-version: v0.187.5
 created: "2026-06-26T16:18:50Z"
 queued: "2026-06-26T16:18:59Z"
@@ -31,11 +31,11 @@ Add a top-of-board Tasks/Goals view toggle to the Task Orchestrator frontend. Th
 Read `/workspace/CLAUDE.md` if it exists. The project follows the conventions visible in the existing frontend code: vanilla JavaScript, no framework, no bundler, fetch + DOM APIs, single `app.js` file served by FastAPI's `StaticFiles` mount.
 
 Read these source files in full before editing (paths are absolute, host-side):
-- `/workspace/src/task_orchestrator/static/index.html` — full file is 107 lines. The toggle MUST be inserted inside the existing `<header>` block, BEFORE the `.kanban-board` div (so it sits above the columns). The toggle's `data-testid="view-toggle"` and button text "Tasks" / "Goals" are required for spec AC#5 evidence.
-- `/workspace/src/task_orchestrator/static/app.js` — full file is 1651 lines. Key entry points: `DOMContentLoaded` handler (line 36), `parseURLParams` (line 60), `loadVaults` (line 423), `loadTasks` (line 763), `createTaskCard` (line 884), `handleTaskUpdate` (line 1592), `connectWebSocket` (line 1563). The existing `loadVaults` always calls `loadTasks` at the end (line 522) — this is the source of the "Tasks view flash on `?view=goals`" anti-pattern the spec calls out.
-- `/workspace/src/task_orchestrator/static/style.css` — the header layout uses flexbox (line 35). Add a `.view-toggle` class that uses the same visual treatment as `.vault-selector-toggle` so the new control feels native.
-- `/workspace/src/task_orchestrator/api/models.py` — both `TaskResponse` and the new `GoalResponse` (added by prompt 1) include `obsidian_url`. The frontend MUST use that field directly; do not build `obsidian://` URLs in JS.
-- `/workspace/src/task_orchestrator/api/tasks.py` — the new `/api/goals` endpoint (added by prompt 1) accepts `vault`, `status`, `assignee` query params. The frontend's `loadGoals` reuses the same param-building logic as `loadTasks`.
+- `/workspace/src/vault_ui/static/index.html` — full file is 107 lines. The toggle MUST be inserted inside the existing `<header>` block, BEFORE the `.kanban-board` div (so it sits above the columns). The toggle's `data-testid="view-toggle"` and button text "Tasks" / "Goals" are required for spec AC#5 evidence.
+- `/workspace/src/vault_ui/static/app.js` — full file is 1651 lines. Key entry points: `DOMContentLoaded` handler (line 36), `parseURLParams` (line 60), `loadVaults` (line 423), `loadTasks` (line 763), `createTaskCard` (line 884), `handleTaskUpdate` (line 1592), `connectWebSocket` (line 1563). The existing `loadVaults` always calls `loadTasks` at the end (line 522) — this is the source of the "Tasks view flash on `?view=goals`" anti-pattern the spec calls out.
+- `/workspace/src/vault_ui/static/style.css` — the header layout uses flexbox (line 35). Add a `.view-toggle` class that uses the same visual treatment as `.vault-selector-toggle` so the new control feels native.
+- `/workspace/src/vault_ui/api/models.py` — both `TaskResponse` and the new `GoalResponse` (added by prompt 1) include `obsidian_url`. The frontend MUST use that field directly; do not build `obsidian://` URLs in JS.
+- `/workspace/src/vault_ui/api/tasks.py` — the new `/api/goals` endpoint (added by prompt 1) accepts `vault`, `status`, `assignee` query params. The frontend's `loadGoals` reuses the same param-building logic as `loadTasks`.
 - `/workspace/README.md` — append a "Goals view" subsection under the existing "## Usage" section (line 37). One paragraph + URL examples.
 
 **Verified assumptions** (READ before writing any code):
@@ -407,9 +407,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-INDEX_HTML = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "index.html").read_text()
-APP_JS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "app.js").read_text()
-STYLE_CSS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "style.css").read_text()
+INDEX_HTML = (REPO_ROOT / "src" / "vault_ui" / "static" / "index.html").read_text()
+APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
+STYLE_CSS = (REPO_ROOT / "src" / "vault_ui" / "static" / "style.css").read_text()
 
 
 def test_index_html_has_view_toggle() -> None:
@@ -555,17 +555,17 @@ uv run pytest tests/test_view_toggle.py -v
 
 Confirm the toggle is in the HTML:
 ```bash
-grep -A 3 'data-testid="view-toggle"' src/task_orchestrator/static/index.html
+grep -A 3 'data-testid="view-toggle"' src/vault_ui/static/index.html
 ```
 
 Confirm the dispatcher routes correctly:
 ```bash
-grep -A 6 "function loadCurrentView" src/task_orchestrator/static/app.js
+grep -A 6 "function loadCurrentView" src/vault_ui/static/app.js
 ```
 
 Confirm `loadVaults` no longer calls `loadTasks` directly:
 ```bash
-grep -n "loadTasks()\|loadCurrentView()" src/task_orchestrator/static/app.js
+grep -n "loadTasks()\|loadCurrentView()" src/vault_ui/static/app.js
 # Expected: only one occurrence of loadTasks() in loadCurrentView() and in the
 # existing handleTaskUpdate re-fetch path; loadVaults should call loadCurrentView
 ```

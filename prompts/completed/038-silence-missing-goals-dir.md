@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Downgraded missing Goals/ directory exception to debug log in cleanup.py; added test covering the new branch; updated CHANGELOG.md.
-container: task-orchestrator-038-silence-missing-goals-dir
+container: vault-ui-038-silence-missing-goals-dir
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-08T12:30:00Z"
 queued: "2026-05-08T12:41:25Z"
@@ -25,8 +25,8 @@ Suppress noisy traceback logging when `vault-cli goal list` fails specifically b
 Read CLAUDE.md for project conventions.
 
 Read these files in full before making changes:
-- `src/task_orchestrator/cleanup.py` — full file. The relevant block is the `except Exception as e:` that logs `"[Cleanup] Exception processing goals for vault %s: %s"` (added by spec 004 prompt 2). The error currently uses `logger.error(..., exc_info=True)` which prints the full traceback.
-- `src/task_orchestrator/vault_cli_client.py` — `list_goals` method raises `RuntimeError(f"vault-cli goal list failed: {stderr.decode().strip()}")`. The stderr text contains the pattern `no such file or directory` when the goals directory is missing.
+- `src/vault_ui/cleanup.py` — full file. The relevant block is the `except Exception as e:` that logs `"[Cleanup] Exception processing goals for vault %s: %s"` (added by spec 004 prompt 2). The error currently uses `logger.error(..., exc_info=True)` which prints the full traceback.
+- `src/vault_ui/vault_cli_client.py` — `list_goals` method raises `RuntimeError(f"vault-cli goal list failed: {stderr.decode().strip()}")`. The stderr text contains the pattern `no such file or directory` when the goals directory is missing.
 - `tests/test_cleanup.py` — existing goal cleanup tests, especially `test_goal_list_failure_does_not_abort_task_pass`. Add the new "missing directory" test alongside it.
 
 The actual error message vault-cli emits (observed at runtime):
@@ -38,7 +38,7 @@ The detection pattern: case-insensitive substring `no such file or directory` in
 </context>
 
 <requirements>
-### 1. Update the goal-cleanup `except` block in `src/task_orchestrator/cleanup.py`
+### 1. Update the goal-cleanup `except` block in `src/vault_ui/cleanup.py`
 
 Find the `except Exception as e:` that logs `"[Cleanup] Exception processing goals for vault %s: %s"` (this is the goal-cleanup wrapper added by spec 004, located inside the per-vault `try:` block, after the goal `for` loop).
 
@@ -85,9 +85,9 @@ async def test_goal_list_missing_directory_logs_debug_not_error(
     )
 
     with patch(
-        "task_orchestrator.cleanup.VaultCLIClient", return_value=mock_client
+        "vault_ui.cleanup.VaultCLIClient", return_value=mock_client
     ):
-        with caplog.at_level(logging.DEBUG, logger="task_orchestrator.cleanup"):
+        with caplog.at_level(logging.DEBUG, logger="vault_ui.cleanup"):
             cleared = await cleanup_stale_sessions(config)
 
     assert cleared == 0

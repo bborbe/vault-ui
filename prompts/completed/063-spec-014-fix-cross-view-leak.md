@@ -2,7 +2,7 @@
 status: completed
 spec: [014-goals-view-ux-hardening]
 summary: 'Eliminated cross-view leak: migrated 16 unconditional loadTasks() call sites (startPolling, refresh-btn, all filter handlers, drag-drop, slash command, clear session, assignToMe, handleTaskUpdate task branch) to loadCurrentView(); hardened handleTaskUpdate with explicit AC#3 early-return; added tests/test_cross_view_leak.py with 4 static-text regression tests; CHANGELOG Unreleased entry added; all 239 tests pass, make precommit exits 0.'
-execution_id: task-orchestrator-goals-view-fixes-exec-063-spec-014-fix-cross-view-leak
+execution_id: vault-ui-goals-view-fixes-exec-063-spec-014-fix-cross-view-leak
 dark-factory-version: v0.187.5
 created: "2026-06-27T12:05:00Z"
 queued: "2026-06-27T12:31:48Z"
@@ -24,10 +24,10 @@ Eliminate the cross-view leak bug: when the operator is on `?view=goals`, NO `lo
 </objective>
 
 <context>
-Read `/workspace/CLAUDE.md` if it exists. Project conventions follow the vanilla-JS / FastAPI pattern visible in `src/task_orchestrator/static/app.js`.
+Read `/workspace/CLAUDE.md` if it exists. Project conventions follow the vanilla-JS / FastAPI pattern visible in `src/vault_ui/static/app.js`.
 
 Read these source files in full before editing (paths are absolute, host-side):
-- `/workspace/src/task_orchestrator/static/app.js` — full file (1819 lines). Critical call sites that unconditionally invoke `loadTasks()` and must be migrated:
+- `/workspace/src/vault_ui/static/app.js` — full file (1819 lines). Critical call sites that unconditionally invoke `loadTasks()` and must be migrated:
   - Line 58: `startPolling()` calls `loadTasks()` every 60s
   - Line 113: `setupEventListeners` wires `#refresh-btn` to `loadTasks()`
   - Line 149: `setupUpcomingWindow` change handler calls `loadTasks()`
@@ -46,8 +46,8 @@ Read these source files in full before editing (paths are absolute, host-side):
   - Line 1763: `handleTaskUpdate` calls `loadTasks()` (WebSocket task event branch)
   - Line 1753: `handleTaskUpdate` calls `loadGoals()` (WebSocket goal event branch — keep this; it's correct)
 
-- `/workspace/src/task_orchestrator/static/index.html` — the existing view toggle at line 13–16 and the existing `id="refresh-btn"` at line 48. No changes to HTML.
-- `/workspace/src/task_orchestrator/factory.py` — the `start_task_watchers` watcher callback already broadcasts `item_kind` (spec 013 prompt 3, merged in PR #14, commit 37bcf16). The frontend handler at app.js line 1721 reads the field. No backend changes needed.
+- `/workspace/src/vault_ui/static/index.html` — the existing view toggle at line 13–16 and the existing `id="refresh-btn"` at line 48. No changes to HTML.
+- `/workspace/src/vault_ui/factory.py` — the `start_task_watchers` watcher callback already broadcasts `item_kind` (spec 013 prompt 3, merged in PR #14, commit 37bcf16). The frontend handler at app.js line 1721 reads the field. No backend changes needed.
 - `/workspace/tests/test_websocket_routing.py` — the existing test file pins the factory-level broadcast and the kind-scoped cache invalidation. This prompt adds `tests/test_cross_view_leak.py` (separate file — one concern per file).
 - `/workspace/tests/test_view_toggle.py` — pins the spec 013 prompt 2 contracts (dispatcher, URL plumbing, goal card rendering). This prompt's regression test is in a new file because it targets the cross-view leak fix specifically.
 
@@ -66,7 +66,7 @@ Read these source files in full before editing (paths are absolute, host-side):
 
 ### 1. Migrate every unconditional `loadTasks()` call site to `loadCurrentView()`
 
-In `/workspace/src/task_orchestrator/static/app.js`, replace every bare `loadTasks()` call that is NOT already inside `loadCurrentView()` with `loadCurrentView()`. Concretely:
+In `/workspace/src/vault_ui/static/app.js`, replace every bare `loadTasks()` call that is NOT already inside `loadCurrentView()` with `loadCurrentView()`. Concretely:
 
 - Line 58 (`startPolling`): `loadTasks();` → `loadCurrentView();`
 - Line 113 (`setupEventListeners` `#refresh-btn` handler): `loadTasks` → `loadCurrentView` (this is an event listener that just passes the click event; replace the reference in the `.addEventListener('click', loadTasks)` call).
@@ -91,7 +91,7 @@ The `await loadTasks();` at line 698 (`assignToMe`) is a task-only write op with
 
 ### 2. Harden `handleTaskUpdate` against cross-view events
 
-In `/workspace/src/task_orchestrator/static/app.js` `handleTaskUpdate` (line 1721), the current dispatch is:
+In `/workspace/src/vault_ui/static/app.js` `handleTaskUpdate` (line 1721), the current dispatch is:
 
 ```javascript
 if (kind === 'goal') {
@@ -167,7 +167,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-APP_JS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "app.js").read_text()
+APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
 
 
 def _slice_outside_function(source: str, fn_name: str) -> str:
@@ -328,17 +328,17 @@ uv run pytest tests/test_cross_view_leak.py -v
 make precommit
 
 # Confirm no bare loadTasks() outside loadCurrentView remains
-grep -n 'loadTasks' src/task_orchestrator/static/app.js
+grep -n 'loadTasks' src/vault_ui/static/app.js
 # Expected: only ONE occurrence of `loadTasks()` as a call — inside loadCurrentView.
 # Other occurrences are the function definition `async function loadTasks()` and
 # the property accesses inside loadCurrentView itself.
 
 # Confirm the polling path is hardened
-grep -A 2 'function startPolling' src/task_orchestrator/static/app.js
+grep -A 2 'function startPolling' src/vault_ui/static/app.js
 # Expected: `await loadCurrentView();` inside the interval callback.
 
 # Confirm the refresh-btn path is hardened
-grep -A 1 'refresh-btn' src/task_orchestrator/static/app.js
+grep -A 1 'refresh-btn' src/vault_ui/static/app.js
 # Expected: addEventListener('click', loadCurrentView)
 
 # Red→green regression test (per spec verification block)
@@ -368,7 +368,7 @@ uv run pytest tests/test_cross_view_leak.py -v   # expect 4 tests PASS
 - Spec: `/workspace/specs/in-progress/014-goals-view-ux-hardening.md`
 - Task page: `[[Fix Task Cards Leaking into Goals View on Task Orchestrator]]`
 - Parent goal: `[[Task Orchestrator Display Tasks and Goals]]`
-- Precedent: `specs/in-progress/013-task-orchestrator-goals-view.md` (merged via PR #14, commit `37bcf16`)
+- Precedent: `specs/in-progress/013-vault-ui-goals-view.md` (merged via PR #14, commit `37bcf16`)
 - Related tests: `/workspace/tests/test_view_toggle.py`, `/workspace/tests/test_websocket_routing.py`
 - Downstream: prompt 2 (`groupBy` selector) depends on this prompt's call-site stabilization
 </cross_references>

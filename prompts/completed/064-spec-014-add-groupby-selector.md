@@ -2,7 +2,7 @@
 status: completed
 spec: [014-goals-view-ux-hardening]
 summary: Added groupBy selector with URL plumbing, kind-aware default, phase/status column-set switch, goal-without-phase '—' fallback, and updated loadTasks/loadGoals to dispatch on currentGroupBy
-execution_id: task-orchestrator-goals-view-fixes-exec-064-spec-014-add-groupby-selector
+execution_id: vault-ui-goals-view-fixes-exec-064-spec-014-add-groupby-selector
 dark-factory-version: v0.187.5
 created: "2026-06-27T12:05:00Z"
 queued: "2026-06-27T12:31:48Z"
@@ -25,10 +25,10 @@ Add a `groupBy` selector to the kanban header so the columns match the dimension
 </objective>
 
 <context>
-Read `/workspace/CLAUDE.md` if it exists. Conventions follow `src/task_orchestrator/static/app.js`.
+Read `/workspace/CLAUDE.md` if it exists. Conventions follow `src/vault_ui/static/app.js`.
 
 Read these source files in full before editing (paths are absolute, host-side):
-- `/workspace/src/task_orchestrator/static/app.js` — full file (now ~1819 lines after prompt 1). Critical anchors:
+- `/workspace/src/vault_ui/static/app.js` — full file (now ~1819 lines after prompt 1). Critical anchors:
   - `parseURLParams` at line 62 — extend to read `?groupBy=`. The current param-reading block at lines 66–94 reads `vault`, `assignee`, `status`, `goal`, `view` (in that order). Add `groupBy` after `view`.
   - `loadTasks` at line 789 — currently maps `displayPhase = task.phase === 'in_progress' ? 'execution' : task.phase` at line 856. This is the aliasing rule that the new `groupBy=status` mode will replace. The `phase` mode keeps this rule.
   - `loadGoals` at line 883 — currently hard-codes `statusToColumn` mapping at line 913 (e.g. `'in_progress': 'execution'`). This hard-coded map is exactly what `groupBy=status` is meant to replace; under `groupBy=phase`, the loader falls back to the "—" column for goals lacking `phase`.
@@ -37,13 +37,13 @@ Read these source files in full before editing (paths are absolute, host-side):
   - `updateURL` at line 705 — extend to emit `?groupBy=`.
   - `createGoalCard` at line 1072 — no changes; goal cards continue to render the same way regardless of grouping.
 
-- `/workspace/src/task_orchestrator/static/index.html` — the kanban column structure at lines 52–77 (six columns: `todo`, `planning`, `in_progress` (renamed to `execution` at runtime), `ai_review`, `human_review`, `done`). Each column has a `<h2>` header. The new `groupBy` selector is a `<select>` element that lives inside the existing `<header>` (e.g., between the view toggle and the `.header-controls` div at line 17). Selector element shape: `<select id="groupby-select" data-testid="groupby-select">` with two `<option>` children.
+- `/workspace/src/vault_ui/static/index.html` — the kanban column structure at lines 52–77 (six columns: `todo`, `planning`, `in_progress` (renamed to `execution` at runtime), `ai_review`, `human_review`, `done`). Each column has a `<h2>` header. The new `groupBy` selector is a `<select>` element that lives inside the existing `<header>` (e.g., between the view toggle and the `.header-controls` div at line 17). Selector element shape: `<select id="groupby-select" data-testid="groupby-select">` with two `<option>` children.
 
-- `/workspace/src/task_orchestrator/static/style.css` — the header layout uses flexbox (line 35). The new select gets a small CSS class (`.groupby-select`) reusing the visual tokens from the existing selectors.
+- `/workspace/src/vault_ui/static/style.css` — the header layout uses flexbox (line 35). The new select gets a small CSS class (`.groupby-select`) reusing the visual tokens from the existing selectors.
 
-- `/workspace/src/task_orchestrator/api/tasks.py` — `GET /api/goals` endpoint (line 587) accepts `vault`, `status`, `assignee`. `GET /api/tasks` (line 470ish) accepts `vault`, `status`, `assignee`, `goal`, `phase`, `upcoming_hours`. The frontend does NOT need to send a `groupBy` query param to the backend — the column rendering is purely a frontend concern (the loader fetches all rows and the JS dispatches into columns).
+- `/workspace/src/vault_ui/api/tasks.py` — `GET /api/goals` endpoint (line 587) accepts `vault`, `status`, `assignee`. `GET /api/tasks` (line 470ish) accepts `vault`, `status`, `assignee`, `goal`, `phase`, `upcoming_hours`. The frontend does NOT need to send a `groupBy` query param to the backend — the column rendering is purely a frontend concern (the loader fetches all rows and the JS dispatches into columns).
 
-- `/workspace/src/task_orchestrator/api/models.py` — `Goal` dataclass at line 41: `phase` field is NOT defined. Goals have `status`, `priority`, `defer_date`, `target_date`, `completed_date` but NOT a `phase` field. The `goal.phase` access (in the JS or the API) returns `undefined`. The "—" fallback column exists for this case.
+- `/workspace/src/vault_ui/api/models.py` — `Goal` dataclass at line 41: `phase` field is NOT defined. Goals have `status`, `priority`, `defer_date`, `target_date`, `completed_date` but NOT a `phase` field. The `goal.phase` access (in the JS or the API) returns `undefined`. The "—" fallback column exists for this case.
 
 **Verified assumptions** (READ before writing any code):
 - The status taxonomy is the same for tasks and goals: `in_progress`, `next`, `backlog`, `completed`, `hold`, `aborted` (per the spec's Constraints). The phase taxonomy is task-only: `todo`, `planning`, `execution`, `ai_review`, `human_review`, `done`. Goals do NOT have a `phase` field.
@@ -62,7 +62,7 @@ Read these source files in full before editing (paths are absolute, host-side):
 
 ### 1. Add the `groupBy` selector to `index.html`
 
-In `/workspace/src/task_orchestrator/static/index.html`, insert a new `<select>` element inside the existing `<header>`. Place it AFTER the `.view-toggle` div (line 16) and BEFORE the `.header-controls` div (line 17):
+In `/workspace/src/vault_ui/static/index.html`, insert a new `<select>` element inside the existing `<header>`. Place it AFTER the `.view-toggle` div (line 16) and BEFORE the `.header-controls` div (line 17):
 
 ```html
 <select id="groupby-select" data-testid="groupby-select" title="Group columns by phase or status">
@@ -75,7 +75,7 @@ The `data-testid="groupby-select"` and the two option values (`phase`, `status`)
 
 ### 2. Add CSS for the `groupBy` selector to `style.css`
 
-Append at the end of `/workspace/src/task_orchestrator/static/style.css`:
+Append at the end of `/workspace/src/vault_ui/static/style.css`:
 
 ```css
 /* groupBy selector (Phase / Status) */
@@ -124,7 +124,7 @@ Append at the end of `/workspace/src/task_orchestrator/static/style.css`:
 
 ### 3. Add `currentGroupBy` state and parsing in `app.js`
 
-**3a.** At the top of `/workspace/src/task_orchestrator/static/app.js`, after the existing `currentView` declaration (line 14), add:
+**3a.** At the top of `/workspace/src/vault_ui/static/app.js`, after the existing `currentView` declaration (line 14), add:
 
 ```javascript
 let currentGroupBy = 'phase'; // 'phase' | 'status' — synced to ?groupBy= URL param, default 'phase'
@@ -415,9 +415,9 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-INDEX_HTML = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "index.html").read_text()
-APP_JS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "app.js").read_text()
-STYLE_CSS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "style.css").read_text()
+INDEX_HTML = (REPO_ROOT / "src" / "vault_ui" / "static" / "index.html").read_text()
+APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
+STYLE_CSS = (REPO_ROOT / "src" / "vault_ui" / "static" / "style.css").read_text()
 
 
 def test_index_html_has_groupby_select_with_two_options() -> None:
@@ -573,14 +573,14 @@ uv run pytest tests/test_groupby_selector.py -v
 make precommit
 
 # Confirm the selector is in the HTML
-grep -A 4 'data-testid="groupby-select"' src/task_orchestrator/static/index.html
+grep -A 4 'data-testid="groupby-select"' src/vault_ui/static/index.html
 # Expected: <select> with two <option value="phase"> and <option value="status">
 
 # Confirm the kind-aware default
-grep -B 2 -A 5 "currentView === 'goals' ? 'status' : 'phase'" src/task_orchestrator/static/app.js
+grep -B 2 -A 5 "currentView === 'goals' ? 'status' : 'phase'" src/vault_ui/static/app.js
 
 # Confirm the URL plumbing
-grep -n "groupBy" src/task_orchestrator/static/app.js
+grep -n "groupBy" src/vault_ui/static/app.js
 # Expected: at least 8 occurrences (parse, default, set, updateURL, renderColumnHeaders, loadTasks dispatch, loadGoals dispatch, column labels)
 
 # Confirm the README update
@@ -609,9 +609,9 @@ grep -n 'groupBy' README.md
 - Prompt 1 (`1-spec-014-fix-cross-view-leak.md`): the cross-view leak fix migrates every unconditional `loadTasks()` to `loadCurrentView()`. This prompt's `setGroupBy` and `setView` both call `loadCurrentView()` to trigger a re-fetch — the dispatcher from prompt 1 is the entry point.
 - Verify before editing:
   ```bash
-  grep -n 'function loadCurrentView' /workspace/src/task_orchestrator/static/app.js
+  grep -n 'function loadCurrentView' /workspace/src/vault_ui/static/app.js
   # Expected: function loadCurrentView() defined.
-  grep -c 'loadTasks()' /workspace/src/task_orchestrator/static/app.js
+  grep -c 'loadTasks()' /workspace/src/vault_ui/static/app.js
   # Expected: ≤1 occurrence (only the one inside loadCurrentView).
   ```
 </depends_on>
@@ -620,7 +620,7 @@ grep -n 'groupBy' README.md
 - Spec: `/workspace/specs/in-progress/014-goals-view-ux-hardening.md`
 - Task page: `[[Add GroupBy Selector to Task Orchestrator Kanban]]`
 - Parent goal: `[[Task Orchestrator Display Tasks and Goals]]`
-- Precedent: `specs/in-progress/013-task-orchestrator-goals-view.md` (merged via PR #14, commit `37bcf16`)
+- Precedent: `specs/in-progress/013-vault-ui-goals-view.md` (merged via PR #14, commit `37bcf16`)
 - Sibling: prompt 1 (`1-spec-014-fix-cross-view-leak.md`) — must ship first
 - Related tests: `/workspace/tests/test_view_toggle.py`, `/workspace/tests/test_cross_view_leak.py` (from prompt 1)
 - Downstream: prompt 3 (cleanups) depends on this prompt's column-rendering stabilization

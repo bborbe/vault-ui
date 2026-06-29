@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from task_orchestrator.hierarchy import (
+from vault_ui.hierarchy import (
     discover_hierarchy_folders,
     discover_hierarchy_folders_for_vault,
 )

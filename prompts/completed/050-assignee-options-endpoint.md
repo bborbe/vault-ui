@@ -2,7 +2,7 @@
 status: completed
 spec: [007-assignee-filter-dropdown]
 summary: Added GET /api/assignees endpoint returning full distinct assignee set, switched Kanban Assignee dropdown to read from this endpoint via availableAssignees cache, added 8 new tests for the endpoint covering all specified scenarios.
-container: task-orchestrator-050-assignee-options-endpoint
+container: vault-ui-050-assignee-options-endpoint
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-13T07:05:00Z"
 queued: "2026-05-13T07:06:40Z"
@@ -34,14 +34,14 @@ Read the spec at `specs/in-progress/007-assignee-filter-dropdown.md`. Note: this
 
 Read these source files in full before editing:
 
-- `src/task_orchestrator/api/tasks.py` — house for the new endpoint. Existing patterns to mirror:
+- `src/vault_ui/api/tasks.py` — house for the new endpoint. Existing patterns to mirror:
   - `list_vaults` at line 107 — the shape for a simple `GET` returning a list.
   - `list_tasks` at line 157 — the pattern for iterating configured vaults via `get_config()`, calling `get_vault_cli_client_for_vault(vault_name)`, and calling `client.list_tasks(...)`.
   - `_flatten_filter` at line 142 — the `?vault=` parsing helper. Reuse it.
-- `src/task_orchestrator/api/models.py` — add the new response model here, next to `TaskResponse`. Note: `VaultResponse` currently lives in `api/tasks.py:80` (not in `models.py`); leave it where it is. Only `TaskResponse`, `SessionResponse`, `Task`, `Goal` live in `models.py` today.
-- `src/task_orchestrator/api/tasks.py` import block (line 17) currently reads `from task_orchestrator.api.models import SessionResponse, Task, TaskResponse`. Add `AssigneesResponse` to this line in alphabetical position.
-- `src/task_orchestrator/vault_cli_client.py` — `list_tasks(status_filter, show_all)` at line 23. The new endpoint will call `list_tasks(show_all=True)` so that every task is considered when computing the assignee set. Do NOT modify this method.
-- `src/task_orchestrator/static/app.js` — current Assignee dropdown lives here (added by prompt 049). Sites this prompt edits (anchored by function name; do NOT trust any hard-coded line number — the file has grown since prompt 049):
+- `src/vault_ui/api/models.py` — add the new response model here, next to `TaskResponse`. Note: `VaultResponse` currently lives in `api/tasks.py:80` (not in `models.py`); leave it where it is. Only `TaskResponse`, `SessionResponse`, `Task`, `Goal` live in `models.py` today.
+- `src/vault_ui/api/tasks.py` import block (line 17) currently reads `from vault_ui.api.models import SessionResponse, Task, TaskResponse`. Add `AssigneesResponse` to this line in alphabetical position.
+- `src/vault_ui/vault_cli_client.py` — `list_tasks(status_filter, show_all)` at line 23. The new endpoint will call `list_tasks(show_all=True)` so that every task is considered when computing the assignee set. Do NOT modify this method.
+- `src/vault_ui/static/app.js` — current Assignee dropdown lives here (added by prompt 049). Sites this prompt edits (anchored by function name; do NOT trust any hard-coded line number — the file has grown since prompt 049):
   - Module-level state at the top of the file (the `let currentVault = null;` … `let currentGoals = [];` block): add a new `let availableAssignees = { named: [], hasUnassigned: false };` cache after the `currentGoals` declaration.
   - `loadVaults` function: near the end, immediately after the existing `updateAssigneeLabel();` call and before `await loadTasks();`, add `await loadAssignees();`.
   - `handleVaultCheckboxChange` and `handleAllVaultCheckbox`: each ends with `loadTasks();`. Add a `loadAssignees();` call immediately before `loadTasks();` in both.
@@ -62,7 +62,7 @@ Read these source files in full before editing:
 
 <requirements>
 
-### 1. Backend — add the response model (`src/task_orchestrator/api/models.py`)
+### 1. Backend — add the response model (`src/vault_ui/api/models.py`)
 
 Append a new Pydantic model after the existing `VaultResponse`:
 
@@ -76,7 +76,7 @@ class AssigneesResponse(BaseModel):
 
 Do NOT modify any existing model.
 
-### 2. Backend — add the endpoint (`src/task_orchestrator/api/tasks.py`)
+### 2. Backend — add the endpoint (`src/vault_ui/api/tasks.py`)
 
 Find the existing `list_vaults` endpoint at line 107. Add the new endpoint immediately after it (before `_parse_defer_date`):
 
@@ -124,7 +124,7 @@ async def list_assignees(
     )
 ```
 
-Update the import at the top of `tasks.py` (currently line 17): change `from task_orchestrator.api.models import SessionResponse, Task, TaskResponse` to `from task_orchestrator.api.models import AssigneesResponse, SessionResponse, Task, TaskResponse`. (`VaultResponse` lives in `tasks.py` itself and is unaffected.)
+Update the import at the top of `tasks.py` (currently line 17): change `from vault_ui.api.models import SessionResponse, Task, TaskResponse` to `from vault_ui.api.models import AssigneesResponse, SessionResponse, Task, TaskResponse`. (`VaultResponse` lives in `tasks.py` itself and is unaffected.)
 
 ### 3. Backend — add a test (`tests/...`)
 
@@ -140,7 +140,7 @@ If `tests/` already has a fixture or helper for spinning up the FastAPI test cli
 
 Per `test-pyramid-triggers.md` this is a unit/integration test at the API-handler level — no E2E.
 
-### 4. Frontend — add the cache and loader (`src/task_orchestrator/static/app.js`)
+### 4. Frontend — add the cache and loader (`src/vault_ui/static/app.js`)
 
 Find the global-state block at the top of `app.js` (lines 3-10). Add immediately after the existing `currentGoals` declaration:
 
@@ -267,22 +267,22 @@ Do NOT modify any existing section. Use the next `v0.NN.0` if `v0.32.0` is taken
 ### 8. Final greps — sanity check
 
 ```
-grep -n "list_assignees\|AssigneesResponse" src/task_orchestrator/api/tasks.py src/task_orchestrator/api/models.py
+grep -n "list_assignees\|AssigneesResponse" src/vault_ui/api/tasks.py src/vault_ui/api/models.py
 ```
 Expected: 1 declaration of each, plus the import line in `tasks.py`.
 
 ```
-grep -n "availableAssignees\|loadAssignees" src/task_orchestrator/static/app.js
+grep -n "availableAssignees\|loadAssignees" src/vault_ui/static/app.js
 ```
 Expected: 1 declaration of `availableAssignees`, the `loadAssignees` function, plus 4 call sites (`loadVaults` startup, `handleAllVaultCheckbox`, `handleVaultCheckboxChange`, the per-vault Only button).
 
 ```
-grep -n "tasksCache" src/task_orchestrator/static/app.js
+grep -n "tasksCache" src/vault_ui/static/app.js
 ```
 Expected: every match is pre-existing (no new reference to `tasksCache` inside `computeAssigneeOptions`).
 
 ```
-grep -n "computeAssigneeOptions" src/task_orchestrator/static/app.js
+grep -n "computeAssigneeOptions" src/vault_ui/static/app.js
 ```
 Expected: 1 declaration + 1 call site inside `renderAssigneeDropdown`.
 
@@ -315,7 +315,7 @@ Expected: 1 declaration + 1 call site inside `renderAssigneeDropdown`.
 
 3. Confirm spec 007's still-relevant constraints hold:
    ```
-   grep -n "filterByAssignee\|assignee-badge\|assign-to-me-link" src/task_orchestrator/static/app.js
+   grep -n "filterByAssignee\|assignee-badge\|assign-to-me-link" src/vault_ui/static/app.js
    ```
    Each match must be byte-identical to before this prompt — only `computeAssigneeOptions` body changes; the badge, the assign-to-me link, and `filterByAssignee` itself must be unchanged.
 

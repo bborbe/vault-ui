@@ -7,7 +7,7 @@ tags:
 
 ## Idea
 
-Rename the project from `task-orchestrator` to `VaultDashboard`.
+Rename the project from `vault-ui` to `VaultDashboard`.
 
 - Display name: `VaultDashboard`
 - Repo / package slug: `vault-dashboard`
@@ -17,7 +17,7 @@ Rename the project from `task-orchestrator` to `VaultDashboard`.
 
 The name is no longer accurate on two axes.
 
-**It is not an orchestrator.** The orchestration machinery lives in `bborbe/agent` (`task/controller`, `task/executor`). This project is the operator-facing dashboard that surfaces what those orchestrators produce and lets a human steer them. Calling it `task-orchestrator` invites confusion with the actual controller/executor and misrepresents the layer.
+**It is not an orchestrator.** The orchestration machinery lives in `bborbe/agent` (`task/controller`, `task/executor`). This project is the operator-facing dashboard that surfaces what those orchestrators produce and lets a human steer them. Calling it `vault-ui` invites confusion with the actual controller/executor and misrepresents the layer.
 
 **It is no longer just about tasks.** Recent and queued work has expanded the surface well beyond a thin task Kanban:
 
@@ -36,9 +36,9 @@ The name is no longer accurate on two axes.
 
 Rough inventory (not exhaustive — sizing only):
 
-- GitHub repo: `bborbe/task-orchestrator` → `bborbe/vault-dashboard` (GitHub redirects clones / PRs / issue links)
+- GitHub repo: `bborbe/vault-ui` → `bborbe/vault-dashboard` (GitHub redirects clones / PRs / issue links)
 - `pyproject.toml` `name`, `[project.scripts]` entry, hatch wheel target
-- Package directory: `src/task_orchestrator/` → `src/vault_dashboard/`
+- Package directory: `src/vault_ui/` → `src/vault_dashboard/`
 - All in-tree Python imports
 - `make` targets / scripts that reference the old name
 - Cross-repo references in `~/Documents/workspaces/maintainer/CLAUDE.md`, `~/Documents/workspaces/agent/CLAUDE.md`, vault-cli, etc.
@@ -52,8 +52,8 @@ Rough inventory (not exhaustive — sizing only):
 - GitHub: in-place rename (relies on auto-redirect) vs new repo with archive of old?
 - Migration timing: single big PR, or staged (rename internals first, repo last)?
 - Do we batch the rename with the goal-board view so the "it's not just tasks" story lands in one release?
-- Console script name: keep `task-orchestrator` as an alias for one release, or hard-cut to `vault-dashboard`?
-- CLI service name in `vault-cli` integration / daemon configs — does anything outside this repo invoke `task-orchestrator` by name?
+- Console script name: keep `vault-ui` as an alias for one release, or hard-cut to `vault-dashboard`?
+- CLI service name in `vault-cli` integration / daemon configs — does anything outside this repo invoke `vault-ui` by name?
 
 ## Why not
 

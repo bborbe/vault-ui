@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Migrated from claude-code-sdk to claude-agent-sdk, renamed ClaudeCodeOptions to ClaudeAgentOptions, replaced direct __aenter__/__aexit__ calls with AsyncExitStack, and updated model alias to explicit claude-sonnet-4-5
-container: task-orchestrator-015-i-migrate-claude-agent-sdk
+container: vault-ui-015-i-migrate-claude-agent-sdk
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -24,8 +24,8 @@ The project uses `claude-agent-sdk` (the supported replacement for the deprecate
 <context>
 Read CLAUDE.md for project conventions.
 Read `pyproject.toml` — dependency declaration (~line 12).
-Read `src/task_orchestrator/claude/session_manager.py` — all SDK usage.
-Read `src/task_orchestrator/factory.py` — check if any `claude_code_sdk` imports remain (prior prompts may have removed them; if so, skip factory.py).
+Read `src/vault_ui/claude/session_manager.py` — all SDK usage.
+Read `src/vault_ui/factory.py` — check if any `claude_code_sdk` imports remain (prior prompts may have removed them; if so, skip factory.py).
 Read `tests/test_session_manager_integration.py` — uses `claude_code_sdk` imports that need updating.
 
 Migration mapping:

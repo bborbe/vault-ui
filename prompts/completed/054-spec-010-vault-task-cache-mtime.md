@@ -1,8 +1,8 @@
 ---
 status: completed
 spec: [010-parallelize-vault-task-fanout]
-summary: Added per-vault mtime-keyed in-process cache to _process_vault in src/task_orchestrator/api/tasks.py; cache hit skips vault-cli subprocess, missing tasks dir falls back gracefully, autouse fixture clears cache between tests, 3 new cache tests added (100 total, up from 97).
-container: task-orchestrator-parallel-vaults-exec-054-spec-010-vault-task-cache-mtime
+summary: Added per-vault mtime-keyed in-process cache to _process_vault in src/vault_ui/api/tasks.py; cache hit skips vault-cli subprocess, missing tasks dir falls back gracefully, autouse fixture clears cache between tests, 3 new cache tests added (100 total, up from 97).
+container: vault-ui-parallel-vaults-exec-054-spec-010-vault-task-cache-mtime
 dark-factory-version: v0.182.0
 created: "2026-06-20T13:07:03Z"
 queued: "2026-06-20T13:07:03Z"
@@ -21,7 +21,7 @@ branch: dark-factory/parallelize-vault-task-fanout
 </summary>
 
 <objective>
-Conditionally add a per-vault, mtime-keyed, in-process cache to `_process_vault` in `src/task_orchestrator/api/tasks.py` so that on a cache hit no `vault-cli` subprocess runs, while keeping the response byte-identical and invalidating automatically on any task-file change. Implement ONLY if prompt 053's measured live p50 was >= 0.100 s.
+Conditionally add a per-vault, mtime-keyed, in-process cache to `_process_vault` in `src/vault_ui/api/tasks.py` so that on a cache hit no `vault-cli` subprocess runs, while keeping the response byte-identical and invalidating automatically on any task-file change. Implement ONLY if prompt 053's measured live p50 was >= 0.100 s.
 </objective>
 
 <context>
@@ -35,9 +35,9 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 
 Read the spec at `specs/in-progress/010-parallelize-vault-task-fanout.md` — Desired Behavior 6, the Failure Modes table (cache rows), and the cache-conditional Acceptance Criteria are the source of truth.
 
-Read `src/task_orchestrator/api/tasks.py` in full, focusing on `_process_vault` (added by prompt 053) and the existing imports (`os` may need adding; `from pathlib import Path` is already present). Read the `VaultConfig` dataclass in `src/task_orchestrator/config.py` — it has fields `name`, `vault_path`, `tasks_folder`, `vault_name`, `claude_script`, `vault_cli_path`, `session_project_dir`. The cache probes `Path(vault_config.vault_path) / vault_config.tasks_folder`.
+Read `src/vault_ui/api/tasks.py` in full, focusing on `_process_vault` (added by prompt 053) and the existing imports (`os` may need adding; `from pathlib import Path` is already present). Read the `VaultConfig` dataclass in `src/vault_ui/config.py` — it has fields `name`, `vault_path`, `tasks_folder`, `vault_name`, `claude_script`, `vault_cli_path`, `session_project_dir`. The cache probes `Path(vault_config.vault_path) / vault_config.tasks_folder`.
 
-Read `src/task_orchestrator/vault_cli_client.py` to confirm the `list_tasks` signature — it accepts `status_filter` and `show_all`. The cache miss path calls `client.list_tasks(show_all=True)` to fetch the FULL unfiltered list (status filtering moves into Python). Confirm `show_all=True` returns all statuses before relying on it; if the real parameter name differs, use the actual one you read.
+Read `src/vault_ui/vault_cli_client.py` to confirm the `list_tasks` signature — it accepts `status_filter` and `show_all`. The cache miss path calls `client.list_tasks(show_all=True)` to fetch the FULL unfiltered list (status filtering moves into Python). Confirm `show_all=True` returns all statuses before relying on it; if the real parameter name differs, use the actual one you read.
 
 Read `tests/conftest.py` — it currently defines only `tmp_vault` and `sample_task_file`. You will add a new autouse fixture there.
 
@@ -50,7 +50,7 @@ Read `tests/test_api.py` for the `_make_task`, `_make_vault_client`, `Config`, `
 
 Re-read the prompt 053 completion notes / report for the recorded p50. Proceed ONLY if p50 >= 0.100 s. Otherwise follow the stop instructions in `<context>` and do not write any cache code.
 
-### 1. Add the module-level cache (`src/task_orchestrator/api/tasks.py`)
+### 1. Add the module-level cache (`src/vault_ui/api/tasks.py`)
 
 Add `import os` to the imports if not already present. Add a module-level single-slot-per-vault cache dict near the other module-level state:
 
@@ -109,7 +109,7 @@ Append this autouse fixture so the in-process cache cannot leak state between te
 @pytest.fixture(autouse=True)
 def clear_vault_task_cache():
     """Clear the in-process vault task cache between tests."""
-    from task_orchestrator.api import tasks as tasks_module
+    from vault_ui.api import tasks as tasks_module
 
     tasks_module._vault_task_cache.clear()
     yield
@@ -120,7 +120,7 @@ If `tests/conftest.py` does not already import `pytest`, add `import pytest` at 
 
 ### 5. Add cache tests to the END of `tests/test_api.py`
 
-Record the current count with `grep -c 'def test_' tests/test_api.py`; after adding the 3 functions the count must increase by exactly 3. Do NOT modify existing tests. Each test must create a REAL tasks directory under `tmp_path` so `os.stat` succeeds, and must mutate its mtime to drive hit/miss. Build the tests on the same multi-vault pattern prompt 053 used (`monkeypatch.setattr("task_orchestrator.factory._config", test_config)` + `patch("task_orchestrator.api.tasks.get_vault_cli_client_for_vault", ...)`). Implement these three:
+Record the current count with `grep -c 'def test_' tests/test_api.py`; after adding the 3 functions the count must increase by exactly 3. Do NOT modify existing tests. Each test must create a REAL tasks directory under `tmp_path` so `os.stat` succeeds, and must mutate its mtime to drive hit/miss. Build the tests on the same multi-vault pattern prompt 053 used (`monkeypatch.setattr("vault_ui.factory._config", test_config)` + `patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", ...)`). Implement these three:
 
 1. `test_list_tasks_cache_hit_skips_subprocess` — single vault; create its tasks dir; make a client whose `list_tasks` is an `AsyncMock` (so calls are countable). Issue two `GET /api/tasks` requests with the directory mtime UNCHANGED between them (do not touch the dir; if needed, force a stable mtime via `os.utime(tasks_dir, (fixed, fixed))` before both requests). Assert `client.list_tasks.await_count == 1` (second request served from cache).
 
@@ -179,15 +179,15 @@ Expected: all pre-existing tests (including prompt 053's) pass plus the 3 new te
 
 Confirm the cache primitives exist:
 ```bash
-grep -n "_vault_task_cache" src/task_orchestrator/api/tasks.py
+grep -n "_vault_task_cache" src/vault_ui/api/tasks.py
 grep -n "clear_vault_task_cache" tests/conftest.py
-grep -n "show_all=True" src/task_orchestrator/api/tasks.py
+grep -n "show_all=True" src/vault_ui/api/tasks.py
 ```
 Expected: matches in each.
 
 Confirm no scenario file was added:
 ```bash
-find . -path '*/scenarios/*.md' -newer src/task_orchestrator/api/tasks.py 2>/dev/null
+find . -path '*/scenarios/*.md' -newer src/vault_ui/api/tasks.py 2>/dev/null
 ```
 Expected: no output.
 

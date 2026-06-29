@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Added command routing comment block, 400 guard for unknown commands, and explicit work-on-task prompt branch in execute_slash_command; added test verifying unknown command returns 400.
-container: task-orchestrator-006-remove-session-manager-simple-ops
+container: vault-ui-006-remove-session-manager-simple-ops
 dark-factory-version: v0.26.0
 created: "2026-03-07T23:14:53Z"
 queued: "2026-03-07T23:14:53Z"
@@ -21,7 +21,7 @@ Clean up the execute_slash_command function so the session manager is only used 
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/api/tasks.py` — the `execute_slash_command` function (~line 264).
+Read `src/vault_ui/api/tasks.py` — the `execute_slash_command` function (~line 264).
 
 After the previous prompts:
 - defer-task and complete-task use the vault-cli fast path (lines ~295-338)

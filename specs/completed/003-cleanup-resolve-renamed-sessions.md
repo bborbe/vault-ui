@@ -19,7 +19,7 @@ branch: dark-factory/cleanup-resolve-renamed-sessions
 
 ## Problem
 
-When a user renames a Claude session via `/rename`, the task stores the display name (e.g. "trading-alerts") as `claude_session_id`. The cleanup job looks for `trading-alerts.jsonl` which doesn't exist — the actual file is still named by UUID. The session gets incorrectly cleared, disconnecting the task from a live session. This causes task-orchestrator to lose track of active work.
+When a user renames a Claude session via `/rename`, the task stores the display name (e.g. "trading-alerts") as `claude_session_id`. The cleanup job looks for `trading-alerts.jsonl` which doesn't exist — the actual file is still named by UUID. The session gets incorrectly cleared, disconnecting the task from a live session. This causes vault-ui to lose track of active work.
 
 ## Goal
 

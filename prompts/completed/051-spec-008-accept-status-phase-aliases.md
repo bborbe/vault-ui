@@ -2,7 +2,7 @@
 status: completed
 spec: [008-accept-renamed-status-phase-aliases]
 summary: Added 'next' to default status filter and 'execution' to valid_phases in tasks.py; added 13 new test functions covering all spec-008 acceptance criteria; updated 2 existing tests whose exact-set assertions broke due to the intentional default filter change.
-container: task-orchestrator-exec-051-spec-008-accept-status-phase-aliases
+container: vault-ui-exec-051-spec-008-accept-status-phase-aliases
 dark-factory-version: v0.162.0
 created: "2026-05-20T16:41:58Z"
 queued: "2026-05-20T16:59:44Z"
@@ -24,7 +24,7 @@ branch: dark-factory/accept-renamed-status-phase-aliases
 </summary>
 
 <objective>
-Add `"next"` to the default status filter and `"execution"` to the valid phases list in `src/task_orchestrator/api/tasks.py` so that vault tasks written under either the old or new canonical for `status` (todo/next) and `phase` (in_progress/execution) appear on the Kanban board and pass through filters correctly. The PATCH phase handler already passes the operator-supplied value verbatim to vault-cli; this prompt adds tests confirming that behavior for both old and new canonical values.
+Add `"next"` to the default status filter and `"execution"` to the valid phases list in `src/vault_ui/api/tasks.py` so that vault tasks written under either the old or new canonical for `status` (todo/next) and `phase` (in_progress/execution) appear on the Kanban board and pass through filters correctly. The PATCH phase handler already passes the operator-supplied value verbatim to vault-cli; this prompt adds tests confirming that behavior for both old and new canonical values.
 </objective>
 
 <context>
@@ -38,7 +38,7 @@ Read `definition-of-done.md` in `~/.claude/plugins/marketplaces/coding/docs/` fo
 
 Read the spec at `specs/in-progress/008-accept-renamed-status-phase-aliases.md` — it is the source of truth for behavior, constraints, failure modes, and acceptance criteria.
 
-Read `src/task_orchestrator/api/tasks.py` in full before making any changes. Pay attention to:
+Read `src/vault_ui/api/tasks.py` in full before making any changes. Pay attention to:
 - `list_tasks` at line 200: the `effective_status_filter` default on line 239 is `["todo", "in_progress", "completed"]` — add `"next"` here
 - `list_tasks` at line 244: the `valid_phases` list on line 245 is `["todo", "planning", "in_progress", "ai_review", "human_review", "done"]` — add `"execution"` here
 - `update_task_phase` at line 559: the phase value is already passed verbatim as `request.phase` in the argv at line 586 — no code change needed, just new test coverage
@@ -55,7 +55,7 @@ Read `tests/test_api.py` in full before adding tests. Pay attention to:
 
 <requirements>
 
-### 1. Add `"next"` to the default status filter (`src/task_orchestrator/api/tasks.py`, line 239)
+### 1. Add `"next"` to the default status filter (`src/vault_ui/api/tasks.py`, line 239)
 
 Find the `effective_status_filter` line inside `list_tasks`:
 
@@ -75,7 +75,7 @@ Change to:
 
 This is the only change needed to satisfy Desired Behaviors 1–4 and the default-filter AC.
 
-### 2. Add `"execution"` to `valid_phases` (`src/task_orchestrator/api/tasks.py`, line 245)
+### 2. Add `"execution"` to `valid_phases` (`src/vault_ui/api/tasks.py`, line 245)
 
 Find the `valid_phases` list inside `list_tasks`:
 
@@ -438,12 +438,12 @@ Open `CHANGELOG.md` and check whether a `## Unreleased` section already exists.
 After editing, run:
 
 ```bash
-grep -n '"next"' src/task_orchestrator/api/tasks.py
+grep -n '"next"' src/vault_ui/api/tasks.py
 ```
 Expected: at least one match on the `effective_status_filter` default list line.
 
 ```bash
-grep -n '"execution"' src/task_orchestrator/api/tasks.py
+grep -n '"execution"' src/vault_ui/api/tasks.py
 ```
 Expected: at least one match on the `valid_phases` list line.
 
@@ -455,12 +455,12 @@ Expected: the count equals the pre-change N (captured at the start of step 3) pl
 </requirements>
 
 <constraints>
-- vault-cli is the sole interface for vault writes. task-orchestrator MUST NOT read or write vault frontmatter directly. All status and phase writes continue to shell out to `vault-cli task set` via subprocess — unchanged by this prompt.
+- vault-cli is the sole interface for vault writes. vault-ui MUST NOT read or write vault frontmatter directly. All status and phase writes continue to shell out to `vault-cli task set` via subprocess — unchanged by this prompt.
 - The filter lists are plain Python string-membership filters applied to JSON output from vault-cli AFTER the subprocess call. The change is purely additive: new strings are added to existing lists; no list is removed, renamed, or normalised through a wrapper.
 - The existing four filters (`vault`, `status`, `phase`, `assignee`) and the `goal` filter must continue to work unchanged for every value they accept today. Every existing test must pass without modification.
 - No vault file on disk is read, written, or migrated by this change. Old canonical values remain valid frontmatter forever.
 - This change MUST NOT depend on vault-cli's own rename having landed. The behaviour is correct whether vault-cli emits `todo`, `next`, or a mix on the same day.
-- No new CLI is invoked by task-orchestrator beyond `vault-cli task set` (already in use).
+- No new CLI is invoked by vault-ui beyond `vault-cli task set` (already in use).
 - Test suite mocks the vault-cli subprocess per the repo's existing convention (no real subprocess execution in unit or integration tests).
 - Python 3.12+, FastAPI, pytest, ruff, mypy. `make precommit` must pass.
 - The status PATCH path (separate from phase PATCH) is out of scope: this prompt touches the phase PATCH handler only via tests (no code change); direct status PATCH semantics are unchanged.
@@ -475,8 +475,8 @@ Run `make precommit` — must exit 0.
 
 Confirm the two list additions:
 ```bash
-grep -n '"next"' src/task_orchestrator/api/tasks.py
-grep -n '"execution"' src/task_orchestrator/api/tasks.py
+grep -n '"next"' src/vault_ui/api/tasks.py
+grep -n '"execution"' src/vault_ui/api/tasks.py
 ```
 
 Run new tests specifically:
@@ -493,7 +493,7 @@ Expected: all pre-existing tests pass plus the new tests.
 
 Confirm no scenario file was added:
 ```bash
-find . -path '*/scenarios/*.md' -newer src/task_orchestrator/api/tasks.py 2>/dev/null
+find . -path '*/scenarios/*.md' -newer src/vault_ui/api/tasks.py 2>/dev/null
 ```
 Expected: no output.
 </verification>

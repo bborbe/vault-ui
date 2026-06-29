@@ -13,17 +13,17 @@ branch: dark-factory/set-claude-session-name-to-task-title
 - When the user clicks Start (or runs work-on-task / create-task) on a task in the Kanban UI, the resume command emitted in the modal embeds `-n <task-title>` so the launched Claude Code session is named with the task title.
 - The display name appears in the prompt box, `/resume` picker, and terminal title from the first turn, with no operator action.
 - Eliminates the per-session manual `/rename <task title>` the user runs every time they start a session from the orchestrator.
-- Pure backend change in `src/task_orchestrator/api/tasks.py::_build_resume_command`; no UI change, no API contract change, no vault-cli change.
+- Pure backend change in `src/vault_ui/api/tasks.py::_build_resume_command`; no UI change, no API contract change, no vault-cli change.
 
 ## Problem
 
-The task-orchestrator's Start button hands the user a resume command of the form `cd <vault> && claude --resume <session_id>`. The resulting interactive session shows up in the `/resume` picker and the terminal title as Claude Code's auto-generated `ai-title` (or untitled) — not as the task the operator is working on. To keep sessions identifiable across multiple parallel tasks, the operator manually runs `/rename <task title>` at the start of every session. The rename is identical every time, trivially derivable from the task already known to the orchestrator, and pure friction.
+The vault-ui's Start button hands the user a resume command of the form `cd <vault> && claude --resume <session_id>`. The resulting interactive session shows up in the `/resume` picker and the terminal title as Claude Code's auto-generated `ai-title` (or untitled) — not as the task the operator is working on. To keep sessions identifiable across multiple parallel tasks, the operator manually runs `/rename <task title>` at the start of every session. The rename is identical every time, trivially derivable from the task already known to the orchestrator, and pure friction.
 
 Claude Code (v2.1.187+) supports `-n <name>` on `--resume` and writes the name to the session's `custom-title` + `agent-name` records on the first turn — verified empirically: `claude --resume <id> -n "RENAMED" -p "noop"` overwrites the prior `custom-title`. So a single append to the resume command string fully eliminates the manual rename.
 
 ## Goal
 
-After this work, every resume command emitted by task-orchestrator includes `-n <shell-quoted task title>` whenever the task has a non-empty title. The launched Claude Code session displays the task title in its prompt box, `/resume` picker, and terminal title from the first turn. Both the Start path (`run_task` → `POST /api/tasks/{id}/run`) and the slash-command path (`execute_slash_command` for `work-on-task` / `create-task`) include the flag. Fast-path commands (defer-task, complete-task) that do not launch claude are unchanged.
+After this work, every resume command emitted by vault-ui includes `-n <shell-quoted task title>` whenever the task has a non-empty title. The launched Claude Code session displays the task title in its prompt box, `/resume` picker, and terminal title from the first turn. Both the Start path (`run_task` → `POST /api/tasks/{id}/run`) and the slash-command path (`execute_slash_command` for `work-on-task` / `create-task`) include the flag. Fast-path commands (defer-task, complete-task) that do not launch claude are unchanged.
 
 ## Non-goals
 

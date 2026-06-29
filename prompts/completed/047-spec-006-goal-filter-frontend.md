@@ -2,7 +2,7 @@
 status: completed
 spec: [006-goal-filter-on-tasks-endpoint]
 summary: Added currentGoals array to app.js with parse in parseURLParams, emit in updateURL, and forward in loadTasks — goal URL parameter now round-trips end-to-end; bumped CHANGELOG to v0.29.0.
-container: task-orchestrator-047-spec-006-goal-filter-frontend
+container: vault-ui-047-spec-006-goal-filter-frontend
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T21:38:00Z"
 queued: "2026-05-10T21:49:50Z"
@@ -23,14 +23,14 @@ branch: dark-factory/goal-filter-on-tasks-endpoint
 </summary>
 
 <objective>
-Convert `src/task_orchestrator/static/app.js` to read, store, forward, and write back `goal` URL parameters so that the Kanban board can be goal-filtered via URL. Pass-through only — no new UI controls. Behaviour when no `goal` param is present is unchanged.
+Convert `src/vault_ui/static/app.js` to read, store, forward, and write back `goal` URL parameters so that the Kanban board can be goal-filtered via URL. Pass-through only — no new UI controls. Behaviour when no `goal` param is present is unchanged.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/static/app.js` — entire file (~1200 lines). All changes are in this single file.
+- `src/vault_ui/static/app.js` — entire file (~1200 lines). All changes are in this single file.
 - `prompts/completed/040-frontend-multi-value-assignee-url-param.md` — the canonical pattern this prompt mirrors. The assignee feature shipped exactly the same shape (state array, `getAll` in `parseURLParams`, `forEach`+`append` in `updateURL` and `loadTasks`). Copy that style for symmetry.
 - `prompts/completed/044-frontend-multi-value-status-url-param.md` — a second example of the same pattern with a writeback guard. Note: goal does NOT need a default-value guard in `updateURL` (unlike status which has a `['in_progress', 'completed']` default) — emit goal params unconditionally when the array is non-empty.
 
@@ -45,7 +45,7 @@ Read these files in full before making any changes:
 </context>
 
 <requirements>
-All edits are in `src/task_orchestrator/static/app.js`. No other files change except CHANGELOG.md.
+All edits are in `src/vault_ui/static/app.js`. No other files change except CHANGELOG.md.
 
 ### 1. Add `currentGoals` global state variable
 
@@ -137,13 +137,13 @@ Insert the goal block immediately after the assignee block, before the `// Fetch
 
 After making the edits, run:
 ```
-grep -n 'currentGoals' src/task_orchestrator/static/app.js
+grep -n 'currentGoals' src/vault_ui/static/app.js
 ```
 Expected: exactly four matches — global declaration (step 1), `parseURLParams` assignment (step 2), `updateURL` forEach (step 3), `loadTasks` forEach (step 4). No more, no fewer.
 
 Also confirm no typo (`currentGoal` without the `s`):
 ```
-grep -n 'currentGoal\b' src/task_orchestrator/static/app.js
+grep -n 'currentGoal\b' src/vault_ui/static/app.js
 ```
 Expected: zero matches (the singular form should not exist).
 
@@ -159,7 +159,7 @@ In `CHANGELOG.md`, project convention is versioned headings (no `## Unreleased`)
 <constraints>
 - Do NOT commit — dark-factory handles git
 - Do NOT add any new UI controls (no button, no chip, no dropdown, no toggle function). This prompt is URL-driven pass-through only — reading and writing `currentGoals` via the URL bar.
-- Do NOT change anything outside `src/task_orchestrator/static/app.js` and `CHANGELOG.md`
+- Do NOT change anything outside `src/vault_ui/static/app.js` and `CHANGELOG.md`
 - Do NOT change the backend, the API contract, or any Python code
 - Do NOT add comma-splitting in JS — the backend already comma-splits server-side; the frontend just forwards the raw values it reads from `URLSearchParams.getAll`
 - The URL `?vault=personal` (no goal param) MUST still show all tasks as today — empty `currentGoals` array = no filter
@@ -175,13 +175,13 @@ In `CHANGELOG.md`, project convention is versioned headings (no `## Unreleased`)
 
 2. Confirm `currentGoals` appears exactly four times:
    ```
-   grep -n 'currentGoals' src/task_orchestrator/static/app.js
+   grep -n 'currentGoals' src/vault_ui/static/app.js
    ```
    Expected: exactly four matches (declaration, parseURLParams, updateURL, loadTasks).
 
 3. Confirm singular `currentGoal` does NOT appear:
    ```
-   grep -n 'currentGoal\b' src/task_orchestrator/static/app.js
+   grep -n 'currentGoal\b' src/vault_ui/static/app.js
    ```
    Expected: zero matches.
 

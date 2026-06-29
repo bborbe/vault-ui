@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Added StatusCache.count() public method and replaced both cache._cache private accesses in reload_cache() with it
-container: task-orchestrator-012-f-add-status-cache-count
+container: vault-ui-012-f-add-status-cache-count
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -22,8 +22,8 @@ completed: "2026-03-11T21:32:05Z"
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/status_cache.py` — the `StatusCache` class.
-Read `src/task_orchestrator/api/tasks.py` — the `reload_cache()` function (~line 511).
+Read `src/vault_ui/status_cache.py` — the `StatusCache` class.
+Read `src/vault_ui/api/tasks.py` — the `reload_cache()` function (~line 511).
 
 `reload_cache()` accesses `cache._cache.get(vault, {})` directly at ~lines 539 and 548 to get the count of cached items. This breaks encapsulation.
 </context>

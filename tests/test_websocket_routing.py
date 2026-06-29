@@ -215,8 +215,8 @@ async def test_explicit_broadcast_in_api_tasks_carries_item_kind_task() -> None:
 
     # The three explicit call sites all pass the same dict shape:
     # {"type": "task_updated", "task_id": task_id, "item_kind": "task"}
-    with patch("task_orchestrator.api.tasks._connection_manager", fake_manager):
-        from task_orchestrator.api import tasks as api_tasks
+    with patch("vault_ui.api.tasks._connection_manager", fake_manager):
+        from vault_ui.api import tasks as api_tasks
 
         assert api_tasks._connection_manager is fake_manager
         await api_tasks._connection_manager.broadcast(
@@ -241,7 +241,7 @@ def test_app_js_handle_task_update_warns_on_missing_item_kind() -> None:
     Static check against the shipped JS — keeps the test independent of
     the browser runtime and pins the warn-on-missing contract.
     """
-    app_js_path = Path("src/task_orchestrator/static/app.js")
+    app_js_path = Path("src/vault_ui/static/app.js")
     app_js = app_js_path.read_text()
 
     # The exact warn-on-missing pattern (spec requires)

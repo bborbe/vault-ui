@@ -4,9 +4,9 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-INDEX_HTML = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "index.html").read_text()
-APP_JS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "app.js").read_text()
-STYLE_CSS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "style.css").read_text()
+INDEX_HTML = (REPO_ROOT / "src" / "vault_ui" / "static" / "index.html").read_text()
+APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
+STYLE_CSS = (REPO_ROOT / "src" / "vault_ui" / "static" / "style.css").read_text()
 
 
 def test_index_html_has_view_toggle() -> None:

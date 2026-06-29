@@ -1,4 +1,4 @@
-"""API models for TaskOrchestrator."""
+"""API models for vault-ui."""
 
 from dataclasses import dataclass
 from datetime import datetime

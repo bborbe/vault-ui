@@ -1,8 +1,8 @@
 ---
 status: completed
 spec: [001-stale-session-cleanup]
-summary: Created StaleSessionCleaner class in src/task_orchestrator/stale_session_cleaner.py with run_once() and run_loop() async methods, helper functions for session file path derivation and existence checking, and vault-cli subprocess invocation following existing patterns
-container: task-orchestrator-017-spec-001-session-cleaner
+summary: Created StaleSessionCleaner class in src/vault_ui/stale_session_cleaner.py with run_once() and run_loop() async methods, helper functions for session file path derivation and existence checking, and vault-cli subprocess invocation following existing patterns
+container: vault-ui-017-spec-001-session-cleaner
 dark-factory-version: v0.54.0
 created: "2026-03-12T00:00:00Z"
 queued: "2026-03-12T14:40:37Z"
@@ -23,17 +23,17 @@ branch: dark-factory/spec-001
 </summary>
 
 <objective>
-A `StaleSessionCleaner` class in `src/task_orchestrator/stale_session_cleaner.py` provides `run_once()` and `run_loop()` async methods. `run_once()` iterates all configured vaults, identifies tasks whose `claude_session_id` no longer has a matching `.jsonl` file, and clears the stale IDs using `vault-cli task clear`. `run_loop()` calls `run_once()` immediately and then on a 5-minute interval.
+A `StaleSessionCleaner` class in `src/vault_ui/stale_session_cleaner.py` provides `run_once()` and `run_loop()` async methods. `run_once()` iterates all configured vaults, identifies tasks whose `claude_session_id` no longer has a matching `.jsonl` file, and clears the stale IDs using `vault-cli task clear`. `run_loop()` calls `run_once()` immediately and then on a 5-minute interval.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
 
 Read these files before implementing:
-- `src/task_orchestrator/config.py` — `VaultConfig` and `Config` dataclasses; note `vault_path`, `vault_cli_path`, and `name` fields on `VaultConfig`
-- `src/task_orchestrator/obsidian/task_reader.py` — `ObsidianTaskReader.list_tasks()` (returns `list[Task]`), `Task.claude_session_id`, `Task.id`
-- `src/task_orchestrator/api/tasks.py` — lines around `defer`/`complete` endpoints for the exact `asyncio.create_subprocess_exec` pattern used when calling vault-cli
-- `src/task_orchestrator/factory.py` — `get_task_reader_for_vault()` factory function; also note how `get_config()` is used
+- `src/vault_ui/config.py` — `VaultConfig` and `Config` dataclasses; note `vault_path`, `vault_cli_path`, and `name` fields on `VaultConfig`
+- `src/vault_ui/obsidian/task_reader.py` — `ObsidianTaskReader.list_tasks()` (returns `list[Task]`), `Task.claude_session_id`, `Task.id`
+- `src/vault_ui/api/tasks.py` — lines around `defer`/`complete` endpoints for the exact `asyncio.create_subprocess_exec` pattern used when calling vault-cli
+- `src/vault_ui/factory.py` — `get_task_reader_for_vault()` factory function; also note how `get_config()` is used
 
 Existing vault-cli invocation pattern (from `tasks.py`):
 ```python
@@ -55,7 +55,7 @@ Session file path derivation rule (from spec):
 </context>
 
 <requirements>
-1. Create `src/task_orchestrator/stale_session_cleaner.py`.
+1. Create `src/vault_ui/stale_session_cleaner.py`.
 
 2. Add a module-level helper:
    ```python
@@ -89,8 +89,8 @@ Session file path derivation rule (from spec):
    import logging
    from pathlib import Path
 
-   from task_orchestrator.config import Config, VaultConfig
-   from task_orchestrator.obsidian.task_reader import TaskReader
+   from vault_ui.config import Config, VaultConfig
+   from vault_ui.obsidian.task_reader import TaskReader
 
    logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ Session file path derivation rule (from spec):
    - Wrap the entire while loop in `try/except asyncio.CancelledError` — re-raise to allow clean cancellation
    - Wrap per-iteration `run_once()` in `try/except Exception` to keep the loop alive if a pass fails unexpectedly
 
-8. All imports must use the `task_orchestrator` package prefix (e.g. `from task_orchestrator.config import Config`). Add `from typing import Callable` for the type annotation.
+8. All imports must use the `vault_ui` package prefix (e.g. `from vault_ui.config import Config`). Add `from typing import Callable` for the type annotation.
 </requirements>
 
 <constraints>

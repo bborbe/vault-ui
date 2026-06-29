@@ -2,7 +2,7 @@
 status: completed
 spec: [005-unify-task-list-filter-syntax]
 summary: 'Unified GET /tasks filter syntax: added _flatten_filter and _flatten_assignee_filter helpers, updated status/phase/assignee params to Annotated[list[str] | None, Query()], vault gains comma-split support, assignee empty-string token matches unassigned tasks, 14 new tests added, CHANGELOG updated.'
-container: task-orchestrator-039-spec-005-unify-filter-syntax
+container: vault-ui-039-spec-005-unify-filter-syntax
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T15:45:00Z"
 queued: "2026-05-10T16:02:53Z"
@@ -32,17 +32,17 @@ Read CLAUDE.md for project conventions.
 Read `test-pyramid-triggers.md` in `~/.claude/plugins/marketplaces/coding/docs/` for which test types to write for each code change.
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/api/tasks.py` — the `list_tasks` endpoint and all supporting helpers. Focus on the `list_tasks` function signature, the current status/phase/assignee parsing, and the `vault_names` derivation at the top of the function body.
+- `src/vault_ui/api/tasks.py` — the `list_tasks` endpoint and all supporting helpers. Focus on the `list_tasks` function signature, the current status/phase/assignee parsing, and the `vault_names` derivation at the top of the function body.
 - `tests/test_api.py` — all existing tests for `GET /tasks`. Study the `_make_task`, `_make_vault_client`, `test_client` fixture, and multi-vault tests (`test_list_tasks_multiple_vaults`) before adding new test cases.
 
 **Relevant assumptions (verified):**
-- vault-cli's `_parse_goal` at `src/task_orchestrator/vault_cli_client.py:240` collapses empty `assignee` to `None`, but `_parse_task` at line 229 does **not** — a task with frontmatter `assignee: ""` parses as the empty string, not `None`. The filter predicate must therefore handle **both** `None` and `""` to match unassigned tasks. Use `not t.assignee` (truthiness) rather than `t.assignee is None`. (Future cleanup: align `_parse_task` with `_parse_goal`. Out of scope for this prompt.)
+- vault-cli's `_parse_goal` at `src/vault_ui/vault_cli_client.py:240` collapses empty `assignee` to `None`, but `_parse_task` at line 229 does **not** — a task with frontmatter `assignee: ""` parses as the empty string, not `None`. The filter predicate must therefore handle **both** `None` and `""` to match unassigned tasks. Use `not t.assignee` (truthiness) rather than `t.assignee is None`. (Future cleanup: align `_parse_task` with `_parse_goal`. Out of scope for this prompt.)
 - FastAPI's `Annotated[list[str] | None, Query()]` binding natively collects repeated params into a `list[str]`. Comma-splitting is handled by the helper added in this prompt.
 - When `?assignee=` is passed (empty value), FastAPI delivers `[""]` — not `None`. `None` is delivered only when the parameter is entirely absent.
 </context>
 
 <requirements>
-### 1. Add two private helper functions to `src/task_orchestrator/api/tasks.py`
+### 1. Add two private helper functions to `src/vault_ui/api/tasks.py`
 
 Insert both helpers immediately **before** the `list_tasks` function (after `_parse_defer_date`).
 
@@ -71,7 +71,7 @@ def _flatten_assignee_filter(values: list[str] | None) -> list[str] | None:
     return flat  # empty strings are valid (match unassigned tasks)
 ```
 
-### 2. Update the `list_tasks` function signature in `src/task_orchestrator/api/tasks.py`
+### 2. Update the `list_tasks` function signature in `src/vault_ui/api/tasks.py`
 
 Change the three `str | None` parameters to use `Annotated[list[str] | None, Query()]`:
 
@@ -87,7 +87,7 @@ async def list_tasks(
 
 `vault` already has this type — keep it unchanged. Only `status`, `phase`, and `assignee` change.
 
-### 3. Update the body of `list_tasks` in `src/task_orchestrator/api/tasks.py`
+### 3. Update the body of `list_tasks` in `src/vault_ui/api/tasks.py`
 
 **a. Replace the vault-name derivation** (the line that currently reads `vault_names = [v.name for v in config.vaults] if not vault or len(vault) == 0 else vault`):
 
@@ -136,7 +136,7 @@ Add the following test functions at the end of the file. All use `pytest` and th
 ```python
 def test_list_tasks_vault_comma_separated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """GET /tasks?vault=Vault1,Vault2 returns tasks from both vaults (comma-separated form)."""
-    from task_orchestrator.config import VaultConfig
+    from vault_ui.config import VaultConfig
 
     vault1 = tmp_path / "vault1"
     vault2 = tmp_path / "vault2"
@@ -151,7 +151,7 @@ def test_list_tasks_vault_comma_separated(tmp_path: Path, monkeypatch: pytest.Mo
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     task1 = _make_task(task_id="Task1", status="in_progress")
     task2 = _make_task(task_id="Task2", status="in_progress")
@@ -166,7 +166,7 @@ def test_list_tasks_vault_comma_separated(tmp_path: Path, monkeypatch: pytest.Mo
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=lambda vault_name: clients[vault_name],
     ):
         response = http_client.get("/api/tasks?vault=Vault1,Vault2")

@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Removed create_claude_client_factory() from factory.py, updated integration tests to construct ClaudeSDKClient directly, and added exc_info=True to stop_task_watchers() error log.
-container: task-orchestrator-011-e-cleanup-factory-dead-code
+container: vault-ui-011-e-cleanup-factory-dead-code
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -22,7 +22,7 @@ completed: "2026-03-11T21:31:22Z"
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/factory.py` — the factory module. `create_claude_client_factory()` is at ~line 64.
+Read `src/vault_ui/factory.py` — the factory module. `create_claude_client_factory()` is at ~line 64.
 Read `tests/test_session_manager_integration.py` — imports and calls `create_claude_client_factory` at lines 11, 20, and 70.
 
 The function is NOT called from any production code path, but IS used by two integration tests. Those tests must be updated before deletion.
@@ -32,7 +32,7 @@ The function is NOT called from any production code path, but IS used by two int
 1. In `tests/test_session_manager_integration.py`, replace the `create_claude_client_factory` import and usage. Instead of calling the factory, construct the client directly:
    ```python
    # OLD
-   from task_orchestrator.factory import create_claude_client_factory
+   from vault_ui.factory import create_claude_client_factory
    factory = create_claude_client_factory()
    client = factory()
 

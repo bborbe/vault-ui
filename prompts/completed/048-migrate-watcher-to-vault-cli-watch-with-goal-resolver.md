@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Migrated vault-cli watcher from `task watch` to `watch`, added `_try_resolve_goal_session` in factory.py, and dispatches on the new `type` field per event for goal/task/theme/objective events.
-container: task-orchestrator-048-migrate-watcher-to-vault-cli-watch-with-goal-resolver
+container: vault-ui-048-migrate-watcher-to-vault-cli-watch-with-goal-resolver
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T22:34:02Z"
 queued: "2026-05-10T22:34:02Z"
@@ -9,7 +9,7 @@ started: "2026-05-10T22:34:03Z"
 completed: "2026-05-10T22:36:59Z"
 ---
 <summary>
-- task-orchestrator stops invoking the deprecated `vault-cli task watch` subcommand and migrates to the new canonical `vault-cli watch` subcommand
+- vault-ui stops invoking the deprecated `vault-cli task watch` subcommand and migrates to the new canonical `vault-cli watch` subcommand
 - The deprecation warning that currently appears once per vault on every restart in task-orch logs goes away
 - Watcher events now carry a `type` field (`task` | `goal` | `theme` | `objective`) which the factory dispatches on
 - Goal frontmatter changes (e.g. an operator running `vault-cli goal set "Goal" claude_session_id task-orch`) now resolve the display-name to a UUID within seconds via the watcher path, instead of waiting up to 5 minutes for the cleanup loop
@@ -20,17 +20,17 @@ completed: "2026-05-10T22:36:59Z"
 </summary>
 
 <objective>
-Migrate task-orchestrator's vault-cli watcher subprocess from `vault-cli task watch` to `vault-cli watch`, dispatch on the new `type` field per event, and add an event-driven `_try_resolve_goal_session` that mirrors the existing `_try_resolve_task_session` for goal events. The 5-minute cleanup loop in `cleanup.py` is untouched and remains as the backstop.
+Migrate vault-ui's vault-cli watcher subprocess from `vault-cli task watch` to `vault-cli watch`, dispatch on the new `type` field per event, and add an event-driven `_try_resolve_goal_session` that mirrors the existing `_try_resolve_task_session` for goal events. The 5-minute cleanup loop in `cleanup.py` is untouched and remains as the backstop.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions (dark-factory workflow, build commands, test conventions).
 
 Read these files in full before making any changes:
-- `src/task_orchestrator/vault_cli_watcher.py` — entire file (~142 lines). Two changes: subprocess argv (lines ~63-72) and `_handle_line` JSON parsing (lines ~99-112). The callback signature on `__init__` (line ~23) must widen from 3 args to 4.
-- `src/task_orchestrator/factory.py` — focus on lines 74-109 (`_try_resolve_task_session` — the function to mirror) and lines 112-171 (`start_task_watchers` and `make_callback` — the wiring site). `make_callback` returns a `Callable[[str, str, str], None]`; this widens to `Callable[[str, str, str, str], None]`. The inner `callback` body at lines 134-149 dispatches `_try_resolve_task_session` unconditionally — that becomes a switch on the new `item_kind` parameter.
-- `src/task_orchestrator/cleanup.py` — read lines 118-260 (the goal-cleanup loop body added in spec 004). The new `_try_resolve_goal_session` is a near-mirror of `_try_resolve_task_session` (in `factory.py`) but for goals — extract the shape from the goal-cleanup loop's resolution branch (lines 137-182) and reshape it into the on-demand single-goal resolver shape that `_try_resolve_task_session` has. **Do NOT modify `cleanup.py`** — it stays as the backstop.
-- `src/task_orchestrator/vault_cli_client.py` lines 124-148 — `list_goals(show_all=True)` returns `list[Goal]`; the `Goal` dataclass has `id`, `claude_session_id`, etc. There is **no** `show_goal` method on the client. The new `_try_resolve_goal_session` will use `client.list_goals(show_all=True)` and find the goal by id (matches the pattern used by the existing cleanup-loop goal branch).
+- `src/vault_ui/vault_cli_watcher.py` — entire file (~142 lines). Two changes: subprocess argv (lines ~63-72) and `_handle_line` JSON parsing (lines ~99-112). The callback signature on `__init__` (line ~23) must widen from 3 args to 4.
+- `src/vault_ui/factory.py` — focus on lines 74-109 (`_try_resolve_task_session` — the function to mirror) and lines 112-171 (`start_task_watchers` and `make_callback` — the wiring site). `make_callback` returns a `Callable[[str, str, str], None]`; this widens to `Callable[[str, str, str, str], None]`. The inner `callback` body at lines 134-149 dispatches `_try_resolve_task_session` unconditionally — that becomes a switch on the new `item_kind` parameter.
+- `src/vault_ui/cleanup.py` — read lines 118-260 (the goal-cleanup loop body added in spec 004). The new `_try_resolve_goal_session` is a near-mirror of `_try_resolve_task_session` (in `factory.py`) but for goals — extract the shape from the goal-cleanup loop's resolution branch (lines 137-182) and reshape it into the on-demand single-goal resolver shape that `_try_resolve_task_session` has. **Do NOT modify `cleanup.py`** — it stays as the backstop.
+- `src/vault_ui/vault_cli_client.py` lines 124-148 — `list_goals(show_all=True)` returns `list[Goal]`; the `Goal` dataclass has `id`, `claude_session_id`, etc. There is **no** `show_goal` method on the client. The new `_try_resolve_goal_session` will use `client.list_goals(show_all=True)` and find the goal by id (matches the pattern used by the existing cleanup-loop goal branch).
 - `tests/test_vault_cli_watcher.py` — entire file (~163 lines). Six tests assert the callback signature `on_change(event_type, item_id, vault)`. After widening the signature to 4 args, every test event JSON must include a `type` key, and every `assert_called_once_with(...)` must include the fourth positional arg. The mocks themselves (`MagicMock`) accept any signature, so it's purely the assertions and event payloads that need updating.
 
 **vault-cli context (just shipped, v0.64.0 already installed):**
@@ -49,7 +49,7 @@ The cleanup loop stays running as the backstop for events that arrive while the 
 
 <requirements>
 
-### 1. `src/task_orchestrator/vault_cli_watcher.py` — migrate subprocess + widen callback
+### 1. `src/vault_ui/vault_cli_watcher.py` — migrate subprocess + widen callback
 
 **1a. Update the module docstring (line 1)** from `"""Manages a vault-cli task watch subprocess for file change events."""` to `"""Manages a vault-cli watch subprocess for file change events."""`.
 
@@ -131,7 +131,7 @@ def _handle_line(self, line: str) -> None:
 - `item_kind` defaults to `""` when the `type` key is absent. The factory dispatch must treat empty/unknown kinds as no-op (covered in step 2).
 - The same gate as before (`if event_type and item_id`) still applies — events missing either are skipped entirely. We deliberately do **not** also gate on `item_kind` being non-empty, because cache invalidation and WebSocket broadcast are unconditional and useful even for events whose kind is unknown to us.
 
-### 2. `src/task_orchestrator/factory.py` — dispatch on `item_kind`, add `_try_resolve_goal_session`
+### 2. `src/vault_ui/factory.py` — dispatch on `item_kind`, add `_try_resolve_goal_session`
 
 **2a. Add `_try_resolve_goal_session` immediately after `_try_resolve_task_session` (after line 109).** Mirror the existing function exactly — same signature shape, same logging style, same swallow-all-exceptions semantics. Body uses `client.list_goals(show_all=True)` to find the goal by id (there is no `show_goal` on the client; this is the canonical pattern, matching `cleanup.py:121`):
 
@@ -149,7 +149,7 @@ async def _try_resolve_goal_session(
     the goal cannot be found, or the display name does not resolve to any
     on-disk session file.
     """
-    from task_orchestrator.session_resolver import is_uuid, resolve_session_id
+    from vault_ui.session_resolver import is_uuid, resolve_session_id
 
     try:
         client = VaultCLIClient(vault_cli_path, vault_name)
@@ -298,7 +298,7 @@ Project convention is versioned headings (no `## Unreleased` section). The curre
 - Do NOT remove `_try_resolve_task_session` or change its signature.
 - Do NOT add `item_kind` to the WebSocket payload — that's a separate UI-affecting change with its own design discussion; out of scope here.
 - Do NOT touch `vault-cli` source — the new `vault-cli watch` subcommand already shipped in v0.64.0.
-- Do NOT touch any frontend file (`src/task_orchestrator/static/*`).
+- Do NOT touch any frontend file (`src/vault_ui/static/*`).
 - `make precommit` must pass (Python lint, type, test).
 - All existing tests must pass after the test extensions in step 3 — the extensions themselves are minimal (one new arg per assertion, one new key per event payload, one new test).
 - No new Python dependencies.
@@ -310,25 +310,25 @@ Project convention is versioned headings (no `## Unreleased` section). The curre
 
 2. Confirm the deprecated subcommand argv no longer appears in `vault_cli_watcher.py` (scoped to argv literal, not docstring/comment text):
    ```
-   grep -nE '"task",\s*"watch"' src/task_orchestrator/vault_cli_watcher.py
+   grep -nE '"task",\s*"watch"' src/vault_ui/vault_cli_watcher.py
    ```
    Expected: zero matches. (Note: the literal phrase "task watch" may still appear in updated comments — that's fine; we want zero argv-style occurrences.)
 
 3. Confirm the new subcommand and `--types` flag appear:
    ```
-   grep -n '"watch",\|"--types",' src/task_orchestrator/vault_cli_watcher.py
+   grep -n '"watch",\|"--types",' src/vault_ui/vault_cli_watcher.py
    ```
    Expected: both present in `_run_subprocess`.
 
 4. Confirm `_try_resolve_goal_session` is defined in `factory.py` and called from `make_callback`:
    ```
-   grep -n '_try_resolve_goal_session' src/task_orchestrator/factory.py
+   grep -n '_try_resolve_goal_session' src/vault_ui/factory.py
    ```
    Expected: at least two matches — the `async def` definition and the dispatch call site inside `callback`.
 
 5. Confirm dispatch is keyed on `item_kind`:
    ```
-   grep -n 'item_kind ==' src/task_orchestrator/factory.py
+   grep -n 'item_kind ==' src/vault_ui/factory.py
    ```
    Expected: at least two matches (`item_kind == "task"`, `item_kind == "goal"`).
 

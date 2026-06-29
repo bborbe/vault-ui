@@ -2,7 +2,7 @@
 status: completed
 spec: [014-goals-view-ux-hardening]
 summary: 'Removed redundant ''Open in Obsidian →'' link from createGoalCard (title <a> is now the only anchor on goal cards) and pinned loadGoals''s lack of goal= append via regression test. loadGoals was already clean — no code edit needed there. CHANGELOG updated with two fix: entries. All 253 tests pass; make precommit exits 0.'
-execution_id: task-orchestrator-goals-view-fixes-exec-065-spec-014-cleanups
+execution_id: vault-ui-goals-view-fixes-exec-065-spec-014-cleanups
 dark-factory-version: v0.187.5
 created: "2026-06-27T12:05:00Z"
 queued: "2026-06-27T12:31:48Z"
@@ -13,7 +13,7 @@ branch: dark-factory/goals-view-ux-hardening
 
 <summary>
 - The redundant "Open in Obsidian →" link is removed from `createGoalCard()` in `static/app.js`. The card title remains the only `<a>` element on the card (it's the existing `obsidian://` link), so AC#9 is satisfied: `document.querySelectorAll('[data-card-kind="goal"] a').length === 1`.
-- The `loadGoals()` function no longer appends `goal=` query params to the `/api/goals` URL. The endpoint never accepted `goal=` (it accepts only `vault`, `status`, `assignee`); the silent ignore is removed. AC#11: `grep -n "params.append('goal'" src/task_orchestrator/static/app.js` returns zero lines inside `loadGoals`.
+- The `loadGoals()` function no longer appends `goal=` query params to the `/api/goals` URL. The endpoint never accepted `goal=` (it accepts only `vault`, `status`, `assignee`); the silent ignore is removed. AC#11: `grep -n "params.append('goal'" src/vault_ui/static/app.js` returns zero lines inside `loadGoals`.
 - No new `innerHTML` write site is introduced. The existing `escapeHtml` pattern from `createTaskCard` is reused — the removal happens by deleting the link element, not by rewriting the card construction with raw HTML (spec Security / Abuse Cases row 1).
 - Clicking the goal card title still opens the goal file in Obsidian (AC#10): the card title `href` still matches `^obsidian://open\?vault=.+&file=.+` because the existing title `<a>` is untouched.
 - Tests added to `tests/test_goal_card_cleanup.py` cover: card count of `<a>` elements, presence of `goal=` append (negative), no new innerHTML write, link URL pattern.
@@ -24,23 +24,23 @@ Remove two UX papercuts from `static/app.js`: (1) the redundant "Open in Obsidia
 </objective>
 
 <context>
-Read `/workspace/CLAUDE.md` if it exists. Conventions follow `src/task_orchestrator/static/app.js`.
+Read `/workspace/CLAUDE.md` if it exists. Conventions follow `src/vault_ui/static/app.js`.
 
 Read these source files in full before editing (paths are absolute, host-side):
-- `/workspace/src/task_orchestrator/static/app.js` — full file (~1900 lines after prompts 1+2). Critical anchors:
+- `/workspace/src/vault_ui/static/app.js` — full file (~1900 lines after prompts 1+2). Critical anchors:
   - `createGoalCard` at line 1072. Currently builds the card with two `<a>` elements:
     1. The title `<a href="${goal.obsidian_url}" class="task-title-link">` (inside the `<h3>`)
     2. The "Open in Obsidian →" `<a class="open-in-obsidian">` inside the `.card-footer` `.card-actions` div
     The redundant link is element (2). The fix removes the `.card-actions` block (or just the `openInObsidian` interpolation inside it) so only the title link remains.
-  - `loadGoals` at line 883. Currently builds a `URLSearchParams` with `vault`, `status`, `assignee`, and `goal` (line 894 + 895 mirror the task filter) — wait, actually re-read the file: line 894 is `currentStatuses.forEach(s => params.append('status', s));`, line 895 is `currentAssignees.forEach(a => params.append('assignee', a));`. There is NO `params.append('goal', ...)` in `loadGoals` today. The spec (line 100) says "loadGoals() request URL contains no goal= parameter — evidence: ... grep -n 'params.append('goal'' src/task_orchestrator/static/app.js returns zero lines inside loadGoals". Verify before editing: if the line already doesn't exist, this prompt's cleanup is a no-op for the grep check (still useful as a regression guard). The spec AC is already satisfied by today's code on this point — confirm in `grep` and document.
+  - `loadGoals` at line 883. Currently builds a `URLSearchParams` with `vault`, `status`, `assignee`, and `goal` (line 894 + 895 mirror the task filter) — wait, actually re-read the file: line 894 is `currentStatuses.forEach(s => params.append('status', s));`, line 895 is `currentAssignees.forEach(a => params.append('assignee', a));`. There is NO `params.append('goal', ...)` in `loadGoals` today. The spec (line 100) says "loadGoals() request URL contains no goal= parameter — evidence: ... grep -n 'params.append('goal'' src/vault_ui/static/app.js returns zero lines inside loadGoals". Verify before editing: if the line already doesn't exist, this prompt's cleanup is a no-op for the grep check (still useful as a regression guard). The spec AC is already satisfied by today's code on this point — confirm in `grep` and document.
 
   Wait — re-read the spec carefully. The spec Problem statement says "`loadGoals()` appends `goal=` query params that the endpoint does not accept". If the current code doesn't do this, the cleanup is a no-op. Verify by reading the actual source. If the code is clean, this prompt's `loadGoals` work is to **add a regression test** that pins the absence of `goal=` appends in `loadGoals`.
 
-- `/workspace/src/task_orchestrator/api/tasks.py` — `list_goals` endpoint at line 587 accepts `vault`, `status`, `assignee`. Confirmed `extra="forbid"` discipline applies to RESPONSE models (`GoalResponse` at models.py:86) but NOT to query params (FastAPI just ignores unknown query params). The spec's AC#11 evidence uses `grep` against the JS source — pinning the absence is the contract.
+- `/workspace/src/vault_ui/api/tasks.py` — `list_goals` endpoint at line 587 accepts `vault`, `status`, `assignee`. Confirmed `extra="forbid"` discipline applies to RESPONSE models (`GoalResponse` at models.py:86) but NOT to query params (FastAPI just ignores unknown query params). The spec's AC#11 evidence uses `grep` against the JS source — pinning the absence is the contract.
 
-- `/workspace/src/task_orchestrator/static/style.css` — the `.open-in-obsidian` class is defined at line ~135 (added in spec 013 prompt 2). After removing the redundant link, the class is unreferenced in HTML. Leave the CSS rule (dead CSS is harmless; removing it could break unrelated future uses).
+- `/workspace/src/vault_ui/static/style.css` — the `.open-in-obsidian` class is defined at line ~135 (added in spec 013 prompt 2). After removing the redundant link, the class is unreferenced in HTML. Leave the CSS rule (dead CSS is harmless; removing it could break unrelated future uses).
 
-- `/workspace/src/task_orchestrator/api/models.py` — `GoalResponse` (line 83). No changes.
+- `/workspace/src/vault_ui/api/models.py` — `GoalResponse` (line 83). No changes.
 
 **Verified assumptions** (READ before writing any code):
 - The card title `<a>` at line 1086 (in `createGoalCard`) reads `goal.obsidian_url` — the same field as the redundant link. Removing the redundant link does NOT change the URL the title points to. AC#10 is preserved automatically.
@@ -59,7 +59,7 @@ Read these source files in full before editing (paths are absolute, host-side):
 
 ### 1. Remove the redundant "Open in Obsidian →" link from `createGoalCard`
 
-In `/workspace/src/task_orchestrator/static/app.js`, find `createGoalCard` (line 1072). The current function body ends with a `.card-footer` block that contains a `.card-actions` div with the redundant link:
+In `/workspace/src/vault_ui/static/app.js`, find `createGoalCard` (line 1072). The current function body ends with a `.card-footer` block that contains a `.card-actions` div with the redundant link:
 
 ```javascript
     const { title } = extractJiraIssue(goal.title);
@@ -125,7 +125,7 @@ This is a deletion, not a rewrite — the existing `card.innerHTML` template-lit
 Before any edit, run:
 
 ```bash
-grep -n "params.append('goal'" /workspace/src/task_orchestrator/static/app.js
+grep -n "params.append('goal'" /workspace/src/vault_ui/static/app.js
 ```
 
 Expected: ZERO matches. If the grep returns zero matches, the cleanup is already done at the code level — this prompt's only contribution is the regression test (requirement 3).
@@ -136,11 +136,11 @@ Confirm the post-edit state:
 
 ```bash
 # Inside loadGoals only — should return ZERO
-awk '/async function loadGoals/,/^}/' /workspace/src/task_orchestrator/static/app.js | grep -n "params.append('goal'"
+awk '/async function loadGoals/,/^}/' /workspace/src/vault_ui/static/app.js | grep -n "params.append('goal'"
 # Expected: zero matches.
 
 # loadTasks should still have the goal= append (it's a valid filter there)
-awk '/async function loadTasks/,/^}/' /workspace/src/task_orchestrator/static/app.js | grep -n "params.append('goal'"
+awk '/async function loadTasks/,/^}/' /workspace/src/vault_ui/static/app.js | grep -n "params.append('goal'"
 # Expected: one match (the existing line in loadTasks).
 ```
 
@@ -160,7 +160,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-APP_JS = (REPO_ROOT / "src" / "task_orchestrator" / "static" / "app.js").read_text()
+APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
 
 
 def _slice_function(source: str, fn_name: str) -> str:
@@ -320,18 +320,18 @@ uv run pytest tests/test_goal_card_cleanup.py -v
 make precommit
 
 # Confirm the redundant link is gone
-grep -n "Open in Obsidian" src/task_orchestrator/static/app.js
+grep -n "Open in Obsidian" src/vault_ui/static/app.js
 # Expected: only occurrences in the index.html title attribute and elsewhere —
 # but createGoalCard (around line 1072) must NOT contain 'Open in Obsidian →'
 # as a card body string. The 'title="Open in Obsidian"' attribute on the
 # title link is fine and expected (the title attribute on the <a> tag).
 
 # Confirm loadGoals has no goal= append
-awk '/async function loadGoals/,/^}/' src/task_orchestrator/static/app.js | grep -n "params.append('goal'"
+awk '/async function loadGoals/,/^}/' src/vault_ui/static/app.js | grep -n "params.append('goal'"
 # Expected: zero matches.
 
 # Confirm loadTasks still has goal= append (regression guard)
-awk '/async function loadTasks/,/^}/' src/task_orchestrator/static/app.js | grep -n "params.append('goal'"
+awk '/async function loadTasks/,/^}/' src/vault_ui/static/app.js | grep -n "params.append('goal'"
 # Expected: one match.
 ```
 </verification>
@@ -339,7 +339,7 @@ awk '/async function loadTasks/,/^}/' src/task_orchestrator/static/app.js | grep
 <success_criteria>
 - [ ] AC#9: `document.querySelectorAll('[data-card-kind="goal"] a').length` is 1 on a page with at least one goal card — pinned by `test_goal_card_has_only_one_anchor`.
 - [ ] AC#10: clicking the goal card title still opens the goal file in Obsidian (card title `href` matches `^obsidian://open\?vault=.+&file=.+`) — pinned by `test_goal_card_title_link_preserves_obsidian_url` (the title link is unchanged).
-- [ ] AC#11: `loadGoals()` request URL contains no `goal=` parameter; `grep -n "params.append('goal'" src/task_orchestrator/static/app.js` returns zero lines inside `loadGoals` — pinned by `test_load_goals_does_not_append_goal_param`.
+- [ ] AC#11: `loadGoals()` request URL contains no `goal=` parameter; `grep -n "params.append('goal'" src/vault_ui/static/app.js` returns zero lines inside `loadGoals` — pinned by `test_load_goals_does_not_append_goal_param`.
 - [ ] AC#16: `make precommit` exits 0 in the changed module.
 - [ ] Security row 1: no new `innerHTML` write site introduced in `createGoalCard` — pinned by `test_no_new_innerhtml_write_in_goal_card` (exactly 1 write site).
 - [ ] Regression guard: `loadTasks` still appends `goal=` (it's valid for `/api/tasks`) — pinned by `test_load_tasks_still_appends_goal_param`.
@@ -363,7 +363,7 @@ awk '/async function loadTasks/,/^}/' src/task_orchestrator/static/app.js | grep
 - Spec: `/workspace/specs/in-progress/014-goals-view-ux-hardening.md`
 - Task pages: `[[Remove Redundant Open in Obsidian Link from Goal Cards]]`, `[[Remove Ignored Goal Filter Param from loadGoals]]`
 - Parent goal: `[[Task Orchestrator Display Tasks and Goals]]`
-- Precedent: `specs/in-progress/013-task-orchestrator-goals-view.md` (merged via PR #14, commit `37bcf16`)
+- Precedent: `specs/in-progress/013-vault-ui-goals-view.md` (merged via PR #14, commit `37bcf16`)
 - Siblings: prompt 1 (`1-spec-014-fix-cross-view-leak.md`), prompt 2 (`2-spec-014-add-groupby-selector.md`)
 - Downstream: prompt 4 (docs + release) cuts the tag and updates README + CHANGELOG `## Unreleased` → `## v0.X.Y`
 </cross_references>

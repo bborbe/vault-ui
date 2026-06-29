@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: 'Added one-click ''Assign to me'' affordance: PATCH /tasks/{id}/assign-to-me endpoint, inline link on unassigned cards, CSS styles, 5 new tests, and CHANGELOG entry for v0.23.0'
-container: task-orchestrator-041-assign-to-me-card-link
+container: vault-ui-041-assign-to-me-card-link
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T16:49:37Z"
 queued: "2026-05-10T16:49:37Z"
@@ -27,12 +27,12 @@ Add a one-click "Assign to me" affordance on Kanban cards that have no assignee.
 Read `CLAUDE.md` for project conventions: dark-factory pipeline, `make precommit` for verification, vault-cli is the sole vault interface, mock external dependencies in tests.
 
 Read these files in full before editing:
-- `src/task_orchestrator/api/tasks.py` — REST endpoints; the new endpoint goes here. Reference shapes: `update_task_phase` at the `@router.patch("/tasks/{task_id}/phase")` decorator (still inlines `asyncio.create_subprocess_exec` — DO NOT copy that pattern), and `patch_task_session` (the second `set_field` callsite) which DOES use the wrapper — copy that style.
-- `src/task_orchestrator/vault_cli_client.py` — both `show_task(task_id) -> Task` (line 68; raises `FileNotFoundError` cleanly when task is unknown) and `set_field(task_id, key, value)` (line 89; raises `RuntimeError` on non-zero exit). The endpoint pre-checks existence via `show_task` to keep 404 mapping clean (no fragile substring matching on stderr), then calls `set_field` to perform the write.
-- `src/task_orchestrator/config.py` — `Config.current_user` field (line 34), populated at startup by `discover_current_user` (called from `factory.py`). Already a stable, accessible string at request time.
-- `src/task_orchestrator/factory.py` — `get_config()` returns the populated `Config`; `get_vault_cli_client_for_vault(vault_name)` returns a `VaultCLIClient` for that vault. Both already imported into `api/tasks.py`.
-- `src/task_orchestrator/static/app.js` — the `createTaskCard` function around the assignee badge ternary (the `task.assignee ? <chip> : ""` pattern). Also locate `filterByAssignee` for placement reference of the new `assignToMe` function.
-- `src/task_orchestrator/static/style.css` — the `.assignee-badge` block (and `.clickable` / `.active` modifiers). The new `.assign-to-me-link` rule belongs adjacent to those styles.
+- `src/vault_ui/api/tasks.py` — REST endpoints; the new endpoint goes here. Reference shapes: `update_task_phase` at the `@router.patch("/tasks/{task_id}/phase")` decorator (still inlines `asyncio.create_subprocess_exec` — DO NOT copy that pattern), and `patch_task_session` (the second `set_field` callsite) which DOES use the wrapper — copy that style.
+- `src/vault_ui/vault_cli_client.py` — both `show_task(task_id) -> Task` (line 68; raises `FileNotFoundError` cleanly when task is unknown) and `set_field(task_id, key, value)` (line 89; raises `RuntimeError` on non-zero exit). The endpoint pre-checks existence via `show_task` to keep 404 mapping clean (no fragile substring matching on stderr), then calls `set_field` to perform the write.
+- `src/vault_ui/config.py` — `Config.current_user` field (line 34), populated at startup by `discover_current_user` (called from `factory.py`). Already a stable, accessible string at request time.
+- `src/vault_ui/factory.py` — `get_config()` returns the populated `Config`; `get_vault_cli_client_for_vault(vault_name)` returns a `VaultCLIClient` for that vault. Both already imported into `api/tasks.py`.
+- `src/vault_ui/static/app.js` — the `createTaskCard` function around the assignee badge ternary (the `task.assignee ? <chip> : ""` pattern). Also locate `filterByAssignee` for placement reference of the new `assignToMe` function.
+- `src/vault_ui/static/style.css` — the `.assignee-badge` block (and `.clickable` / `.active` modifiers). The new `.assign-to-me-link` rule belongs adjacent to those styles.
 - `tests/test_api.py` — study `test_update_task_phase_uses_vault_cli` (PATCH endpoint shape, monkeypatched subprocess), `test_patch_session_uuid_stored_as_is` (mock `vault_client.set_field` with `AsyncMock` via the `mock_vault_client` fixture), and `test_patch_session_vault_not_found` (vault-not-found shape). The `mock_vault_client` fixture (lines 65-95) already creates `client.set_field = AsyncMock()` — use that directly.
 - `prompts/completed/040-frontend-multi-value-assignee-url-param.md` — the immediately preceding prompt that made unassigned tasks reachable in the inbox; this prompt closes that workflow.
 - `CHANGELOG.md` — append the new entry at the top under a new `## v0.23.0` section (the most recent version is `## v0.22.0`, so bump minor; project convention is one section per release rather than an "Unreleased" section — verify by reading the first 30 lines and follow whatever pattern is current).
@@ -40,14 +40,14 @@ Read these files in full before editing:
 **Verified assumptions** (from a fresh read at prompt-creation time):
 - `Config.current_user: str = ""` exists at `config.py` line 34. Empty string is the "unset" sentinel.
 - `vault_cli_client.set_field` is an `async def` that calls `vault-cli task set <id> <key> <value> --vault <vault_name>` and raises `RuntimeError(f"vault-cli task set failed: ...")` on non-zero exit.
-- The `mock_vault_client` fixture in `tests/test_api.py` already provides `client.set_field = AsyncMock()` and is wired through the `test_client` fixture, which patches `task_orchestrator.api.tasks.get_vault_cli_client_for_vault` to return it. New tests should reuse `test_client` + `mock_vault_client` and assert against `mock_vault_client.set_field.assert_awaited_once_with(...)` — same shape as `test_patch_session_uuid_stored_as_is`.
-- The `test_client` fixture builds `Config` with no `current_user` argument, so `current_user` defaults to `""`. The new tests need to override that — either by setting `_config.current_user` after construction (the fixture uses `monkeypatch.setattr("task_orchestrator.factory._config", test_config)` so reach into that same object) or by constructing a separate `Config` with `current_user="bborbe"` for the happy-path test. Pick whichever matches existing test ergonomics; the simpler pattern is to mutate `test_config.current_user` inside each test that needs it.
+- The `mock_vault_client` fixture in `tests/test_api.py` already provides `client.set_field = AsyncMock()` and is wired through the `test_client` fixture, which patches `vault_ui.api.tasks.get_vault_cli_client_for_vault` to return it. New tests should reuse `test_client` + `mock_vault_client` and assert against `mock_vault_client.set_field.assert_awaited_once_with(...)` — same shape as `test_patch_session_uuid_stored_as_is`.
+- The `test_client` fixture builds `Config` with no `current_user` argument, so `current_user` defaults to `""`. The new tests need to override that — either by setting `_config.current_user` after construction (the fixture uses `monkeypatch.setattr("vault_ui.factory._config", test_config)` so reach into that same object) or by constructing a separate `Config` with `current_user="bborbe"` for the happy-path test. Pick whichever matches existing test ergonomics; the simpler pattern is to mutate `test_config.current_user` inside each test that needs it.
 - The frontend `createTaskCard` ternary's `: ""` branch is the only spot where unassigned cards render the empty-slot placeholder — replacing it with the link is sufficient; no other branch handles empty assignee.
 </context>
 
 <requirements>
 
-### 1. Backend endpoint — `src/task_orchestrator/api/tasks.py`
+### 1. Backend endpoint — `src/vault_ui/api/tasks.py`
 
 Add a new endpoint after `update_task_phase` (or anywhere in the file with the other `@router.patch` handlers — placement doesn't matter for correctness, but adjacent to `update_task_phase` reads naturally).
 
@@ -114,7 +114,7 @@ Notes:
 - Broadcast `task_updated` over the WebSocket the same way `update_task_phase` does — operators with the board open will see the chip appear without a manual reload (the existing watcher would also catch it, but the explicit broadcast is consistent with sibling endpoints).
 - Do NOT modify `update_task_phase` to use the wrapper — out of scope.
 
-### 2. Frontend — `src/task_orchestrator/static/app.js`
+### 2. Frontend — `src/vault_ui/static/app.js`
 
 #### 2a. Replace the empty-assignee branch in `createTaskCard`
 
@@ -173,7 +173,7 @@ Notes:
 - The `alert` calls are minimal user feedback; match whatever existing handlers in this file do for error reporting (some use `alert`, some only log — pick the closest existing pattern, prioritizing `alert` for hard failures so the operator notices the click had no effect).
 - Use `encodeURIComponent` on both path and query parameters — task IDs can contain spaces.
 
-### 3. CSS — `src/task_orchestrator/static/style.css`
+### 3. CSS — `src/vault_ui/static/style.css`
 
 Add a new rule block adjacent to `.assignee-badge` (look for the existing block; place this immediately after the `.assignee-icon` rule). Keep it small, muted, and discoverable:
 
@@ -207,7 +207,7 @@ Add four tests using the existing `test_client` and `mock_vault_client` fixtures
 For each test that needs `current_user` set, mutate the live config via the same path the `test_client` fixture uses:
 
 ```python
-from task_orchestrator import factory as _factory_module
+from vault_ui import factory as _factory_module
 
 def _set_current_user(value: str) -> None:
     """Helper: mutate the test config's current_user in place."""
@@ -346,7 +346,7 @@ If the project's most recent version has changed by the time this prompt runs, b
 </constraints>
 
 <verification>
-1. Run `make precommit` from `~/Documents/workspaces/task-orchestrator` — must exit 0.
+1. Run `make precommit` from `~/Documents/workspaces/vault-ui` — must exit 0.
 
 2. Confirm the new test names are present and pass:
    ```
@@ -356,25 +356,25 @@ If the project's most recent version has changed by the time this prompt runs, b
 
 3. Confirm the new endpoint is registered:
    ```
-   grep -n "assign-to-me" src/task_orchestrator/api/tasks.py
+   grep -n "assign-to-me" src/vault_ui/api/tasks.py
    ```
    Expected: at least one match (the `@router.patch` decorator).
 
 4. Confirm the wrapper is used (no new inline subprocess in the new endpoint):
    ```
-   grep -n "asyncio.create_subprocess_exec" src/task_orchestrator/api/tasks.py | wc -l
+   grep -n "asyncio.create_subprocess_exec" src/vault_ui/api/tasks.py | wc -l
    ```
    Expected: same count as before this prompt (the new endpoint must not add another).
 
 5. Confirm the frontend link is wired:
    ```
-   grep -n "assign-to-me-link\|assignToMe" src/task_orchestrator/static/app.js
+   grep -n "assign-to-me-link\|assignToMe" src/vault_ui/static/app.js
    ```
    Expected: at least 3 matches (the link CSS class in `createTaskCard`, the `onclick` handler, and the `async function assignToMe` declaration).
 
 6. Confirm the CSS rule was added:
    ```
-   grep -n "assign-to-me-link" src/task_orchestrator/static/style.css
+   grep -n "assign-to-me-link" src/vault_ui/static/style.css
    ```
    Expected: at least 2 matches (base rule + `:hover`).
 

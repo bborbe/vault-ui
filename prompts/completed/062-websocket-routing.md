@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Added item_kind to all WebSocket broadcast payloads (factory.py watcher callback + 3 explicit api/tasks.py sites) and made cache invalidation kind-scoped so task events don't invalidate the goal cache and vice versa; 6 new tests in tests/test_websocket_routing.py cover AC#9 no-cross-rerender invariant.
-execution_id: task-orchestrator-goals-view-exec-062-websocket-routing
+execution_id: vault-ui-goals-view-exec-062-websocket-routing
 dark-factory-version: v0.187.5
 created: "2026-06-26T16:18:50Z"
 queued: "2026-06-26T16:18:59Z"
@@ -10,14 +10,14 @@ completed: "2026-06-26T16:37:18Z"
 ---
 ---
 status: draft
-spec: [013-task-orchestrator-goals-view]
+spec: [013-vault-ui-goals-view]
 summary: Add `item_kind: "task" | "goal"` to every WebSocket broadcast payload in the vault-cli watcher callback and the explicit `_connection_manager.broadcast` calls in `api/tasks.py`, extend `handleTaskUpdate` on the frontend to route by `item_kind` (already drafted in prompt 2 but make the field mandatory), add tests asserting the payload carries `item_kind` for both task and goal events, and verify the no-cross-rerender invariant (editing a goal does NOT re-fetch tasks and vice versa) via a mocked-watcher unit test.
 ---
 
 <summary>
-- Every WebSocket message broadcast via the `vault-cli watch` callback in `src/task_orchestrator/factory.py` now carries an `item_kind: "task" | "goal"` field in addition to the existing `type`, `task_id`, and `vault` fields. Pre-existing fields are unchanged (backwards-compatible — `extra="forbid"` discipline is for response models, not WebSocket payloads).
+- Every WebSocket message broadcast via the `vault-cli watch` callback in `src/vault_ui/factory.py` now carries an `item_kind: "task" | "goal"` field in addition to the existing `type`, `task_id`, and `vault` fields. Pre-existing fields are unchanged (backwards-compatible — `extra="forbid"` discipline is for response models, not WebSocket payloads).
 - The factory's watcher callback already receives `item_kind` as the 4th argument (from `vault_cli_watcher.py`'s `_handle_line`); it currently uses it to dispatch session resolution (task vs goal). This prompt adds the same `item_kind` value to the broadcast message dictionary.
-- The two existing explicit `_connection_manager.broadcast` call sites in `src/task_orchestrator/api/tasks.py` (the `defer-task` / `complete-task` fast path at line 614 and the `assign-to-me` endpoint at line 703, plus the `update_task_phase` endpoint at line 767) are task-driven and carry `item_kind: "task"`. The `clear_field` and `set_field` paths are still per-task; no new `item_kind: "goal"` site is added because there is no goal write endpoint (the spec says goal cards are read-only).
+- The two existing explicit `_connection_manager.broadcast` call sites in `src/vault_ui/api/tasks.py` (the `defer-task` / `complete-task` fast path at line 614 and the `assign-to-me` endpoint at line 703, plus the `update_task_phase` endpoint at line 767) are task-driven and carry `item_kind: "task"`. The `clear_field` and `set_field` paths are still per-task; no new `item_kind: "goal"` site is added because there is no goal write endpoint (the spec says goal cards are read-only).
 - The `set_task_session`, `clear_task_session`, and `run_task` endpoints already only manipulate tasks, so their broadcasts (if any) carry `item_kind: "task"`. Audit each call site explicitly; the audit list is in the requirements.
 - The frontend's `handleTaskUpdate` (added by prompt 2) already reads `item_kind` with a fallback to `"task"`. This prompt removes the fallback so the field is mandatory in new code paths; pre-existing behaviour is preserved for any pre-prompt-3-payload replay.
 - A new `tests/test_websocket_routing.py` file adds three tests: (a) watcher callback broadcast includes `item_kind: "task"` for task events, (b) watcher callback broadcast includes `item_kind: "goal"` for goal events, (c) an integration test using a mocked `ConnectionManager` and `app.state.vault_task_cache` proves that a task event does NOT invalidate the goal cache and vice versa (spec's no-cross-rerender invariant — the AC at spec lines 86 covering "Editing a task does NOT trigger a goals re-fetch; editing a goal does NOT trigger a tasks re-fetch").
@@ -38,21 +38,21 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 - `definition-of-done.md` — coverage rules for modified code (≥80% for new code; test all changed paths).
 
 Read these source files in full before editing (paths are absolute, host-side):
-- `/workspace/src/task_orchestrator/factory.py` — `start_task_watchers` (line 161) is where the watcher callback is wired. The current broadcast (line 206) reads:
+- `/workspace/src/vault_ui/factory.py` — `start_task_watchers` (line 161) is where the watcher callback is wired. The current broadcast (line 206) reads:
   ```python
   message = {"type": event_type, "task_id": item_id, "vault": vault_arg}
   asyncio.run_coroutine_threadsafe(connection_manager.broadcast(message), loop)
   ```
   The callback already receives `item_kind` as its 4th argument. Add it to the message dict.
-- `/workspace/src/task_orchestrator/vault_cli_watcher.py` — `_handle_line` (line 102) parses the `type` field from each event and calls `self._on_change(event_type, item_id, vault, item_kind)` (line 118). The 4-arg signature is already in place; no changes here. The `test_vault_cli_watcher.py` test `test_watcher_calls_on_change_for_valid_event` (line 42) already asserts the 4-arg shape.
-- `/workspace/src/task_orchestrator/api/tasks.py` — grep for every `_connection_manager.broadcast(` call site:
+- `/workspace/src/vault_ui/vault_cli_watcher.py` — `_handle_line` (line 102) parses the `type` field from each event and calls `self._on_change(event_type, item_id, vault, item_kind)` (line 118). The 4-arg signature is already in place; no changes here. The `test_vault_cli_watcher.py` test `test_watcher_calls_on_change_for_valid_event` (line 42) already asserts the 4-arg shape.
+- `/workspace/src/vault_ui/api/tasks.py` — grep for every `_connection_manager.broadcast(` call site:
   - Line 614: `defer-task` / `complete-task` fast path inside `execute_slash_command` — emits `{"type": "task_updated", "task_id": task_id}`. This is a task-only operation, so `item_kind: "task"`.
   - Line 703: `assign_task_to_me` endpoint — emits `{"type": "task_updated", "task_id": task_id}`. Task-only, so `item_kind: "task"`.
   - Line 767: `update_task_phase` endpoint — emits `{"type": "task_updated", "task_id": task_id}`. Task-only, so `item_kind: "task"`.
   - The `set_task_session` (line 805) and `clear_task_session` (line 778) endpoints do NOT currently broadcast — they write to disk and the watcher event will trigger a broadcast. So no broadcast to update there.
   - The `run_task` endpoint (line 498) does NOT broadcast — same reason (watcher picks it up).
-- `/workspace/src/task_orchestrator/api/websocket.py` — the WebSocket endpoint handler. **No changes** to this file. The broadcast payload is constructed in `factory.py` and the explicit call sites in `tasks.py`; the endpoint just relays whatever's passed to `connection_manager.broadcast`.
-- `/workspace/src/task_orchestrator/static/app.js` — `handleTaskUpdate` (added by prompt 2) reads `item_kind` with a fallback to `"task"`. This prompt makes the field mandatory in code paths but keeps the fallback for any pre-prompt-3-payload replay. The `removeGoalCard` helper was added in prompt 2; no additional JS changes.
+- `/workspace/src/vault_ui/api/websocket.py` — the WebSocket endpoint handler. **No changes** to this file. The broadcast payload is constructed in `factory.py` and the explicit call sites in `tasks.py`; the endpoint just relays whatever's passed to `connection_manager.broadcast`.
+- `/workspace/src/vault_ui/static/app.js` — `handleTaskUpdate` (added by prompt 2) reads `item_kind` with a fallback to `"task"`. This prompt makes the field mandatory in code paths but keeps the fallback for any pre-prompt-3-payload replay. The `removeGoalCard` helper was added in prompt 2; no additional JS changes.
 - `/workspace/tests/test_vault_cli_watcher.py` — existing tests (lines 42, 65, 80, 93, 106, 119) already exercise the 4-arg watcher callback. The new `tests/test_websocket_routing.py` tests the **factory-level** callback that wraps the watcher's 4-arg into a broadcast message.
 - `/workspace/tests/test_api.py` — there are no existing tests that directly assert the WebSocket broadcast payload. New tests live in `tests/test_websocket_routing.py`.
 
@@ -149,7 +149,7 @@ Three call sites exist today; all are task-driven (per spec 013, goal cards are 
 
 ### 4. Tighten the frontend `handleTaskUpdate` fallback (forward-compat only)
 
-In `/workspace/src/task_orchestrator/static/app.js`, find `handleTaskUpdate` (added by prompt 2). The current line is:
+In `/workspace/src/vault_ui/static/app.js`, find `handleTaskUpdate` (added by prompt 2). The current line is:
 ```javascript
     const kind = item_kind || 'task';
 ```
@@ -195,7 +195,7 @@ def _run_callback(callback: Any, *args: Any) -> None:
 async def test_watcher_callback_broadcasts_item_kind_task() -> None:
     """A 'task' event from the watcher produces a broadcast with
     ``item_kind: "task"`` (spec AC#4 + prompt 3)."""
-    from task_orchestrator import factory as _factory_module
+    from vault_ui import factory as _factory_module
 
     captured: dict[str, Any] = {}
 
@@ -385,7 +385,7 @@ async def test_no_cross_rerender_invariant() -> None:
 async def test_explicit_broadcast_in_api_tasks_carries_item_kind_task() -> None:
     """The explicit broadcast in execute_slash_command fast path carries
     ``item_kind: "task"`` (audit site line 614)."""
-    from task_orchestrator.api import tasks as api_tasks
+    from vault_ui.api import tasks as api_tasks
 
     captured: list[dict[str, Any]] = []
     fake_manager = MagicMock()
@@ -409,7 +409,7 @@ def test_app_js_handle_task_update_warns_on_missing_item_kind() -> None:
     """handleTaskUpdate logs a console.warn when item_kind is absent
     (so pre-prompt-3 backend deployments surface the issue)."""
     from pathlib import Path
-    app_js = Path("src/task_orchestrator/static/app.js").read_text()
+    app_js = Path("src/vault_ui/static/app.js").read_text()
     # The exact one-line warn
     assert "console.warn" in app_js
     assert "item_kind" in app_js
@@ -463,13 +463,13 @@ uv run pytest tests/test_websocket_routing.py::test_no_cross_rerender_invariant 
 
 Confirm the explicit broadcast sites in `api/tasks.py` carry the field:
 ```bash
-grep -n 'item_kind' src/task_orchestrator/api/tasks.py
+grep -n 'item_kind' src/vault_ui/api/tasks.py
 # Expected: 3 lines (the three explicit broadcast sites) + the field name in the imports
 ```
 
 Confirm the factory callback includes `item_kind`:
 ```bash
-grep -n 'item_kind' src/task_orchestrator/factory.py
+grep -n 'item_kind' src/vault_ui/factory.py
 # Expected: in the message dict construction + the if/elif invalidation block
 ```
 

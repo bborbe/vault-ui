@@ -1,4 +1,4 @@
-"""Configuration for TaskOrchestrator."""
+"""Configuration for vault-ui."""
 
 import json
 import logging

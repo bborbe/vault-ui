@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Added showToast helper and vault-cli fast-path branch in executeSlashCommand to show success/error toasts and refresh task list when session_id is empty, skipping the session modal.
-container: task-orchestrator-003-vault-cli-fast-path-ui
+container: vault-ui-003-vault-cli-fast-path-ui
 dark-factory-version: v0.26.0
 created: "2026-03-07T22:36:23Z"
 queued: "2026-03-07T22:36:23Z"
@@ -22,7 +22,7 @@ When the backend returns an empty session_id (vault-cli fast path for defer/comp
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/static/app.js` — the `executeSlashCommand` function (starts at ~line 764) handles defer-task and complete-task actions. After a successful fetch response (~line 809-819), it always calls `showModal` — even when `session_id` is empty (vault-cli fast path).
+Read `src/vault_ui/static/app.js` — the `executeSlashCommand` function (starts at ~line 764) handles defer-task and complete-task actions. After a successful fetch response (~line 809-819), it always calls `showModal` — even when `session_id` is empty (vault-cli fast path).
 
 Key functions in app.js:
 - `executeSlashCommand` (~line 764) — sends command to backend
@@ -33,7 +33,7 @@ There is no existing toast/notification component in the codebase. You need to c
 </context>
 
 <requirements>
-1. In `src/task_orchestrator/static/app.js`, in the success path of `executeSlashCommand` (~line 809-819), check if `data.session_id` is empty string
+1. In `src/vault_ui/static/app.js`, in the success path of `executeSlashCommand` (~line 809-819), check if `data.session_id` is empty string
 2. If `session_id` is empty (vault-cli fast path):
    - Skip the `showModal` call
    - Show a toast notification with the message "Task deferred" or "Task completed" depending on the command

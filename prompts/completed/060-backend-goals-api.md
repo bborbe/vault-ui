@@ -1,8 +1,8 @@
 ---
 status: completed
-spec: [013-task-orchestrator-goals-view]
+spec: [013-vault-ui-goals-view]
 summary: Add `GET /api/goals` endpoint mirroring `/api/tasks`, extend the `Goal` dataclass and new `GoalResponse` Pydantic model with `status`, `priority`, `defer_date`, `target_date`, `completed_date`, `obsidian_url`, and `vault` fields, parse the additional goal frontmatter in `_parse_goal`, build a per-vault goal cache invalidated by the existing watcher, reuse `_flatten_filter` and the same query params (`vault`, `status`, `assignee`, `defer_date`) as `/api/tasks`, and add tests covering parser shapes, endpoint behaviour, no-regression of `/api/tasks`, and `make precommit` green.
-execution_id: task-orchestrator-goals-view-exec-060-backend-goals-api
+execution_id: vault-ui-goals-view-exec-060-backend-goals-api
 dark-factory-version: v0.187.2-5-ge4bd087-dirty
 created: "2026-06-26T16:18:50Z"
 queued: "2026-06-26T16:18:50Z"
@@ -11,10 +11,10 @@ completed: "2026-06-26T16:28:15Z"
 ---
 
 <summary>
-- `GET /api/goals` is added to the existing `tasks_router` in `src/task_orchestrator/api/tasks.py`, accepting the same query parameters as `/api/tasks` (`vault`, `status`, `assignee`, `defer_date`) with the same `extra="forbid"` validation.
-- The `Goal` dataclass in `src/task_orchestrator/api/models.py` gains `status`, `priority`, `defer_date`, `target_date`, `completed_date`, and `obsidian_url` — all defaulting to `None` so the type is backwards-compatible with the existing call sites in `factory.py` and `cleanup.py`.
+- `GET /api/goals` is added to the existing `tasks_router` in `src/vault_ui/api/tasks.py`, accepting the same query parameters as `/api/tasks` (`vault`, `status`, `assignee`, `defer_date`) with the same `extra="forbid"` validation.
+- The `Goal` dataclass in `src/vault_ui/api/models.py` gains `status`, `priority`, `defer_date`, `target_date`, `completed_date`, and `obsidian_url` — all defaulting to `None` so the type is backwards-compatible with the existing call sites in `factory.py` and `cleanup.py`.
 - A new `GoalResponse` Pydantic model exposes the same fields plus `vault`, mirroring the `TaskResponse` shape but without task-only fields (`phase`, `defer_date` semantics differ — see body).
-- `_parse_goal` in `src/task_orchestrator/vault_cli_client.py` is extended to read the new frontmatter fields from `vault-cli goal list --output json`; missing fields surface as `None`, never as empty strings or epoch dates.
+- `_parse_goal` in `src/vault_ui/vault_cli_client.py` is extended to read the new frontmatter fields from `vault-cli goal list --output json`; missing fields surface as `None`, never as empty strings or epoch dates.
 - A per-vault goal cache is added to `app.state` (matching the existing per-vault task cache shape: `dict[str, tuple[float, list[Goal]]]` keyed by tasks-dir mtime), and the existing watcher callback in `factory.py` invalidates it on goal events alongside the existing per-vault task cache invalidation.
 - The endpoint reuses the existing `VaultCLIClient.list_goals` (no new vault-cli surface — the spec marks vault-cli as frozen), the existing `_flatten_filter` helper, the existing `quote(...)`-based `obsidian://` URL construction pattern from `_task_to_response`, and the existing `ValueError`/`RuntimeError` gather pattern from `list_tasks` so HTTP 500 surfaces the same way it does for tasks.
 - `/api/tasks` response shape, `TaskResponse` schema, `_task_to_response`, `_parse_task`, and `list_tasks` query parameters remain byte-identical to pre-spec (verified by `git diff` against master).
@@ -31,18 +31,18 @@ Read `/workspace/CLAUDE.md` if it exists, otherwise the project follows standard
 
 Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 - `python-pydantic-guide.md` — Pydantic v2 patterns, `extra="forbid"` on `BaseModel`.
-- `python-factory-pattern.md` — composition-root patterns used by `src/task_orchestrator/factory.py`.
+- `python-factory-pattern.md` — composition-root patterns used by `src/vault_ui/factory.py`.
 - `python-architecture-patterns.md` — module boundaries, dataclass vs Pydantic split.
 - `changelog-guide.md` — bullet style, `## Unreleased` rules.
 
 Read these source files in full before editing (paths are absolute, host-side):
-- `/workspace/src/task_orchestrator/api/models.py` — the existing `Goal` dataclass at lines 40–48 has exactly four fields today (`id`, `title`, `claude_session_id`, `assignee`). The new fields go after `assignee`. `TaskResponse` is the structural reference for `GoalResponse` (a slimmed subset).
-- `/workspace/src/task_orchestrator/api/tasks.py` — `list_tasks` (line 428), the `_flatten_filter` helper (line 279), `_task_to_response` (line 889), and the per-vault mtime cache pattern in `_process_vault` (line 316). The new `list_goals` route MUST follow the same shape: `_process_goal_vault` helper, per-vault cache, gather over vault names, `ValueError` skip / `RuntimeError` re-raise.
-- `/workspace/src/task_orchestrator/vault_cli_client.py` — `list_goals` already exists (line 124, calls `vault-cli goal list --output json`), and `_parse_goal` (line 245) currently only reads `name`/`title`/`claude_session_id`/`assignee`. Extend `_parse_goal` in place; do not change `list_goals`.
-- `/workspace/src/task_orchestrator/factory.py` — `start_task_watchers` (line 161) currently invalidates `app.state.vault_task_cache[vault_name]` on every watcher event. Add the equivalent `app.state.vault_goal_cache.pop(vault_name, None)` inside the same callback. The `lifespan` function (line 274) must initialize `app.state.vault_goal_cache = {}` next to the existing `app.state.vault_task_cache = {}` (line 317).
-- `/workspace/src/task_orchestrator/vault_cli_watcher.py` — the watcher already emits `(event_type, item_id, vault_name, item_kind)` with `item_kind` being `"goal"` for goal events. **No changes to this file** for this prompt — prompt 3 (WebSocket routing) reads this signature as-is.
+- `/workspace/src/vault_ui/api/models.py` — the existing `Goal` dataclass at lines 40–48 has exactly four fields today (`id`, `title`, `claude_session_id`, `assignee`). The new fields go after `assignee`. `TaskResponse` is the structural reference for `GoalResponse` (a slimmed subset).
+- `/workspace/src/vault_ui/api/tasks.py` — `list_tasks` (line 428), the `_flatten_filter` helper (line 279), `_task_to_response` (line 889), and the per-vault mtime cache pattern in `_process_vault` (line 316). The new `list_goals` route MUST follow the same shape: `_process_goal_vault` helper, per-vault cache, gather over vault names, `ValueError` skip / `RuntimeError` re-raise.
+- `/workspace/src/vault_ui/vault_cli_client.py` — `list_goals` already exists (line 124, calls `vault-cli goal list --output json`), and `_parse_goal` (line 245) currently only reads `name`/`title`/`claude_session_id`/`assignee`. Extend `_parse_goal` in place; do not change `list_goals`.
+- `/workspace/src/vault_ui/factory.py` — `start_task_watchers` (line 161) currently invalidates `app.state.vault_task_cache[vault_name]` on every watcher event. Add the equivalent `app.state.vault_goal_cache.pop(vault_name, None)` inside the same callback. The `lifespan` function (line 274) must initialize `app.state.vault_goal_cache = {}` next to the existing `app.state.vault_task_cache = {}` (line 317).
+- `/workspace/src/vault_ui/vault_cli_watcher.py` — the watcher already emits `(event_type, item_id, vault_name, item_kind)` with `item_kind` being `"goal"` for goal events. **No changes to this file** for this prompt — prompt 3 (WebSocket routing) reads this signature as-is.
 - `/workspace/tests/test_api.py` — the existing test patterns: `_make_task` helper (line 25), `_make_vault_client` helper (line 75), `mock_vault_client` fixture (line 102), `test_client` fixture (line 108), `test_list_tasks_*` tests (lines 142 onwards), and `test_list_tasks_goal_filter_*` tests (lines 2005+). The new `test_list_goals_*` tests follow the same pattern but use `_make_goal` and `_make_goal_client` helpers modelled on the task ones.
-- `/workspace/src/task_orchestrator/hierarchy.py` — `discover_hierarchy_folders` lists both `Tasks` and `Goals` folders; the per-vault goal cache key uses the vault's `tasks_folder` parent dir (since goal files live in `23 Goals` and the watcher event is mtime-agnostic — the spec says to invalidate on event, not on mtime, same as the existing task-cache pattern).
+- `/workspace/src/vault_ui/hierarchy.py` — `discover_hierarchy_folders` lists both `Tasks` and `Goals` folders; the per-vault goal cache key uses the vault's `tasks_folder` parent dir (since goal files live in `23 Goals` and the watcher event is mtime-agnostic — the spec says to invalidate on event, not on mtime, same as the existing task-cache pattern).
 - `/workspace/CHANGELOG.md` — the current top entry is `## v0.37.0`. There is no `## Unreleased` section; create one. The version bump for this prompt is **v0.38.0** (new feature, minor bump per `changelog-guide.md`).
 
 **Verified assumptions** (READ before writing any code):
@@ -60,7 +60,7 @@ Read these source files in full before editing (paths are absolute, host-side):
 
 <requirements>
 
-### 1. Extend the `Goal` dataclass in `src/task_orchestrator/api/models.py`
+### 1. Extend the `Goal` dataclass in `src/vault_ui/api/models.py`
 
 The current dataclass (lines 40–48) ends with:
 ```python
@@ -85,7 +85,7 @@ Add these fields after `assignee` (with `None` defaults so existing construction
 
 The `obsidian_url` is `None` on the dataclass (set by the API layer in `_goal_to_response` — the dataclass represents the on-disk frontmatter, not the API response). `TaskResponse` uses a non-Optional `obsidian_url: str`; the dataclass mirrors that decision for the response model only.
 
-### 2. Add `GoalResponse` Pydantic model in `src/task_orchestrator/api/models.py`
+### 2. Add `GoalResponse` Pydantic model in `src/vault_ui/api/models.py`
 
 Append after `TaskResponse` (after line 75):
 ```python
@@ -109,7 +109,7 @@ class GoalResponse(BaseModel):
 
 Order: the spec AC#2 keys list is `status`, `priority`, `obsidian_url`, `defer_date`, `target_date`, `completed_date` — that order is preserved. `vault`, `claude_session_id`, and `assignee` follow. The `model_config = {"extra": "forbid"}` follows the codebase's existing Pydantic convention (mirror `TaskResponse` if it has the same — read the file first; if it does NOT, do not invent it; Pydantic defaults to allow-extras).
 
-### 3. Extend `_parse_goal` in `src/task_orchestrator/vault_cli_client.py`
+### 3. Extend `_parse_goal` in `src/vault_ui/vault_cli_client.py`
 
 Current implementation (lines 245–253):
 ```python
@@ -161,7 +161,7 @@ def _parse_goal(self, data: dict[str, Any]) -> Goal:
 
 `obsidian_url` is intentionally NOT set here — the API layer builds it. Note: `_parse_task` already follows the same priority-coercion pattern at lines 194–203; mirror it.
 
-### 4. Add per-vault goal cache in `src/task_orchestrator/factory.py`
+### 4. Add per-vault goal cache in `src/vault_ui/factory.py`
 
 **4a.** In `create_app` (line 304), next to the existing `app.state.vault_task_cache = {}` at line 317, add:
 ```python
@@ -185,16 +185,16 @@ The `vault_goal_cache` parameter is the new one passed into the factory. To keep
     start_task_watchers(app.state.vault_task_cache, app.state.vault_goal_cache)
 ```
 
-Add `Goal` to the `from task_orchestrator.api.models import Task` import at line 12 of factory.py so the type annotation resolves:
+Add `Goal` to the `from vault_ui.api.models import Task` import at line 12 of factory.py so the type annotation resolves:
 ```python
-from task_orchestrator.api.models import Goal, Task
+from vault_ui.api.models import Goal, Task
 ```
 
-### 5. Add `_process_goal_vault` helper and `list_goals` route in `src/task_orchestrator/api/tasks.py`
+### 5. Add `_process_goal_vault` helper and `list_goals` route in `src/vault_ui/api/tasks.py`
 
-**5a.** Add the new imports at the top of `api/tasks.py` (extend the existing `from task_orchestrator.api.models import ...` line at line 19):
+**5a.** Add the new imports at the top of `api/tasks.py` (extend the existing `from vault_ui.api.models import ...` line at line 19):
 ```python
-from task_orchestrator.api.models import AssigneesResponse, Goal, GoalResponse, SessionResponse, Task, TaskResponse
+from vault_ui.api.models import AssigneesResponse, Goal, GoalResponse, SessionResponse, Task, TaskResponse
 ```
 
 **5b.** Add a new helper above the `@router.get("/tasks", ...)` route (insert after `_task_to_response` at line 919):
@@ -212,7 +212,7 @@ def _goal_to_response(goal: Goal, vault_config: VaultConfig) -> GoalResponse:
     # standard "23 Goals" suffix; spec 013 keeps the existing
     # folder-naming convention — the goals folder name is whatever the
     # user has in their vault (e.g. "23 Goals", "37 Goals").
-    from task_orchestrator.hierarchy import discover_hierarchy_folders
+    from vault_ui.hierarchy import discover_hierarchy_folders
 
     vault_root = Path(vault_config.vault_path)
     goals_folders = [f for f in discover_hierarchy_folders(vault_root) if f.name.endswith("Goals")]
@@ -406,7 +406,7 @@ def test_client_with_goals(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Test client with a mock that supports list_goals."""
-    from task_orchestrator.config import VaultConfig
+    from vault_ui.config import VaultConfig
 
     test_config = Config(
         vaults=[
@@ -421,12 +421,12 @@ def test_client_with_goals(
         port=8000,
     )
 
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     app = create_app()
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         return_value=mock_vault_client_with_goals,
     ):
         yield TestClient(app)
@@ -597,7 +597,7 @@ Do not include the `## Unreleased` placeholder — the codebase uses `## vX.Y.Z`
 
 <constraints>
 - vault-cli is frozen — do NOT add or modify any vault-cli command. Use the existing `vault-cli goal list --output json` and `watch --types goal` surface. No `goal show` fallback (spec Failure Mode row 1).
-- `/api/tasks` response shape, `TaskResponse` schema, and the `list_tasks` query-parameter set MUST remain byte-identical to pre-spec — verified by `git diff origin/master...HEAD -- src/task_orchestrator/api/tasks.py src/task_orchestrator/api/models.py` showing zero changes to `Task`, `TaskResponse`, `_parse_task`, `_task_to_response`, or `list_tasks`.
+- `/api/tasks` response shape, `TaskResponse` schema, and the `list_tasks` query-parameter set MUST remain byte-identical to pre-spec — verified by `git diff origin/master...HEAD -- src/vault_ui/api/tasks.py src/vault_ui/api/models.py` showing zero changes to `Task`, `TaskResponse`, `_parse_task`, `_task_to_response`, or `list_tasks`.
 - The new `Goal` dataclass fields MUST default to `None` so the existing call sites in `factory._try_resolve_goal_session` and `cleanup.py` keep compiling unchanged.
 - Goal cards are read-only — this prompt does NOT add any write endpoint (`POST/PATCH/DELETE` on `/api/goals/{id}/...`).
 - Do NOT change `vault_cli_watcher.py` — the watcher already passes `item_kind` correctly. Prompt 3 owns the WebSocket payload change.
@@ -624,13 +624,13 @@ uv run pytest tests/test_api.py -k "test_list_goals_response_has_required_keys" 
 
 Confirm no `/api/tasks` regression:
 ```bash
-git diff origin/master...HEAD -- src/task_orchestrator/api/tasks.py src/task_orchestrator/api/models.py | grep -E "^[+-].*(TaskResponse|list_tasks|_parse_task|_task_to_response)" | grep -v "^[+-]{3}"
+git diff origin/master...HEAD -- src/vault_ui/api/tasks.py src/vault_ui/api/models.py | grep -E "^[+-].*(TaskResponse|list_tasks|_parse_task|_task_to_response)" | grep -v "^[+-]{3}"
 # Expected: empty (the diff line above is the comment, no actual changes to those symbols)
 ```
 
 Confirm the Goal dataclass adds fields without breaking old call sites:
 ```bash
-git diff origin/master...HEAD -- src/task_orchestrator/factory.py src/task_orchestrator/cleanup.py
+git diff origin/master...HEAD -- src/vault_ui/factory.py src/vault_ui/cleanup.py
 # Expected: factory.py adds a new import line + one line in start_task_watchers; cleanup.py unchanged
 ```
 

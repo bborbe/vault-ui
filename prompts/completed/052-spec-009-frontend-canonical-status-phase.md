@@ -2,7 +2,7 @@
 status: completed
 spec: [009-frontend-canonical-status-phase-display]
 summary: Updated app.js to display canonical vocabulary — ALL_STATUSES now includes next/backlog, EXECUTION column renames in_progress at DOMContentLoaded, phase routing aliases in_progress→execution, formatPhase maps both values to 'Execution', right-click menu emits phase=execution, and updateURL always emits explicit ?status= params; CHANGELOG.md updated with Unreleased entry.
-container: task-orchestrator-exec-052-spec-009-frontend-canonical-status-phase
+container: vault-ui-exec-052-spec-009-frontend-canonical-status-phase
 dark-factory-version: v0.162.0
 created: "2026-05-20T19:15:00Z"
 queued: "2026-05-20T18:54:20Z"
@@ -20,7 +20,7 @@ branch: dark-factory/frontend-canonical-status-phase-display
 </summary>
 
 <objective>
-Flip the Kanban board UI to display the new canonical vocabulary (`next`, `execution`) while remaining interoperable with on-disk data and URLs that still use old values (`todo`, `in_progress`). All changes are confined to `src/task_orchestrator/static/app.js`; the backend (v0.33.0, spec 008) already accepts both old and new canonical values.
+Flip the Kanban board UI to display the new canonical vocabulary (`next`, `execution`) while remaining interoperable with on-disk data and URLs that still use old values (`todo`, `in_progress`). All changes are confined to `src/vault_ui/static/app.js`; the backend (v0.33.0, spec 008) already accepts both old and new canonical values.
 </objective>
 
 <context>
@@ -34,7 +34,7 @@ Read `test-pyramid-triggers.md` in `~/.claude/plugins/marketplaces/coding/docs/`
 
 Read the spec at `specs/in-progress/009-frontend-canonical-status-phase-display.md` — it is the source of truth for all behavior, constraints, failure modes, and acceptance criteria.
 
-Read `src/task_orchestrator/static/app.js` in full before making any changes. Key locations anchored by function/line context (confirm by reading — do NOT trust hard-coded line numbers):
+Read `src/vault_ui/static/app.js` in full before making any changes. Key locations anchored by function/line context (confirm by reading — do NOT trust hard-coded line numbers):
 
 - **`ALL_STATUSES` constant** (near line 10): `['todo', 'in_progress', 'completed', 'hold', 'aborted']` — this drives the status dropdown options and ordering.
 - **`DOMContentLoaded` listener** (near line 35): the init block that calls `parseURLParams`, `loadVaults`, `setupEventListeners`, `connectWebSocket`, `startPolling`.
@@ -47,7 +47,7 @@ Read `src/task_orchestrator/static/app.js` in full before making any changes. Ke
 - **`formatPhase` function** (near line 1177): phase label map with `'in_progress': 'In Progress'`
 - **`showTaskMenu` function** (near line 1211): right-click menu items, specifically `{ label: 'In Progress', action: 'in_progress', disabled: false }` near line 1242
 
-Read `src/task_orchestrator/static/index.html` to confirm column structure — the EXECUTION column currently has `data-phase="in_progress"`, `id="cards-in_progress"`, and `<h2>In Progress</h2>`. These are renamed via JavaScript only (no HTML edit).
+Read `src/vault_ui/static/index.html` to confirm column structure — the EXECUTION column currently has `data-phase="in_progress"`, `id="cards-in_progress"`, and `<h2>In Progress</h2>`. These are renamed via JavaScript only (no HTML edit).
 
 Read `CHANGELOG.md` — current top is `## v0.33.0`. There is no `## Unreleased` section.
 </context>
@@ -282,7 +282,7 @@ Replace the entire block (comment + variables + conditional) with:
 **What this does:**
 - When `currentStatuses = ['in_progress', 'completed']` (default), the URL now explicitly contains `?status=in_progress&status=completed` instead of suppressing the params. Matches the always-explicit pattern used for assignee and goal filters.
 - When `currentStatuses = []` (all deselected), `forEach` emits nothing → no `?status=` in the URL (absence = no filter). Satisfies spec Desired Behaviors 8 and 9.
-- Satisfies acceptance criteria: `grep -n "isDefaultStatuses" src/task_orchestrator/static/app.js` returns 0 lines.
+- Satisfies acceptance criteria: `grep -n "isDefaultStatuses" src/vault_ui/static/app.js` returns 0 lines.
 
 ### 9. CHANGELOG entry
 
@@ -302,48 +302,48 @@ After all edits, run these greps to confirm each acceptance criterion. Each must
 
 ```bash
 # AC: ALL_STATUSES contains exactly next, in_progress, backlog, completed, hold, aborted
-grep -n "ALL_STATUSES" src/task_orchestrator/static/app.js
+grep -n "ALL_STATUSES" src/vault_ui/static/app.js
 # Expected: one declaration line whose array literal is ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']
 
 # AC: 'todo' no longer appears in ALL_STATUSES
-grep -n "'todo'" src/task_orchestrator/static/app.js
+grep -n "'todo'" src/vault_ui/static/app.js
 # Expected: zero matches on the ALL_STATUSES declaration line (may still appear elsewhere as a phase value — that is acceptable)
 
 # AC: phase column iterator lists planning...execution...ai_review in that order (not in_progress)
-grep -n "planning.*execution.*ai_review" src/task_orchestrator/static/app.js
+grep -n "planning.*execution.*ai_review" src/vault_ui/static/app.js
 # Expected: exactly one matching line (the validPhases array in loadTasks)
 
 # AC: display alias line appears before validPhases.includes
-grep -n "task.phase === 'in_progress'" src/task_orchestrator/static/app.js
+grep -n "task.phase === 'in_progress'" src/vault_ui/static/app.js
 # Expected: at least one match; confirm it appears textually before the validPhases.includes call in the same function body
 
 # AC: formatPhase has both 'execution': 'Execution' and 'in_progress': 'Execution'
-grep -n "'execution': 'Execution'" src/task_orchestrator/static/app.js
+grep -n "'execution': 'Execution'" src/vault_ui/static/app.js
 # Expected: one match (in formatPhase)
-grep -n "'in_progress': 'Execution'" src/task_orchestrator/static/app.js
+grep -n "'in_progress': 'Execution'" src/vault_ui/static/app.js
 # Expected: one match (in formatPhase, the backwards alias)
 
 # AC: right-click menu has 'Execution' label and 'execution' action; no 'In Progress'/'in_progress' pair
-grep -n "'Execution'" src/task_orchestrator/static/app.js
+grep -n "'Execution'" src/vault_ui/static/app.js
 # Expected: at least one match in showTaskMenu menuItems
-grep -n "'In Progress'" src/task_orchestrator/static/app.js
+grep -n "'In Progress'" src/vault_ui/static/app.js
 # Expected: zero matches anywhere in the file. After this prompt's edits, formatPhase
 # stores 'in_progress': 'Execution' (alias label), the right-click menuItems no longer
 # contains the old entry, and there should be no other surviving 'In Progress' string.
 
 # AC: isDefaultStatuses no longer exists
-grep -n "isDefaultStatuses" src/task_orchestrator/static/app.js
+grep -n "isDefaultStatuses" src/vault_ui/static/app.js
 # Expected: 0 lines
 
 # AC: right-click action 'in_progress' no longer in menu items
-grep -n "action: 'in_progress'" src/task_orchestrator/static/app.js
+grep -n "action: 'in_progress'" src/vault_ui/static/app.js
 # Expected: 0 lines
 ```
 
 </requirements>
 
 <constraints>
-- Only `src/task_orchestrator/static/app.js` is modified among source files. `CHANGELOG.md` is also updated. No other file changes.
+- Only `src/vault_ui/static/app.js` is modified among source files. `CHANGELOG.md` is also updated. No other file changes.
 - The on-disk phase values `todo`, `planning`, `ai_review`, `human_review`, `done` are not touched — only `in_progress → execution` is renamed at the frontend display layer.
 - The on-disk status values `in_progress`, `backlog`, `completed`, `hold`, `aborted` are not touched — only `todo → next` is renamed at the frontend display layer (i.e., removed from `ALL_STATUSES` and replaced with `next`).
 - `currentStatuses` default (`['in_progress', 'completed']` on line 5) must NOT be widened to include `next` or `backlog`. The default pre-selection is unchanged.

@@ -1,13 +1,13 @@
-# Task Orchestrator
+# Vault UI
 
-[![CI](https://github.com/bborbe/task-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/bborbe/task-orchestrator/actions/workflows/ci.yml)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/bborbe/task-orchestrator)
+[![CI](https://github.com/bborbe/vault-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/bborbe/vault-ui/actions/workflows/ci.yml)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/bborbe/vault-ui)
 
 Orchestrate Claude Code sessions from Obsidian tasks.
 
 ## Where this fits in the bigger picture
 
-task-orchestrator is the **human operator's Kanban view** into the bborbe task / agent system. It wraps [vault-cli](https://github.com/bborbe/vault-cli) as a FastAPI + Kanban web UI, watching vault file changes and offering a one-click launch of a Claude Code session per task.
+vault-ui is the **human operator's Kanban view** into the bborbe task / agent system. It wraps [vault-cli](https://github.com/bborbe/vault-cli) as a FastAPI + Kanban web UI, watching vault file changes and offering a one-click launch of a Claude Code session per task.
 
 It only reads / mutates the local vault — it never talks to Kafka, Kubernetes, or the upstream task pipeline. The tasks shown on the board are materialized into the vault by [agent](https://github.com/bborbe/agent)'s `task/controller`, fed by producers like [recurring-task-creator](https://github.com/bborbe/recurring-task-creator) and [maintainer](https://github.com/bborbe/maintainer)'s watchers.
 

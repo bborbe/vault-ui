@@ -1,6 +1,6 @@
 ---
 status: completed
-container: task-orchestrator-031-multi-vault-only-button
+container: vault-ui-031-multi-vault-only-button
 dark-factory-version: v0.57.5
 created: "2026-03-18T12:05:00Z"
 queued: "2026-03-18T11:03:19Z"
@@ -22,8 +22,8 @@ Add "Only" buttons to vault selector items and make "All" a true toggle, so user
 Read CLAUDE.md for project conventions.
 
 Read these files before modifying:
-- `src/task_orchestrator/static/app.js` — `handleAllVaultCheckbox()` (currently only checks all, never unchecks), `handleVaultCheckboxChange()` (lines 177-206, auto-selects all when last vault unchecked), `loadVaults()` (builds checkbox items)
-- `src/task_orchestrator/static/style.css` — `.vault-selector-item` styles
+- `src/vault_ui/static/app.js` — `handleAllVaultCheckbox()` (currently only checks all, never unchecks), `handleVaultCheckboxChange()` (lines 177-206, auto-selects all when last vault unchecked), `loadVaults()` (builds checkbox items)
+- `src/vault_ui/static/style.css` — `.vault-selector-item` styles
 
 The multi-select dropdown was just implemented. The "All" checkbox currently only checks all vaults and never unchecks them. The `handleVaultCheckboxChange()` function auto-selects all when the last vault is unchecked (line 187-195), which prevents users from reaching an empty selection before picking one vault.
 </context>

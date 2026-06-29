@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced sys.exit(1) in load_config() with FileNotFoundError, moved wiring into main() for catchability, and updated the test to expect FileNotFoundError
-container: task-orchestrator-008-b-fix-config-sys-exit
+container: vault-ui-008-b-fix-config-sys-exit
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -22,8 +22,8 @@ completed: "2026-03-11T21:28:29Z"
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/config.py` — the `load_config()` function (~line 42).
-Read `src/task_orchestrator/__main__.py` — the entry point.
+Read `src/vault_ui/config.py` — the `load_config()` function (~line 42).
+Read `src/vault_ui/__main__.py` — the entry point.
 Read `tests/test_config.py` — contains `test_load_config_missing_file_exits` (~line 83) that currently asserts `SystemExit`.
 
 **Important call chain**: `__main__.py` calls `create_app()` and `get_config()` at MODULE LEVEL (lines 19-31), not inside `main()`. This means a try/except inside `main()` will NOT catch a `FileNotFoundError` from `load_config()`. The module-level wiring must be moved inside `main()` for the exception to be catchable.
@@ -78,7 +78,7 @@ Read `tests/test_config.py` — contains `test_load_config_missing_file_exits` (
 
        return 0
    ```
-   Note: the `make watch` target uses `task_orchestrator.__main__:app` for uvicorn reload. If `app` is no longer module-level, either keep a lazy `app` at module level or update the Makefile watch target to use `task_orchestrator.factory:create_app()` with `--factory` flag.
+   Note: the `make watch` target uses `vault_ui.__main__:app` for uvicorn reload. If `app` is no longer module-level, either keep a lazy `app` at module level or update the Makefile watch target to use `vault_ui.factory:create_app()` with `--factory` flag.
 
 4. In `tests/test_config.py`, update the existing test at ~line 83:
    ```python

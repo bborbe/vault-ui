@@ -6,7 +6,7 @@ tags:
 approved: "2026-06-26T15:03:47Z"
 generating: "2026-06-26T15:17:39Z"
 verifying: "2026-06-26T16:33:20Z"
-branch: dark-factory/task-orchestrator-goals-view
+branch: dark-factory/vault-ui-goals-view
 ---
 
 ## Summary

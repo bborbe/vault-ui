@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced reader.update_task_phase() in PATCH /tasks/{task_id}/phase with an asyncio.create_subprocess_exec call to vault-cli task set, following the established fast-path pattern, with WebSocket broadcast on success and two new tests verifying command construction and failure handling.
-container: task-orchestrator-005-migrate-update-phase-to-vault-cli
+container: vault-ui-005-migrate-update-phase-to-vault-cli
 dark-factory-version: v0.26.0
 created: "2026-03-07T23:14:53Z"
 queued: "2026-03-07T23:14:53Z"
@@ -21,7 +21,7 @@ Replace the Python-based `reader.update_task_phase()` call in the phase PATCH en
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/api/tasks.py` — the `update_task_phase` function (~line 427, decorated with `@router.patch("/tasks/{task_id}/phase")`).
+Read `src/vault_ui/api/tasks.py` — the `update_task_phase` function (~line 427, decorated with `@router.patch("/tasks/{task_id}/phase")`).
 
 Currently it calls `reader.update_task_phase(task_id, request.phase)` which is Python-based frontmatter editing.
 
@@ -33,7 +33,7 @@ The `_connection_manager` global and `set_connection_manager()` injector already
 </context>
 
 <requirements>
-1. In `src/task_orchestrator/api/tasks.py`, replace the body of `update_task_phase` (~line 445-452) with a vault-cli subprocess call: `vault-cli task set <task-name> phase <value> --vault <vault-name>`
+1. In `src/vault_ui/api/tasks.py`, replace the body of `update_task_phase` (~line 445-452) with a vault-cli subprocess call: `vault-cli task set <task-name> phase <value> --vault <vault-name>`
 2. Use `asyncio.create_subprocess_exec` with `vault_config.vault_cli_path`, same pattern as the existing fast path
 3. Use `vault_config.name.lower()` for the `--vault` argument
 4. Get the `vault_config` using `get_vault_config(vault)`

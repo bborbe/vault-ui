@@ -2,7 +2,7 @@
 status: completed
 spec: [001-stale-session-cleanup]
 summary: Wired StaleSessionCleaner into the lifespan context manager in factory.py as a tracked asyncio.Task started at startup and cancelled gracefully on shutdown
-container: task-orchestrator-018-spec-001-startup-integration
+container: vault-ui-018-spec-001-startup-integration
 dark-factory-version: v0.54.0
 created: "2026-03-12T00:00:00Z"
 queued: "2026-03-12T14:40:37Z"
@@ -28,9 +28,9 @@ The `lifespan` context manager in `factory.py` creates a `StaleSessionCleaner`, 
 Read CLAUDE.md for project conventions.
 
 Read these files before implementing:
-- `src/task_orchestrator/factory.py` — the `lifespan` async context manager (startup/shutdown hook), `get_config()`, `get_task_reader_for_vault()`, the `_watchers` module-level list used for tracking background objects
-- `src/task_orchestrator/stale_session_cleaner.py` — the `StaleSessionCleaner` class created by the previous prompt (prompt `1-spec-001-session-cleaner.md`)
-- `src/task_orchestrator/claude/session_manager.py` — how `_background_tasks` set and `asyncio.create_task()` with `.add_done_callback` are used as the reference pattern for tracking async tasks
+- `src/vault_ui/factory.py` — the `lifespan` async context manager (startup/shutdown hook), `get_config()`, `get_task_reader_for_vault()`, the `_watchers` module-level list used for tracking background objects
+- `src/vault_ui/stale_session_cleaner.py` — the `StaleSessionCleaner` class created by the previous prompt (prompt `1-spec-001-session-cleaner.md`)
+- `src/vault_ui/claude/session_manager.py` — how `_background_tasks` set and `asyncio.create_task()` with `.add_done_callback` are used as the reference pattern for tracking async tasks
 
 Current lifespan startup sequence in `factory.py`:
 1. Load status cache from all vaults
@@ -45,7 +45,7 @@ The new cleanup task must be inserted so that:
 </context>
 
 <requirements>
-1. In `src/task_orchestrator/factory.py`, add a module-level variable to hold the cleanup task:
+1. In `src/vault_ui/factory.py`, add a module-level variable to hold the cleanup task:
    ```python
    _cleanup_task: asyncio.Task | None = None
    ```
@@ -53,7 +53,7 @@ The new cleanup task must be inserted so that:
 
 2. Add the import at the top of `factory.py`:
    ```python
-   from task_orchestrator.stale_session_cleaner import StaleSessionCleaner
+   from vault_ui.stale_session_cleaner import StaleSessionCleaner
    ```
 
 3. In the `lifespan` context manager, in the startup section (after cache loading, alongside or after `start_task_watchers()`), add:

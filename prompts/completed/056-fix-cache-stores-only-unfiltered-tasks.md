@@ -2,7 +2,7 @@
 status: completed
 spec: [010-parallelize-vault-task-fanout]
 summary: Dropped status_filter kwarg from cache-miss list_tasks call in _process_vault, rewrote two call_args-inspecting tests to assert observable behavior, and added a regression test proving cache stores unfiltered raw tasks across requests with different status filters.
-container: task-orchestrator-parallel-vaults-exec-056-fix-cache-stores-only-unfiltered-tasks
+container: vault-ui-parallel-vaults-exec-056-fix-cache-stores-only-unfiltered-tasks
 dark-factory-version: v0.182.0
 created: "2026-06-20T15:12:23Z"
 queued: "2026-06-20T15:12:23Z"
@@ -18,11 +18,11 @@ completed: "2026-06-20T15:14:50Z"
 </summary>
 
 <objective>
-Drop the `status_filter` keyword from the cache-miss `client.list_tasks(...)` call in `_process_vault` (`src/task_orchestrator/api/tasks.py`) so the cache provably stores unfiltered raw tasks. Update the two `call_args`-inspecting tests to assert behavior. Add one regression test proving correct status filtering across cache-hit requests with different filter sets.
+Drop the `status_filter` keyword from the cache-miss `client.list_tasks(...)` call in `_process_vault` (`src/vault_ui/api/tasks.py`) so the cache provably stores unfiltered raw tasks. Update the two `call_args`-inspecting tests to assert behavior. Add one regression test proving correct status filtering across cache-hit requests with different filter sets.
 </objective>
 
 <context>
-This is a follow-up to a pr-reviewer CRITICAL on PR #6 (spec 010). The reviewer's concern: if the subprocess ever returned filtered results (mock does), the cache would serve stale-filtered data for a subsequent request with a different `effective_status_filter`. In production this can't happen because `vault_cli_client.list_tasks(show_all=True)` passes `--all` and ignores `status_filter` (see `src/task_orchestrator/vault_cli_client.py:43-52`). But the current code passes both kwargs, which is a smell and lets the bug exist in the mock.
+This is a follow-up to a pr-reviewer CRITICAL on PR #6 (spec 010). The reviewer's concern: if the subprocess ever returned filtered results (mock does), the cache would serve stale-filtered data for a subsequent request with a different `effective_status_filter`. In production this can't happen because `vault_cli_client.list_tasks(show_all=True)` passes `--all` and ignores `status_filter` (see `src/vault_ui/vault_cli_client.py:43-52`). But the current code passes both kwargs, which is a smell and lets the bug exist in the mock.
 
 Read `CLAUDE.md` for project conventions.
 
@@ -31,8 +31,8 @@ Read these docs in `/home/node/.claude/plugins/marketplaces/coding/docs/`:
 - `tdd-guide.md` — adding regression test before/with the fix.
 
 Read the full files before editing:
-- `src/task_orchestrator/api/tasks.py` — focus on `_process_vault` (~lines 203-245). Line ~236 is the cache-miss call: `raw_tasks = await client.list_tasks(show_all=True, status_filter=effective_status_filter)`.
-- `src/task_orchestrator/vault_cli_client.py` — confirm `list_tasks(show_all=True)` returns ALL statuses (the `if show_all: args.append("--all")` branch).
+- `src/vault_ui/api/tasks.py` — focus on `_process_vault` (~lines 203-245). Line ~236 is the cache-miss call: `raw_tasks = await client.list_tasks(show_all=True, status_filter=effective_status_filter)`.
+- `src/vault_ui/vault_cli_client.py` — confirm `list_tasks(show_all=True)` returns ALL statuses (the `if show_all: args.append("--all")` branch).
 - `tests/test_api.py` — two tests at lines ~962 and ~1174 (`test_list_tasks_default_status_filter_includes_completed`, `test_list_tasks_status_all_empty_uses_default`) currently assert on `call_args.kwargs["status_filter"]`. They will be rewritten.
 - `tests/conftest.py` — fixtures used by both tests; do NOT need to change conftest.
 
@@ -43,7 +43,7 @@ The mock `_make_vault_client` in `tests/test_api.py` (around line ~69) currently
 
 ### 1. Drop `status_filter` from the cache-miss `list_tasks` call
 
-In `src/task_orchestrator/api/tasks.py`, in `_process_vault`, change:
+In `src/vault_ui/api/tasks.py`, in `_process_vault`, change:
 
 ```python
 raw_tasks = await client.list_tasks(show_all=True, status_filter=effective_status_filter)
@@ -145,7 +145,7 @@ def test_list_tasks_cache_does_not_leak_filtered_results(
         host="127.0.0.1",
         port=8000,
     )
-    monkeypatch.setattr("task_orchestrator.factory._config", test_config)
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
 
     todo_task = _make_task(task_id="A Todo", status="todo")
     recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
@@ -160,7 +160,7 @@ def test_list_tasks_cache_does_not_leak_filtered_results(
     http_client = TestClient(app)
 
     with patch(
-        "task_orchestrator.api.tasks.get_vault_cli_client_for_vault",
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
         side_effect=lambda vn: client,
     ):
         # Request A — narrow filter
@@ -216,7 +216,7 @@ All 3 must pass. The full suite must continue to pass.
 <verification>
 Confirm the kwarg is dropped:
 ```bash
-grep -n "list_tasks(show_all=True" src/task_orchestrator/api/tasks.py
+grep -n "list_tasks(show_all=True" src/vault_ui/api/tasks.py
 ```
 Expected: exactly one match, `await client.list_tasks(show_all=True)` (no `status_filter=` on this line).
 

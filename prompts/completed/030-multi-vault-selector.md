@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Replaced single-select vault dropdown with multi-select checkbox dropdown supporting multiple vault filtering, URL persistence via repeated ?vault= params, localStorage migration from old selectedVault key, click-outside and Escape close behavior, and All checkbox reflecting full-selection state.
-container: task-orchestrator-030-multi-vault-selector
+container: vault-ui-030-multi-vault-selector
 dark-factory-version: v0.57.5
 created: "2026-03-18T12:00:00Z"
 queued: "2026-03-18T10:57:52Z"
@@ -29,9 +29,9 @@ Replace the single-select vault dropdown with a multi-select checkbox dropdown (
 Read CLAUDE.md for project conventions.
 
 Read these files before modifying:
-- `src/task_orchestrator/static/index.html` — current single `<select>` element for vault
-- `src/task_orchestrator/static/app.js` — `loadVaults()`, `handleVaultChange()`, `parseURLParams()`, `updateURL()`, `loadTasks()` — all reference `currentVault` (null=all, string=single, array=multiple)
-- `src/task_orchestrator/static/style.css` — `.vault-selector` styles
+- `src/vault_ui/static/index.html` — current single `<select>` element for vault
+- `src/vault_ui/static/app.js` — `loadVaults()`, `handleVaultChange()`, `parseURLParams()`, `updateURL()`, `loadTasks()` — all reference `currentVault` (null=all, string=single, array=multiple)
+- `src/vault_ui/static/style.css` — `.vault-selector` styles
 
 The backend API already supports multiple vault params (`Query()` returns `list[str]`), so no backend changes needed.
 

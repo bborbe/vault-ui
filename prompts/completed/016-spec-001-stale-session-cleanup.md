@@ -1,8 +1,8 @@
 ---
 status: completed
 spec: [001-stale-session-cleanup]
-summary: Created src/task_orchestrator/cleanup.py with derive_claude_project_dir, cleanup_stale_sessions, and run_cleanup_loop, then wired run_cleanup_loop into factory.py lifespan() as a background asyncio task
-container: task-orchestrator-016-spec-001-stale-session-cleanup
+summary: Created src/vault_ui/cleanup.py with derive_claude_project_dir, cleanup_stale_sessions, and run_cleanup_loop, then wired run_cleanup_loop into factory.py lifespan() as a background asyncio task
+container: vault-ui-016-spec-001-stale-session-cleanup
 dark-factory-version: v0.54.0
 created: "2026-03-12T13:00:00Z"
 queued: "2026-03-12T14:37:19Z"
@@ -23,7 +23,7 @@ completed: "2026-03-12T14:43:12Z"
 </summary>
 
 <objective>
-Add `src/task_orchestrator/cleanup.py` with three functions — `derive_claude_project_dir`, `cleanup_stale_sessions`, and `run_cleanup_loop` — then wire `run_cleanup_loop` into `factory.py`'s `lifespan()` as a background asyncio task so that stale `claude_session_id` values heal themselves automatically.
+Add `src/vault_ui/cleanup.py` with three functions — `derive_claude_project_dir`, `cleanup_stale_sessions`, and `run_cleanup_loop` — then wire `run_cleanup_loop` into `factory.py`'s `lifespan()` as a background asyncio task so that stale `claude_session_id` values heal themselves automatically.
 </objective>
 
 <context>
@@ -31,11 +31,11 @@ Read CLAUDE.md for project conventions.
 
 Read these files before making any changes:
 
-- `src/task_orchestrator/config.py` — `Config` and `VaultConfig` dataclasses; note `vault_path` (str), `vault_cli_path` (str), `name` (str), `tasks_folder` (str)
-- `src/task_orchestrator/factory.py` — `lifespan()` context manager; note where `start_task_watchers()` is called; note existing import block
-- `src/task_orchestrator/obsidian/task_reader.py` — `ObsidianTaskReader.__init__(vault_path, tasks_folder)` and `list_tasks(status_filter)` return type `list[Task]`
-- `src/task_orchestrator/api/models.py` — `Task` dataclass; note `id: str` and `claude_session_id: str | None`
-- `src/task_orchestrator/api/tasks.py` — the `execute_slash_command` function; specifically the vault-cli subprocess block that builds `vault_cli_args` and calls `asyncio.create_subprocess_exec(*vault_cli_args, ...)` then checks `proc.returncode` — this is the exact pattern to replicate for `task clear`
+- `src/vault_ui/config.py` — `Config` and `VaultConfig` dataclasses; note `vault_path` (str), `vault_cli_path` (str), `name` (str), `tasks_folder` (str)
+- `src/vault_ui/factory.py` — `lifespan()` context manager; note where `start_task_watchers()` is called; note existing import block
+- `src/vault_ui/obsidian/task_reader.py` — `ObsidianTaskReader.__init__(vault_path, tasks_folder)` and `list_tasks(status_filter)` return type `list[Task]`
+- `src/vault_ui/api/models.py` — `Task` dataclass; note `id: str` and `claude_session_id: str | None`
+- `src/vault_ui/api/tasks.py` — the `execute_slash_command` function; specifically the vault-cli subprocess block that builds `vault_cli_args` and calls `asyncio.create_subprocess_exec(*vault_cli_args, ...)` then checks `proc.returncode` — this is the exact pattern to replicate for `task clear`
 
 Existing vault-cli subprocess pattern to follow (from `api/tasks.py`, the defer-task branch inside `execute_slash_command`):
 
@@ -76,7 +76,7 @@ All arguments are passed as discrete list elements — never interpolated into a
 </context>
 
 <requirements>
-1. Create `src/task_orchestrator/cleanup.py` with the following content (match existing file style: module docstring, standard-library imports first, then local imports, then logger):
+1. Create `src/vault_ui/cleanup.py` with the following content (match existing file style: module docstring, standard-library imports first, then local imports, then logger):
 
    ```python
    """Background cleanup for stale Claude session IDs."""
@@ -85,8 +85,8 @@ All arguments are passed as discrete list elements — never interpolated into a
    import logging
    from pathlib import Path
 
-   from task_orchestrator.config import Config
-   from task_orchestrator.obsidian.task_reader import ObsidianTaskReader
+   from vault_ui.config import Config
+   from vault_ui.obsidian.task_reader import ObsidianTaskReader
 
    logger = logging.getLogger(__name__)
 
@@ -176,11 +176,11 @@ All arguments are passed as discrete list elements — never interpolated into a
                raise
    ```
 
-5. Modify `src/task_orchestrator/factory.py`:
+5. Modify `src/vault_ui/factory.py`:
 
    a. Add the import for the cleanup module after the existing local imports block:
       ```python
-      from task_orchestrator.cleanup import run_cleanup_loop
+      from vault_ui.cleanup import run_cleanup_loop
       ```
 
    b. Add a module-level global to hold the background task (alongside the existing globals like `_watchers`):

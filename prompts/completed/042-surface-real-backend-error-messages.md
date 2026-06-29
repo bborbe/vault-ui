@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: 'Added parseErrorResponse() helper to app.js and applied it at all 5 error-surfacing callsites, eliminating the broken ''Failed to execute command: Failed to execute command'' doubled-prefix and raw JSON envelope display; updated CHANGELOG.md with v0.24.0 entry.'
-container: task-orchestrator-042-surface-real-backend-error-messages
+container: vault-ui-042-surface-real-backend-error-messages
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T18:55:53Z"
 queued: "2026-05-10T18:55:53Z"
@@ -20,20 +20,20 @@ completed: "2026-05-10T18:58:46Z"
 </summary>
 
 <objective>
-Replace the broken/raw error-surfacing in `src/task_orchestrator/static/app.js` with a single small helper that parses the FastAPI `{"detail": "..."}` envelope into plain text. Apply it at every callsite that shows backend errors to the user, and remove doubled "Failed to X: Failed to X" prefixes.
+Replace the broken/raw error-surfacing in `src/vault_ui/static/app.js` with a single small helper that parses the FastAPI `{"detail": "..."}` envelope into plain text. Apply it at every callsite that shows backend errors to the user, and remove doubled "Failed to X: Failed to X" prefixes.
 </objective>
 
 <context>
 Read `CLAUDE.md` for project conventions: dark-factory pipeline (never code directly outside it), `make precommit` for verification (Python only — JS isn't linted), vault-cli is the sole vault interface.
 
 Read these files in full before editing:
-- `src/task_orchestrator/static/app.js` — entire file (~1243 lines, all changes are in this single file)
+- `src/vault_ui/static/app.js` — entire file (~1243 lines, all changes are in this single file)
 - `prompts/completed/041-assign-to-me-card-link.md` — most recent sibling frontend prompt for shape reference
 - `prompts/completed/040-frontend-multi-value-assignee-url-param.md` — also a frontend-only single-file change for shape reference
 - `CHANGELOG.md` — top-of-file conventions; current top section is `## v0.23.0`. Project uses one section per release rather than an "Unreleased" section. Bump to `## v0.24.0` for this entry (or whatever the next minor is if a later prompt has shipped a section ahead of this one — verify by reading the first 15 lines).
-- `src/task_orchestrator/api/tasks.py` — referenced only to confirm the backend contract (every error path uses `raise HTTPException(status_code=N, detail=...)`, response body is always `{"detail": "<string>"}` as `application/json`). Do NOT modify this file.
+- `src/vault_ui/api/tasks.py` — referenced only to confirm the backend contract (every error path uses `raise HTTPException(status_code=N, detail=...)`, response body is always `{"detail": "<string>"}` as `application/json`). Do NOT modify this file.
 
-**Verified assumptions** (from a fresh read of `src/task_orchestrator/static/app.js` at prompt-creation time):
+**Verified assumptions** (from a fresh read of `src/vault_ui/static/app.js` at prompt-creation time):
 - Line 4 declares `let currentAssignees = [];` — global state declarations occupy lines 3–7. The new helper goes after these globals and before the first `async function` (i.e. between line 7 and the first function around line 12).
 - The five error-surfacing callsites are exactly:
   - Line 1086–1088 in `executeSlashCommand` — uses the broken `throw new Error('Failed to execute command')` (no body read at all). This is the **specific bug** that produced "127.0.0.1:8000 says: Failed to execute command: Failed to execute command".
@@ -46,11 +46,11 @@ Read these files in full before editing:
 - Line 286 inside `assignToMe`: `const detail = await response.text();` — this is the ONE remaining `await response.text()` callsite that will exist after the change (other than the helper's own internal use). The grep verification accounts for this.
 - Line 81 uses `await response.json()` for the success path of `loadVaults` — unrelated, leave it.
 - There are no automated frontend tests in this repo. Verification is `make precommit` (Python only) plus manual browser checks.
-- The backend contract: `grep -n 'HTTPException' src/task_orchestrator/api/tasks.py` confirms every error path uses `raise HTTPException(status_code=N, detail=...)`. FastAPI serializes this as `application/json` with body `{"detail": "<string>"}`.
+- The backend contract: `grep -n 'HTTPException' src/vault_ui/api/tasks.py` confirms every error path uses `raise HTTPException(status_code=N, detail=...)`. FastAPI serializes this as `application/json` with body `{"detail": "<string>"}`.
 </context>
 
 <requirements>
-All edits are in `src/task_orchestrator/static/app.js` plus one entry in `CHANGELOG.md`. No other files change.
+All edits are in `src/vault_ui/static/app.js` plus one entry in `CHANGELOG.md`. No other files change.
 
 ### 1. Add the `parseErrorResponse` helper
 
@@ -184,42 +184,42 @@ If a later prompt has already shipped `## v0.24.0`, bump to the next available m
 - The helper MUST work for both JSON and non-JSON error bodies (proxy 502, network failure, malformed body)
 - The helper MUST always return a string and MUST NOT throw — both inner `try/catch` blocks are required
 - The doubled-prefix anti-pattern ("Failed to X: Failed to X") MUST be eliminated at every callsite where it could occur — at minimum line 1120
-- After the change, `grep -n 'await response.text()' src/task_orchestrator/static/app.js` MUST return ≤ 2 matches: one inside `parseErrorResponse`, one inside `assignToMe`. Any additional match is a missed callsite still using the old pattern.
+- After the change, `grep -n 'await response.text()' src/vault_ui/static/app.js` MUST return ≤ 2 matches: one inside `parseErrorResponse`, one inside `assignToMe`. Any additional match is a missed callsite still using the old pattern.
 - `make precommit` must pass (it only covers Python — the JS edit cannot affect it, but run it to confirm nothing else regressed)
 - No automated frontend tests — there is no JS test infrastructure in this repo. Verification is manual browser checks (see below).
 - Existing tests must still pass
 </constraints>
 
 <verification>
-1. Run `make precommit` from `~/Documents/workspaces/task-orchestrator` — must exit 0. (This only covers Python; the JS edit cannot affect it, but confirm no incidental regression.)
+1. Run `make precommit` from `~/Documents/workspaces/vault-ui` — must exit 0. (This only covers Python; the JS edit cannot affect it, but confirm no incidental regression.)
 
 2. Confirm the helper exists exactly once:
    ```
-   grep -n 'function parseErrorResponse' src/task_orchestrator/static/app.js
+   grep -n 'function parseErrorResponse' src/vault_ui/static/app.js
    ```
    Expected: exactly 1 match.
 
 3. Confirm every error-surfacing callsite uses the helper (or is the in-scope-skipped `assignToMe`):
    ```
-   grep -n 'parseErrorResponse(response)' src/task_orchestrator/static/app.js
+   grep -n 'parseErrorResponse(response)' src/vault_ui/static/app.js
    ```
    Expected: at least 5 matches (the 4 replaced `await response.text()` sites plus the formerly-broken line 1086 site).
 
 4. Confirm the broken placeholder string is gone:
    ```
-   grep -n "throw new Error('Failed to execute command')" src/task_orchestrator/static/app.js
+   grep -n "throw new Error('Failed to execute command')" src/vault_ui/static/app.js
    ```
    Expected: zero matches.
 
 5. Confirm `await response.text()` only remains in the two allowed places (the helper itself, and the out-of-scope `assignToMe` handler):
    ```
-   grep -n 'await response.text()' src/task_orchestrator/static/app.js
+   grep -n 'await response.text()' src/vault_ui/static/app.js
    ```
    Expected: ≤ 2 matches — one inside `parseErrorResponse`, one inside `assignToMe`. Any third match is a missed callsite.
 
 6. Confirm the doubled-prefix line 1120 was tightened:
    ```
-   grep -n "Failed to execute command:" src/task_orchestrator/static/app.js
+   grep -n "Failed to execute command:" src/vault_ui/static/app.js
    ```
    Expected: zero matches.
 

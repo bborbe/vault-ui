@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Added multi-select status filter dropdown to the Kanban header — mirrors vault dropdown UX with checkboxes for todo/in_progress/completed/hold/aborted, URL writeback, and startup label sync via updateStatusLabel().
-container: task-orchestrator-045-status-filter-dropdown
+container: vault-ui-045-status-filter-dropdown
 dark-factory-version: v0.156.1-1-g04f3863-dirty
 created: "2026-05-10T17:30:00Z"
 queued: "2026-05-10T21:19:20Z"
@@ -28,8 +28,8 @@ Read CLAUDE.md for project conventions.
 
 Read these files in full before making any changes (the new code is a near-mechanical mirror of the vault selector pattern — read it as the canonical reference):
 
-- `src/task_orchestrator/static/index.html` (~85 lines) — the existing vault selector lives at lines 14-20 inside `<div class="header-controls">`. The new status selector goes immediately after it, before the `<span id="ws-status">` on line 21.
-- `src/task_orchestrator/static/app.js` (~1280 lines) — the file is the canonical reference for the dropdown pattern. Required reading sections:
+- `src/vault_ui/static/index.html` (~85 lines) — the existing vault selector lives at lines 14-20 inside `<div class="header-controls">`. The new status selector goes immediately after it, before the `<span id="ws-status">` on line 21.
+- `src/vault_ui/static/app.js` (~1280 lines) — the file is the canonical reference for the dropdown pattern. Required reading sections:
   - Lines 1-10: globals (`currentVault`, `currentStatuses` already exist — DO NOT redeclare)
   - Lines 30-36: `DOMContentLoaded` init
   - Lines 70-97: `setupEventListeners`, `toggleVaultDropdown`, `closeVaultDropdown`, `handleClickOutsideVaultDropdown`
@@ -38,7 +38,7 @@ Read these files in full before making any changes (the new code is a near-mecha
   - Lines 273-286: `updateVaultLabel`
   - Lines 323-351: `updateURL` — already emits status params correctly, no change needed
   - Lines 407-487: `loadTasks` — already forwards `currentStatuses` to the API, no change needed
-- `src/task_orchestrator/static/style.css` lines 41-150 — vault selector CSS rules. Crucially, NO rule contains a "vault" color/spacing literal that affects rendering — every selector is purely structural and uses generic dark-theme colors. The class names contain the word "vault" but the rule bodies do not. Reusing class names is therefore safe; this prompt picks the duplicate-rules approach (lower risk) per the "if in doubt, duplicate" guidance.
+- `src/vault_ui/static/style.css` lines 41-150 — vault selector CSS rules. Crucially, NO rule contains a "vault" color/spacing literal that affects rendering — every selector is purely structural and uses generic dark-theme colors. The class names contain the word "vault" but the rule bodies do not. Reusing class names is therefore safe; this prompt picks the duplicate-rules approach (lower risk) per the "if in doubt, duplicate" guidance.
 - `prompts/completed/044-frontend-multi-value-status-url-param.md` — the upstream prompt that wired `currentStatuses` end-to-end (parse → state → URL writeback → API). Read it to understand what state already exists. This prompt does NOT change `currentStatuses` semantics — it only adds a UI to mutate it.
 - `prompts/completed/030-multi-vault-selector.md` — the canonical multi-select dropdown prompt (vault). The status dropdown mirrors its shape exactly, minus the per-item "Only" button (status has only 5 fixed values; an Only shortcut is unnecessary).
 - `CHANGELOG.md` — top of file is `## v0.26.0`. Add the new section above it as `## v0.27.0`.
@@ -55,9 +55,9 @@ Read these files in full before making any changes (the new code is a near-mecha
 
 <requirements>
 
-All edits are in three files: `src/task_orchestrator/static/index.html`, `src/task_orchestrator/static/app.js`, `src/task_orchestrator/static/style.css`, plus a `CHANGELOG.md` entry.
+All edits are in three files: `src/vault_ui/static/index.html`, `src/vault_ui/static/app.js`, `src/vault_ui/static/style.css`, plus a `CHANGELOG.md` entry.
 
-### 1. HTML — add the status selector block (`src/task_orchestrator/static/index.html`)
+### 1. HTML — add the status selector block (`src/vault_ui/static/index.html`)
 
 Find the existing vault selector block (lines 14-20):
 
@@ -87,7 +87,7 @@ The label text `in_progress, completed` is just the static initial value while J
 
 ### 2. JS — add a constant for the status enum (top of `app.js`, near other globals)
 
-Find the global-state block at the top of `src/task_orchestrator/static/app.js` (lines 3-8). Immediately after `let currentStatuses = ['in_progress', 'completed']; ...` add:
+Find the global-state block at the top of `src/vault_ui/static/app.js` (lines 3-8). Immediately after `let currentStatuses = ['in_progress', 'completed']; ...` add:
 
 ```js
 const ALL_STATUSES = ['todo', 'in_progress', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
@@ -262,7 +262,7 @@ await loadTasks();
 
 Rationale: `loadVaults` runs once on startup after `parseURLParams`. Calling `updateStatusLabel()` here guarantees the header label matches the URL-derived state on first paint (e.g. `?status=todo` shows "todo" in the label, not the static "in_progress, completed" from the HTML).
 
-### 6. CSS — duplicate the vault rules under `status-selector*` (`src/task_orchestrator/static/style.css`)
+### 6. CSS — duplicate the vault rules under `status-selector*` (`src/vault_ui/static/style.css`)
 
 After the existing `.vault-selector-separator { ... }` block (around line 150) and before `.ws-status { ... }` (around line 152), add a new block. Copy each vault rule verbatim and rename `vault-selector` → `status-selector`. Skip the `.vault-only-btn` rules — status has no Only button.
 
@@ -374,27 +374,27 @@ Do NOT modify any existing section. If the file has already advanced past `v0.26
 After the edits, run these to confirm wiring is correct (each is a single grep, easy for the agent to execute):
 
 ```
-grep -n "status-selector" src/task_orchestrator/static/index.html
+grep -n "status-selector" src/vault_ui/static/index.html
 ```
 Expected: ≥6 matches inside the new block (`status-selector` outer div + `status-selector-toggle` × 2 + `status-selector-label` + `status-selector-arrow` + `status-selector-dropdown`); no matches outside lines added in step 1.
 
 ```
-grep -n "status-selector" src/task_orchestrator/static/app.js
+grep -n "status-selector" src/vault_ui/static/app.js
 ```
 Expected: matches inside `toggleStatusDropdown`, `closeStatusDropdown`, `handleClickOutsideStatusDropdown`, `renderStatusDropdown`, `handleAllStatusCheckbox`, `handleStatusCheckboxChange`, `updateStatusLabel`, and the `setupEventListeners` wiring — all introduced in steps 3-5.
 
 ```
-grep -n "status-selector" src/task_orchestrator/static/style.css
+grep -n "status-selector" src/vault_ui/static/style.css
 ```
 Expected: matches only inside the new CSS block added in step 6. The original vault-selector rules must be unchanged.
 
 ```
-grep -n "ALL_STATUSES" src/task_orchestrator/static/app.js
+grep -n "ALL_STATUSES" src/vault_ui/static/app.js
 ```
 Expected: 1 declaration (step 2) plus references inside the functions added in step 4. No references outside those.
 
 ```
-grep -n "currentStatuses" src/task_orchestrator/static/app.js
+grep -n "currentStatuses" src/vault_ui/static/app.js
 ```
 Expected: original 4 sites (declaration, parseURLParams, updateURL, loadTasks) PLUS the new mutations inside `handleAllStatusCheckbox`, `handleStatusCheckboxChange`, `updateStatusLabel`, `renderStatusDropdown`. The parseURLParams / updateURL / loadTasks lines must be byte-identical to before — only the new functions touch the variable. If any of those three sites changed, revert them; this prompt is purely additive to those files.
 
@@ -424,9 +424,9 @@ Expected: original 4 sites (declaration, parseURLParams, updateURL, loadTasks) P
 
 3. Confirm vault selector code is unchanged. From the repo root:
    ```
-   grep -n "vault-selector" src/task_orchestrator/static/index.html
-   grep -n "vault-selector\|vault-only-btn" src/task_orchestrator/static/style.css
-   grep -n "toggleVaultDropdown\|handleVaultCheckboxChange\|handleAllVaultCheckbox\|loadVaults" src/task_orchestrator/static/app.js
+   grep -n "vault-selector" src/vault_ui/static/index.html
+   grep -n "vault-selector\|vault-only-btn" src/vault_ui/static/style.css
+   grep -n "toggleVaultDropdown\|handleVaultCheckboxChange\|handleAllVaultCheckbox\|loadVaults" src/vault_ui/static/app.js
    ```
    For each: the lines must reference the existing functions/classes only. No vault-selector identifier was renamed or removed.
 

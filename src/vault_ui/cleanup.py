@@ -4,10 +4,10 @@ import asyncio
 import logging
 from pathlib import Path
 
-from task_orchestrator.api.models import Goal
-from task_orchestrator.config import Config
-from task_orchestrator.session_resolver import is_uuid, resolve_session_id
-from task_orchestrator.vault_cli_client import VaultCLIClient
+from vault_ui.api.models import Goal
+from vault_ui.config import Config
+from vault_ui.session_resolver import is_uuid, resolve_session_id
+from vault_ui.vault_cli_client import VaultCLIClient
 
 logger = logging.getLogger(__name__)
 

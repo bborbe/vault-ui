@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Moved claude_script source from config.yaml overrides to vault-cli JSON output, updated config files and tests accordingly.
-container: task-orchestrator-022-inherit-claude-script-from-vault-cli
+container: vault-ui-022-inherit-claude-script-from-vault-cli
 dark-factory-version: v0.54.0
 created: "2026-03-12T21:30:00Z"
 queued: "2026-03-12T20:39:51Z"
@@ -18,19 +18,19 @@ completed: "2026-03-12T20:40:41Z"
 </summary>
 
 <objective>
-Vault-specific Claude script paths are discovered automatically from vault-cli rather than repeated in task-orchestrator's config, reducing manual duplication and keeping the two systems in sync.
+Vault-specific Claude script paths are discovered automatically from vault-cli rather than repeated in vault-ui's config, reducing manual duplication and keeping the two systems in sync.
 </objective>
 
 <context>
 Read CLAUDE.md for project conventions.
-Read `src/task_orchestrator/config.py` — find `VaultConfig` dataclass and `load_config` function. In `load_config()`, find the vault construction loop where `claude_script` is set from `overrides.get("claude_script", "claude")`.
+Read `src/vault_ui/config.py` — find `VaultConfig` dataclass and `load_config` function. In `load_config()`, find the vault construction loop where `claude_script` is set from `overrides.get("claude_script", "claude")`.
 Read `config.yaml` — current format has per-vault `claude_script` overrides.
 Read `config.yaml.example` — may also reference `claude_script`.
 Read `tests/test_config.py` — find tests that reference `claude_script`, especially `test_load_config_reads_vaults`.
 </context>
 
 <requirements>
-1. In `load_config()` in `src/task_orchestrator/config.py`, change the `claude_script` source in the `VaultConfig` constructor call:
+1. In `load_config()` in `src/vault_ui/config.py`, change the `claude_script` source in the `VaultConfig` constructor call:
 
 ```python
 # Before
@@ -41,7 +41,7 @@ claude_script=cli_vault.get("claude_script") or "claude",
 
 The `or "claude"` handles both `None` (key absent) and `""` (empty string) from vault-cli JSON output.
 
-2. Update `config.yaml` to remove `claude_script` from vault overrides. If a vault entry has no remaining overrides, it can be an empty dict or null. The vaults section is still needed to specify which vaults task-orchestrator should manage:
+2. Update `config.yaml` to remove `claude_script` from vault overrides. If a vault entry has no remaining overrides, it can be an empty dict or null. The vaults section is still needed to specify which vaults vault-ui should manage:
 
 ```yaml
 vault_cli_path: vault-cli

@@ -59,7 +59,7 @@ After this work, all four list filters on `GET /tasks` accept both syntaxes (`?x
 
 ## Assumptions
 
-- **vault-cli collapses missing and empty `assignee` to `None`.** Verified by reading `src/task_orchestrator/vault_cli_client.py:240` (`assignee=data.get("assignee") or None`). If this changes, behaviors 5–6 (empty-token-matches-unassigned) must be re-validated against the new representation.
+- **vault-cli collapses missing and empty `assignee` to `None`.** Verified by reading `src/vault_ui/vault_cli_client.py:240` (`assignee=data.get("assignee") or None`). If this changes, behaviors 5–6 (empty-token-matches-unassigned) must be re-validated against the new representation.
 - **FastAPI dependency-injection is the binding mechanism.** The framework binds repeated and array query parameters into a `list[str]` natively; no custom parser is needed beyond the comma-flattening helper.
 
 ## Failure Modes
@@ -117,10 +117,10 @@ Without this work, the upcoming "make stalled PR-reviewer tasks visible to opera
 ## Verification Result
 
 **Verified:** 2026-05-10T20:21:17Z (HEAD 0b8abad)
-**Binary:** installed `dark-factory` (task-orchestrator is Python; verified against running uvicorn at :8000 started 21:36 today, post-v0.21.0 deploy ac4cc69)
-**Scenario:** Live curl against running task-orchestrator API for all four filters, plus full pytest suite and OpenAPI introspection.
+**Binary:** installed `dark-factory` (vault-ui is Python; verified against running uvicorn at :8000 started 21:36 today, post-v0.21.0 deploy ac4cc69)
+**Scenario:** Live curl against running vault-ui API for all four filters, plus full pytest suite and OpenAPI introspection.
 **Evidence:**
-- Code: `src/task_orchestrator/api/tasks.py:142-219` shows `_flatten_filter`/`_flatten_assignee_filter` helpers and all four params declared `Annotated[list[str] | None, Query()]`.
+- Code: `src/vault_ui/api/tasks.py:142-219` shows `_flatten_filter`/`_flatten_assignee_filter` helpers and all four params declared `Annotated[list[str] | None, Query()]`.
 - 14 new tests at `tests/test_api.py:1065-1454` all PASS (`pytest tests/test_api.py` → 58 passed; full suite 137 passed).
 - Live: `?status=todo&status=in_progress` == `?status=todo,in_progress` → both 206 tasks, identical id set.
 - Live: `?vault=personal&vault=trading` == `?vault=personal,trading` → both 148.

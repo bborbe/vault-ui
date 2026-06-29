@@ -1,7 +1,7 @@
 ---
 status: completed
 summary: Updated README.md with Prerequisites section, correct make sync target, and config.yaml-based configuration documentation
-container: task-orchestrator-014-h-fix-readme
+container: vault-ui-014-h-fix-readme
 dark-factory-version: v0.44.0
 created: "2026-03-11T22:00:00Z"
 queued: "2026-03-11T21:25:02Z"
@@ -25,7 +25,7 @@ Read CLAUDE.md for project conventions.
 Read `README.md` — the file to update.
 Read `Makefile` — to verify target names (correct target is `sync`, not `install`).
 Read `config.yaml.example` — the actual config format to document.
-Read `src/task_orchestrator/config.py` — `VaultConfig` and `Config` dataclasses for field names.
+Read `src/vault_ui/config.py` — `VaultConfig` and `Config` dataclasses for field names.
 </context>
 
 <requirements>

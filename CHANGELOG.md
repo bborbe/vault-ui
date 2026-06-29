@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- refactor: Rename project end-to-end `task-orchestrator` → `vault-ui` — pairs with `vault-cli` (two surfaces over the same vault). Python package `src/task_orchestrator/` → `src/vault_ui/`, all imports + tests + `pyproject.toml` (`[project.scripts] vault-ui = "vault_ui.__main__:main"`, `[tool.hatch.build.targets.wheel] packages = ["src/vault_ui"]`) updated. GitHub repo `bborbe/task-orchestrator` → `bborbe/vault-ui` (redirect intact). Mechanical diff: 116 files renamed (933 ins / 933 del), no behavior changes. Operators must update launchd plist `ProgramArguments` from `uv run task-orchestrator` to `uv run vault-ui` after pulling — old entry-point name no longer registered.
+
 ## v0.41.1
 
 - fix(goals): match goal card layout to task cards — Jira badge + assignee badge render side-by-side in `card-footer-left` (was: Jira badge inline with title; assignee alone in footer). Priority meta text now uses `.goal-meta` rule (12px / `#96999e`) matching the assignee-badge visual weight instead of inheriting paragraph-default size. Goal cards with frontmatter `jira: BRO-NNNN` (or BRO-NNNN prefix in title) now render the same 🔖 issue-key link tasks already had — `extractJiraIssue()` destructure was dropping `issueKey` / `issueUrl` on the goal-card path.
