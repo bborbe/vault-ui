@@ -1,4 +1,4 @@
-"""WebSocket support for task-orchestrator."""
+"""WebSocket support for vault-ui."""
 
 from vault_ui.websocket.connection_manager import ConnectionManager
 
