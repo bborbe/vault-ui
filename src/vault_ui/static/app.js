@@ -1811,7 +1811,11 @@ function connectWebSocket() {
 }
 
 function handleTaskUpdate(data) {
-    const { type, task_id, vault, item_kind } = data;
+    const { type, vault, item_kind } = data;
+    // Goal events use `goal_id`, task events use `task_id`. Accept either
+    // so the frontend works during the deploy window where some payloads
+    // still carry `task_id` for goal events.
+    const id = data.goal_id || data.task_id;
     // Pre-prompt-3 payloads have no item_kind; default to "task" so
     // pre-existing event types (task_updated etc.) keep working during
     // the deploy window. With prompt 3 shipped, every payload from the
@@ -1832,7 +1836,7 @@ function handleTaskUpdate(data) {
         return;
     }
 
-    console.log(`Handling ${type} event for ${kind} ${task_id}`);
+    console.log(`Handling ${type} event for ${kind} ${id}`);
 
     // Dispatch by kind — only re-fetch the active view's data.
     // This is the spec AC#9 invariant: editing a task does NOT trigger
@@ -1840,7 +1844,7 @@ function handleTaskUpdate(data) {
     if (kind === 'goal') {
         if (currentView === 'goals') {
             if (type === 'deleted') {
-                removeGoalCard(task_id);
+                removeGoalCard(id);
             } else {
                 loadGoals();
             }
@@ -1853,12 +1857,12 @@ function handleTaskUpdate(data) {
             // NOT mutate the goals DOM and does NOT trigger any fetch. Return
             // explicitly so future edits cannot accidentally re-fetch goals
             // in response to a task event (and vice versa).
-            console.log(`Ignoring task event for ${task_id} — view is goals`);
+            console.log(`Ignoring task event for ${id} — view is goals`);
             return;
         }
         if (currentView === 'tasks') {
             if (type === 'deleted') {
-                removeTaskCard(task_id);
+                removeTaskCard(id);
             } else {
                 loadCurrentView();
             }

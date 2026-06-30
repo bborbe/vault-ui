@@ -1006,7 +1006,7 @@ async def update_goal_status(
 
         if _connection_manager:
             await _connection_manager.broadcast(
-                {"type": "goal_updated", "task_id": goal_id, "item_kind": "goal", "vault": vault}
+                {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
             )
 
         return {"status": "success", "goal_id": goal_id, "new_status": request.status}
@@ -1071,7 +1071,7 @@ async def assign_goal_to_me(
 
     if _connection_manager:
         await _connection_manager.broadcast(
-            {"type": "goal_updated", "task_id": goal_id, "item_kind": "goal", "vault": vault}
+            {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
         )
 
     return {"status": "success", "goal_id": goal_id, "assignee": current_user}
