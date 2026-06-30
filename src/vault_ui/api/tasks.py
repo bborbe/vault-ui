@@ -1006,7 +1006,7 @@ async def update_goal_status(
 
         if _connection_manager:
             await _connection_manager.broadcast(
-                {"type": "goal_updated", "task_id": goal_id, "item_kind": "goal", "vault": vault}
+                {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
             )
 
         return {"status": "success", "goal_id": goal_id, "new_status": request.status}
@@ -1016,6 +1016,65 @@ async def update_goal_status(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.patch("/goals/{goal_id}/assign-to-me")
+async def assign_goal_to_me(
+    vault: str,
+    goal_id: str,
+) -> dict[str, str]:
+    """Assign a goal to the configured current_user via vault-cli.
+
+    Mirrors `assign_task_to_me` for goals. Sets the goal's `assignee`
+    frontmatter field to `config.current_user`. The UI only exposes this for
+    unassigned goals, but the endpoint is idempotent and overwrites are allowed.
+
+    Args:
+        vault: Vault name (query parameter)
+        goal_id: Goal ID (filename without .md)
+
+    Returns:
+        {"status": "success", "goal_id": goal_id, "assignee": <current_user>}
+
+    Raises:
+        HTTPException 400: if current_user is empty/unset, or goal_id starts with '-'
+        HTTPException 404: if vault not found, or goal not found in vault
+        HTTPException 500: if vault-cli set fails for any other reason
+    """
+    # Reject goal IDs starting with `-` to prevent argument injection into
+    # vault-cli (same guard as update_goal_status).
+    if goal_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="goal_id must not start with '-'")
+
+    config = get_config()
+    current_user = config.current_user
+    if not current_user:
+        raise HTTPException(
+            status_code=400,
+            detail="current_user is not configured; cannot assign goal",
+        )
+
+    try:
+        get_vault_config(vault)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        await client.set_goal_field(goal_id, "assignee", current_user)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if _connection_manager:
+        await _connection_manager.broadcast(
+            {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
+        )
+
+    return {"status": "success", "goal_id": goal_id, "assignee": current_user}
 
 
 @router.delete("/tasks/{task_id}/session")

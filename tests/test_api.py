@@ -141,6 +141,7 @@ def _make_vault_client(tasks: list[Task] | None = None) -> MagicMock:
     client.show_task = AsyncMock(side_effect=_show_task)
     client.clear_field = AsyncMock()
     client.set_field = AsyncMock()
+    client.set_goal_field = AsyncMock()
     client._tasks = task_list
     return client
 
@@ -1776,6 +1777,95 @@ def test_assign_to_me_vault_cli_generic_failure_returns_500(
     )
 
     response = test_client.patch("/api/tasks/Test%20Task/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 500
+    assert "permission denied" in response.json()["detail"]
+
+
+# --- goal assign-to-me endpoint tests ---
+
+
+def test_assign_goal_to_me_happy_path(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /goals/{id}/assign-to-me sets assignee to current_user via vault-cli goal set."""
+    _set_current_user("bborbe")
+
+    response = test_client.patch("/api/goals/Test%20Goal/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {"status": "success", "goal_id": "Test Goal", "assignee": "bborbe"}
+    mock_vault_client.set_goal_field.assert_awaited_once_with("Test Goal", "assignee", "bborbe")
+
+
+def test_assign_goal_to_me_empty_current_user_returns_400(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """If current_user is unset, the endpoint must NOT call vault-cli with an empty value."""
+    _set_current_user("")
+
+    response = test_client.patch("/api/goals/Test%20Goal/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 400
+    assert "current_user" in response.json()["detail"]
+    mock_vault_client.set_goal_field.assert_not_awaited()
+
+
+def test_assign_goal_to_me_dash_prefixed_id_returns_400(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """Goal IDs starting with '-' are rejected to prevent vault-cli argument injection."""
+    _set_current_user("bborbe")
+
+    response = test_client.patch("/api/goals/--evil/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 400
+    assert "goal_id" in response.json()["detail"]
+    mock_vault_client.set_goal_field.assert_not_awaited()
+
+
+def test_assign_goal_to_me_unknown_vault_returns_404(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """Unknown vault surfaces as HTTP 404 before vault-cli is called."""
+    _set_current_user("bborbe")
+
+    response = test_client.patch("/api/goals/Test%20Goal/assign-to-me?vault=NoSuchVault")
+
+    assert response.status_code == 404
+    mock_vault_client.set_goal_field.assert_not_awaited()
+
+
+def test_assign_goal_to_me_goal_not_found_returns_404(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """set_goal_field raising FileNotFoundError surfaces as HTTP 404."""
+    _set_current_user("bborbe")
+    mock_vault_client.set_goal_field.side_effect = FileNotFoundError("Goal not found: NoSuchGoal")
+
+    response = test_client.patch("/api/goals/NoSuchGoal/assign-to-me?vault=TestVault")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_assign_goal_to_me_vault_cli_generic_failure_returns_500(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """vault-cli RuntimeError from set_goal_field surfaces as HTTP 500."""
+    _set_current_user("bborbe")
+    mock_vault_client.set_goal_field.side_effect = RuntimeError(
+        "vault-cli goal set failed: permission denied"
+    )
+
+    response = test_client.patch("/api/goals/Test%20Goal/assign-to-me?vault=TestVault")
 
     assert response.status_code == 500
     assert "permission denied" in response.json()["detail"]
