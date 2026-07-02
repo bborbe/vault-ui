@@ -256,22 +256,30 @@ async def list_assignees(
     vault_filter = _flatten_filter(vault)
     vault_names = [v.name for v in config.vaults] if vault_filter is None else vault_filter
 
-    named: set[str] = set()
-    has_unassigned = False
-
-    for vault_name in vault_names:
+    async def _fetch_assignees_for_vault(vault_name: str) -> tuple[set[str], bool]:
         try:
             client = get_vault_cli_client_for_vault(vault_name)
         except ValueError:
-            continue  # Skip invalid vault names, matching list_tasks behavior
+            return set(), False
 
         tasks = await client.list_tasks(show_all=True)
+        named: set[str] = set()
+        has_unassigned = False
         for task in tasks:
             raw = task.assignee
             if isinstance(raw, str) and raw.strip() != "":
                 named.add(raw)
             else:
                 has_unassigned = True
+        return named, has_unassigned
+
+    results = await asyncio.gather(*[_fetch_assignees_for_vault(v) for v in vault_names])
+
+    named: set[str] = set()
+    has_unassigned = False
+    for r_named, r_unassigned in results:
+        named.update(r_named)
+        has_unassigned = has_unassigned or r_unassigned
 
     return AssigneesResponse(
         named=sorted(named, key=str.lower),
