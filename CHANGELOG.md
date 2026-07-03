@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.44.0
 
 - feat: Resolve config file XDG-first (`~/.config/vault-ui/config.yaml`), falling back to legacy repo-root `config.yaml` — matches vault-cli convention and enables `uv tool install`-based bare `vault-ui` invocations.
 
