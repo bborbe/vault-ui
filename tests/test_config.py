@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vault_ui.config import load_config
+from vault_ui.config import load_config, resolve_default_config_path
 
 
 def _mock_run(vaults: list[dict] | None = None) -> MagicMock:
@@ -174,3 +174,66 @@ def test_get_vault_returns_correct_vault(tmp_path: Path) -> None:
     assert config.get_vault("personal").vault_path == "/personal"
     assert config.get_vault("work") is not None
     assert config.get_vault("missing") is None
+
+
+def test_resolve_default_config_path_xdg_exists(tmp_path: Path) -> None:
+    """resolve_default_config_path returns XDG path when XDG file exists."""
+    xdg_dir = tmp_path / "xdg"
+    xdg_dir.mkdir(parents=True)
+    xdg_file = xdg_dir / "config.yaml"
+    xdg_file.write_text("vaults:\n  personal: {}\n")
+    legacy_file = tmp_path / "legacy" / "config.yaml"
+
+    result = resolve_default_config_path(
+        xdg_path=xdg_file,
+        legacy_path=legacy_file,
+    )
+    assert result == xdg_file
+
+
+def test_resolve_default_config_path_xdg_missing_legacy_exists(tmp_path: Path) -> None:
+    """resolve_default_config_path returns legacy path when XDG is absent but legacy exists."""
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir(parents=True)
+    legacy_file = legacy_dir / "config.yaml"
+    legacy_file.write_text("vaults:\n  personal: {}\n")
+
+    result = resolve_default_config_path(
+        xdg_path=tmp_path / "xdg" / "config.yaml",
+        legacy_path=legacy_file,
+    )
+    assert result == legacy_file
+
+
+def test_resolve_default_config_path_neither_exists(tmp_path: Path) -> None:
+    """resolve_default_config_path returns XDG path when neither file exists."""
+    result = resolve_default_config_path(
+        xdg_path=tmp_path / "xdg" / "config.yaml",
+        legacy_path=tmp_path / "legacy" / "config.yaml",
+    )
+    assert result == tmp_path / "xdg" / "config.yaml"
+
+
+def test_resolve_default_config_path_both_exist_xdg_wins(tmp_path: Path) -> None:
+    """resolve_default_config_path returns XDG path when both files exist (XDG wins)."""
+    xdg_dir = tmp_path / "xdg"
+    xdg_dir.mkdir(parents=True)
+    xdg_file = xdg_dir / "config.yaml"
+    xdg_file.write_text("vaults:\n  personal: {}\n")
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir(parents=True)
+    legacy_file = legacy_dir / "config.yaml"
+    legacy_file.write_text("vaults:\n  work: {}\n")
+
+    result = resolve_default_config_path(
+        xdg_path=xdg_file,
+        legacy_path=legacy_file,
+    )
+    assert result == xdg_file
+
+
+def test_resolve_default_config_path_real_defaults_sane(tmp_path: Path) -> None:
+    """resolve_default_config_path with no args returns ~/.config/vault-ui/config.yaml."""
+    result = resolve_default_config_path()
+    assert isinstance(result, Path)
+    assert result == Path.home() / ".config" / "vault-ui" / "config.yaml"

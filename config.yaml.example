@@ -1,3 +1,7 @@
+# vault-ui looks for its config in this order:
+#   1. ~/.config/vault-ui/config.yaml  (preferred — copy this file there)
+#   2. ./config.yaml                    (legacy, repo-root fallback)
+# Copy this example to ~/.config/vault-ui/config.yaml for new installs.
 vault_cli_path: vault-cli  # optional, defaults to "vault-cli"
 host: 127.0.0.1
 port: 8000
