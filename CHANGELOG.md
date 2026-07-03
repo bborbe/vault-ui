@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.43.0
 
 - feat(ui): Replace the task-card menu's 5 "Move to" phase shortcuts with a single "Abort Task" action — drag-and-drop already covers phase moves; abort sets task status to `aborted` via new `PATCH /api/tasks/{id}/status` (mirrors the goal status endpoint). Complete/Defer unchanged.
 
