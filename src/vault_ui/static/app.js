@@ -1512,14 +1512,7 @@ function showTaskMenu(event, taskId) {
     // Add slash command actions
     menuItems.push({ label: 'Complete Task', action: 'complete_task', disabled: false });
     menuItems.push({ label: 'Defer Task', action: 'defer_task', disabled: false });
-
-    // Add phase options
-    menuItems.push({ label: 'Move to', action: 'move', disabled: false });
-    menuItems.push({ label: 'Error', action: 'error', disabled: true });
-    menuItems.push({ label: 'Execution', action: 'execution', disabled: false });
-    menuItems.push({ label: 'AI Review', action: 'ai_review', disabled: false });
-    menuItems.push({ label: 'Human Review', action: 'human_review', disabled: false });
-    menuItems.push({ label: 'Done', action: 'done', disabled: false });
+    menuItems.push({ label: 'Abort Task', action: 'abort_task', disabled: false });
 
     menuItems.forEach(item => {
         const menuItem = document.createElement('div');
@@ -1527,12 +1520,9 @@ function showTaskMenu(event, taskId) {
         if (item.disabled) {
             menuItem.classList.add('disabled');
         }
-        if (item.label === 'Move to') {
-            menuItem.classList.add('header');
-        }
         menuItem.textContent = item.label;
 
-        if (!item.disabled && item.action !== 'move') {
+        if (!item.disabled) {
             menuItem.addEventListener('click', () => handleMenuAction(taskId, item.action));
         }
 
@@ -1611,24 +1601,23 @@ async function handleMenuAction(taskId, action) {
     } else if (action === 'complete_task' || action === 'defer_task') {
         // Handle slash commands
         await executeSlashCommand(taskId, action);
-    } else {
-        // Move to phase
+    } else if (action === 'abort_task') {
         try {
-            const response = await fetch(`/api/tasks/${taskId}/phase?vault=${encodeURIComponent(task.vault)}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ phase: action }),
-            });
-
+            const response = await fetch(
+                `/api/tasks/${encodeURIComponent(taskId)}/status?vault=${encodeURIComponent(task.vault)}`,
+                {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'aborted' }),
+                }
+            );
             if (!response.ok) {
                 throw new Error(await parseErrorResponse(response));
             }
-
+            showToast('Task aborted');
             await loadCurrentView();
         } catch (error) {
-            console.error('Failed to update task phase:', error);
+            console.error('Failed to abort task:', error);
             showToast(error.message, true);
         }
     }

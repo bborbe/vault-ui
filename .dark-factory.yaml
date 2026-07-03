@@ -1,5 +1,5 @@
 autoRelease: false
-containerImage: docker.io/bborbe/claude-yolo:v0.10.1
+containerImage: docker.io/bborbe/claude-yolo:v0.12.0
 hideGit: true
 validationPrompt: docs/dod.md
 workflow: direct

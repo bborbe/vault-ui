@@ -985,6 +985,93 @@ def test_update_goal_status_vault_cli_failure_returns_500(test_client: TestClien
     assert "goal not found" in response.json()["detail"]
 
 
+def test_update_task_status_uses_vault_cli(test_client: TestClient) -> None:
+    """PATCH /tasks/{id}/status calls vault-cli task set <id> status <value> on the right vault."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/status?vault=TestVault",
+            json={"status": "aborted"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "task_id": "Test Task",
+        "new_status": "aborted",
+    }
+    assert mock_exec.call_args.args == (
+        "vault-cli",
+        "task",
+        "set",
+        "Test Task",
+        "status",
+        "aborted",
+        "--vault",
+        "testvault",
+    )
+
+
+def test_update_task_status_invalid_status_returns_422(test_client: TestClient) -> None:
+    """Pydantic Literal rejects unknown status values with HTTP 422 before reaching vault-cli."""
+    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/status?vault=TestVault",
+            json={"status": "abortd"},
+        )
+
+    assert response.status_code == 422
+    mock_exec.assert_not_called()
+
+
+def test_update_task_status_leading_dash_rejected(test_client: TestClient) -> None:
+    """Task IDs starting with '-' are rejected to prevent vault-cli argument injection."""
+    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+        response = test_client.patch(
+            "/api/tasks/-help/status?vault=TestVault",
+            json={"status": "aborted"},
+        )
+
+    assert response.status_code == 400
+    assert "task_id must not start with '-'" in response.json()["detail"]
+    mock_exec.assert_not_called()
+
+
+def test_update_task_status_vault_cli_failure_returns_500(test_client: TestClient) -> None:
+    """vault-cli failure during task status update returns HTTP 500."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 1
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"task not found\n"))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.patch(
+            "/api/tasks/Missing/status?vault=TestVault",
+            json={"status": "aborted"},
+        )
+
+    assert response.status_code == 500
+    assert "task not found" in response.json()["detail"]
+
+
+def test_update_task_status_timeout_returns_504(test_client: TestClient) -> None:
+    """vault-cli hang during task status update returns HTTP 504."""
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
+    mock_proc.kill = MagicMock()
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/status?vault=TestVault",
+            json={"status": "aborted"},
+        )
+
+    assert response.status_code == 504
+    assert "timed out" in response.json()["detail"]
+
+
 def test_patch_session_uuid_stored_as_is(
     test_client: TestClient,
     mock_vault_client: MagicMock,

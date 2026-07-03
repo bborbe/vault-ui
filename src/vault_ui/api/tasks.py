@@ -1026,6 +1026,74 @@ async def update_goal_status(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@router.patch("/tasks/{task_id}/status")
+async def update_task_status(
+    vault: str,
+    task_id: str,
+    request: UpdateStatusRequest,
+) -> dict[str, str]:
+    """Update task status in frontmatter via the task card menu.
+
+    Args:
+        vault: Vault name
+        task_id: Task ID (filename without .md)
+        request: Status update request with the new status value
+
+    Returns:
+        Success payload with task_id + new status
+
+    Raises:
+        HTTPException: If task not found, task_id starts with '-', or update fails
+    """
+    # Reject task IDs starting with `-` to prevent argument injection into
+    # vault-cli (e.g. `--help`, `--upload=…`). Separate-arg subprocess form
+    # already prevents shell injection; this guards the vault-cli arg parser.
+    if task_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="task_id must not start with '-'")
+
+    try:
+        vault_config = get_vault_config(vault)
+
+        proc = await asyncio.create_subprocess_exec(
+            vault_config.vault_cli_path,
+            "task",
+            "set",
+            task_id,
+            "status",
+            request.status,
+            "--vault",
+            vault_config.name.lower(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        # 10s timeout — vault-cli `task set` is a single-file frontmatter edit;
+        # anything beyond this is a hang we want to surface as HTTP 504.
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except TimeoutError as e:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            raise HTTPException(
+                status_code=504, detail="vault-cli task set (status) timed out after 10s"
+            ) from e
+
+        if proc.returncode != 0:
+            raise HTTPException(status_code=500, detail=stderr.decode())
+
+        if _connection_manager:
+            await _connection_manager.broadcast(
+                {"type": "task_updated", "task_id": task_id, "item_kind": "task", "vault": vault}
+            )
+
+        return {"status": "success", "task_id": task_id, "new_status": request.status}
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.patch("/goals/{goal_id}/assign-to-me")
 async def assign_goal_to_me(
     vault: str,

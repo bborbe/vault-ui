@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): Replace the task-card menu's 5 "Move to" phase shortcuts with a single "Abort Task" action — drag-and-drop already covers phase moves; abort sets task status to `aborted` via new `PATCH /api/tasks/{id}/status` (mirrors the goal status endpoint). Complete/Defer unchanged.
+
 ## v0.42.1
 
 - perf: parallelize `/api/assignees` endpoint with `asyncio.gather` — 4 vaults drop from 2.65s to 0.17s (15× faster)

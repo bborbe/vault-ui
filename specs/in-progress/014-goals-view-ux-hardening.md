@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-06-27T12:03:51Z"
 generating: "2026-06-27T12:04:06Z"
 prompted: "2026-06-27T12:29:00Z"
+verifying: "2026-07-03T06:46:30Z"
 branch: dark-factory/goals-view-ux-hardening
 ---
 
