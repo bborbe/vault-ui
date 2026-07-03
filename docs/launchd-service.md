@@ -13,7 +13,7 @@ Use this setup when you want `vault-ui` running continuously so the Kanban UI is
 
 - `uv` installed at `~/.local/bin/uv` (or adjust the plist)
 - `vault-cli` on `PATH` — typically `~/Documents/workspaces/go/bin/vault-cli`
-- A populated `config.yaml` in the repo root (`cp config.yaml.example config.yaml`)
+- A populated `config.yaml` (XDG location preferred: `~/.config/vault-ui/config.yaml`; legacy repo-root fallback: `cp config.yaml.example config.yaml`)
 - Repo cloned at `~/Documents/workspaces/vault-ui`
 
 Verify:
@@ -65,7 +65,7 @@ Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
 **Important:**
 
 - launchd does **not** expand `~` — use absolute paths everywhere.
-- `uv run --directory <repo>` is required because `config.yaml` is loaded relative to the source tree (`src/vault_ui/../../../config.yaml`). A bare `vault-ui` invocation from a `uv tool install` would not find the config.
+- `uv run --directory <repo>` is required when relying on the legacy repo-root config path. If using the XDG config location (`~/.config/vault-ui/config.yaml`), a bare `vault-ui` invocation from a `uv tool install` works because vault-ui checks `~/.config/vault-ui/config.yaml` regardless of working directory.
 - The `PATH` env var must include the directory holding `vault-cli`, otherwise the watchers fail with `[Errno 2] No such file or directory: 'vault-cli'`.
 
 Load and start:

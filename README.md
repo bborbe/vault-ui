@@ -89,10 +89,15 @@ make precommit   # Run all checks
 
 ## Configuration
 
-Copy the example config and edit vault paths:
+Copy the example config to the XDG config directory (preferred):
 ```bash
-cp config.yaml.example config.yaml
+mkdir -p ~/.config/vault-ui
+cp config.yaml.example ~/.config/vault-ui/config.yaml
 ```
+
+vault-ui looks for config in this order:
+1. `~/.config/vault-ui/config.yaml` (preferred)
+2. `./config.yaml` in the repo root (legacy fallback — still supported for existing installs)
 
 **Top-level fields:**
 - `claude_cli` - Claude CLI command (default: `claude`)

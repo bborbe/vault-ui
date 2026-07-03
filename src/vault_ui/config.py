@@ -41,7 +41,34 @@ class Config:
         return None
 
 
-_CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
+_LEGACY_CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
+
+
+def _xdg_config_path() -> Path:
+    return Path.home() / ".config" / "vault-ui" / "config.yaml"
+
+
+def resolve_default_config_path(
+    xdg_path: Path | None = None,
+    legacy_path: Path | None = None,
+) -> Path:
+    """Resolve the default config.yaml path, XDG-first.
+
+    Checks the XDG path (`~/.config/vault-ui/config.yaml` by default)
+    first. Falls back to the legacy path (repo-root `config.yaml` by
+    default) if the XDG path does not exist but the legacy path does.
+    Otherwise returns the XDG path as the default for new installs.
+    Never creates directories or files.
+    """
+    if xdg_path is None:
+        xdg_path = _xdg_config_path()
+    if legacy_path is None:
+        legacy_path = _LEGACY_CONFIG_PATH
+    if xdg_path.exists():
+        return xdg_path
+    if legacy_path.exists():
+        return legacy_path
+    return xdg_path
 
 
 def discover_current_user(vault_cli_path: str) -> str:
@@ -73,12 +100,17 @@ def discover_vaults_from_cli(vault_cli_path: str) -> list[dict[str, str]]:
     return vaults
 
 
-def load_config(config_path: Path = _CONFIG_PATH) -> Config:
+def load_config(config_path: Path | None = None) -> Config:
     """Load configuration from config.yaml. Exits with error if not found."""
+    if config_path is None:
+        config_path = resolve_default_config_path()
     if not config_path.exists():
         raise FileNotFoundError(
             f"config.yaml not found at {config_path}\n"
-            "\nCreate it by copying the example:\n"
+            "\nCreate it by copying the example (preferred, XDG location):\n"
+            "  mkdir -p ~/.config/vault-ui\n"
+            "  cp config.yaml.example ~/.config/vault-ui/config.yaml\n"
+            "\nOr, for the legacy repo-root location:\n"
             "  cp config.yaml.example config.yaml\n"
             "\nThen edit vault paths to match your system."
         )
