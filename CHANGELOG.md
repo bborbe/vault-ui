@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.44.2
 
 - fix: Start/Run button was broken for **every** task — `vault-cli task work-on --output json` emits its result as a **pretty-printed multi-line** JSON object, but `start_vault_cli_session` parsed only the last non-empty line (`}`), so `json.loads("}")` raised `Expecting value: line 1 column 1 (char 0)` (the recurring red toast; 0 successful sessions in the logs). Replace the last-line heuristic with `_last_json_value`, which parses the whole output as one value (pretty or single-line object) and falls back to last-parseable-line for JSONL. The v0.44.1 diagnostic wrapper made this legible; this restores the button. New `tests/test_workon_json_parse.py` covers the pretty-printed regression, JSONL fallback, and empty/blank/`null` inputs.
 
