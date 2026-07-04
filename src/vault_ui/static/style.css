@@ -899,6 +899,27 @@ h1 {
     opacity: 0.55;
 }
 
+.task-card.on-hold {
+    border-left: 4px solid #a78bfa; /* violet-400 — on hold / blocked, not actively worked */
+    opacity: 0.6;
+}
+
+.hold-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #ede9fe;             /* violet-100 */
+    background: #6d28d9;        /* violet-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+}
+
 /* View toggle (Tasks / Goals) */
 .view-toggle {
     display: inline-flex;

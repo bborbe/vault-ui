@@ -265,6 +265,51 @@ def test_list_tasks_with_status_filter(test_client: TestClient) -> None:
         assert task["status"] == "todo"
 
 
+def test_list_tasks_default_filter_includes_hold(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default status filter (no ?status=) includes hold but still excludes aborted.
+
+    Hold is parked/blocked work that must stay visible by default so it isn't
+    forgotten; aborted is terminal and stays hidden.
+    """
+    client = _make_vault_client(
+        [
+            _make_task(task_id="Active Task", status="in_progress"),
+            _make_task(task_id="Held Task", status="hold"),
+            _make_task(task_id="Aborted Task", status="aborted"),
+        ]
+    )
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+    app = create_app()
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response = TestClient(app).get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    statuses = {t["status"] for t in response.json()}
+    assert "hold" in statuses
+    assert "in_progress" in statuses
+    assert "aborted" not in statuses
+
+
 def test_run_task_endpoint_success(
     test_client: TestClient,
 ) -> None:

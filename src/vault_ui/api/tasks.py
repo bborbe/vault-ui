@@ -400,7 +400,9 @@ async def _process_vault(
 
     # get tasks
     effective_status_filter = (
-        status_filter if status_filter is not None else ["todo", "next", "in_progress", "completed"]
+        status_filter
+        if status_filter is not None
+        else ["todo", "next", "in_progress", "hold", "completed"]
     )
 
     tasks_dir = Path(vault_config.vault_path) / vault_config.tasks_folder
