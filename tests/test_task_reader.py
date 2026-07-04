@@ -442,3 +442,37 @@ async def test_list_tasks_null_output_returns_empty() -> None:
         tasks = await client.list_tasks()
 
     assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_show_task_null_output_raises_contextual_error() -> None:
+    """show_task on `null` output raises a diagnosable RuntimeError, not AttributeError.
+
+    `null` is valid JSON (→ None); without an expect_object guard, _parse_task(None)
+    would crash with a context-free AttributeError on None.get(...).
+    """
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"null\n")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await client.show_task("Some Task")
+
+    msg = str(exc_info.value)
+    assert "expected JSON object" in msg
+    assert "task show" in msg
+    assert not isinstance(exc_info.value, AttributeError)
+
+
+@pytest.mark.asyncio
+async def test_list_goals_null_output_returns_empty() -> None:
+    """list_goals keeps null→[] behavior (empty vaults emit `null`); no expect_object."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"null\n")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals()
+
+    assert goals == []

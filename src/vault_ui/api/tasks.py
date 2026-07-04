@@ -170,7 +170,7 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
         stdout_text,
     )
     try:
-        result: dict[str, Any] = json.loads(last_line)
+        parsed = json.loads(last_line)
     except json.JSONDecodeError as e:
         # Empty/blank output here yields the opaque "Expecting value: line 1
         # column 1 (char 0)"; attach the command, return code, and captured
@@ -183,6 +183,18 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
             f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
             f"stderr={stderr_text!r}"
         ) from e
+    # `null` parses cleanly to None (and other scalars to non-dicts); guard before
+    # result.get() so this surfaces as a diagnosable RuntimeError, not AttributeError.
+    if not isinstance(parsed, dict):
+        stderr_text = bytes(stderr_buf).decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli work-on returned {type(parsed).__name__} (expected JSON object, "
+            f"rc={returncode}) for task {task_id!r} in vault {vault_config.name!r}. "
+            f"parsed_line={last_line[:500]!r}; "
+            f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        )
+    result: dict[str, Any] = parsed
     session_id: str = result.get("session_id") or ""
     if not session_id:
         warnings: list[str] = result.get("warnings") or []

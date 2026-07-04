@@ -19,6 +19,7 @@ def _loads_or_raise(
     command: list[str],
     returncode: int,
     stderr: bytes,
+    expect_object: bool = False,
 ) -> Any:
     """Decode + parse vault-cli JSON output, raising a diagnosable error on failure.
 
@@ -33,10 +34,17 @@ def _loads_or_raise(
     silently swallow it as an ordinary ``ValueError``) with the full context needed
     to diagnose the next occurrence: the command, its return code, the length and a
     snippet of stdout, and stderr.
+
+    ``expect_object``: when True, a parse that yields anything other than a JSON
+    object (e.g. ``null`` → ``None``, which real vault-cli list commands emit for an
+    empty result) is itself raised as a contextual ``RuntimeError``. Object-expecting
+    callers (``show_task``, work-on) would otherwise crash with a context-free
+    ``AttributeError`` on ``result.get(...)``. List callers keep the default (False)
+    so ``null`` correctly parses to ``None`` and is handled as an empty list.
     """
     text = stdout.decode(errors="replace")
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as e:
         stderr_text = stderr.decode(errors="replace").strip()
         raise RuntimeError(
@@ -45,6 +53,15 @@ def _loads_or_raise(
             f"stdout ({len(text)} chars)={text[:500]!r}; "
             f"stderr={stderr_text!r}"
         ) from e
+    if expect_object and not isinstance(parsed, dict):
+        stderr_text = stderr.decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli returned {type(parsed).__name__} (expected JSON object, "
+            f"rc={returncode}) for `{shlex.join(command)}`. "
+            f"stdout ({len(text)} chars)={text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        )
+    return parsed
 
 
 class VaultCLIClient:
@@ -124,7 +141,7 @@ class VaultCLIClient:
             raise FileNotFoundError(f"Task not found: {task_id}")
 
         data: dict[str, Any] = _loads_or_raise(
-            stdout, command=args, returncode=proc.returncode, stderr=stderr
+            stdout, command=args, returncode=proc.returncode, stderr=stderr, expect_object=True
         )
         return self._parse_task(data)
 
