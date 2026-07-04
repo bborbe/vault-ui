@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Start/Run button was broken for **every** task — `vault-cli task work-on --output json` emits its result as a **pretty-printed multi-line** JSON object, but `start_vault_cli_session` parsed only the last non-empty line (`}`), so `json.loads("}")` raised `Expecting value: line 1 column 1 (char 0)` (the recurring red toast; 0 successful sessions in the logs). Replace the last-line heuristic with `_last_json_value`, which parses the whole output as one value (pretty or single-line object) and falls back to last-parseable-line for JSONL. The v0.44.1 diagnostic wrapper made this legible; this restores the button. New `tests/test_workon_json_parse.py` covers the pretty-printed regression, JSONL fallback, and empty/blank/`null` inputs.
+
 ## v0.44.1
 
 - fix: Replace the opaque `Expecting value: line 1 column 1 (char 0)` toast with a diagnosable error. Every `vault-cli` JSON-parse site (`vault_cli_client.list_tasks`/`show_task`/`list_goals`, `tasks.start_vault_cli_session` work-on, `config.discover_vaults_from_cli`) now wraps `json.loads` — on empty/blank subprocess output it raises a `RuntimeError` naming the command, return code, stdout length + snippet, and stderr, instead of the context-free `json.JSONDecodeError`. The new `RuntimeError` is deliberately not a `ValueError` subclass, so `/api/tasks` and `/api/goals` no longer silently swallow the failure (previously a transiently-empty vault vanished from the board with no signal). Root cause was unguarded `json.loads(stdout.decode())` — guarded only `returncode != 0`, never empty output. Object-expecting parse sites (`show_task`, work-on) also guard against `null`/non-object JSON (which would otherwise crash with a context-free `AttributeError` on `result.get(...)`); list sites keep `null → []` since empty vaults legitimately emit `null`.
