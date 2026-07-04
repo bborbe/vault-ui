@@ -41,6 +41,51 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Sentinel distinguishing "no JSON value found" from a legitimately-parsed None
+# (JSON ``null``) in _last_json_value.
+_UNSET = object()
+
+
+def _last_json_value(text: str) -> Any:
+    """Return the last top-level JSON value in ``vault-cli --output json`` stdout.
+
+    ``vault-cli`` emits its result as a JSON object that may be **pretty-printed
+    across multiple lines**, optionally preceded by JSONL progress lines. The old
+    ``splitlines()[-1]`` heuristic assumed single-line JSONL and broke on
+    pretty-printed output — it grabbed the bare closing ``}`` and raised the
+    opaque ``Expecting value: line 1 column 1 (char 0)`` (which surfaced as the
+    recurring Start-button toast; every Start attempt was failing).
+
+    Strategy:
+      1. Parse the whole (stripped) output as one value — handles a single
+         pretty-printed or single-line object.
+      2. Fall back to JSONL: return the last line that parses as JSON — handles
+         progress lines followed by a single-line result object.
+
+    Raises ``json.JSONDecodeError`` if no JSON value is found (empty/blank output
+    or no parseable line), so callers can attach diagnostic context.
+    """
+    stripped = text.strip()
+    if not stripped:
+        raise json.JSONDecodeError("No JSON value in empty output", text, 0)
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    last: Any = _UNSET
+    for line in stripped.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            last = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    if last is _UNSET:
+        raise json.JSONDecodeError("No parseable JSON value in output", text, 0)
+    return last
+
+
 # Global connection manager (injected via set_connection_manager)
 _connection_manager: "ConnectionManager | None" = None
 
@@ -163,23 +208,20 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
         )
 
     stdout_text = bytes(stdout_buf).decode()
-    # vault-cli --output json emits a single JSON object, possibly preceded by
-    # JSONL progress lines; parse the last non-empty line to handle both formats.
-    last_line = next(
-        (line for line in reversed(stdout_text.splitlines()) if line.strip()),
-        stdout_text,
-    )
+    # vault-cli --output json emits its result object either pretty-printed across
+    # multiple lines or as single-line JSONL (optionally preceded by progress
+    # lines); _last_json_value handles both. The previous last-non-empty-line
+    # heuristic broke on pretty-printed output (grabbed the closing `}`).
     try:
-        parsed = json.loads(last_line)
+        parsed = _last_json_value(stdout_text)
     except json.JSONDecodeError as e:
-        # Empty/blank output here yields the opaque "Expecting value: line 1
-        # column 1 (char 0)"; attach the command, return code, and captured
-        # streams so the next occurrence is diagnosable from the toast + log.
+        # Empty/blank output yields the opaque "Expecting value: line 1 column 1
+        # (char 0)"; attach the return code and captured streams so the next
+        # occurrence is diagnosable from the toast + log.
         stderr_text = bytes(stderr_buf).decode(errors="replace").strip()
         raise RuntimeError(
             f"vault-cli work-on returned non-JSON output (rc={returncode}) for "
             f"task {task_id!r} in vault {vault_config.name!r}: {e}. "
-            f"parsed_line={last_line[:500]!r}; "
             f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
             f"stderr={stderr_text!r}"
         ) from e
@@ -190,7 +232,6 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
         raise RuntimeError(
             f"vault-cli work-on returned {type(parsed).__name__} (expected JSON object, "
             f"rc={returncode}) for task {task_id!r} in vault {vault_config.name!r}. "
-            f"parsed_line={last_line[:500]!r}; "
             f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
             f"stderr={stderr_text!r}"
         )
