@@ -94,7 +94,14 @@ def discover_vaults_from_cli(vault_cli_path: str) -> list[dict[str, str]]:
     )
     if result.returncode != 0:
         raise RuntimeError(f"vault-cli config list failed: {result.stderr.strip()}")
-    vaults = json.loads(result.stdout)
+    try:
+        vaults = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"vault-cli config list returned non-JSON output (rc={result.returncode}): {e}. "
+            f"stdout ({len(result.stdout)} chars)={result.stdout[:500]!r}; "
+            f"stderr={result.stderr.strip()!r}"
+        ) from e
     if not isinstance(vaults, list):
         raise RuntimeError("vault-cli config list returned non-list")
     return vaults

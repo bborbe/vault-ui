@@ -169,7 +169,20 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
         (line for line in reversed(stdout_text.splitlines()) if line.strip()),
         stdout_text,
     )
-    result: dict[str, Any] = json.loads(last_line)
+    try:
+        result: dict[str, Any] = json.loads(last_line)
+    except json.JSONDecodeError as e:
+        # Empty/blank output here yields the opaque "Expecting value: line 1
+        # column 1 (char 0)"; attach the command, return code, and captured
+        # streams so the next occurrence is diagnosable from the toast + log.
+        stderr_text = bytes(stderr_buf).decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli work-on returned non-JSON output (rc={returncode}) for "
+            f"task {task_id!r} in vault {vault_config.name!r}: {e}. "
+            f"parsed_line={last_line[:500]!r}; "
+            f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        ) from e
     session_id: str = result.get("session_id") or ""
     if not session_id:
         warnings: list[str] = result.get("warnings") or []

@@ -371,3 +371,74 @@ async def test_clear_goal_field_error() -> None:
         pytest.raises(RuntimeError, match="vault-cli goal clear failed"),
     ):
         await client.clear_goal_field("my-goal", "claude_session_id")
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_empty_stdout_raises_contextual_error() -> None:
+    """Empty stdout (rc=0) raises a RuntimeError naming the command + streams.
+
+    Regression for the opaque "Expecting value: line 1 column 1 (char 0)" toast:
+    vault-cli exiting 0 with empty output must fail loudly with diagnostic context,
+    as a RuntimeError (NOT a bare JSONDecodeError/ValueError that gets swallowed by
+    the /api/tasks gather).
+    """
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"", b"some warning on stderr")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await client.list_tasks()
+
+    msg = str(exc_info.value)
+    assert "non-JSON output" in msg
+    assert "task list" in msg  # the command
+    assert "TestVault" in msg  # --vault arg
+    assert "some warning on stderr" in msg  # stderr captured
+    # Deliberately not a ValueError subclass, so gather-with-return_exceptions
+    # in /api/tasks no longer silently swallows it.
+    assert not isinstance(exc_info.value, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_show_task_empty_stdout_raises_contextual_error() -> None:
+    """show_task with empty stdout (rc=0) raises a contextual RuntimeError."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError, match="non-JSON output"),
+    ):
+        await client.show_task("Some Task")
+
+
+@pytest.mark.asyncio
+async def test_list_goals_empty_stdout_raises_contextual_error() -> None:
+    """list_goals with empty stdout (rc=0) raises a contextual RuntimeError."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"", b"")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await client.list_goals()
+
+    assert "goal list" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_null_output_returns_empty() -> None:
+    """vault-cli emitting `null` (valid JSON) still yields an empty list, not an error.
+
+    Real vaults with no tasks return `null\\n`; only truly empty output is a failure.
+    """
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"null\n")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        tasks = await client.list_tasks()
+
+    assert tasks == []

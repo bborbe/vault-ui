@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Replace the opaque `Expecting value: line 1 column 1 (char 0)` toast with a diagnosable error. Every `vault-cli` JSON-parse site (`vault_cli_client.list_tasks`/`show_task`/`list_goals`, `tasks.start_vault_cli_session` work-on, `config.discover_vaults_from_cli`) now wraps `json.loads` — on empty/blank subprocess output it raises a `RuntimeError` naming the command, return code, stdout length + snippet, and stderr, instead of the context-free `json.JSONDecodeError`. The new `RuntimeError` is deliberately not a `ValueError` subclass, so `/api/tasks` and `/api/goals` no longer silently swallow the failure (previously a transiently-empty vault vanished from the board with no signal). Root cause was unguarded `json.loads(stdout.decode())` — guarded only `returncode != 0`, never empty output.
+
 ## v0.44.0
 
 - feat: Resolve config file XDG-first (`~/.config/vault-ui/config.yaml`), falling back to legacy repo-root `config.yaml` — matches vault-cli convention and enables `uv tool install`-based bare `vault-ui` invocations.
