@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.45.0
 
 - feat(ui): Surface `hold` tasks on the Kanban board. Held cards now render with a violet left border, 60% opacity ("parked"), and a `⏸ HOLD` chip so they're distinguishable from active work while sitting in their own phase column. `hold` is included in the default status filter (frontend `currentStatuses` + backend `/api/tasks` default) so blocked/parked work stays visible without opting in via the dropdown, and held cards sink to the bottom of each column (order: active → upcoming → hold) since they're not actionable now. New `test_list_tasks_default_filter_includes_hold` covers the backend default including `hold` and still excluding `aborted`.
 
