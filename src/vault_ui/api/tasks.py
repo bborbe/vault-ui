@@ -986,31 +986,43 @@ async def update_task_phase(
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
 
-        # Also update status to match the new phase
-        new_status = "completed" if request.phase == "done" else "in_progress"
-        status_proc = await asyncio.create_subprocess_exec(
-            vault_config.vault_cli_path,
-            "task",
-            "set",
-            task_id,
-            "status",
-            new_status,
-            "--vault",
-            vault_config.name.lower(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _stdout, stderr = await asyncio.wait_for(status_proc.communicate(), timeout=10.0)
-        except TimeoutError as e:
-            with suppress(ProcessLookupError):
-                status_proc.kill()
-            raise HTTPException(
-                status_code=504, detail="vault-cli task set (status) timed out after 10s"
-            ) from e
+        # Also update status to match the new phase — but preserve `hold`, which is
+        # orthogonal to phase (a task can be blocked mid-execution). Moving a held
+        # card between phase columns must not silently clear its hold status.
+        new_status: str | None
+        if request.phase == "done":
+            new_status = "completed"
+        else:
+            current_status: str | None = None
+            with suppress(FileNotFoundError, RuntimeError, ValueError):
+                client = get_vault_cli_client_for_vault(vault)
+                current_status = (await client.show_task(task_id)).status
+            new_status = None if current_status == "hold" else "in_progress"
 
-        if status_proc.returncode != 0:
-            raise HTTPException(status_code=500, detail=stderr.decode())
+        if new_status is not None:
+            status_proc = await asyncio.create_subprocess_exec(
+                vault_config.vault_cli_path,
+                "task",
+                "set",
+                task_id,
+                "status",
+                new_status,
+                "--vault",
+                vault_config.name.lower(),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                _stdout, stderr = await asyncio.wait_for(status_proc.communicate(), timeout=10.0)
+            except TimeoutError as e:
+                with suppress(ProcessLookupError):
+                    status_proc.kill()
+                raise HTTPException(
+                    status_code=504, detail="vault-cli task set (status) timed out after 10s"
+                ) from e
+
+            if status_proc.returncode != 0:
+                raise HTTPException(status_code=500, detail=stderr.decode())
 
         if _connection_manager:
             await _connection_manager.broadcast(
