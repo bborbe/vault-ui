@@ -959,6 +959,53 @@ def test_update_task_phase_vault_cli_failure_returns_500(
     assert "phase update failed" in response.json()["detail"]
 
 
+def test_update_task_phase_preserves_hold_status(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dragging a hold task to a non-done phase preserves hold — no status overwrite.
+
+    hold is orthogonal to phase (a task can be blocked mid-execution); a phase move
+    must not silently clear it. Regression guard for the drag-clears-hold bug.
+    """
+    client = _make_vault_client([_make_task(task_id="Held Task", status="hold", phase="planning")])
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+    app = create_app()
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with (
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec,
+    ):
+        response = TestClient(app).patch(
+            "/api/tasks/Held%20Task/phase?vault=TestVault",
+            json={"phase": "execution"},
+        )
+
+    assert response.status_code == 200
+    all_calls = [call[0] for call in mock_exec.call_args_list]
+    # phase was set
+    assert any(c[:5] == ("vault-cli", "task", "set", "Held Task", "phase") for c in all_calls)
+    # status was NOT touched — hold preserved
+    assert not any(len(c) > 4 and c[4] == "status" for c in all_calls)
+
+
 def test_update_goal_status_uses_vault_cli(test_client: TestClient) -> None:
     """PATCH /goals/{id}/status calls vault-cli goal set <id> status <value> on the right vault."""
     mock_proc = MagicMock()

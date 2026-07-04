@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(ui): Preserve `hold` status when dragging a card between phase columns. `update_task_phase` hardcoded `status = in_progress` for any non-`done` phase move, so dragging a held card to Execution silently cleared its hold status (regression against the v0.45.0 hold feature). Now the handler reads the current status first and leaves `hold` untouched on non-`done` moves (`done` → `completed` unchanged, everything else → `in_progress` as before). New `test_update_task_phase_preserves_hold_status` guards it.
+
 ## v0.45.0
 
 - feat(ui): Surface `hold` tasks on the Kanban board. Held cards now render with a violet left border, 60% opacity ("parked"), and a `⏸ HOLD` chip so they're distinguishable from active work while sitting in their own phase column. `hold` is included in the default status filter (frontend `currentStatuses` + backend `/api/tasks` default) so blocked/parked work stays visible without opting in via the dropdown, and held cards sink to the bottom of each column (order: active → upcoming → hold) since they're not actionable now. New `test_list_tasks_default_filter_includes_hold` covers the backend default including `hold` and still excluding `aborted`.
