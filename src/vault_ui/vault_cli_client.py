@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import shlex
 from contextlib import suppress
 from datetime import datetime
 from typing import Any
@@ -10,6 +11,57 @@ from typing import Any
 from vault_ui.api.models import Goal, Task
 
 logger = logging.getLogger(__name__)
+
+
+def _loads_or_raise(
+    stdout: bytes,
+    *,
+    command: list[str],
+    returncode: int,
+    stderr: bytes,
+    expect_object: bool = False,
+) -> Any:
+    """Decode + parse vault-cli JSON output, raising a diagnosable error on failure.
+
+    A bare ``json.loads(stdout.decode())`` on empty/blank subprocess output raises
+    ``json.JSONDecodeError: Expecting value: line 1 column 1 (char 0)`` — a message
+    with zero context that FastAPI then surfaces verbatim in the UI toast, making the
+    root cause impossible to pin down (which vault? which command? what did vault-cli
+    actually print?).
+
+    This wrapper re-raises as ``RuntimeError`` (deliberately NOT a ``ValueError``
+    subclass, so callers that gather with ``return_exceptions=True`` no longer
+    silently swallow it as an ordinary ``ValueError``) with the full context needed
+    to diagnose the next occurrence: the command, its return code, the length and a
+    snippet of stdout, and stderr.
+
+    ``expect_object``: when True, a parse that yields anything other than a JSON
+    object (e.g. ``null`` → ``None``, which real vault-cli list commands emit for an
+    empty result) is itself raised as a contextual ``RuntimeError``. Object-expecting
+    callers (``show_task``, work-on) would otherwise crash with a context-free
+    ``AttributeError`` on ``result.get(...)``. List callers keep the default (False)
+    so ``null`` correctly parses to ``None`` and is handled as an empty list.
+    """
+    text = stdout.decode(errors="replace")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        stderr_text = stderr.decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli returned non-JSON output (rc={returncode}) for "
+            f"`{shlex.join(command)}`: {e}. "
+            f"stdout ({len(text)} chars)={text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        ) from e
+    if expect_object and not isinstance(parsed, dict):
+        stderr_text = stderr.decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli returned {type(parsed).__name__} (expected JSON object, "
+            f"rc={returncode}) for `{shlex.join(command)}`. "
+            f"stdout ({len(text)} chars)={text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        )
+    return parsed
 
 
 class VaultCLIClient:
@@ -60,14 +112,16 @@ class VaultCLIClient:
         if proc.returncode != 0:
             raise RuntimeError(f"vault-cli task list failed: {stderr.decode().strip()}")
 
-        data: list[dict[str, Any]] | None = json.loads(stdout.decode())
+        data: list[dict[str, Any]] | None = _loads_or_raise(
+            stdout, command=args, returncode=proc.returncode, stderr=stderr
+        )
         tasks = [self._parse_task(item) for item in data] if data else []
 
         return tasks
 
     async def show_task(self, task_id: str) -> Task:
         """Call vault-cli task show <task_id> --output json, parse into Task."""
-        proc = await asyncio.create_subprocess_exec(
+        args = [
             self._vault_cli_path,
             "task",
             "show",
@@ -76,14 +130,19 @@ class VaultCLIClient:
             self._vault_name,
             "--output",
             "json",
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _stderr = await proc.communicate()
+        stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise FileNotFoundError(f"Task not found: {task_id}")
 
-        data: dict[str, Any] = json.loads(stdout.decode())
+        data: dict[str, Any] = _loads_or_raise(
+            stdout, command=args, returncode=proc.returncode, stderr=stderr, expect_object=True
+        )
         return self._parse_task(data)
 
     async def set_field(self, task_id: str, key: str, value: str) -> None:
@@ -144,7 +203,9 @@ class VaultCLIClient:
         if proc.returncode != 0:
             raise RuntimeError(f"vault-cli goal list failed: {stderr.decode().strip()}")
 
-        data: list[dict[str, Any]] | None = json.loads(stdout.decode())
+        data: list[dict[str, Any]] | None = _loads_or_raise(
+            stdout, command=args, returncode=proc.returncode, stderr=stderr
+        )
         return [self._parse_goal(item) for item in data] if data else []
 
     async def set_goal_field(self, goal_id: str, key: str, value: str) -> None:
