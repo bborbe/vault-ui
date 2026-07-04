@@ -2,7 +2,7 @@
 
 let currentVault = null; // null = "All", or vault name
 let currentAssignees = [];
-let currentStatuses = ['in_progress', 'completed']; // default — overridden by ?status= URL param
+let currentStatuses = ['in_progress', 'hold', 'completed']; // default — overridden by ?status= URL param; hold shown by default so parked/blocked work isn't forgotten
 let currentGoals = []; // goal filter from URL — empty means no filter
 let upcomingHours = 8; // 0 = hide all deferred tasks; persists in localStorage
 // Distinct assignees across the selected vaults — sourced from /api/assignees,
@@ -106,7 +106,7 @@ function parseURLParams() {
     } else if (currentView === 'goals') {
         currentStatuses = ['backlog', 'next', 'in_progress', 'completed'];
     }
-    // else: keep the module-level default ['in_progress', 'completed'] for Tasks view.
+    // else: keep the module-level default ['in_progress', 'hold', 'completed'] for Tasks view.
 
     // Grouping is derived from view: tasks→phase, goals→status.
     // The groupBy UI selector + URL param were removed (the cross-axis combinations
@@ -899,14 +899,23 @@ async function loadTasks() {
             return normalizePriority(a.priority) - normalizePriority(b.priority);
         });
 
-        // Split tasks: active, upcoming (deferred soon), recently_completed (done lane only)
-        const activeTasks = tasks.filter(t => !t.upcoming && !t.recently_completed);
-        const upcomingTasks = tasks.filter(t => t.upcoming);
+        // Split tasks into buckets that fix column ordering: active → upcoming → hold,
+        // with recently_completed pinned to the bottom of the Done lane.
+        // Hold takes precedence over upcoming so a hold task with a future defer_date
+        // still sinks to the bottom (parked/blocked, not actionable now).
         const recentlyCompletedTasks = tasks.filter(t => t.recently_completed);
+        const holdTasks = tasks.filter(t => !t.recently_completed && t.status === 'hold');
+        const upcomingTasks = tasks.filter(
+            t => !t.recently_completed && t.status !== 'hold' && t.upcoming
+        );
+        const activeTasks = tasks.filter(
+            t => !t.recently_completed && t.status !== 'hold' && !t.upcoming
+        );
 
-        // Populate cards: active first, then upcoming per lane, recently-completed always at bottom of done
+        // Populate cards: active first, then upcoming, then hold at the bottom;
+        // recently-completed always at bottom of done.
         const validPhases = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'];
-        [...activeTasks, ...upcomingTasks].forEach(task => {
+        [...activeTasks, ...upcomingTasks, ...holdTasks].forEach(task => {
             let containerId;
             if (currentGroupBy === 'status') {
                 // Status-mode for tasks: status is the column discriminator.
@@ -1069,6 +1078,7 @@ function createTaskCard(task) {
 
     if (task.upcoming) card.classList.add('upcoming');
     if (task.recently_completed) card.classList.add('recently-completed');
+    if (task.status === 'hold') card.classList.add('on-hold');
 
     // Drag handlers
     card.addEventListener('dragstart', (e) => {
@@ -1107,6 +1117,11 @@ function createTaskCard(task) {
 
     const menuButton = '<button class="menu-btn" onclick="showTaskMenu(event, \'' + task.id + '\')">⋮</button>';
 
+    // On-hold badge (if status is hold) — signals the task is parked/blocked
+    const holdBadge = task.status === 'hold'
+        ? '<span class="hold-badge" title="On hold — blocked, not actively worked">⏸ HOLD</span>'
+        : '';
+
     // Jira issue badge (if present)
     const jiraBadge = issueKey && issueUrl
         ? `<a href="${issueUrl}" class="jira-badge" target="_blank" title="Open in Jira">
@@ -1134,6 +1149,7 @@ function createTaskCard(task) {
         </div>
         <div class="card-footer">
             <div class="card-footer-left">
+                ${holdBadge}
                 ${jiraBadge}
                 ${assigneeBadge}
             </div>
