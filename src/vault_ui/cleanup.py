@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from vault_ui.api.models import Goal
@@ -12,6 +13,9 @@ from vault_ui.vault_cli_client import VaultCLIClient
 logger = logging.getLogger(__name__)
 
 _CLEANUP_INTERVAL_SECONDS = 300
+_SESSION_STARTING_TTL_SECONDS = (
+    900  # ~15 minutes; crash-recovery TTL for claude_session_starting marker
+)
 
 
 def derive_claude_project_dir(vault_path: str, session_project_dir: str = "") -> Path:
@@ -118,6 +122,75 @@ async def cleanup_stale_sessions(config: Config) -> int:
                         e,
                         exc_info=True,
                     )
+
+            # TTL sweep: clear stale claude_session_starting markers.
+            # A task that also has claude_session_id is already resumable — skip the
+            # marker sweep but still log it so frontmatter stays clean.
+            tasks_with_starting = [t for t in tasks if t.claude_session_starting]
+            for task in tasks_with_starting:
+                if task.claude_session_id:
+                    # Session already resumable; marker is redundant but not harmful.
+                    continue
+                raw_ts = task.claude_session_starting
+                if not raw_ts:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(raw_ts)
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=UTC)
+                except (ValueError, TypeError):
+                    # Unparseable timestamp — skip this task without crashing the pass.
+                    logger.warning(
+                        "[Cleanup] Skipping task %s in vault %s: "
+                        "unparseable claude_session_starting value %r",
+                        task.id,
+                        vault.name,
+                        raw_ts,
+                    )
+                    continue
+                age = (datetime.now(UTC) - ts).total_seconds()
+                if age > _SESSION_STARTING_TTL_SECONDS:
+                    try:
+                        clear_args = [
+                            vault.vault_cli_path,
+                            "task",
+                            "clear",
+                            task.id,
+                            "claude_session_starting",
+                            "--vault",
+                            vault.name,
+                        ]
+                        proc = await asyncio.create_subprocess_exec(
+                            *clear_args,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        _stdout, stderr = await proc.communicate()
+                        if proc.returncode != 0:
+                            logger.error(
+                                "[Cleanup] Failed to clear claude_session_starting for task %s"
+                                " in vault %s: %s",
+                                task.id,
+                                vault.name,
+                                stderr.decode().strip(),
+                            )
+                        else:
+                            logger.info(
+                                "[Cleanup] Cleared stale claude_session_starting marker"
+                                " (age=%ds) from task %s in vault %s",
+                                int(age),
+                                task.id,
+                                vault.name,
+                            )
+                    except Exception as e:
+                        logger.error(
+                            "[Cleanup] Exception clearing claude_session_starting for task %s"
+                            " in vault %s: %s",
+                            task.id,
+                            vault.name,
+                            e,
+                            exc_info=True,
+                        )
 
             # Goal cleanup — independent try/except so a goal-list failure
             # does not abort the task pass that already completed above
