@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## v0.45.2
+## Unreleased
+
+- fix(ui): Replace the transient `claude_session_starting` timestamp marker with a durable `claude_session_started` boolean flag. `vault-cli task work-on --mode headless` returns the session id in ~1s (it does not block for the whole session), so the old marker was set and cleared within the same second and never actually showed "Starting". The flag is now set to `true` before launch and left set — it is cleared only when `claude_session_id` is cleared (the clear-session endpoint and the stale-session cleanup sweep both clear it), or if the launch itself fails. Button state: `claude_session_id` → Resume; else flag set → Starting; else Start. This makes the indicator durable across reload, modal dismiss, and phase change, and stops the card reverting to "Start" while a session exists. The `claude_session_starting` TTL sweep is removed. Also bumps the `app.js` cache-bust token.
 
 - fix(ui): Bump the `app.js` cache-bust token (`?v=`) so the v0.45.1 durable-"Starting" fix actually reaches browsers. The static mount sends no `Cache-Control`, so with the token unchanged an already-open board kept serving the pre-fix cached `app.js` and the Start button still reverted — the fix shipped server-side but never loaded client-side. Bumping the token forces a fresh fetch on the next normal page load (no hard-refresh needed).
 

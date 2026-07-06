@@ -298,7 +298,7 @@ class VaultCLIClient:
             category=data.get("category"),
             recurring=data.get("recurring"),
             claude_session_id=data.get("claude_session_id"),
-            claude_session_starting=data.get("claude_session_starting"),
+            claude_session_started=data.get("claude_session_started"),
             assignee=data.get("assignee"),
             blocked_by=blocked_by,
             goals=goals,
