@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.45.2
 
 - fix(ui): Bump the `app.js` cache-bust token (`?v=`) so the v0.45.1 durable-"Starting" fix actually reaches browsers. The static mount sends no `Cache-Control`, so with the token unchanged an already-open board kept serving the pre-fix cached `app.js` and the Start button still reverted — the fix shipped server-side but never loaded client-side. Bumping the token forces a fresh fetch on the next normal page load (no hard-refresh needed).
 
