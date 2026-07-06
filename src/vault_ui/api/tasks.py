@@ -746,21 +746,24 @@ async def run_task(
         # Read task
         task = await client.show_task(task_id)
 
-        # Set the durable "starting" marker before launching — survives modal dismiss,
-        # page reload, and second browser tab.
-        starting_marker = datetime.now(UTC).isoformat()
-        await client.set_field(task_id, "claude_session_starting", starting_marker)
+        # Mark the session as started before launching. This is a durable flag
+        # (survives modal dismiss, page reload, second tab) that stays "true" until
+        # claude_session_id is cleared — it is NOT cleared here. The card shows
+        # "Starting…" while the flag is set but no claude_session_id has landed yet,
+        # then "Resume" once the session id lands.
+        await client.set_field(task_id, "claude_session_started", "true")
 
         try:
             logger.info(f"Starting vault-cli session for task {task_id}")
             session_id = await start_vault_cli_session(vault_config, task_id)
             logger.info(f"Session {session_id} created")
-        finally:
-            # Clear the marker on both success and failure. suppress ensures a failed
-            # clear (e.g. task file deleted mid-launch) does not mask the real error.
+        except Exception:
+            # Launch failed — no session id was established, so nothing will ever
+            # clear the started flag via the session-id lifecycle. Clear it here so
+            # the card returns to "Start" instead of sticking on "Starting…".
             with suppress(Exception):
-                await client.clear_field(task_id, "claude_session_starting")
-                logger.debug("Cleared claude_session_starting marker for task %s", task_id)
+                await client.clear_field(task_id, "claude_session_started")
+            raise
 
         # Build command: use vault-specific script from config (handles cd internally)
         command = _build_resume_command(vault_config, session_id, task_title=task.title)
@@ -1265,6 +1268,9 @@ async def clear_task_session(
     try:
         client = get_vault_cli_client_for_vault(vault)
         await client.clear_field(task_id, "claude_session_id")
+        # The started flag is tied to the session id lifecycle — clear it too so the
+        # card returns to "Start" once the session is torn down.
+        await client.clear_field(task_id, "claude_session_started")
         return {"status": "success", "task_id": task_id}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1380,7 +1386,7 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         category=task.category,
         recurring=task.recurring,
         claude_session_id=task.claude_session_id,
-        claude_session_starting=task.claude_session_starting,
+        claude_session_started=task.claude_session_started,
         assignee=task.assignee,
         blocked_by=task.blocked_by,
         upcoming=task.upcoming,
