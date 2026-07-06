@@ -30,6 +30,9 @@ class Task:
     assignee: str | None  # From frontmatter: Person assigned to the task
     blocked_by: list[str] | None  # From frontmatter: List of blocking task wikilinks
     completed_date: str | None = None  # From frontmatter: ISO 8601 datetime when task was completed
+    claude_session_starting: str | None = (
+        None  # ISO-8601 timestamp when launch began; truthy = launching but not yet resumable
+    )
     upcoming: bool = False  # True if defer_date is within the next 8 hours
     recently_completed: bool = False  # True if status=completed and modified within 8h
     goals: list[str] | None = (
@@ -72,6 +75,7 @@ class TaskResponse(BaseModel):
     category: str | None
     recurring: str | None
     claude_session_id: str | None
+    claude_session_starting: str | None
     assignee: str | None
     blocked_by: list[str] | None
     upcoming: bool = False

@@ -1,6 +1,7 @@
 """Tests for stale session cleanup with assignee-aware logic."""
 
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,7 @@ def _make_task(
     session_id: str = "12345678-1234-1234-1234-123456789abc",
     assignee: str | None = None,
     task_id: str = "task-1",
+    claude_session_starting: str | None = None,
 ) -> Task:
     return Task(
         id=task_id,
@@ -34,6 +36,7 @@ def _make_task(
         claude_session_id=session_id,
         assignee=assignee,
         blocked_by=None,
+        claude_session_starting=claude_session_starting,
     )
 
 
@@ -367,3 +370,159 @@ async def test_goal_list_missing_directory_logs_debug_not_error(
     assert any("Goals directory not configured" in r.message for r in debug_records), (
         "Missing-directory should log at DEBUG"
     )
+
+
+# --- claude_session_starting TTL sweep tests ---
+
+
+@pytest.mark.asyncio
+async def test_cleanup_clears_stale_claude_session_starting_marker() -> None:
+    """Tasks with claude_session_starting older than TTL have the marker cleared."""
+    from vault_ui.cleanup import _SESSION_STARTING_TTL_SECONDS
+
+    stale_ts = (
+        datetime.now(UTC) - timedelta(seconds=_SESSION_STARTING_TTL_SECONDS + 1)
+    ).isoformat()
+    config = _make_config(current_user="alice")
+    tasks = [
+        _make_task(
+            task_id="stale-task",
+            session_id=None,
+            claude_session_starting=stale_ts,
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch(
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
+            mock_subprocess,
+        ),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    # The stale marker was cleared
+    assert cleared == 0  # not a session clear, just a marker clear
+    # Verify the subprocess was called with clear + claude_session_starting args
+    subprocess_calls = mock_subprocess.call_args_list
+    clear_calls = [
+        c for c in subprocess_calls if "clear" in c.args and "claude_session_starting" in c.args
+    ]
+    assert len(clear_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_preserves_fresh_claude_session_starting_marker() -> None:
+    """Tasks with a fresh (non-stale) claude_session_starting marker are NOT cleared."""
+    fresh_ts = (datetime.now(UTC) - timedelta(seconds=100)).isoformat()
+    config = _make_config(current_user="alice")
+    tasks = [
+        _make_task(
+            task_id="fresh-task",
+            session_id=None,
+            claude_session_starting=fresh_ts,
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch(
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
+            mock_subprocess,
+        ),
+    ):
+        await cleanup_stale_sessions(config)
+
+    # No clear call for the starting marker
+    subprocess_calls = mock_subprocess.call_args_list
+    starting_clears = [
+        c for c in subprocess_calls if "clear" in c.args and "claude_session_starting" in c.args
+    ]
+    assert len(starting_clears) == 0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_skips_unparseable_claude_session_starting() -> None:
+    """A task with an unparseable claude_session_starting value does not crash the pass."""
+    config = _make_config(current_user="alice")
+    tasks = [
+        _make_task(
+            task_id="bad-ts-task",
+            session_id=None,
+            claude_session_starting="not-a-valid-timestamp",
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+    ):
+        # Should not raise — unparseable timestamp is skipped gracefully
+        cleared = await cleanup_stale_sessions(config)
+        assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_skips_task_with_session_id_even_if_starting_present() -> None:
+    """A task with claude_session_id skips marker sweep even if starting field is stale."""
+    from vault_ui.cleanup import _SESSION_STARTING_TTL_SECONDS
+
+    old_ts = (datetime.now(UTC) - timedelta(seconds=_SESSION_STARTING_TTL_SECONDS + 1)).isoformat()
+    config = _make_config(current_user="alice")
+    # Has both claude_session_id AND a stale claude_session_starting
+    tasks = [
+        _make_task(
+            task_id="resuming-task",
+            session_id="12345678-1234-1234-1234-123456789abc",
+            claude_session_starting=old_ts,
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch(
+            "vault_ui.cleanup.asyncio.create_subprocess_exec",
+            mock_subprocess,
+        ),
+    ):
+        await cleanup_stale_sessions(config)
+
+    # No clear call for the starting marker (session already resumable)
+    subprocess_calls = mock_subprocess.call_args_list
+    starting_clears = [
+        c for c in subprocess_calls if "clear" in c.args and "claude_session_starting" in c.args
+    ]
+    assert len(starting_clears) == 0

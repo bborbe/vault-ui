@@ -1095,10 +1095,11 @@ function createTaskCard(task) {
     const { title, issueKey, issueUrl } = extractJiraIssue(task.title);
 
     // Show Resume button if session exists, Starting if in progress, otherwise Start.
-    // Treat startingTasks as a hint, not truth: if claude_session_id is already set
-    // (watcher event arrived, backend completed) the Set entry is stale.
+    // isStarting is driven by the durable claude_session_starting field (written by the
+    // backend before launch); startingTasks is kept only as an instant optimistic hint
+    // before the first watcher event lands from the server.
     const hasSession = task.claude_session_id;
-    const isStarting = startingTasks.has(task.id) && !hasSession;
+    const isStarting = !hasSession && (!!task.claude_session_starting || startingTasks.has(task.id));
     let buttonLabel, buttonClass, buttonDisabled;
     if (isStarting) {
         buttonLabel = '⏳ Starting...';
@@ -1256,9 +1257,8 @@ async function runTask(taskId) {
             userDismissed = true;
             loadingModal.classList.add('hidden');
             closeBtn.removeEventListener('click', closeHandler);
-            // Clear the in-flight marker so the next render reflects the actual
-            // backend state (Resume once claude_session_id lands, Start otherwise).
-            startingTasks.delete(taskId);
+            // Re-render the card so the durable claude_session_starting field
+            // drives the indicator state (Starting… or Resume) going forward.
             renderTasks();
         };
         closeBtn.addEventListener('click', closeHandler);

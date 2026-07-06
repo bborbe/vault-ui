@@ -36,6 +36,7 @@ def _make_task(
     blocked_by: list[str] | None = None,
     completed_date: str | None = None,
     goals: list[str] | None = None,
+    claude_session_starting: str | None = None,
     **_kwargs: Any,
 ) -> Task:
     return Task(
@@ -54,6 +55,7 @@ def _make_task(
         category=category,
         recurring=None,
         claude_session_id=None,
+        claude_session_starting=claude_session_starting,
         assignee=assignee,
         blocked_by=blocked_by,
         completed_date=completed_date,
@@ -3428,3 +3430,157 @@ def test_list_tasks_response_unchanged(test_client: TestClient) -> None:
     assert expected_keys.issubset(set(task.keys())), (
         f"missing pre-existing keys: {expected_keys - set(task.keys())}"
     )
+
+
+# --- claude_session_starting field tests ---
+
+
+def test_parse_task_parses_claude_session_starting() -> None:
+    """_parse_task maps claude_session_starting from frontmatter dict into Task."""
+    client = object.__new__(VaultCLIClient)
+    task = client._parse_task(
+        {
+            "name": "T1",
+            "title": "Test",
+            "status": "in_progress",
+            "claude_session_starting": "2026-07-06T10:00:00+00:00",
+        }
+    )
+    assert task.claude_session_starting == "2026-07-06T10:00:00+00:00"
+
+
+def test_parse_task_claude_session_starting_absent() -> None:
+    """_parse_task returns None for claude_session_starting when absent from dict."""
+    client = object.__new__(VaultCLIClient)
+    task = client._parse_task({"name": "T1", "title": "Test", "status": "in_progress"})
+    assert task.claude_session_starting is None
+
+
+def test_list_tasks_includes_claude_session_starting(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """GET /api/tasks returns claude_session_starting field when set on the task."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(
+            task_id="Starting Task",
+            status="in_progress",
+            claude_session_starting="2026-07-06T10:00:00+00:00",
+        )
+    )
+
+    response = test_client.get("/api/tasks?vault=TestVault")
+    assert response.status_code == 200
+    tasks = response.json()
+    task = next((t for t in tasks if t["id"] == "Starting Task"), None)
+    assert task is not None
+    assert task["claude_session_starting"] == "2026-07-06T10:00:00+00:00"
+
+
+def test_list_tasks_claude_session_starting_null_when_absent(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """GET /api/tasks returns null claude_session_starting when the field is not set."""
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Normal Task", status="in_progress"))
+
+    response = test_client.get("/api/tasks?vault=TestVault")
+    assert response.status_code == 200
+    tasks = response.json()
+    task = next((t for t in tasks if t["id"] == "Normal Task"), None)
+    assert task is not None
+    assert task["claude_session_starting"] is None
+
+
+def test_run_task_sets_marker_before_launch_and_clears_on_success(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """run_task writes claude_session_starting before launch and clears it in finally on success."""
+    mock_vault_client.set_field.reset_mock()
+    mock_vault_client.clear_field.reset_mock()
+    mock_proc = _make_streaming_proc(b'{"session_id": "new-session-id"}')
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 200
+
+    # Marker was set before launch
+    set_calls = mock_vault_client.set_field.await_args_list
+    assert len(set_calls) >= 1
+    last_set = set_calls[-1]
+    assert last_set.args[0] == "Test Task"
+    assert last_set.args[1] == "claude_session_starting"
+    assert isinstance(last_set.args[2], str)  # ISO-8601 string
+
+    # Marker was cleared after success
+    mock_vault_client.clear_field.assert_awaited_once_with("Test Task", "claude_session_starting")
+
+
+def test_run_task_sets_marker_before_launch_and_clears_on_failure(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """run_task writes claude_session_starting before launch and clears it in finally on failure."""
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    mock_vault_client.set_field.reset_mock()
+    mock_vault_client.clear_field.reset_mock()
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    # HTTPException propagates
+    assert response.status_code == 500
+
+    # Marker was set before launch
+    set_calls = mock_vault_client.set_field.await_args_list
+    assert len(set_calls) >= 1
+    last_set = set_calls[-1]
+    assert last_set.args[0] == "Test Task"
+    assert last_set.args[1] == "claude_session_starting"
+
+    # Marker was cleared even though launch failed
+    mock_vault_client.clear_field.assert_awaited_once_with("Test Task", "claude_session_starting")
+
+
+def test_run_task_marker_clear_failure_does_not_mask_launch_error(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """If clear_field raises, the original launch error still propagates (finally + suppress)."""
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    mock_vault_client.set_field.reset_mock()
+    # clear_field succeeds but suppress swallows any exception
+    mock_vault_client.clear_field.reset_mock()
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    # Original error propagates
+    assert response.status_code == 500
+
+    # set_field was called (marker was set before failure occurred)
+    assert mock_vault_client.set_field.await_count >= 1
+    # clear_field was called (suppress prevented it from masking the error)
+    assert mock_vault_client.clear_field.await_count >= 1

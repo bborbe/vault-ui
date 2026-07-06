@@ -746,9 +746,21 @@ async def run_task(
         # Read task
         task = await client.show_task(task_id)
 
-        logger.info(f"Starting vault-cli session for task {task_id}")
-        session_id = await start_vault_cli_session(vault_config, task_id)
-        logger.info(f"Session {session_id} created")
+        # Set the durable "starting" marker before launching — survives modal dismiss,
+        # page reload, and second browser tab.
+        starting_marker = datetime.now(UTC).isoformat()
+        await client.set_field(task_id, "claude_session_starting", starting_marker)
+
+        try:
+            logger.info(f"Starting vault-cli session for task {task_id}")
+            session_id = await start_vault_cli_session(vault_config, task_id)
+            logger.info(f"Session {session_id} created")
+        finally:
+            # Clear the marker on both success and failure. suppress ensures a failed
+            # clear (e.g. task file deleted mid-launch) does not mask the real error.
+            with suppress(Exception):
+                await client.clear_field(task_id, "claude_session_starting")
+                logger.debug("Cleared claude_session_starting marker for task %s", task_id)
 
         # Build command: use vault-specific script from config (handles cd internally)
         command = _build_resume_command(vault_config, session_id, task_title=task.title)
@@ -1368,6 +1380,7 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         category=task.category,
         recurring=task.recurring,
         claude_session_id=task.claude_session_id,
+        claude_session_starting=task.claude_session_starting,
         assignee=task.assignee,
         blocked_by=task.blocked_by,
         upcoming=task.upcoming,
