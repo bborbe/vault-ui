@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(ui): Bump the `app.js` cache-bust token (`?v=`) so the v0.45.1 durable-"Starting" fix actually reaches browsers. The static mount sends no `Cache-Control`, so with the token unchanged an already-open board kept serving the pre-fix cached `app.js` and the Start button still reverted — the fix shipped server-side but never loaded client-side. Bumping the token forces a fresh fetch on the next normal page load (no hard-refresh needed).
+
 ## v0.45.1
 
 - fix(ui): Make task card's "Starting…" state durable and server-owned. The v0.34.4 fix deleted the browser-side starting marker on modal close, so the card silently reverted to "Start" during the 30s–5min window before `claude_session_id` landed. Now the backend writes a `claude_session_starting` ISO-8601 timestamp frontmatter field before launching; the frontend derives "Starting…" from this durable field instead of ephemeral browser state. The marker is cleared in `finally` when the session starts successfully or on failure. A background cleanup sweep clears orphaned markers older than ~15 min (TTL) so crashed mid-launch processes do not leave stale indicators. Existing Start → Starting → Resume behaviour and all current tests keep working.
