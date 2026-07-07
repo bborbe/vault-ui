@@ -516,6 +516,15 @@ async def _process_vault(
 
     tasks = unblocked_tasks
 
+    # Surface claude_session_started from the status cache — vault-cli's task list
+    # does not emit this custom field, so the durable "Starting" flag reaches the UI
+    # only via the cache's direct frontmatter read. The cache is authoritative; the
+    # `or` fallback keeps whatever the parse already had if the cache lacks it.
+    for task in tasks:
+        task.claude_session_started = (
+            cache.get_session_started(vault_config.name, task.id) or task.claude_session_started
+        )
+
     # Convert to response models
     return [_task_to_response(task, vault_config) for task in tasks]
 
