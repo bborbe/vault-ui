@@ -17,6 +17,10 @@ class StatusCache:
     def __init__(self) -> None:
         """Initialize empty cache."""
         self._cache: dict[str, dict[str, str]] = {}
+        # vault -> item_id -> "true" for items whose frontmatter has a truthy
+        # claude_session_started. vault-cli's task list does not emit this custom
+        # field, so the API surfaces it from here (the sanctioned direct-read path).
+        self._started: dict[str, dict[str, str]] = {}
         self._vault_paths: dict[str, Path] = {}
         self._tasks_folders: dict[str, str] = {}
 
@@ -33,6 +37,7 @@ class StatusCache:
             tasks_folder: Preferred tasks folder name for this vault
         """
         cache: dict[str, str] = {}  # Start fresh each time
+        started: dict[str, str] = {}
 
         # Scan discovered hierarchy folders for items with status
         hierarchy_folders = discover_hierarchy_folders_for_vault(
@@ -44,25 +49,29 @@ class StatusCache:
         for folder_path in hierarchy_folders:
             for md_file in folder_path.rglob("*.md"):
                 item_id = md_file.stem
-                status = self._extract_status(md_file)
+                status, session_started = self._extract_fields(md_file)
                 if status:
                     cache[item_id] = status
+                if session_started:
+                    started[item_id] = session_started
 
         # Atomic replacement (overwrites previous cache)
         self._cache[vault_name] = cache
+        self._started[vault_name] = started
         self._vault_paths[vault_name] = vault_path
         if tasks_folder is not None:
             self._tasks_folders[vault_name] = tasks_folder
         logger.info(f"[StatusCache] Loaded {len(cache)} items for vault '{vault_name}'")
 
-    def _extract_status(self, file_path: Path) -> str | None:
-        """Fast status extraction from frontmatter.
+    def _extract_fields(self, file_path: Path) -> tuple[str | None, str | None]:
+        """Fast extraction of status and claude_session_started from frontmatter.
 
         Args:
             file_path: Path to markdown file
 
         Returns:
-            Status string if found, None otherwise
+            ``(status, session_started)`` — status string or None, and "true" when
+            ``claude_session_started`` is truthy (else None).
         """
         try:
             content = file_path.read_text(encoding="utf-8")
@@ -70,11 +79,15 @@ class StatusCache:
             if match:
                 frontmatter = yaml.safe_load(match.group(1))
                 if isinstance(frontmatter, dict):
-                    return frontmatter.get("status")
-            return None
+                    status = frontmatter.get("status")
+                    # Normalize any truthy YAML value (True, "true") to "true"; a
+                    # cleared/absent/false field yields None. Never emits "false".
+                    session_started = "true" if frontmatter.get("claude_session_started") else None
+                    return status, session_started
+            return None, None
         except Exception as e:
-            logger.debug(f"[StatusCache] Failed to extract status from {file_path.name}: {e}")
-            return None
+            logger.debug(f"[StatusCache] Failed to extract fields from {file_path.name}: {e}")
+            return None, None
 
     def get_status(self, vault_name: str, item_id: str) -> str | None:
         """Get status for item (task/goal/theme/objective).
@@ -87,6 +100,18 @@ class StatusCache:
             Status string if found, None otherwise
         """
         return self._cache.get(vault_name, {}).get(item_id)
+
+    def get_session_started(self, vault_name: str, item_id: str) -> str | None:
+        """Return "true" if the item's claude_session_started flag is set, else None.
+
+        Args:
+            vault_name: Name of the vault
+            item_id: Item ID (filename without .md extension)
+
+        Returns:
+            "true" when the flag is set on the item's frontmatter, None otherwise.
+        """
+        return self._started.get(vault_name, {}).get(item_id)
 
     def count(self, vault_name: str) -> int:
         """Get number of cached items for a vault.
@@ -118,7 +143,7 @@ class StatusCache:
         for folder_path in discover_hierarchy_folders_for_vault(vault_path, tasks_folder):
             md_file = folder_path / f"{item_id}.md"
             if md_file.exists():
-                status = self._extract_status(md_file)
+                status, session_started = self._extract_fields(md_file)
                 if status:
                     if vault_name not in self._cache:
                         self._cache[vault_name] = {}
@@ -128,9 +153,15 @@ class StatusCache:
                     # Status field removed or invalid - remove from cache
                     self._cache.get(vault_name, {}).pop(item_id, None)
                     logger.debug(f"[StatusCache] Removed '{item_id}' (no valid status)")
+                # Maintain the claude_session_started flag in lockstep
+                if session_started:
+                    self._started.setdefault(vault_name, {})[item_id] = session_started
+                else:
+                    self._started.get(vault_name, {}).pop(item_id, None)
                 return
 
         # File deleted or moved - remove from cache
         if vault_name in self._cache:
             self._cache[vault_name].pop(item_id, None)
             logger.debug(f"[StatusCache] Removed '{item_id}' (file not found)")
+        self._started.get(vault_name, {}).pop(item_id, None)

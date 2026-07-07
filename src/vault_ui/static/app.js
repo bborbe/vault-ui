@@ -1095,9 +1095,10 @@ function createTaskCard(task) {
     const { title, issueKey, issueUrl } = extractJiraIssue(task.title);
 
     // Show Resume button if session exists, Starting if in progress, otherwise Start.
-    // isStarting is driven by the durable claude_session_started flag (set true by the
-    // backend before launch, cleared only when claude_session_id is cleared). startingTasks
-    // is kept only as an instant optimistic hint before the first watcher event lands.
+    // Starting is bound 100% to the durable frontmatter fields: the session was
+    // started (claude_session_started=true) but no claude_session_id has landed yet.
+    // startingTasks is an instant optimistic hint for the tab that clicked Start,
+    // before the first watcher-driven refetch surfaces the flag.
     const hasSession = task.claude_session_id;
     const isStarting = !hasSession && (!!task.claude_session_started || startingTasks.has(task.id));
     let buttonLabel, buttonClass, buttonDisabled;
