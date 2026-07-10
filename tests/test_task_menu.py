@@ -26,12 +26,71 @@ def test_phase_shortcuts_removed() -> None:
 
 
 def test_abort_routes_to_status_endpoint() -> None:
-    """handleMenuAction dispatches abort_task via PATCH /tasks/{id}/status."""
-    # Slice to the handleMenuAction function body (~1200 chars is enough to
-    # cover the function without bleeding into unrelated code)
+    """handleMenuAction dispatches abort_task through patchStatus to /tasks/{id}/status.
+
+    Abort was refactored onto the shared patchStatus helper (alongside hold/resume),
+    so the /status fetch now lives in patchStatus, not inline in handleMenuAction.
+    """
     fn_start = APP_JS.find("async function handleMenuAction")
     fn_body = APP_JS[fn_start : fn_start + 1200]
-
     assert "abort_task" in fn_body
-    assert "/status?vault=" in fn_body
-    assert "status: 'aborted'" in fn_body
+    assert "patchStatus('task'" in fn_body
+    assert "'aborted'" in fn_body
+
+    # The actual /status fetch now lives in the shared patchStatus helper.
+    ps_start = APP_JS.find("async function patchStatus")
+    ps_body = APP_JS[ps_start : ps_start + 900]
+    assert "/status?vault=" in ps_body
+
+
+def test_hold_task_toggle_present() -> None:
+    """Task menu offers a Hold Task / Resume Task toggle."""
+    assert "'Hold Task'" in APP_JS
+    assert "action: 'hold_task'" in APP_JS
+    assert "'Resume Task'" in APP_JS
+    assert "action: 'resume_task'" in APP_JS
+
+
+def test_hold_resume_route_via_patch_status() -> None:
+    """Task hold/resume dispatch through the shared patchStatus helper to /status."""
+    fn_start = APP_JS.find("async function handleMenuAction")
+    fn_body = APP_JS[fn_start : fn_start + 1200]
+    assert "patchStatus('task'" in fn_body
+    assert "'hold'" in fn_body
+    assert "'in_progress'" in fn_body
+
+
+def test_goal_card_has_menu() -> None:
+    """Goal cards render a lifecycle menu button wired to showGoalMenu."""
+    assert "function showGoalMenu" in APP_JS
+    assert "showGoalMenu(event," in APP_JS
+
+
+def test_goal_menu_items_present() -> None:
+    """Goal menu mirrors task lifecycle actions plus a Hold/Resume toggle."""
+    for label in (
+        "'Complete Goal'",
+        "'Defer Goal'",
+        "'Abort Goal'",
+        "'Hold Goal'",
+        "'Resume Goal'",
+    ):
+        assert label in APP_JS, label
+
+
+def test_goal_menu_routes() -> None:
+    """Complete/defer route to the goal execute-command; abort/hold/resume to status."""
+    fn_start = APP_JS.find("async function handleGoalMenuAction")
+    fn_body = APP_JS[fn_start : fn_start + 1600]
+    assert "/execute-command?vault=" in fn_body
+    assert "complete-goal" in fn_body
+    assert "defer-goal" in fn_body
+    assert "patchStatus('goal'" in fn_body
+
+
+def test_hold_status_column_is_filter_conditional() -> None:
+    """Hold/Aborted status columns render only when that status is in the active filter."""
+    assert "id: 'hold', label: 'Hold'" in APP_JS
+    assert "currentStatuses.includes('hold')" in APP_JS
+    assert "id: 'aborted', label: 'Aborted'" in APP_JS
+    assert "currentStatuses.includes('aborted')" in APP_JS

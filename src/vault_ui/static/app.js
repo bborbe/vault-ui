@@ -288,6 +288,7 @@ function handleAllStatusCheckbox() {
 
     updateStatusLabel();
     updateURL();
+    renderColumnHeaders();  // hold/aborted columns appear/disappear with the filter
     loadCurrentView();
 }
 
@@ -309,6 +310,7 @@ function handleStatusCheckboxChange(e) {
 
     updateStatusLabel();
     updateURL();
+    renderColumnHeaders();  // hold/aborted columns appear/disappear with the filter
     loadCurrentView();
 }
 
@@ -1170,6 +1172,7 @@ function createGoalCard(goal) {
     card.dataset.goalId = goal.id;
     card.dataset.kind = 'goal';
     card.draggable = true;
+    if (goal.status === 'hold') card.classList.add('on-hold');
 
     // Drag handlers — mirror createTaskCard, set dataTransfer to the goal id
     // so handleDrop can detect goal-vs-task via cache lookup (goalsCache hit
@@ -1190,7 +1193,14 @@ function createGoalCard(goal) {
            </a>`
         : '';
 
+    const menuButton = '<button class="menu-btn" onclick="showGoalMenu(event, \'' + goal.id + '\')">⋮</button>';
+
+    const holdBadge = goal.status === 'hold'
+        ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
+        : '';
+
     card.innerHTML = `
+        ${menuButton}
         <div class="card-content">
             <h3 class="task-title">
                 <a href="${goal.obsidian_url}" class="task-title-link" title="Open in Obsidian">
@@ -1202,6 +1212,7 @@ function createGoalCard(goal) {
         </div>
         <div class="card-footer">
             <div class="card-footer-left">
+                ${holdBadge}
                 ${jiraBadge}
                 ${goal.assignee
                     ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
@@ -1531,6 +1542,13 @@ function showTaskMenu(event, taskId) {
     menuItems.push({ label: 'Defer Task', action: 'defer_task', disabled: false });
     menuItems.push({ label: 'Abort Task', action: 'abort_task', disabled: false });
 
+    // Hold/Resume toggle — a held task offers Resume (back to in_progress), else Hold
+    if (task && task.status === 'hold') {
+        menuItems.push({ label: 'Resume Task', action: 'resume_task', disabled: false });
+    } else {
+        menuItems.push({ label: 'Hold Task', action: 'hold_task', disabled: false });
+    }
+
     menuItems.forEach(item => {
         const menuItem = document.createElement('div');
         menuItem.className = 'task-menu-item';
@@ -1546,8 +1564,13 @@ function showTaskMenu(event, taskId) {
         menu.appendChild(menuItem);
     });
 
-    // Position menu
-    const button = event.target;
+    positionAndBindMenu(menu, event.target);
+}
+
+// Position a `.task-menu` next to its trigger button, keep it inside the viewport
+// (flip up / clamp horizontally), then bind the click-outside close handler.
+// Shared by showTaskMenu and showGoalMenu.
+function positionAndBindMenu(menu, button) {
     const rect = button.getBoundingClientRect();
     menu.style.position = 'fixed';
     menu.style.visibility = 'hidden'; // Hide while measuring
@@ -1591,6 +1614,45 @@ function showTaskMenu(event, taskId) {
     }, 0);
 }
 
+// Build and open the goal-card lifecycle menu. Mirrors showTaskMenu; goal actions
+// route to handleGoalMenuAction. Reuses the `.task-menu` class + positionAndBindMenu.
+function showGoalMenu(event, goalId) {
+    event.stopPropagation();
+
+    const existingMenu = document.querySelector('.task-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+
+    const menu = document.createElement('div');
+    menu.className = 'task-menu';
+
+    const goal = goalsCache[goalId];
+
+    const menuItems = [
+        { label: 'Complete Goal', action: 'complete_goal' },
+        { label: 'Defer Goal', action: 'defer_goal' },
+        { label: 'Abort Goal', action: 'abort_goal' },
+    ];
+
+    // Hold/Resume toggle — a held goal offers Resume (back to in_progress), else Hold
+    if (goal && goal.status === 'hold') {
+        menuItems.push({ label: 'Resume Goal', action: 'resume_goal' });
+    } else {
+        menuItems.push({ label: 'Hold Goal', action: 'hold_goal' });
+    }
+
+    menuItems.forEach(item => {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'task-menu-item';
+        menuItem.textContent = item.label;
+        menuItem.addEventListener('click', () => handleGoalMenuAction(goalId, item.action));
+        menu.appendChild(menuItem);
+    });
+
+    positionAndBindMenu(menu, event.target);
+}
+
 let activeMenuCloseHandler = null;
 
 function closeMenu() {
@@ -1619,24 +1681,75 @@ async function handleMenuAction(taskId, action) {
         // Handle slash commands
         await executeSlashCommand(taskId, action);
     } else if (action === 'abort_task') {
+        await patchStatus('task', taskId, task.vault, 'aborted', 'Task aborted');
+    } else if (action === 'hold_task') {
+        await patchStatus('task', taskId, task.vault, 'hold', 'Task on hold');
+    } else if (action === 'resume_task') {
+        await patchStatus('task', taskId, task.vault, 'in_progress', 'Task resumed');
+    }
+}
+
+// PATCH a task or goal status via the shared /status endpoint, toast, then refresh.
+// kind: 'task' | 'goal'. Used by the card lifecycle menus for abort/hold/resume.
+async function patchStatus(kind, id, vault, status, successMsg) {
+    const base = kind === 'goal' ? 'goals' : 'tasks';
+    try {
+        const response = await fetch(
+            `/api/${base}/${encodeURIComponent(id)}/status?vault=${encodeURIComponent(vault)}`,
+            {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status }),
+            }
+        );
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
+        }
+        showToast(successMsg);
+        await loadCurrentView();
+    } catch (error) {
+        console.error(`Failed to set ${kind} status to ${status}:`, error);
+        showToast(error.message, true);
+    }
+}
+
+// Goal-card menu actions: complete/defer via the goal execute-command fast path,
+// abort/hold/resume via the shared status PATCH.
+async function handleGoalMenuAction(goalId, action) {
+    const goal = goalsCache[goalId];
+    if (!goal) {
+        showToast('Goal not found', true);
+        return;
+    }
+
+    closeMenu();
+
+    if (action === 'complete_goal' || action === 'defer_goal') {
+        const command = action === 'complete_goal' ? 'complete-goal' : 'defer-goal';
         try {
             const response = await fetch(
-                `/api/tasks/${encodeURIComponent(taskId)}/status?vault=${encodeURIComponent(task.vault)}`,
+                `/api/goals/${encodeURIComponent(goalId)}/execute-command?vault=${encodeURIComponent(goal.vault)}`,
                 {
-                    method: 'PATCH',
+                    method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: 'aborted' }),
+                    body: JSON.stringify({ command }),
                 }
             );
             if (!response.ok) {
                 throw new Error(await parseErrorResponse(response));
             }
-            showToast('Task aborted');
+            showToast(action === 'complete_goal' ? 'Goal completed' : 'Goal deferred to tomorrow');
             await loadCurrentView();
         } catch (error) {
-            console.error('Failed to abort task:', error);
+            console.error(`Failed to ${command}:`, error);
             showToast(error.message, true);
         }
+    } else if (action === 'abort_goal') {
+        await patchStatus('goal', goalId, goal.vault, 'aborted', 'Goal aborted');
+    } else if (action === 'hold_goal') {
+        await patchStatus('goal', goalId, goal.vault, 'hold', 'Goal on hold');
+    } else if (action === 'resume_goal') {
+        await patchStatus('goal', goalId, goal.vault, 'in_progress', 'Goal resumed');
     }
 }
 
@@ -1925,16 +2038,24 @@ function renderColumnHeaders() {
         board.classList.add('status-mode');
         // Remove any pre-existing status columns (idempotent).
         board.querySelectorAll('[data-status]').forEach(el => el.remove());
-        // Insert six status columns at the start of the board (in canonical enum order).
+        // Insert status columns at the start of the board (in canonical enum order).
         // Visible status columns (left → right, time-progression).
-        // Hold + aborted are intentionally hidden — they're rare edge states; the
-        // status filter dropdown still lists them so cards remain reachable via filter.
+        // Hold + aborted are hidden by DEFAULT (rare edge states), but must get a
+        // column when the operator explicitly filters them in — otherwise a held /
+        // aborted goal is fetched but has no column to render into and silently
+        // vanishes (its card, and thus its Resume action, becomes unreachable).
         const STATUS_COLUMNS = [
             { id: 'backlog', label: 'Backlog' },
             { id: 'next', label: 'Next' },
             { id: 'in_progress', label: 'In Progress' },
             { id: 'completed', label: 'Completed' },
         ];
+        if (currentStatuses.includes('hold')) {
+            STATUS_COLUMNS.push({ id: 'hold', label: 'Hold' });
+        }
+        if (currentStatuses.includes('aborted')) {
+            STATUS_COLUMNS.push({ id: 'aborted', label: 'Aborted' });
+        }
         STATUS_COLUMNS.forEach(col => {
             const div = document.createElement('div');
             div.className = 'kanban-column';

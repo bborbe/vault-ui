@@ -1166,6 +1166,118 @@ def test_update_task_status_timeout_returns_504(test_client: TestClient) -> None
     assert "timed out" in response.json()["detail"]
 
 
+def test_update_goal_status_invalidates_goal_cache(test_client: TestClient) -> None:
+    """A successful goal status write pops the per-vault goal cache synchronously, so
+    the operator's own change surfaces on the next /api/goals read without waiting for
+    the async watcher (the mtime cache key can't detect in-place frontmatter edits)."""
+    test_client.app.state.vault_goal_cache["TestVault"] = (123.0, [])
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.patch(
+            "/api/goals/Some%20Goal/status?vault=TestVault",
+            json={"status": "hold"},
+        )
+
+    assert response.status_code == 200
+    assert "TestVault" not in test_client.app.state.vault_goal_cache
+
+
+def test_update_task_status_invalidates_task_cache(test_client: TestClient) -> None:
+    """A successful task status write pops the per-vault task cache synchronously."""
+    test_client.app.state.vault_task_cache["TestVault"] = (123.0, [])
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/status?vault=TestVault",
+            json={"status": "hold"},
+        )
+
+    assert response.status_code == 200
+    assert "TestVault" not in test_client.app.state.vault_task_cache
+
+
+def test_execute_goal_command_complete_uses_vault_cli(test_client: TestClient) -> None:
+    """POST /goals/{id}/execute-command complete-goal runs vault-cli goal complete."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"done\n", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.post(
+            "/api/goals/Some%20Goal/execute-command?vault=TestVault",
+            json={"command": "complete-goal"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["command"] == "complete-goal"
+    assert mock_exec.call_args.args == (
+        "vault-cli",
+        "goal",
+        "complete",
+        "Some Goal",
+        "--vault",
+        "testvault",
+    )
+
+
+def test_execute_goal_command_defer_uses_vault_cli(test_client: TestClient) -> None:
+    """POST /goals/{id}/execute-command defer-goal runs vault-cli goal defer <tomorrow>."""
+    from datetime import date, timedelta
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.post(
+            "/api/goals/Some%20Goal/execute-command?vault=TestVault",
+            json={"command": "defer-goal"},
+        )
+
+    assert response.status_code == 200
+    assert mock_exec.call_args.args == (
+        "vault-cli",
+        "goal",
+        "defer",
+        "Some Goal",
+        tomorrow,
+        "--vault",
+        "testvault",
+    )
+
+
+def test_execute_goal_command_unknown_returns_400(test_client: TestClient) -> None:
+    """Unknown goal command is rejected with HTTP 400 before reaching vault-cli."""
+    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+        response = test_client.post(
+            "/api/goals/Some%20Goal/execute-command?vault=TestVault",
+            json={"command": "delete-goal"},
+        )
+
+    assert response.status_code == 400
+    mock_exec.assert_not_called()
+
+
+def test_execute_goal_command_leading_dash_rejected(test_client: TestClient) -> None:
+    """Goal IDs starting with '-' are rejected to prevent vault-cli argument injection."""
+    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+        response = test_client.post(
+            "/api/goals/-help/execute-command?vault=TestVault",
+            json={"command": "complete-goal"},
+        )
+
+    assert response.status_code == 400
+    assert "goal_id must not start with '-'" in response.json()["detail"]
+    mock_exec.assert_not_called()
+
+
 def test_patch_session_uuid_stored_as_is(
     test_client: TestClient,
     mock_vault_client: MagicMock,
