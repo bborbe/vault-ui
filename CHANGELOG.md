@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.46.0
 
 - feat(ui): Add a lifecycle dropdown to goal cards and a Hold/Resume toggle to both goal and task cards. Goal cards gain a `⋮` menu (Complete / Defer / Abort / Hold Goal) mirroring the task-card menu — Complete/Defer route to a new `POST /api/goals/{id}/execute-command` fast path (`vault-cli goal complete` / `goal defer <tomorrow>`, no AI session); Abort/Hold go through the existing `PATCH /api/goals/{id}/status`. Hold is a toggle: a held item's menu instead reads **Resume** and returns it to `in_progress`. Held goals show a `⏸ HOLD` badge like held tasks. Shared `positionAndBindMenu` + `patchStatus` frontend helpers back both menus (abort refactored onto them).
 - fix(ui): Render the Hold (and Aborted) status column on the Goals board whenever that status is in the active filter. Previously the board built only four fixed columns (Backlog/Next/In Progress/Completed), so a held goal was fetched but had no column to render into and silently vanished — its card and Resume action unreachable. Columns now rebuild on status-filter changes too, not just on view toggle.
