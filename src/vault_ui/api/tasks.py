@@ -1064,6 +1064,7 @@ async def update_task_phase(
 
 @router.patch("/goals/{goal_id}/status")
 async def update_goal_status(
+    http_request: Request,
     vault: str,
     goal_id: str,
     request: UpdateStatusRequest,
@@ -1116,6 +1117,12 @@ async def update_goal_status(
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
 
+        # Invalidate the per-vault goal cache synchronously. The cache key is the
+        # vault-root mtime, which does NOT change on an in-place frontmatter edit
+        # (POSIX), so without this pop the operator's own status change would not
+        # surface until the async watcher happens to fire — forcing a manual reload.
+        http_request.app.state.vault_goal_cache.pop(vault, None)
+
         if _connection_manager:
             await _connection_manager.broadcast(
                 {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
@@ -1130,8 +1137,101 @@ async def update_goal_status(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@router.post("/goals/{goal_id}/execute-command")
+async def execute_goal_command(
+    http_request: Request,
+    vault: str,
+    goal_id: str,
+    request: ExecuteCommandRequest,
+) -> dict[str, str]:
+    """Run a goal lifecycle command (complete-goal / defer-goal) from the goal card menu.
+
+    Fast path only — mirrors the task defer/complete fast path via vault-cli, no AI
+    session. Abort and hold/resume go through PATCH /goals/{id}/status instead (pure
+    status writes). Complete/defer live here because they carry semantics beyond a
+    status flip (recurring/subtask handling, defer_date).
+
+    Args:
+        vault: Vault name
+        goal_id: Goal ID (filename without .md)
+        request: Command to execute ("complete-goal" or "defer-goal")
+
+    Returns:
+        Success payload with goal_id + command
+
+    Raises:
+        HTTPException: If goal not found, goal_id starts with '-', command unknown, or update fails
+    """
+    if goal_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="goal_id must not start with '-'")
+
+    if request.command not in ("complete-goal", "defer-goal"):
+        raise HTTPException(status_code=400, detail=f"Unknown command: {request.command}")
+
+    try:
+        vault_config = get_vault_config(vault)
+
+        if request.command == "defer-goal":
+            tomorrow = (date.today() + timedelta(days=1)).isoformat()
+            vault_cli_args = [
+                vault_config.vault_cli_path,
+                "goal",
+                "defer",
+                goal_id,
+                tomorrow,
+                "--vault",
+                vault_config.name.lower(),
+            ]
+        else:
+            vault_cli_args = [
+                vault_config.vault_cli_path,
+                "goal",
+                "complete",
+                goal_id,
+                "--vault",
+                vault_config.name.lower(),
+            ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *vault_cli_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        # 10s timeout — vault-cli goal complete/defer is a single-file frontmatter
+        # edit; anything beyond this is a hang we want to surface as HTTP 504.
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except TimeoutError as e:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            raise HTTPException(
+                status_code=504, detail=f"vault-cli goal {request.command} timed out after 10s"
+            ) from e
+
+        if proc.returncode != 0:
+            raise HTTPException(status_code=500, detail=stderr.decode())
+
+        # Invalidate the per-vault goal cache synchronously (see update_goal_status
+        # for why the mtime cache key can't detect an in-place frontmatter edit).
+        http_request.app.state.vault_goal_cache.pop(vault, None)
+
+        if _connection_manager:
+            await _connection_manager.broadcast(
+                {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
+            )
+
+        return {"status": "success", "goal_id": goal_id, "command": request.command}
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.patch("/tasks/{task_id}/status")
 async def update_task_status(
+    http_request: Request,
     vault: str,
     task_id: str,
     request: UpdateStatusRequest,
@@ -1183,6 +1283,10 @@ async def update_task_status(
 
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
+
+        # Invalidate the per-vault task cache synchronously (see update_goal_status
+        # for why the mtime cache key can't detect an in-place frontmatter edit).
+        http_request.app.state.vault_task_cache.pop(vault, None)
 
         if _connection_manager:
             await _connection_manager.broadcast(
