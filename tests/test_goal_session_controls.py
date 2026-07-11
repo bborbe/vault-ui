@@ -16,7 +16,7 @@ def _slice(marker: str, length: int = 1600) -> str:
 def test_goal_card_renders_start_and_resume_gated_on_session() -> None:
     """createGoalCard offers BOTH Resume (session present) and Start (no session),
     gated on goal.claude_session_id — so an always-Start impl fails."""
-    body = _slice("function createGoalCard", 2200)
+    body = _slice("function createGoalCard", 2800)
     assert "claude_session_id" in body
     assert "'▶ Resume'" in body or "▶ Resume" in body
     assert "resume-btn" in body

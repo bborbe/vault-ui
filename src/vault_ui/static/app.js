@@ -15,6 +15,7 @@ let currentView = 'tasks'; // 'tasks' | 'goals' — synced to ?view= URL param, 
 let currentGroupBy = 'phase'; // 'phase' | 'status' — derived from currentView (tasks→phase, goals→status); not user-selectable
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
+let startingGoals = new Set(); // Track goals currently being started (mirrors startingTasks)
 
 const POLL_INTERVAL_MS = 60000; // Fallback polling every 60 seconds
 
@@ -97,14 +98,14 @@ function parseURLParams() {
     // KIND-AWARE default:
     //   - Tasks view: ['in_progress', 'completed'] (current behaviour — operator
     //     usually wants to see active + recent wins, not planning queue).
-    //   - Goals view: ['backlog', 'next', 'in_progress', 'completed'] — matches the
+    //   - Goals view: ['backlog', 'next', 'in_progress', 'hold', 'completed'] — matches the
     //     four visible status columns on the Goals board, so each column has its
     //     items by default instead of two empty columns confusing the operator.
     const statusParams = params.getAll('status');
     if (statusParams.length > 0) {
         currentStatuses = statusParams;
     } else if (currentView === 'goals') {
-        currentStatuses = ['backlog', 'next', 'in_progress', 'completed'];
+        currentStatuses = ['backlog', 'next', 'in_progress', 'hold', 'completed'];
     }
     // else: keep the module-level default ['in_progress', 'hold', 'completed'] for Tasks view.
 
@@ -1200,11 +1201,28 @@ function createGoalCard(goal) {
         ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
         : '';
 
-    // Start/Resume button — mirrors createTaskCard but WITHOUT the task-only
-    // "Starting…" state (spec Non-goal): a goal shows Resume once claude_session_id
-    // lands, Start otherwise.
+    // Start / Starting / Resume button — mirrors createTaskCard. The startingGoals
+    // set is an optimistic per-tab hint that survives re-renders during the
+    // multi-second mint, so the button holds "Starting…" instead of flashing back
+    // to Start when a WebSocket/poll re-render fires mid-mint. (goal.claude_session_started
+    // is reserved for a future durable/cross-tab flag; not surfaced by the API yet.)
     const hasSession = goal.claude_session_id;
-    const startButton = `<button class="${hasSession ? 'resume-btn' : 'start-btn'}" onclick="runGoal('${goal.id}')">${hasSession ? '▶ Resume' : '▶ Start'}</button>`;
+    const isStarting = !hasSession && (!!goal.claude_session_started || startingGoals.has(goal.id));
+    let buttonLabel, buttonClass, buttonDisabled;
+    if (isStarting) {
+        buttonLabel = '⏳ Starting...';
+        buttonClass = 'start-btn';
+        buttonDisabled = true;
+    } else if (hasSession) {
+        buttonLabel = '▶ Resume';
+        buttonClass = 'resume-btn';
+        buttonDisabled = false;
+    } else {
+        buttonLabel = '▶ Start';
+        buttonClass = 'start-btn';
+        buttonDisabled = false;
+    }
+    const startButton = `<button class="${buttonClass}" onclick="runGoal('${goal.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
 
     card.innerHTML = `
         ${menuButton}
@@ -1368,7 +1386,10 @@ async function runGoal(goalId) {
             return;
         }
 
-        // Mint a new session via the goal-run endpoint.
+        // Mint a new session via the goal-run endpoint. Mark the goal as starting so
+        // a mid-mint re-render (WebSocket/poll) keeps the button on "Starting…" via
+        // createGoalCard's startingGoals check, instead of flashing back to Start.
+        startingGoals.add(goalId);
         button.textContent = '⏳ Starting...';
         const response = await fetch(
             `/api/goals/${encodeURIComponent(goalId)}/run?vault=${encodeURIComponent(goal.vault)}`,
@@ -1379,6 +1400,7 @@ async function runGoal(goalId) {
         }
 
         const data = await response.json();
+        startingGoals.delete(goalId);
         goal.claude_session_id = data.session_id;
         showModal(data.session_id, data.command, data.working_dir, data.task_title);
 
@@ -1386,6 +1408,7 @@ async function runGoal(goalId) {
         button.className = 'resume-btn';
         button.disabled = false;
     } catch (error) {
+        startingGoals.delete(goalId);
         console.error('Failed to run goal:', error);
         showToast(error.message, true);
         if (event && event.target) {
@@ -2119,8 +2142,8 @@ function setView(newView) {
     // BACKLOG / NEXT columns empty (and vice versa). The operator can still
     // narrow afterwards via the status dropdown.
     currentStatuses = newView === 'goals'
-        ? ['backlog', 'next', 'in_progress', 'completed']
-        : ['in_progress', 'completed'];
+        ? ['backlog', 'next', 'in_progress', 'hold', 'completed']
+        : ['in_progress', 'hold', 'completed'];
     updateStatusLabel();
     renderStatusDropdown();
     updateViewToggle();

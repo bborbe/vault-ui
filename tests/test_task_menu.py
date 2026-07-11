@@ -104,3 +104,21 @@ def test_priority_chip_replaces_goal_meta_line() -> None:
     assert "goal.priority ?" in APP_JS
     # The old standalone goal "Priority: N" line is gone
     assert 'class="goal-meta">Priority:' not in APP_JS
+
+
+def test_goal_starting_state_mirrors_tasks() -> None:
+    """Goal cards get a startingGoals set + isStarting button logic (no Start flash)."""
+    assert "let startingGoals" in APP_JS
+    assert "startingGoals.has(goal.id)" in APP_JS
+    assert "startingGoals.add(goalId)" in APP_JS
+    assert "startingGoals.delete(goalId)" in APP_JS
+    # createGoalCard computes an isStarting state like createTaskCard
+    assert "goal.claude_session_started || startingGoals.has(goal.id)" in APP_JS
+
+
+def test_hold_in_default_status_filters() -> None:
+    """Both tasks and goals default status sets include 'hold'."""
+    # Goals default (parseURLParams + setView) has hold
+    assert "['backlog', 'next', 'in_progress', 'hold', 'completed']" in APP_JS
+    # Tasks default on view-toggle has hold (was ['in_progress', 'completed'])
+    assert "['in_progress', 'hold', 'completed']" in APP_JS
