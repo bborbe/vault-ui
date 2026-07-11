@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(api): Add `POST /api/goals/{goal_id}/run` endpoint that mints a Claude session for a goal via `vault-cli goal work-on`, stores `claude_session_id` on the goal, and returns a `SessionResponse` with a ready-to-run resume command. Goal IDs beginning with `-` are rejected before any subprocess (argument-injection guard). Failures surface as HTTP 500 with diagnostics naming the goal id and vault.
+- feat(api): Add `DELETE /api/goals/{goal_id}/session` endpoint that clears `claude_session_id` from goal frontmatter via `vault-cli goal clear` with a bounded 10s timeout. A wedged process is killed and returns HTTP 504; non-zero exit returns HTTP 500. Goal IDs beginning with `-` are rejected before any subprocess.
+- test(api): Add regression tests for both goal-session endpoints covering: happy-path mint + store + resume command, goal-not-found 404, dash-prefix rejection, three diagnosable-500 cases (non-zero exit, non-JSON, no session), clear-session happy path, timeout → 504 + kill, non-zero → 500, and `GET /api/goals` continuing to surface each goal's `claude_session_id`.
+
 ## v0.46.0
 
 - feat(ui): Add a lifecycle dropdown to goal cards and a Hold/Resume toggle to both goal and task cards. Goal cards gain a `⋮` menu (Complete / Defer / Abort / Hold Goal) mirroring the task-card menu — Complete/Defer route to a new `POST /api/goals/{id}/execute-command` fast path (`vault-cli goal complete` / `goal defer <tomorrow>`, no AI session); Abort/Hold go through the existing `PATCH /api/goals/{id}/status`. Hold is a toggle: a held item's menu instead reads **Resume** and returns it to `in_progress`. Held goals show a `⏸ HOLD` badge like held tasks. Shared `positionAndBindMenu` + `patchStatus` frontend helpers back both menus (abort refactored onto them).

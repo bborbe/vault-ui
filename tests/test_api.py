@@ -3680,3 +3680,126 @@ def test_clear_task_session_clears_both_id_and_started(
     cleared_fields = {c.args[1] for c in mock_vault_client.clear_field.await_args_list}
     assert "claude_session_id" in cleared_fields
     assert "claude_session_started" in cleared_fields
+
+
+# ---- spec-014: goal session endpoints ----
+
+
+def test_run_goal_endpoint_success(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """POST /api/goals/{id}/run mints a session, stores it, returns a resume command."""
+    mock_proc = _make_streaming_proc(b'{"session_id": "goal-session-id"}')
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client_with_goals.post("/api/goals/Test%20Goal/run?vault=TestVault")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == "goal-session-id"
+    assert "claude --resume goal-session-id" in data["command"]
+    assert data["task_title"] == "Test Goal"
+    # Guard: assert exact vault-cli argv to catch "task" vs "goal" or wrong-flag typo
+    argv = mock_exec.call_args.args
+    for tok in ("goal", "work-on", "Test Goal", "--mode", "headless", "--output", "json"):
+        assert tok in argv, f"missing {tok!r} in vault-cli argv {argv}"
+    mock_vault_client_with_goals.set_goal_field.assert_awaited_once_with(
+        "Test Goal", "claude_session_id", "goal-session-id"
+    )
+
+
+def test_run_goal_endpoint_not_found(test_client_with_goals: TestClient) -> None:
+    """A goal_id not present in the vault returns HTTP 404 before minting."""
+    response = test_client_with_goals.post("/api/goals/NoSuchGoal/run?vault=TestVault")
+    assert response.status_code == 404
+
+
+def test_run_goal_dash_prefix_rejected(test_client_with_goals: TestClient) -> None:
+    """A goal_id starting with '-' is rejected with HTTP 400 and no subprocess."""
+    mock_exec = AsyncMock()
+    with patch("asyncio.create_subprocess_exec", mock_exec):
+        response = test_client_with_goals.post("/api/goals/-evil/run?vault=TestVault")
+    assert response.status_code == 400
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "proc_factory",
+    [
+        pytest.param("nonzero", id="nonzero_exit"),
+        pytest.param("nonjson", id="non_json"),
+        pytest.param("nosession", id="no_session"),
+    ],
+)
+def test_run_goal_failures_return_diagnosable_500(
+    test_client_with_goals: TestClient, proc_factory: str
+) -> None:
+    if proc_factory == "nonzero":
+        proc = _make_streaming_proc(b"")
+        proc.wait = AsyncMock(return_value=1)
+    elif proc_factory == "nonjson":
+        proc = _make_streaming_proc(b"not json at all")
+    else:  # nosession
+        proc = _make_streaming_proc(b'{"foo": "bar"}')
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        response = test_client_with_goals.post("/api/goals/Test%20Goal/run?vault=TestVault")
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "Test Goal" in detail
+    assert "TestVault" in detail
+
+
+def test_clear_goal_session_success(test_client_with_goals: TestClient) -> None:
+    """DELETE /api/goals/{id}/session clears claude_session_id via vault-cli."""
+    proc = MagicMock()
+    proc.communicate = AsyncMock(return_value=(b"", b""))
+    proc.returncode = 0
+    mock_exec = AsyncMock(return_value=proc)
+    with patch("asyncio.create_subprocess_exec", mock_exec):
+        response = test_client_with_goals.delete("/api/goals/Test%20Goal/session?vault=TestVault")
+    assert response.status_code == 200
+    assert response.json()["goal_id"] == "Test Goal"
+    args = mock_exec.call_args.args
+    assert "goal" in args
+    assert "clear" in args
+    assert "claude_session_id" in args
+    assert "Test Goal" in args
+
+
+def test_clear_goal_session_dash_prefix_rejected(test_client_with_goals: TestClient) -> None:
+    mock_exec = AsyncMock()
+    with patch("asyncio.create_subprocess_exec", mock_exec):
+        response = test_client_with_goals.delete("/api/goals/-evil/session?vault=TestVault")
+    assert response.status_code == 400
+    mock_exec.assert_not_called()
+
+
+def test_clear_goal_session_timeout_returns_504(test_client_with_goals: TestClient) -> None:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(side_effect=TimeoutError())
+    proc.kill = MagicMock()
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        response = test_client_with_goals.delete("/api/goals/Test%20Goal/session?vault=TestVault")
+    assert response.status_code == 504
+    proc.kill.assert_called_once()
+
+
+def test_clear_goal_session_nonzero_returns_500(test_client_with_goals: TestClient) -> None:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(return_value=(b"", b"boom"))
+    proc.returncode = 1
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        response = test_client_with_goals.delete("/api/goals/Test%20Goal/session?vault=TestVault")
+    assert response.status_code == 500
+
+
+def test_list_goals_surfaces_claude_session_id(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """/api/goals continues to include each goal's claude_session_id (regression guard)."""
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Sessioned Goal", claude_session_id="sess-123")
+    )
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+    assert response.status_code == 200
+    goal = response.json()[0]
+    assert goal["claude_session_id"] == "sess-123"

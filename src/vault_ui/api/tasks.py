@@ -244,6 +244,82 @@ async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> st
     return session_id
 
 
+async def start_vault_cli_goal_session(vault_config: VaultConfig, goal_id: str) -> str:
+    """Start a Claude session for a goal via ``vault-cli goal work-on``, returns session_id.
+
+    Parallels ``start_vault_cli_session`` (which targets tasks) but runs
+    ``vault-cli goal work-on <goal_id> --mode headless --vault <name> --output json``.
+    Streams stdout/stderr line-by-line to the logger via ``_drain_stream`` while
+    accumulating raw bytes for the final JSON parse. Every diagnostic RuntimeError
+    names the goal id and vault so a failure is diagnosable from the toast + log
+    (spec Failure Mode rows 2 and 3).
+    """
+    proc = await asyncio.create_subprocess_exec(
+        vault_config.vault_cli_path,
+        "goal",
+        "work-on",
+        goal_id,
+        "--mode",
+        "headless",
+        "--vault",
+        vault_config.name,
+        "--output",
+        "json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        limit=1 << 20,  # 1 MiB per-line buffer (matches start_vault_cli_session)
+    )
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+
+    stdout_buf = bytearray()
+    stderr_buf = bytearray()
+
+    await asyncio.gather(
+        _drain_stream(proc.stdout, "stdout", goal_id, stdout_buf),
+        _drain_stream(proc.stderr, "stderr", goal_id, stderr_buf),
+    )
+
+    returncode = await proc.wait()
+
+    if returncode != 0:
+        stderr_text = bytes(stderr_buf).decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli goal work-on failed (rc={returncode}) for goal {goal_id!r} "
+            f"in vault {vault_config.name!r}: {stderr_text}"
+        )
+
+    stdout_text = bytes(stdout_buf).decode()
+    try:
+        parsed = _last_json_value(stdout_text)
+    except json.JSONDecodeError as e:
+        stderr_text = bytes(stderr_buf).decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli goal work-on returned non-JSON output (rc={returncode}) for "
+            f"goal {goal_id!r} in vault {vault_config.name!r}: {e}. "
+            f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        ) from e
+    if not isinstance(parsed, dict):
+        stderr_text = bytes(stderr_buf).decode(errors="replace").strip()
+        raise RuntimeError(
+            f"vault-cli goal work-on returned {type(parsed).__name__} (expected JSON object, "
+            f"rc={returncode}) for goal {goal_id!r} in vault {vault_config.name!r}. "
+            f"stdout ({len(stdout_text)} chars)={stdout_text[:500]!r}; "
+            f"stderr={stderr_text!r}"
+        )
+    result = parsed
+    session_id = result.get("session_id") or ""
+    if not session_id:
+        warnings = result.get("warnings") or []
+        detail = "; ".join(warnings) if warnings else "no warnings reported"
+        raise RuntimeError(
+            f"vault-cli goal work-on did not start a claude session for goal {goal_id!r} "
+            f"in vault {vault_config.name!r}: {detail}"
+        )
+    return session_id
+
+
 class VaultResponse(BaseModel):
     """API response model for vault."""
 
@@ -791,6 +867,68 @@ async def run_task(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.exception(f"Error creating session: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/goals/{goal_id}/run", response_model=SessionResponse)
+async def run_goal(
+    vault: str,
+    goal_id: str,
+) -> SessionResponse:
+    """Create a Claude Code session for the given goal.
+
+    Mirrors ``run_task`` for goals: mint a session via ``vault-cli goal work-on``,
+    store the returned ``claude_session_id`` on the goal frontmatter via vault-cli,
+    and return a ``SessionResponse`` with a ready-to-run resume command.
+
+    Raises:
+        HTTPException 400: goal_id starts with '-'
+        HTTPException 404: goal not found in the vault
+        HTTPException 500: vault-cli non-zero exit / non-JSON / no session minted
+    """
+    logger.info(f"run_goal called: vault={vault}, goal_id={goal_id}")
+
+    # Reject goal IDs starting with `-` before any subprocess (arg-injection guard,
+    # same as update_goal_status).
+    if goal_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="goal_id must not start with '-'")
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        vault_config = get_vault_config(vault)
+
+        # vault-cli has no `goal show`; list_goals(show_all=True) is the existing
+        # surface. Resolving here yields the title for the resume command AND a
+        # clean 404 when the goal does not exist (spec Failure Mode row 1).
+        goals = await client.list_goals(show_all=True)
+        goal = next((g for g in goals if g.id == goal_id), None)
+        if goal is None:
+            raise HTTPException(status_code=404, detail=f"Goal not found: {goal_id}")
+
+        logger.info(f"Starting vault-cli goal session for goal {goal_id}")
+        session_id = await start_vault_cli_goal_session(vault_config, goal_id)
+        logger.info(f"Goal session {session_id} created")
+
+        # Store the minted session id on the goal via vault-cli (not a direct file
+        # write) so /api/goals surfaces it and the card flips to Resume.
+        await client.set_goal_field(goal_id, "claude_session_id", session_id)
+
+        command = _build_resume_command(vault_config, session_id, task_title=goal.title)
+
+        return SessionResponse(
+            session_id=session_id,
+            command=command,
+            working_dir=vault_config.vault_path,
+            task_title=goal.title,
+        )
+
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        logger.error(f"Goal not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception(f"Error creating goal session: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -1389,6 +1527,78 @@ async def clear_task_session(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/goals/{goal_id}/session")
+async def clear_goal_session(
+    http_request: Request,
+    vault: str,
+    goal_id: str,
+) -> dict[str, str]:
+    """Clear ``claude_session_id`` from goal frontmatter (Reset Session).
+
+    Mirrors ``clear_task_session`` but uses the inline-subprocess pattern with a
+    bounded 10s timeout (spec Failure Mode: a wedged ``goal clear`` surfaces as
+    HTTP 504 with the process killed, not a hung request).
+
+    Raises:
+        HTTPException 400: goal_id starts with '-'
+        HTTPException 404: vault-cli BINARY not found (FileNotFoundError only)
+        HTTPException 500: vault-cli non-zero exit — INCLUDING a missing goal (vault-cli
+            exits non-zero; this matches update_goal_status and every other goal write
+            endpoint. Do NOT add a list_goals pre-check to the clear path just to turn
+            goal-not-found into 404 — the run path pre-fetches only because it needs the
+            title; clear does not. The error still surfaces cleanly as a toast.)
+        HTTPException 504: vault-cli goal clear timed out (process killed)
+    """
+    if goal_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="goal_id must not start with '-'")
+
+    try:
+        vault_config = get_vault_config(vault)
+
+        proc = await asyncio.create_subprocess_exec(
+            vault_config.vault_cli_path,
+            "goal",
+            "clear",
+            goal_id,
+            "claude_session_id",
+            "--vault",
+            vault_config.name.lower(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        # 10s timeout — vault-cli `goal clear` is a single-file frontmatter edit;
+        # anything beyond this is a hang we surface as HTTP 504.
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except TimeoutError as e:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            raise HTTPException(
+                status_code=504, detail="vault-cli goal clear (session) timed out after 10s"
+            ) from e
+
+        if proc.returncode != 0:
+            raise HTTPException(status_code=500, detail=stderr.decode())
+
+        # Invalidate the per-vault goal cache synchronously so the card's
+        # Start/Resume state updates without waiting for the async watcher
+        # (same rationale as update_goal_status).
+        http_request.app.state.vault_goal_cache.pop(vault, None)
+
+        if _connection_manager:
+            await _connection_manager.broadcast(
+                {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
+            )
+
+        return {"status": "success", "goal_id": goal_id}
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/tasks/{task_id}/session")
