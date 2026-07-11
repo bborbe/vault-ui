@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.50.0
 
 - feat(api): Surface durable `claude_session_started` flag for goals end-to-end: `GET /api/goals` reads it from the status cache (mirroring the task path), `POST /goals/{id}/run` sets it before mint and clears it on mint failure, `DELETE /goals/{id}/session` clears it in lockstep with `claude_session_id`, and stale-session cleanup clears it alongside the id. The flag is an invariant of the goal session lifecycle, mirroring the existing task behavior exactly. No new config or tunable — the frontend already consumes `goal.claude_session_started` (shipped v0.49.0).
 
