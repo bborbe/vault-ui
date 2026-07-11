@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.51.0
 
 - feat(ui): Declutter the header on narrow viewports (laptops). Below a 1500px viewport width, hide the "Vault UI" title (pure branding) and the "Upcoming" window `<select>` (a rarely-toggled setting) via a CSS media query, so the vault/status/assignee selectors and the board columns get the reclaimed width. Full-width monitors are unchanged; the elements stay in the DOM (hidden by CSS only). Bumps the `style.css` cache-bust token.
 
