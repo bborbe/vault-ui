@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-07-11T13:29:51Z"
 generating: "2026-07-11T13:29:51Z"
 prompted: "2026-07-11T13:40:31Z"
+verifying: "2026-07-11T14:59:09Z"
 branch: dark-factory/unify-task-goal-card-frontend
 ---
 
