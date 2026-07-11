@@ -232,8 +232,19 @@ def test_resolve_default_config_path_both_exist_xdg_wins(tmp_path: Path) -> None
     assert result == xdg_file
 
 
-def test_resolve_default_config_path_real_defaults_sane(tmp_path: Path) -> None:
-    """resolve_default_config_path with no args returns ~/.config/vault-ui/config.yaml."""
+def test_resolve_default_config_path_real_defaults_sane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """resolve_default_config_path returns the XDG default when no legacy config exists.
+
+    Isolate the legacy fallback from the ambient filesystem: the production clone
+    keeps a repo-root ``config.yaml`` (needed by the launchd service), which the
+    resolver would otherwise correctly return via its legacy fallback — making this
+    test env-dependent (green in CI / fresh clones, red in the production clone where
+    dark-factory runs its baseline check). Point the legacy path at a guaranteed-absent
+    file so we exercise the real XDG-default computation deterministically.
+    """
+    monkeypatch.setattr("vault_ui.config._LEGACY_CONFIG_PATH", tmp_path / "no-legacy-config.yaml")
     result = resolve_default_config_path()
     assert isinstance(result, Path)
     assert result == Path.home() / ".config" / "vault-ui" / "config.yaml"
