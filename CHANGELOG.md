@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): Render card priority as a compact `P<N>` chip in the footer meta row (next to the assignee) on both task and goal cards, replacing the standalone `Priority: N` line that wasted a full row on goal cards. No chip when priority is unset. Muted slate pill styling (`.priority-chip`), distinct from the violet hold badge. Bumps the `app.js` cache-bust token.
+
 ## v0.47.0
 
 - feat(ui): Add Start / Resume / Reset session controls to goal cards, reaching session parity with task cards. A session-less goal shows ▶ Start; clicking it mints a real Claude session via `POST /api/goals/{id}/run` (`vault-cli goal work-on <goal> --mode headless --output json`), stores `claude_session_id` on the goal, and opens the existing Session Ready modal with a resume command — the card then flips to ▶ Resume. A goal that already has a session shows ▶ Resume and short-circuits to the modal without minting a new session. The goal dropdown lists **Reset Session** only when the goal has a session; choosing it clears `claude_session_id` via `DELETE /api/goals/{id}/session` and the card reverts to ▶ Start. Reuses the existing `showModal` / `positionAndBindMenu` / `patchStatus` / `parseErrorResponse` helpers and the existing stale-session cleanup. Bumps the `app.js` cache-bust token so already-open boards fetch the new script.

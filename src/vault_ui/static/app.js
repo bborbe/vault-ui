@@ -1156,6 +1156,7 @@ function createTaskCard(task) {
                 ${holdBadge}
                 ${jiraBadge}
                 ${assigneeBadge}
+                ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
             </div>
             <div class="card-actions">
                 ${startButton}
@@ -1214,7 +1215,6 @@ function createGoalCard(goal) {
                     <span class="obsidian-icon">↗</span>
                 </a>
             </h3>
-            ${goal.priority ? `<p class="goal-meta">Priority: ${escapeHtml(String(goal.priority))}</p>` : ''}
         </div>
         <div class="card-footer">
             <div class="card-footer-left">
@@ -1223,6 +1223,7 @@ function createGoalCard(goal) {
                 ${goal.assignee
                     ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
                     : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeHtml(goal.id)}', '${escapeHtml(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
+                ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
             </div>
             <div class="card-actions">
                 ${startButton}

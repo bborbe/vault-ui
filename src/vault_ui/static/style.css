@@ -920,6 +920,23 @@ h1 {
     white-space: nowrap;
 }
 
+/* Compact priority chip (P<N>) in the card footer meta row — muted, replaces the
+   old standalone "Priority: N" line. */
+.priority-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.02em;
+    color: #cbd5e1;             /* slate-300 */
+    background: #334155;        /* slate-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+}
+
 /* View toggle (Tasks / Goals) */
 .view-toggle {
     display: inline-flex;
