@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(ui): Goal ▶ Start button holds "⏳ Starting…" through the multi-second Claude mint instead of flashing back to Start. Adds a `startingGoals` set (mirroring `startingTasks`) that survives mid-mint re-renders (WebSocket/poll) within the tab; `createGoalCard` computes an `isStarting` state like `createTaskCard`. (Full durable/cross-tab `claude_session_started` flag for goals is a follow-up.) Bumps the `app.js` cache-bust token.
+- feat(ui): Include `hold` in the default status filter (no `?status=` param) for both tasks and goals, so parked/blocked work isn't silently hidden. Goals default is now `backlog, next, in_progress, hold, completed` (adds the Hold column by default); the Tasks view-toggle default is `in_progress, hold, completed` (previously dropped `hold`, inconsistent with initial load).
+
 ## v0.48.0
 
 - feat(ui): Render card priority as a compact `P<N>` chip in the footer meta row (next to the assignee) on both task and goal cards, replacing the standalone `Priority: N` line that wasted a full row on goal cards. No chip when priority is unset. Muted slate pill styling (`.priority-chip`), distinct from the violet hold badge. Bumps the `app.js` cache-bust token.
