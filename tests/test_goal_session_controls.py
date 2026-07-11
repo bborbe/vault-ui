@@ -16,13 +16,16 @@ def _slice(marker: str, length: int = 1600) -> str:
 def test_goal_card_renders_start_and_resume_gated_on_session() -> None:
     """createGoalCard offers BOTH Resume (session present) and Start (no session),
     gated on goal.claude_session_id — so an always-Start impl fails."""
-    body = _slice("function createGoalCard", 2800)
+    # Label/class/condition literals now live in the shared sessionButtonHtml helper
+    body = _slice("function sessionButtonHtml", 900)
     assert "claude_session_id" in body
-    assert "'▶ Resume'" in body or "▶ Resume" in body
+    assert "▶ Resume" in body
     assert "resume-btn" in body
-    assert "'▶ Start'" in body or "▶ Start" in body
+    assert "▶ Start" in body
     assert "start-btn" in body
-    assert "runSession('goal'" in body
+    assert "runSession('${kind}'" in body
+    # createGoalCard calls the shared helper
+    assert "sessionButtonHtml('goal', goal)" in APP_JS
 
 
 def test_run_goal_posts_to_run_endpoint_with_resume_shortcut() -> None:

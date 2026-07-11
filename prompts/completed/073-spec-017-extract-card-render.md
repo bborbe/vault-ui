@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [017-unify-task-goal-card-frontend]
+summary: Extracted sessionButtonHtml and cardShellHtml shared helpers with thin kind wrappers in app.js; bumped app.js cache-bust token; updated existing tests and created new static tests
+execution_id: vault-ui-exec-073-spec-017-extract-card-render
+dark-factory-version: v0.191.0
 created: "2026-07-11T13:41:00Z"
 queued: "2026-07-11T14:03:49Z"
+started: "2026-07-11T14:11:29Z"
+completed: "2026-07-11T14:59:09Z"
 ---
 
 <summary>

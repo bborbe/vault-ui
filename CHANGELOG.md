@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- refactor(ui): Collapse the forked task/goal card code paths in `app.js` into one kind-parameterized path. The run (Start/Resume), dropdown-build, dropdown-action dispatch, and clear-session functions each become a single function taking `kind` and routing to `/api/${base}/…` (`task`→`tasks`, `goal`→`goals`), extending the existing `patchStatus(kind, …)` precedent. Card render is extracted into shared helpers (`sessionButtonHtml`, `cardShellHtml`) with thin kind wrappers that keep the genuinely divergent parts (task urgency tiers + Jira badge; goal on-hold styling + goal-kind dataset) — not a monolithic `createCard`. The id arg-injection guard now lives once on the merged run and clear paths and covers both kinds. Pure refactor: both boards, drag-and-drop routing, every dropdown action, Start/Resume/Reset, and the durable `claude_session_started` starting-state behave identically to before. Bumps the `app.js` cache-bust token so already-open boards fetch the collapsed script.
+
 ## v0.50.0
 
 - feat(api): Surface durable `claude_session_started` flag for goals end-to-end: `GET /api/goals` reads it from the status cache (mirroring the task path), `POST /goals/{id}/run` sets it before mint and clears it on mint failure, `DELETE /goals/{id}/session` clears it in lockstep with `claude_session_id`, and stale-session cleanup clears it alongside the id. The flag is an invariant of the goal session lifecycle, mirroring the existing task behavior exactly. No new config or tunable — the frontend already consumes `goal.claude_session_started` (shipped v0.49.0).

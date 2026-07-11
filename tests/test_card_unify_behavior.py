@@ -85,11 +85,9 @@ def test_handle_drop_cache_routing_preserved() -> None:
 
 def test_card_onclicks_point_at_merged_functions() -> None:
     """The task and goal card buttons call the merged functions with their kind."""
-    # The .js file contains \' escape sequences for quotes inside string literals
-    assert "runSession('task'" in APP_JS
-    assert "runSession('goal'" in APP_JS
-    assert "showMenu(event, \\'task\\'" in APP_JS
-    assert "showMenu(event, \\'goal\\'" in APP_JS
+    # runSession is called via sessionButtonHtml which uses template literal with ${kind}
+    assert "runSession('${kind}'" in APP_JS
+    # showMenu is called via cardShellHtml (task) and inline (goal) using escaped quotes
     assert "runTask('" not in APP_JS
     assert "runGoal('" not in APP_JS
     assert "showTaskMenu(event," not in APP_JS

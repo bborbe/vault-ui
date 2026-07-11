@@ -1066,6 +1066,53 @@ function extractJiraIssue(title) {
     return { title: cleanTitle, issueKey, issueUrl };
 }
 
+// Shared Start / Resume / Starting button for task and goal cards. Written once;
+// both card renderers call it. hasSession/isStarting gate the three labels off
+// claude_session_id and the durable claude_session_started flag (plus the optimistic
+// per-tab starting set), mirroring the pre-collapse per-kind blocks exactly.
+function sessionButtonHtml(kind, item) {
+    const startingSet = kind === 'goal' ? startingGoals : startingTasks;
+    const hasSession = item.claude_session_id;
+    const isStarting = !hasSession && (!!item.claude_session_started || startingSet.has(item.id));
+    let buttonLabel, buttonClass, buttonDisabled;
+    if (isStarting) {
+        buttonLabel = '⏳ Starting...';
+        buttonClass = 'start-btn';
+        buttonDisabled = true;
+    } else if (hasSession) {
+        buttonLabel = '▶ Resume';
+        buttonClass = 'resume-btn';
+        buttonDisabled = false;
+    } else {
+        buttonLabel = '▶ Start';
+        buttonClass = 'start-btn';
+        buttonDisabled = false;
+    }
+    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${item.id}')"${buttonDisabled ? ' disabled' : ''}>${buttonLabel}</button>`;
+}
+
+// Shared card body: menu button + title block + footer skeleton. The kind-specific
+// footer-left content (badges/assignee), card classes, dataset, urgency/on-hold, and
+// drag wiring stay in the thin createTaskCard/createGoalCard wrappers.
+function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml) {
+    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + id + '\')">⋮</button>';
+    return `
+        ${menuButton}
+        <div class="card-content">
+            <h3 class="task-title">
+                <a href="${obsidianUrl}" class="task-title-link" title="Open in Obsidian">
+                    ${escapeHtml(title)}
+                    <span class="obsidian-icon">↗</span>
+                </a>
+            </h3>
+        </div>
+        <div class="card-footer">
+            <div class="card-footer-left">${footerLeftHtml}</div>
+            <div class="card-actions">${startButtonHtml}</div>
+        </div>
+    `;
+}
+
 function createTaskCard(task) {
     const card = document.createElement('div');
     card.className = 'task-card';
@@ -1090,37 +1137,12 @@ function createTaskCard(task) {
         card.classList.add('dragging');
     });
 
-    card.addEventListener('dragend', (e) => {
+    card.addEventListener('dragend', () => {
         card.classList.remove('dragging');
     });
 
     // Extract Jira issue info
     const { title, issueKey, issueUrl } = extractJiraIssue(task.title);
-
-    // Show Resume button if session exists, Starting if in progress, otherwise Start.
-    // Starting is bound 100% to the durable frontmatter fields: the session was
-    // started (claude_session_started=true) but no claude_session_id has landed yet.
-    // startingTasks is an instant optimistic hint for the tab that clicked Start,
-    // before the first watcher-driven refetch surfaces the flag.
-    const hasSession = task.claude_session_id;
-    const isStarting = !hasSession && (!!task.claude_session_started || startingTasks.has(task.id));
-    let buttonLabel, buttonClass, buttonDisabled;
-    if (isStarting) {
-        buttonLabel = '⏳ Starting...';
-        buttonClass = 'start-btn';
-        buttonDisabled = true;
-    } else if (hasSession) {
-        buttonLabel = '▶ Resume';
-        buttonClass = 'resume-btn';
-        buttonDisabled = false;
-    } else {
-        buttonLabel = '▶ Start';
-        buttonClass = 'start-btn';
-        buttonDisabled = false;
-    }
-    const startButton = `<button class="${buttonClass}" onclick="runSession('task', '${task.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
-
-    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'task\', \'' + task.id + '\')">⋮</button>';
 
     // On-hold badge (if status is hold) — signals the task is parked/blocked
     const holdBadge = task.status === 'hold'
@@ -1142,29 +1164,14 @@ function createTaskCard(task) {
            </span>`
         : `<a class="assign-to-me-link" onclick="assignToMe('${escapeHtml(task.id)}', '${escapeHtml(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
 
-    card.innerHTML = `
-        ${menuButton}
-        <div class="card-content">
-            <h3 class="task-title">
-                <a href="${task.obsidian_url}" class="task-title-link" title="Open in Obsidian">
-                    ${escapeHtml(title)}
-                    <span class="obsidian-icon">↗</span>
-                </a>
-            </h3>
-        </div>
-        <div class="card-footer">
-            <div class="card-footer-left">
-                ${holdBadge}
-                ${jiraBadge}
-                ${assigneeBadge}
-                ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
-            </div>
-            <div class="card-actions">
-                ${startButton}
-            </div>
-        </div>
+    const startButton = sessionButtonHtml('task', task);
+    const footerLeft = `
+        ${holdBadge}
+        ${jiraBadge}
+        ${assigneeBadge}
+        ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
     `;
-
+    card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, startButton);
     return card;
 }
 
@@ -1189,41 +1196,28 @@ function createGoalCard(goal) {
     });
 
     const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
+
+    const holdBadge = goal.status === 'hold'
+        ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
+        : '';
+
+    // Jira issue badge (if present)
     const jiraBadge = issueKey && issueUrl
         ? `<a href="${issueUrl}" class="jira-badge" target="_blank" title="Open in Jira">
              <span class="jira-icon">🔖</span><span>${escapeHtml(issueKey)}</span>
            </a>`
         : '';
 
+    const startButton = sessionButtonHtml('goal', goal);
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + goal.id + '\')">⋮</button>';
-
-    const holdBadge = goal.status === 'hold'
-        ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
-        : '';
-
-    // Start / Starting / Resume button — mirrors createTaskCard. The startingGoals
-    // set is an optimistic per-tab hint that survives re-renders during the
-    // multi-second mint, so the button holds "Starting…" instead of flashing back
-    // to Start when a WebSocket/poll re-render fires mid-mint. (goal.claude_session_started
-    // is reserved for a future durable/cross-tab flag; not surfaced by the API yet.)
-    const hasSession = goal.claude_session_id;
-    const isStarting = !hasSession && (!!goal.claude_session_started || startingGoals.has(goal.id));
-    let buttonLabel, buttonClass, buttonDisabled;
-    if (isStarting) {
-        buttonLabel = '⏳ Starting...';
-        buttonClass = 'start-btn';
-        buttonDisabled = true;
-    } else if (hasSession) {
-        buttonLabel = '▶ Resume';
-        buttonClass = 'resume-btn';
-        buttonDisabled = false;
-    } else {
-        buttonLabel = '▶ Start';
-        buttonClass = 'start-btn';
-        buttonDisabled = false;
-    }
-    const startButton = `<button class="${buttonClass}" onclick="runSession('goal', '${goal.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
-
+    const footerLeft = `
+        ${holdBadge}
+        ${jiraBadge}
+        ${goal.assignee
+            ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
+            : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeHtml(goal.id)}', '${escapeHtml(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
+        ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
+    `;
     card.innerHTML = `
         ${menuButton}
         <div class="card-content">
@@ -1235,17 +1229,8 @@ function createGoalCard(goal) {
             </h3>
         </div>
         <div class="card-footer">
-            <div class="card-footer-left">
-                ${holdBadge}
-                ${jiraBadge}
-                ${goal.assignee
-                    ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
-                    : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeHtml(goal.id)}', '${escapeHtml(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
-                ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
-            </div>
-            <div class="card-actions">
-                ${startButton}
-            </div>
+            <div class="card-footer-left">${footerLeft}</div>
+            <div class="card-actions">${startButton}</div>
         </div>
     `;
     return card;

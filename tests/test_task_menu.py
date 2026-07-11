@@ -110,13 +110,13 @@ def test_priority_chip_replaces_goal_meta_line() -> None:
 def test_goal_starting_state_mirrors_tasks() -> None:
     """Goal cards get a startingGoals set + isStarting button logic (no Start flash)."""
     assert "let startingGoals" in APP_JS
-    assert "startingGoals.has(goal.id)" in APP_JS
+    # The gate logic moved into sessionButtonHtml which uses startingSet
+    assert "function sessionButtonHtml" in APP_JS
+    assert "!!item.claude_session_started || startingSet.has(item.id)" in APP_JS
     # Merged runSession uses startingSet derived from kind
     assert "kind === 'goal' ? startingGoals : startingTasks" in APP_JS
     assert "startingSet.add(id)" in APP_JS
     assert "startingSet.delete(id)" in APP_JS
-    # createGoalCard computes an isStarting state like createTaskCard
-    assert "goal.claude_session_started || startingGoals.has(goal.id)" in APP_JS
 
 
 def test_hold_in_default_status_filters() -> None:
