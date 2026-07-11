@@ -441,3 +441,77 @@ async def test_cleanup_no_started_clear_when_flag_absent() -> None:
         if "clear" in c.args and "claude_session_started" in c.args
     ]
     assert started_clears == []
+
+
+@pytest.mark.asyncio
+async def test_cleanup_goal_clears_started_flag_with_stale_session() -> None:
+    """A stale goal session clear also fires a claude_session_started clear."""
+    config = _make_config(current_user="alice")
+    goals = [
+        _make_goal(
+            goal_id="stale-goal",
+            session_id="12345678-1234-1234-1234-123456789abc",
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=goals)
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1
+    calls = mock_subprocess.call_args_list
+    assert any("clear" in c.args and "claude_session_id" in c.args for c in calls)
+    assert any("clear" in c.args and "claude_session_started" in c.args for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_goal_started_flag_clear_failure_still_counts_cleared() -> None:
+    """If the started-flag clear fails after the id clear succeeded, cleared count is still 1."""
+    config = _make_config(current_user="alice")
+    goals = [
+        _make_goal(
+            goal_id="stale-goal",
+            session_id="12345678-1234-1234-1234-123456789abc",
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=goals)
+
+    id_proc = AsyncMock()
+    id_proc.returncode = 0
+    id_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    started_proc = AsyncMock()
+    started_proc.returncode = 1
+    started_proc.communicate = AsyncMock(return_value=(b"", b"boom"))
+
+    call_count = [0]
+
+    async def _make_proc(*args: object, **kwargs: object) -> AsyncMock:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return id_proc
+        return started_proc
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", side_effect=_make_proc),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1

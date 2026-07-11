@@ -255,6 +255,24 @@ async def cleanup_stale_sessions(config: Config) -> int:
                                 vault.name,
                             )
                             cleared += 1
+                            # The started flag is tied to the session id lifecycle — clear it in
+                            # lockstep so the card returns to "Start" once the session is gone.
+                            # The Goal dataclass has no claude_session_started field (unlike
+                            # Task), so we cannot gate on presence; clearing an absent frontmatter
+                            # field is idempotent. A failure here is caught by the enclosing
+                            # per-goal try/except (logged, does not abort the pass).
+                            started_proc = await asyncio.create_subprocess_exec(
+                                vault.vault_cli_path,
+                                "goal",
+                                "clear",
+                                goal.id,
+                                "claude_session_started",
+                                "--vault",
+                                vault.name,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            await started_proc.communicate()
                     except Exception as e:
                         logger.error(
                             "[Cleanup] Exception clearing session for goal %s in vault %s: %s",

@@ -99,6 +99,11 @@ class GoalResponse(BaseModel):
     completed_date: str | None
     vault: str  # Vault name this goal belongs to
     claude_session_id: str | None = None
+    # "true" once a session start was initiated; stays set until claude_session_id is
+    # cleared so any concurrent view (cross-tab, post-mint-reload) shows "Starting…"
+    # while the flag is set but no session id has landed yet; then "Resume" once it
+    # does, or "Start" again if the mint failed / the session was reset / cleanup.
+    claude_session_started: str | None = None
     assignee: str | None = None
 
 

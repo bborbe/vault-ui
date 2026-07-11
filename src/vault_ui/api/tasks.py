@@ -675,7 +675,9 @@ async def list_tasks(
     return all_tasks
 
 
-def _goal_to_response(goal: Goal, vault_config: VaultConfig) -> GoalResponse:
+def _goal_to_response(
+    goal: Goal, vault_config: VaultConfig, claude_session_started: str | None = None
+) -> GoalResponse:
     """Convert Goal to GoalResponse.
 
     Builds the obsidian_url the same way ``_task_to_response`` does (line
@@ -707,6 +709,7 @@ def _goal_to_response(goal: Goal, vault_config: VaultConfig) -> GoalResponse:
         completed_date=goal.completed_date,
         vault=vault_config.name,
         claude_session_id=goal.claude_session_id,
+        claude_session_started=claude_session_started,
         assignee=goal.assignee,
     )
 
@@ -754,7 +757,18 @@ async def _process_goal_vault(
             )
         ]
 
-    return [_goal_to_response(g, vault_config) for g in goals]
+    # Surface claude_session_started from the status cache — vault-cli's goal list does
+    # not emit this custom field, so the durable "Starting…" flag reaches any concurrent
+    # view only via the cache's direct frontmatter read.
+    cache = get_status_cache()
+    return [
+        _goal_to_response(
+            g,
+            vault_config,
+            claude_session_started=cache.get_session_started(vault_config.name, g.id),
+        )
+        for g in goals
+    ]
 
 
 @router.get("/goals", response_model=list[GoalResponse])
@@ -905,9 +919,25 @@ async def run_goal(
         if goal is None:
             raise HTTPException(status_code=404, detail=f"Goal not found: {goal_id}")
 
-        logger.info(f"Starting vault-cli goal session for goal {goal_id}")
-        session_id = await start_vault_cli_goal_session(vault_config, goal_id)
-        logger.info(f"Goal session {session_id} created")
+        # Mark the session as started before minting. This is a durable flag that
+        # survives concurrent views, page reloads, and cross-tab renders — any
+        # view sees "Starting…" while the mint is in flight, then "Resume" once the
+        # session id lands. On mint failure the flag is cleared so the card returns
+        # to "Start" instead of being stuck on "Starting…".
+        await client.set_goal_field(goal_id, "claude_session_started", "true")
+
+        try:
+            logger.info(f"Starting vault-cli goal session for goal {goal_id}")
+            session_id = await start_vault_cli_goal_session(vault_config, goal_id)
+            logger.info(f"Goal session {session_id} created")
+        except Exception:
+            # Mint failed — no session id was established, so nothing will ever clear
+            # the started flag via the session-id lifecycle. Clear it here so the
+            # card returns to "Start" instead of being stuck on "Starting…". The clear
+            # is suppressed so a clear failure cannot mask the original mint error.
+            with suppress(Exception):
+                await client.clear_goal_field(goal_id, "claude_session_started")
+            raise
 
         # Store the minted session id on the goal via vault-cli (not a direct file
         # write) so /api/goals surfaces it and the card flips to Resume.
@@ -1581,6 +1611,37 @@ async def clear_goal_session(
 
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail=stderr.decode())
+
+        # Clear the durable started flag in lockstep with the session id (spec
+        # Desired Behavior #4). The id clear above already succeeded, so a failure
+        # here is best-effort: log and continue — a lingering flag self-heals on the
+        # next cleanup pass rather than failing an otherwise-successful reset.
+        try:
+            started_proc = await asyncio.create_subprocess_exec(
+                vault_config.vault_cli_path,
+                "goal",
+                "clear",
+                goal_id,
+                "claude_session_started",
+                "--vault",
+                vault_config.name.lower(),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _out, started_err = await asyncio.wait_for(started_proc.communicate(), timeout=10.0)
+            if started_proc.returncode != 0:
+                logger.warning(
+                    "Failed to clear claude_session_started for goal %s in vault %s: %s",
+                    goal_id,
+                    vault,
+                    started_err.decode(errors="replace").strip(),
+                )
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                started_proc.kill()
+            logger.warning(
+                "Timed out clearing claude_session_started for goal %s in vault %s", goal_id, vault
+            )
 
         # Invalidate the per-vault goal cache synchronously so the card's
         # Start/Resume state updates without waiting for the async watcher
