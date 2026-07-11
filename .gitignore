@@ -22,3 +22,4 @@ wheels/
 /prompts/log
 /specs/log
 /bin/
+/.dark-factory.daemon.out

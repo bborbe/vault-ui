@@ -919,3 +919,11 @@ DARK-FACTORY-REPORT -->
 time=2026-07-11T12:19:46.289+02:00 level=INFO msg="docker container exited" prompt_id=070-spec-015-frontend-goal-session-controls spec_id=015-goal-start-resume-session container="" workflow_type=direct container=vault-ui-exec-070-spec-015-frontend-goal-session-controls exit_code=0 workflow_step=run_claude
 time=2026-07-11T12:19:46.290+02:00 level=INFO msg="completion report" status=success summary="Add Start/Resume/Reset session controls to goal cards in app.js, bump cache-bust token, update CHANGELOG, add static tests"
 time=2026-07-11T12:19:46.304+02:00 level=INFO msg="moved to completed" prompt_id=070-spec-015-frontend-goal-session-controls spec_id=015-goal-start-resume-session container="" workflow_type=direct container=vault-ui-exec-070-spec-015-frontend-goal-session-controls
+time=2026-07-11T12:19:46.417+02:00 level=INFO msg="committed changes (autoRelease disabled, skipping tag)" prompt_id=070-spec-015-frontend-goal-session-controls spec_id=015-goal-start-resume-session container="" workflow_type=direct container=vault-ui-exec-070-spec-015-frontend-goal-session-controls workflow_step=commit
+time=2026-07-11T12:19:46.425+02:00 level=INFO msg="spec awaiting verification" spec=015-goal-start-resume-session
+time=2026-07-11T12:19:46.425+02:00 level=INFO msg="watching for queued prompts" dir=prompts/in-progress
+time=2026-07-11T12:19:46.436+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-07-11T12:20:46.439+02:00 level=INFO msg="nothing to do, waiting for changes"
+time=2026-07-11T12:21:04.802+02:00 level=INFO msg="spec watcher shutting down"
+time=2026-07-11T12:21:04.802+02:00 level=INFO msg="watcher shutting down"
+time=2026-07-11T12:21:04.802+02:00 level=INFO msg="processor shutting down"
