@@ -1043,3 +1043,16 @@ h1 {
     color: #9ca3af;
     font-style: italic;
 }
+
+/* Narrow viewports (laptops): declutter the header by hiding the least-used
+   chrome so the selectors + board columns get the width. The "Vault UI" title
+   is pure branding and the Upcoming window is a rarely-toggled setting, so both
+   are the safe first things to drop. Tunable breakpoint. */
+@media (max-width: 1500px) {
+    header h1 {
+        display: none;
+    }
+    #upcoming-window {
+        display: none;
+    }
+}
