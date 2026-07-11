@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.48.0
 
 - feat(ui): Render card priority as a compact `P<N>` chip in the footer meta row (next to the assignee) on both task and goal cards, replacing the standalone `Priority: N` line that wasted a full row on goal cards. No chip when priority is unset. Muted slate pill styling (`.priority-chip`), distinct from the violet hold badge. Bumps the `app.js` cache-bust token.
 
