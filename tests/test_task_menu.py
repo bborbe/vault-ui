@@ -94,3 +94,13 @@ def test_hold_status_column_is_filter_conditional() -> None:
     assert "currentStatuses.includes('hold')" in APP_JS
     assert "id: 'aborted', label: 'Aborted'" in APP_JS
     assert "currentStatuses.includes('aborted')" in APP_JS
+
+
+def test_priority_chip_replaces_goal_meta_line() -> None:
+    """Priority renders as a compact footer chip on both cards, not a standalone row."""
+    # Both task and goal cards emit a priority-chip when priority is set
+    assert APP_JS.count("priority-chip") >= 2
+    assert "task.priority ?" in APP_JS
+    assert "goal.priority ?" in APP_JS
+    # The old standalone goal "Priority: N" line is gone
+    assert 'class="goal-meta">Priority:' not in APP_JS

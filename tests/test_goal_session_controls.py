@@ -58,6 +58,14 @@ def test_goal_menu_routes_clear_session_to_delete() -> None:
 
 
 def test_cachebust_token_bumped() -> None:
-    """index.html references the new app.js cache-bust token, not the stale one."""
-    assert "app.js?v=2026-07-11-goal-session" in INDEX_HTML
+    """index.html references a bumped app.js cache-bust token, not the stale ones.
+
+    Robust to future bumps: assert a non-empty ``?v=`` token exists and that the
+    known-stale tokens are gone, rather than hardcoding the current value (which
+    forces an edit on every cache-bust bump).
+    """
+    import re
+
+    assert re.search(r"app\.js\?v=\S+", INDEX_HTML)
     assert "app.js?v=2026-07-07-surface-started" not in INDEX_HTML
+    assert "app.js?v=2026-07-11-goal-session" not in INDEX_HTML
