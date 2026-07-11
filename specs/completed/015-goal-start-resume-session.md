@@ -1,11 +1,13 @@
 ---
-status: prompted
+status: completed
 tags:
     - dark-factory
     - spec
 approved: "2026-07-11T09:53:31Z"
 generating: "2026-07-11T10:08:01Z"
 prompted: "2026-07-11T10:08:01Z"
+verifying: "2026-07-11T10:19:46Z"
+completed: "2026-07-11T10:30:37Z"
 branch: dark-factory/goal-start-resume-session
 ---
 
