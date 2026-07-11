@@ -22,14 +22,14 @@ def test_goal_card_renders_start_and_resume_gated_on_session() -> None:
     assert "resume-btn" in body
     assert "'▶ Start'" in body or "▶ Start" in body
     assert "start-btn" in body
-    assert "runGoal(" in body
+    assert "runSession('goal'" in body
 
 
 def test_run_goal_posts_to_run_endpoint_with_resume_shortcut() -> None:
-    """runGoal POSTs to /api/goals/{id}/run and short-circuits to the modal on an
-    existing session."""
-    body = _slice("async function runGoal", 2200)
-    assert "/api/goals/" in body
+    """runSession with kind='goal' POSTs to /api/goals/{id}/run and short-circuits
+    to the modal on an existing session."""
+    body = _slice("async function runSession", 3500)
+    assert "/api/${base}/" in body
     assert "/run?vault=" in body
     assert "method: 'POST'" in body
     assert "claude_session_id" in body  # resume short-circuit gate
@@ -37,22 +37,22 @@ def test_run_goal_posts_to_run_endpoint_with_resume_shortcut() -> None:
 
 
 def test_goal_menu_reset_session_conditional() -> None:
-    """showGoalMenu lists Reset Session only when the goal has a session."""
-    body = _slice("function showGoalMenu", 1400)
+    """showMenu (kind='goal') lists Reset Session only when the goal has a session."""
+    body = _slice("function showMenu", 2400)
     assert "'Reset Session'" in body
     assert "action: 'clear_session'" in body
     assert "hasSession" in body or "claude_session_id" in body
 
 
 def test_goal_menu_routes_clear_session_to_delete() -> None:
-    """handleGoalMenuAction routes clear_session to clearGoalSession, which DELETEs
-    /api/goals/{id}/session."""
-    action_body = _slice("async function handleGoalMenuAction", 1800)
+    """dispatchMenuAction routes clear_session to clearSession, which DELETEs
+    /api/{base}/{id}/session."""
+    action_body = _slice("async function dispatchMenuAction", 2600)
     assert "clear_session" in action_body
-    assert "clearGoalSession(" in action_body
+    assert "clearSession(kind, id)" in action_body
 
-    clear_body = _slice("async function clearGoalSession", 900)
-    assert "/api/goals/" in clear_body
+    clear_body = _slice("async function clearSession", 1200)
+    assert "/api/${base}/" in clear_body
     assert "/session?vault=" in clear_body
     assert "method: 'DELETE'" in clear_body
 

@@ -1118,9 +1118,9 @@ function createTaskCard(task) {
         buttonClass = 'start-btn';
         buttonDisabled = false;
     }
-    const startButton = `<button class="${buttonClass}" onclick="runTask('${task.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
+    const startButton = `<button class="${buttonClass}" onclick="runSession('task', '${task.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
 
-    const menuButton = '<button class="menu-btn" onclick="showTaskMenu(event, \'' + task.id + '\')">⋮</button>';
+    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'task\', \'' + task.id + '\')">⋮</button>';
 
     // On-hold badge (if status is hold) — signals the task is parked/blocked
     const holdBadge = task.status === 'hold'
@@ -1195,7 +1195,7 @@ function createGoalCard(goal) {
            </a>`
         : '';
 
-    const menuButton = '<button class="menu-btn" onclick="showGoalMenu(event, \'' + goal.id + '\')">⋮</button>';
+    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + goal.id + '\')">⋮</button>';
 
     const holdBadge = goal.status === 'hold'
         ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
@@ -1222,7 +1222,7 @@ function createGoalCard(goal) {
         buttonClass = 'start-btn';
         buttonDisabled = false;
     }
-    const startButton = `<button class="${buttonClass}" onclick="runGoal('${goal.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
+    const startButton = `<button class="${buttonClass}" onclick="runSession('goal', '${goal.id}')" ${buttonDisabled ? 'disabled' : ''}>${buttonLabel}</button>`;
 
     card.innerHTML = `
         ${menuButton}
@@ -1251,114 +1251,22 @@ function createGoalCard(goal) {
     return card;
 }
 
-async function runTask(taskId) {
-    // Look up task from cache
-    const task = tasksCache[taskId];
-    if (!task) {
-        showToast('Task not found in cache', true);
+async function runSession(kind, id) {
+    // Arg-injection guard on the merged path (spec AC + Security): reject ids
+    // beginning with '-' before any fetch, covering BOTH kinds at once. Mirrors
+    // the backend guard in api/tasks.py.
+    if (typeof id === 'string' && id.startsWith('-')) {
+        showToast('Invalid id', true);
         return;
     }
 
-    try {
-        // Show loading state
-        const button = event.target;
-        const originalText = button.textContent;
-        button.textContent = '⏳ Loading...';
-        button.disabled = true;
+    const base = kind === 'goal' ? 'goals' : 'tasks';
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const startingSet = kind === 'goal' ? startingGoals : startingTasks;
 
-        // If task already has a session, show resume modal directly
-        if (task.claude_session_id) {
-            // Get vault config to build command
-            const vaultsResponse = await fetch('/api/vaults');
-            const vaults = await vaultsResponse.json();
-            const vaultConfig = vaults.find(v => v.name === task.vault);
-
-            if (!vaultConfig) {
-                throw new Error('Vault not found');
-            }
-
-            const command = `${vaultConfig.claude_script} --resume ${task.claude_session_id}`;
-            showModal(task.claude_session_id, command, vaultConfig.vault_path, task.title);
-
-            // Restore button
-            button.textContent = originalText;
-            button.disabled = false;
-            return;
-        }
-
-        // Show loading modal during session creation
-        const loadingModal = document.getElementById('loading-modal');
-        loadingModal.classList.remove('hidden');
-
-        // Setup close button handler
-        let userDismissed = false;
-        const closeBtn = document.getElementById('close-loading-btn');
-        const closeHandler = () => {
-            userDismissed = true;
-            loadingModal.classList.add('hidden');
-            closeBtn.removeEventListener('click', closeHandler);
-            // Re-render the card so the durable claude_session_started flag
-            // drives the indicator state (Starting… or Resume) going forward.
-            renderTasks();
-        };
-        closeBtn.addEventListener('click', closeHandler);
-
-        // Create new Claude session
-        startingTasks.add(taskId);
-        button.textContent = '⏳ Starting...';
-        const response = await fetch(`/api/tasks/${taskId}/run?vault=${encodeURIComponent(task.vault)}`, {
-            method: 'POST'
-        });
-
-        if (!response.ok) {
-            throw new Error(await parseErrorResponse(response));
-        }
-
-        const data = await response.json();
-
-        // Cleanup
-        closeBtn.removeEventListener('click', closeHandler);
-        loadingModal.classList.add('hidden');
-
-        // Done starting
-        startingTasks.delete(taskId);
-
-        // Update task cache with new session_id
-        task.claude_session_id = data.session_id;
-
-        // Show session modal with command (unless user dismissed loading)
-        if (!userDismissed) {
-            showModal(data.session_id, data.command, data.working_dir, data.task_title);
-        }
-
-        // Restore button and update to Resume
-        button.textContent = '▶ Resume';
-        button.className = 'resume-btn';
-        button.disabled = false;
-
-    } catch (error) {
-        console.error('Failed to run task:', error);
-
-        // Clear starting state and hide loading modal on error
-        startingTasks.delete(taskId);
-        const loadingModal = document.getElementById('loading-modal');
-        loadingModal.classList.add('hidden');
-        await new Promise(r => requestAnimationFrame(r));  // ensure modal hides before toast renders
-
-        showToast(error.message, true);
-
-        // Restore button
-        if (event && event.target) {
-            event.target.textContent = '▶ Start';
-            event.target.disabled = false;
-        }
-    }
-}
-
-async function runGoal(goalId) {
-    const goal = goalsCache[goalId];
-    if (!goal) {
-        showToast('Goal not found in cache', true);
+    const item = cache[id];
+    if (!item) {
+        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
         return;
     }
 
@@ -1369,30 +1277,44 @@ async function runGoal(goalId) {
         button.textContent = '⏳ Loading...';
         button.disabled = true;
 
-        // Resume short-circuit: a goal that already has a session opens the modal
-        // directly — no new session minted, no POST to /run (spec Failure Mode:
-        // "operator clicks Start on a goal that already has a session").
-        if (goal.claude_session_id) {
+        // Resume short-circuit: an item with a session opens the modal directly.
+        if (item.claude_session_id) {
             const vaultsResponse = await fetch('/api/vaults');
             const vaults = await vaultsResponse.json();
-            const vaultConfig = vaults.find(v => v.name === goal.vault);
+            const vaultConfig = vaults.find(v => v.name === item.vault);
             if (!vaultConfig) {
                 throw new Error('Vault not found');
             }
-            const command = `${vaultConfig.claude_script} --resume ${goal.claude_session_id}`;
-            showModal(goal.claude_session_id, command, vaultConfig.vault_path, goal.title);
+            const command = `${vaultConfig.claude_script} --resume ${item.claude_session_id}`;
+            showModal(item.claude_session_id, command, vaultConfig.vault_path, item.title);
             button.textContent = originalText;
             button.disabled = false;
             return;
         }
 
-        // Mint a new session via the goal-run endpoint. Mark the goal as starting so
-        // a mid-mint re-render (WebSocket/poll) keeps the button on "Starting…" via
-        // createGoalCard's startingGoals check, instead of flashing back to Start.
-        startingGoals.add(goalId);
+        // Task-only "Creating session…" loading modal, preserved verbatim from runTask.
+        // Goals never had this overlay; the kind gate keeps both behaviors unchanged.
+        let userDismissed = false;
+        let loadingModal = null;
+        let closeBtn = null;
+        let closeHandler = null;
+        if (kind === 'task') {
+            loadingModal = document.getElementById('loading-modal');
+            loadingModal.classList.remove('hidden');
+            closeBtn = document.getElementById('close-loading-btn');
+            closeHandler = () => {
+                userDismissed = true;
+                loadingModal.classList.add('hidden');
+                closeBtn.removeEventListener('click', closeHandler);
+                renderTasks();
+            };
+            closeBtn.addEventListener('click', closeHandler);
+        }
+
+        startingSet.add(id);
         button.textContent = '⏳ Starting...';
         const response = await fetch(
-            `/api/goals/${encodeURIComponent(goalId)}/run?vault=${encodeURIComponent(goal.vault)}`,
+            `/api/${base}/${encodeURIComponent(id)}/run?vault=${encodeURIComponent(item.vault)}`,
             { method: 'POST' }
         );
         if (!response.ok) {
@@ -1400,16 +1322,29 @@ async function runGoal(goalId) {
         }
 
         const data = await response.json();
-        startingGoals.delete(goalId);
-        goal.claude_session_id = data.session_id;
-        showModal(data.session_id, data.command, data.working_dir, data.task_title);
+
+        if (kind === 'task') {
+            closeBtn.removeEventListener('click', closeHandler);
+            loadingModal.classList.add('hidden');
+        }
+        startingSet.delete(id);
+        item.claude_session_id = data.session_id;
+
+        if (!userDismissed) {
+            showModal(data.session_id, data.command, data.working_dir, data.task_title);
+        }
 
         button.textContent = '▶ Resume';
         button.className = 'resume-btn';
         button.disabled = false;
     } catch (error) {
-        startingGoals.delete(goalId);
-        console.error('Failed to run goal:', error);
+        startingSet.delete(id);
+        console.error(`Failed to run ${kind}:`, error);
+        if (kind === 'task') {
+            const loadingModal = document.getElementById('loading-modal');
+            loadingModal.classList.add('hidden');
+            await new Promise(r => requestAnimationFrame(r));  // ensure modal hides before toast renders
+        }
         showToast(error.message, true);
         if (event && event.target) {
             event.target.textContent = '▶ Start';
@@ -1604,54 +1539,58 @@ function formatRelativeTime(timestamp) {
     }
 }
 
-function showTaskMenu(event, taskId) {
+function showMenu(event, kind, id) {
     event.stopPropagation();
 
-    // Remove any existing menu
     const existingMenu = document.querySelector('.task-menu');
     if (existingMenu) {
         existingMenu.remove();
     }
 
-    // Create menu
     const menu = document.createElement('div');
     menu.className = 'task-menu';
 
-    // Get task from cache to check if it has a session
-    const task = tasksCache[taskId];
-    const hasSession = task && task.claude_session_id;
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const item = cache[id];
+    const hasSession = item && item.claude_session_id;
 
     const menuItems = [];
-
-    // Add Clear Session option if task has a session
-    if (hasSession) {
-        menuItems.push({ label: 'Clear Session', action: 'clear_session', disabled: false });
-    }
-
-    // Add slash command actions
-    menuItems.push({ label: 'Complete Task', action: 'complete_task', disabled: false });
-    menuItems.push({ label: 'Defer Task', action: 'defer_task', disabled: false });
-    menuItems.push({ label: 'Abort Task', action: 'abort_task', disabled: false });
-
-    // Hold/Resume toggle — a held task offers Resume (back to in_progress), else Hold
-    if (task && task.status === 'hold') {
-        menuItems.push({ label: 'Resume Task', action: 'resume_task', disabled: false });
+    if (kind === 'goal') {
+        if (hasSession) {
+            menuItems.push({ label: 'Reset Session', action: 'clear_session' });
+        }
+        menuItems.push({ label: 'Complete Goal', action: 'complete_goal' });
+        menuItems.push({ label: 'Defer Goal', action: 'defer_goal' });
+        menuItems.push({ label: 'Abort Goal', action: 'abort_goal' });
+        if (item && item.status === 'hold') {
+            menuItems.push({ label: 'Resume Goal', action: 'resume_goal' });
+        } else {
+            menuItems.push({ label: 'Hold Goal', action: 'hold_goal' });
+        }
     } else {
-        menuItems.push({ label: 'Hold Task', action: 'hold_task', disabled: false });
+        if (hasSession) {
+            menuItems.push({ label: 'Clear Session', action: 'clear_session', disabled: false });
+        }
+        menuItems.push({ label: 'Complete Task', action: 'complete_task', disabled: false });
+        menuItems.push({ label: 'Defer Task', action: 'defer_task', disabled: false });
+        menuItems.push({ label: 'Abort Task', action: 'abort_task', disabled: false });
+        if (item && item.status === 'hold') {
+            menuItems.push({ label: 'Resume Task', action: 'resume_task', disabled: false });
+        } else {
+            menuItems.push({ label: 'Hold Task', action: 'hold_task', disabled: false });
+        }
     }
 
-    menuItems.forEach(item => {
+    menuItems.forEach(itemDef => {
         const menuItem = document.createElement('div');
         menuItem.className = 'task-menu-item';
-        if (item.disabled) {
+        if (itemDef.disabled) {
             menuItem.classList.add('disabled');
         }
-        menuItem.textContent = item.label;
-
-        if (!item.disabled) {
-            menuItem.addEventListener('click', () => handleMenuAction(taskId, item.action));
+        menuItem.textContent = itemDef.label;
+        if (!itemDef.disabled) {
+            menuItem.addEventListener('click', () => dispatchMenuAction(kind, id, itemDef.action));
         }
-
         menu.appendChild(menuItem);
     });
 
@@ -1660,7 +1599,7 @@ function showTaskMenu(event, taskId) {
 
 // Position a `.task-menu` next to its trigger button, keep it inside the viewport
 // (flip up / clamp horizontally), then bind the click-outside close handler.
-// Shared by showTaskMenu and showGoalMenu.
+// Shared by showMenu.
 function positionAndBindMenu(menu, button) {
     const rect = button.getBoundingClientRect();
     menu.style.position = 'fixed';
@@ -1705,50 +1644,6 @@ function positionAndBindMenu(menu, button) {
     }, 0);
 }
 
-// Build and open the goal-card lifecycle menu. Mirrors showTaskMenu; goal actions
-// route to handleGoalMenuAction. Reuses the `.task-menu` class + positionAndBindMenu.
-function showGoalMenu(event, goalId) {
-    event.stopPropagation();
-
-    const existingMenu = document.querySelector('.task-menu');
-    if (existingMenu) {
-        existingMenu.remove();
-    }
-
-    const menu = document.createElement('div');
-    menu.className = 'task-menu';
-
-    const goal = goalsCache[goalId];
-    const hasSession = goal && goal.claude_session_id;
-
-    const menuItems = [];
-    // Reset Session only when the goal has a session (mirrors the task menu's
-    // conditional Clear Session item). A session-less goal does not list it.
-    if (hasSession) {
-        menuItems.push({ label: 'Reset Session', action: 'clear_session' });
-    }
-    menuItems.push({ label: 'Complete Goal', action: 'complete_goal' });
-    menuItems.push({ label: 'Defer Goal', action: 'defer_goal' });
-    menuItems.push({ label: 'Abort Goal', action: 'abort_goal' });
-
-    // Hold/Resume toggle — a held goal offers Resume (back to in_progress), else Hold
-    if (goal && goal.status === 'hold') {
-        menuItems.push({ label: 'Resume Goal', action: 'resume_goal' });
-    } else {
-        menuItems.push({ label: 'Hold Goal', action: 'hold_goal' });
-    }
-
-    menuItems.forEach(item => {
-        const menuItem = document.createElement('div');
-        menuItem.className = 'task-menu-item';
-        menuItem.textContent = item.label;
-        menuItem.addEventListener('click', () => handleGoalMenuAction(goalId, item.action));
-        menu.appendChild(menuItem);
-    });
-
-    positionAndBindMenu(menu, event.target);
-}
-
 let activeMenuCloseHandler = null;
 
 function closeMenu() {
@@ -1762,26 +1657,61 @@ function closeMenu() {
     }
 }
 
-async function handleMenuAction(taskId, action) {
-    const task = tasksCache[taskId];
-    if (!task) {
-        showToast('Task not found', true);
+async function dispatchMenuAction(kind, id, action) {
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const item = cache[id];
+    if (!item) {
+        showToast(kind === 'goal' ? 'Goal not found' : 'Task not found', true);
         return;
     }
 
     closeMenu();
 
     if (action === 'clear_session') {
-        await clearTaskSession(taskId);
-    } else if (action === 'complete_task' || action === 'defer_task') {
-        // Handle slash commands
-        await executeSlashCommand(taskId, action);
+        await clearSession(kind, id);
+        return;
+    }
+
+    if (kind === 'goal') {
+        if (action === 'complete_goal' || action === 'defer_goal') {
+            const command = action === 'complete_goal' ? 'complete-goal' : 'defer-goal';
+            try {
+                const response = await fetch(
+                    `/api/goals/${encodeURIComponent(id)}/execute-command?vault=${encodeURIComponent(item.vault)}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ command }),
+                    }
+                );
+                if (!response.ok) {
+                    throw new Error(await parseErrorResponse(response));
+                }
+                showToast(action === 'complete_goal' ? 'Goal completed' : 'Goal deferred to tomorrow');
+                await loadCurrentView();
+            } catch (error) {
+                console.error(`Failed to ${command}:`, error);
+                showToast(error.message, true);
+            }
+        } else if (action === 'abort_goal') {
+            await patchStatus('goal', id, item.vault, 'aborted', 'Goal aborted');
+        } else if (action === 'hold_goal') {
+            await patchStatus('goal', id, item.vault, 'hold', 'Goal on hold');
+        } else if (action === 'resume_goal') {
+            await patchStatus('goal', id, item.vault, 'in_progress', 'Goal resumed');
+        }
+        return;
+    }
+
+    // kind === 'task'
+    if (action === 'complete_task' || action === 'defer_task') {
+        await executeSlashCommand(id, action);
     } else if (action === 'abort_task') {
-        await patchStatus('task', taskId, task.vault, 'aborted', 'Task aborted');
+        await patchStatus('task', id, item.vault, 'aborted', 'Task aborted');
     } else if (action === 'hold_task') {
-        await patchStatus('task', taskId, task.vault, 'hold', 'Task on hold');
+        await patchStatus('task', id, item.vault, 'hold', 'Task on hold');
     } else if (action === 'resume_task') {
-        await patchStatus('task', taskId, task.vault, 'in_progress', 'Task resumed');
+        await patchStatus('task', id, item.vault, 'in_progress', 'Task resumed');
     }
 }
 
@@ -1809,45 +1739,36 @@ async function patchStatus(kind, id, vault, status, successMsg) {
     }
 }
 
-// Goal-card menu actions: complete/defer via the goal execute-command fast path,
-// abort/hold/resume via the shared status PATCH.
-async function handleGoalMenuAction(goalId, action) {
-    const goal = goalsCache[goalId];
-    if (!goal) {
-        showToast('Goal not found', true);
+async function clearSession(kind, id) {
+    // Arg-injection guard on the merged clear path (spec AC + Security).
+    if (typeof id === 'string' && id.startsWith('-')) {
+        showToast('Invalid id', true);
         return;
     }
 
-    closeMenu();
+    const base = kind === 'goal' ? 'goals' : 'tasks';
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const item = cache[id];
+    if (!item) {
+        showToast(kind === 'goal' ? 'Goal not found' : 'Task not found', true);
+        return;
+    }
 
-    if (action === 'clear_session') {
-        await clearGoalSession(goalId);
-    } else if (action === 'complete_goal' || action === 'defer_goal') {
-        const command = action === 'complete_goal' ? 'complete-goal' : 'defer-goal';
-        try {
-            const response = await fetch(
-                `/api/goals/${encodeURIComponent(goalId)}/execute-command?vault=${encodeURIComponent(goal.vault)}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command }),
-                }
-            );
-            if (!response.ok) {
-                throw new Error(await parseErrorResponse(response));
-            }
-            showToast(action === 'complete_goal' ? 'Goal completed' : 'Goal deferred to tomorrow');
-            await loadCurrentView();
-        } catch (error) {
-            console.error(`Failed to ${command}:`, error);
-            showToast(error.message, true);
+    try {
+        const response = await fetch(
+            `/api/${base}/${encodeURIComponent(id)}/session?vault=${encodeURIComponent(item.vault)}`,
+            { method: 'DELETE' }
+        );
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
         }
-    } else if (action === 'abort_goal') {
-        await patchStatus('goal', goalId, goal.vault, 'aborted', 'Goal aborted');
-    } else if (action === 'hold_goal') {
-        await patchStatus('goal', goalId, goal.vault, 'hold', 'Goal on hold');
-    } else if (action === 'resume_goal') {
-        await patchStatus('goal', goalId, goal.vault, 'in_progress', 'Goal resumed');
+        if (cache[id]) {
+            cache[id].claude_session_id = null;
+        }
+        await loadCurrentView();
+    } catch (error) {
+        console.error(`Failed to clear ${kind} session:`, error);
+        showToast(error.message, true);
     }
 }
 
@@ -1964,60 +1885,6 @@ async function executeSlashCommand(taskId, commandType) {
         await new Promise(r => requestAnimationFrame(r));  // ensure modal hides before toast renders
 
         console.error('Error executing slash command:', error);
-        showToast(error.message, true);
-    }
-}
-
-async function clearTaskSession(taskId) {
-    const task = tasksCache[taskId];
-    if (!task) {
-        showToast('Task not found', true);
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/tasks/${taskId}/session?vault=${encodeURIComponent(task.vault)}`, {
-            method: 'DELETE',
-        });
-
-        if (!response.ok) {
-            throw new Error(await parseErrorResponse(response));
-        }
-
-        // Update cache
-        if (tasksCache[taskId]) {
-            tasksCache[taskId].claude_session_id = null;
-        }
-
-        // Reload the active view to update UI
-        await loadCurrentView();
-    } catch (error) {
-        console.error('Failed to clear session:', error);
-        showToast(error.message, true);
-    }
-}
-
-async function clearGoalSession(goalId) {
-    const goal = goalsCache[goalId];
-    if (!goal) {
-        showToast('Goal not found', true);
-        return;
-    }
-
-    try {
-        const response = await fetch(
-            `/api/goals/${encodeURIComponent(goalId)}/session?vault=${encodeURIComponent(goal.vault)}`,
-            { method: 'DELETE' }
-        );
-        if (!response.ok) {
-            throw new Error(await parseErrorResponse(response));
-        }
-        if (goalsCache[goalId]) {
-            goalsCache[goalId].claude_session_id = null;
-        }
-        await loadCurrentView();
-    } catch (error) {
-        console.error('Failed to clear goal session:', error);
         showToast(error.message, true);
     }
 }

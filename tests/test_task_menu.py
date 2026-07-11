@@ -26,13 +26,13 @@ def test_phase_shortcuts_removed() -> None:
 
 
 def test_abort_routes_to_status_endpoint() -> None:
-    """handleMenuAction dispatches abort_task through patchStatus to /tasks/{id}/status.
+    """dispatchMenuAction dispatches abort_task through patchStatus to /tasks/{id}/status.
 
     Abort was refactored onto the shared patchStatus helper (alongside hold/resume),
-    so the /status fetch now lives in patchStatus, not inline in handleMenuAction.
+    so the /status fetch now lives in patchStatus, not inline in dispatchMenuAction.
     """
-    fn_start = APP_JS.find("async function handleMenuAction")
-    fn_body = APP_JS[fn_start : fn_start + 1200]
+    fn_start = APP_JS.find("async function dispatchMenuAction")
+    fn_body = APP_JS[fn_start : fn_start + 2600]
     assert "abort_task" in fn_body
     assert "patchStatus('task'" in fn_body
     assert "'aborted'" in fn_body
@@ -53,17 +53,18 @@ def test_hold_task_toggle_present() -> None:
 
 def test_hold_resume_route_via_patch_status() -> None:
     """Task hold/resume dispatch through the shared patchStatus helper to /status."""
-    fn_start = APP_JS.find("async function handleMenuAction")
-    fn_body = APP_JS[fn_start : fn_start + 1200]
+    fn_start = APP_JS.find("async function dispatchMenuAction")
+    fn_body = APP_JS[fn_start : fn_start + 2600]
     assert "patchStatus('task'" in fn_body
     assert "'hold'" in fn_body
     assert "'in_progress'" in fn_body
 
 
 def test_goal_card_has_menu() -> None:
-    """Goal cards render a lifecycle menu button wired to showGoalMenu."""
-    assert "function showGoalMenu" in APP_JS
-    assert "showGoalMenu(event," in APP_JS
+    """Goal cards render a lifecycle menu button wired to showMenu."""
+    assert "function showMenu(event, kind, id)" in APP_JS
+    # The .js file contains \' escape sequences for quotes inside string literals
+    assert "showMenu(event, \\'goal\\'" in APP_JS
 
 
 def test_goal_menu_items_present() -> None:
@@ -80,8 +81,8 @@ def test_goal_menu_items_present() -> None:
 
 def test_goal_menu_routes() -> None:
     """Complete/defer route to the goal execute-command; abort/hold/resume to status."""
-    fn_start = APP_JS.find("async function handleGoalMenuAction")
-    fn_body = APP_JS[fn_start : fn_start + 1600]
+    fn_start = APP_JS.find("async function dispatchMenuAction")
+    fn_body = APP_JS[fn_start : fn_start + 2600]
     assert "/execute-command?vault=" in fn_body
     assert "complete-goal" in fn_body
     assert "defer-goal" in fn_body
@@ -110,8 +111,10 @@ def test_goal_starting_state_mirrors_tasks() -> None:
     """Goal cards get a startingGoals set + isStarting button logic (no Start flash)."""
     assert "let startingGoals" in APP_JS
     assert "startingGoals.has(goal.id)" in APP_JS
-    assert "startingGoals.add(goalId)" in APP_JS
-    assert "startingGoals.delete(goalId)" in APP_JS
+    # Merged runSession uses startingSet derived from kind
+    assert "kind === 'goal' ? startingGoals : startingTasks" in APP_JS
+    assert "startingSet.add(id)" in APP_JS
+    assert "startingSet.delete(id)" in APP_JS
     # createGoalCard computes an isStarting state like createTaskCard
     assert "goal.claude_session_started || startingGoals.has(goal.id)" in APP_JS
 
