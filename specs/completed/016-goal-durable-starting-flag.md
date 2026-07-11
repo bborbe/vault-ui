@@ -1,5 +1,5 @@
 ---
-status: verifying
+status: completed
 tags:
     - dark-factory
     - spec
@@ -7,6 +7,7 @@ approved: "2026-07-11T12:21:20Z"
 generating: "2026-07-11T12:29:57Z"
 prompted: "2026-07-11T12:29:57Z"
 verifying: "2026-07-11T12:36:27Z"
+completed: "2026-07-11T16:08:09Z"
 branch: dark-factory/goal-durable-starting-flag
 ---
 
