@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.47.0
 
 - feat(ui): Add Start / Resume / Reset session controls to goal cards, reaching session parity with task cards. A session-less goal shows ▶ Start; clicking it mints a real Claude session via `POST /api/goals/{id}/run` (`vault-cli goal work-on <goal> --mode headless --output json`), stores `claude_session_id` on the goal, and opens the existing Session Ready modal with a resume command — the card then flips to ▶ Resume. A goal that already has a session shows ▶ Resume and short-circuits to the modal without minting a new session. The goal dropdown lists **Reset Session** only when the goal has a session; choosing it clears `claude_session_id` via `DELETE /api/goals/{id}/session` and the card reverts to ▶ Start. Reuses the existing `showModal` / `positionAndBindMenu` / `patchStatus` / `parseErrorResponse` helpers and the existing stale-session cleanup. Bumps the `app.js` cache-bust token so already-open boards fetch the new script.
 - feat(api): Add `POST /api/goals/{goal_id}/run` endpoint that mints a Claude session for a goal via `vault-cli goal work-on`, stores `claude_session_id` on the goal, and returns a `SessionResponse` with a ready-to-run resume command. Goal IDs beginning with `-` are rejected before any subprocess (argument-injection guard). Failures surface as HTTP 500 with diagnostics naming the goal id and vault.
