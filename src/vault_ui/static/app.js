@@ -1199,6 +1199,12 @@ function createGoalCard(goal) {
         ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
         : '';
 
+    // Start/Resume button — mirrors createTaskCard but WITHOUT the task-only
+    // "Starting…" state (spec Non-goal): a goal shows Resume once claude_session_id
+    // lands, Start otherwise.
+    const hasSession = goal.claude_session_id;
+    const startButton = `<button class="${hasSession ? 'resume-btn' : 'start-btn'}" onclick="runGoal('${goal.id}')">${hasSession ? '▶ Resume' : '▶ Start'}</button>`;
+
     card.innerHTML = `
         ${menuButton}
         <div class="card-content">
@@ -1217,6 +1223,9 @@ function createGoalCard(goal) {
                 ${goal.assignee
                     ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
                     : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeHtml(goal.id)}', '${escapeHtml(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
+            </div>
+            <div class="card-actions">
+                ${startButton}
             </div>
         </div>
     `;
@@ -1320,6 +1329,64 @@ async function runTask(taskId) {
         showToast(error.message, true);
 
         // Restore button
+        if (event && event.target) {
+            event.target.textContent = '▶ Start';
+            event.target.disabled = false;
+        }
+    }
+}
+
+async function runGoal(goalId) {
+    const goal = goalsCache[goalId];
+    if (!goal) {
+        showToast('Goal not found in cache', true);
+        return;
+    }
+
+    const button = event.target;
+    const originalText = button.textContent;
+
+    try {
+        button.textContent = '⏳ Loading...';
+        button.disabled = true;
+
+        // Resume short-circuit: a goal that already has a session opens the modal
+        // directly — no new session minted, no POST to /run (spec Failure Mode:
+        // "operator clicks Start on a goal that already has a session").
+        if (goal.claude_session_id) {
+            const vaultsResponse = await fetch('/api/vaults');
+            const vaults = await vaultsResponse.json();
+            const vaultConfig = vaults.find(v => v.name === goal.vault);
+            if (!vaultConfig) {
+                throw new Error('Vault not found');
+            }
+            const command = `${vaultConfig.claude_script} --resume ${goal.claude_session_id}`;
+            showModal(goal.claude_session_id, command, vaultConfig.vault_path, goal.title);
+            button.textContent = originalText;
+            button.disabled = false;
+            return;
+        }
+
+        // Mint a new session via the goal-run endpoint.
+        button.textContent = '⏳ Starting...';
+        const response = await fetch(
+            `/api/goals/${encodeURIComponent(goalId)}/run?vault=${encodeURIComponent(goal.vault)}`,
+            { method: 'POST' }
+        );
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
+        }
+
+        const data = await response.json();
+        goal.claude_session_id = data.session_id;
+        showModal(data.session_id, data.command, data.working_dir, data.task_title);
+
+        button.textContent = '▶ Resume';
+        button.className = 'resume-btn';
+        button.disabled = false;
+    } catch (error) {
+        console.error('Failed to run goal:', error);
+        showToast(error.message, true);
         if (event && event.target) {
             event.target.textContent = '▶ Start';
             event.target.disabled = false;
@@ -1628,12 +1695,17 @@ function showGoalMenu(event, goalId) {
     menu.className = 'task-menu';
 
     const goal = goalsCache[goalId];
+    const hasSession = goal && goal.claude_session_id;
 
-    const menuItems = [
-        { label: 'Complete Goal', action: 'complete_goal' },
-        { label: 'Defer Goal', action: 'defer_goal' },
-        { label: 'Abort Goal', action: 'abort_goal' },
-    ];
+    const menuItems = [];
+    // Reset Session only when the goal has a session (mirrors the task menu's
+    // conditional Clear Session item). A session-less goal does not list it.
+    if (hasSession) {
+        menuItems.push({ label: 'Reset Session', action: 'clear_session' });
+    }
+    menuItems.push({ label: 'Complete Goal', action: 'complete_goal' });
+    menuItems.push({ label: 'Defer Goal', action: 'defer_goal' });
+    menuItems.push({ label: 'Abort Goal', action: 'abort_goal' });
 
     // Hold/Resume toggle — a held goal offers Resume (back to in_progress), else Hold
     if (goal && goal.status === 'hold') {
@@ -1724,7 +1796,9 @@ async function handleGoalMenuAction(goalId, action) {
 
     closeMenu();
 
-    if (action === 'complete_goal' || action === 'defer_goal') {
+    if (action === 'clear_session') {
+        await clearGoalSession(goalId);
+    } else if (action === 'complete_goal' || action === 'defer_goal') {
         const command = action === 'complete_goal' ? 'complete-goal' : 'defer-goal';
         try {
             const response = await fetch(
@@ -1895,6 +1969,31 @@ async function clearTaskSession(taskId) {
         await loadCurrentView();
     } catch (error) {
         console.error('Failed to clear session:', error);
+        showToast(error.message, true);
+    }
+}
+
+async function clearGoalSession(goalId) {
+    const goal = goalsCache[goalId];
+    if (!goal) {
+        showToast('Goal not found', true);
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `/api/goals/${encodeURIComponent(goalId)}/session?vault=${encodeURIComponent(goal.vault)}`,
+            { method: 'DELETE' }
+        );
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
+        }
+        if (goalsCache[goalId]) {
+            goalsCache[goalId].claude_session_id = null;
+        }
+        await loadCurrentView();
+    } catch (error) {
+        console.error('Failed to clear goal session:', error);
         showToast(error.message, true);
     }
 }

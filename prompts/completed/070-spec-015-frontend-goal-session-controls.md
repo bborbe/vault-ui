@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [015-goal-start-resume-session]
+summary: Add Start/Resume/Reset session controls to goal cards in app.js, bump cache-bust token, update CHANGELOG, add static tests
+execution_id: vault-ui-exec-070-spec-015-frontend-goal-session-controls
+dark-factory-version: v0.191.0
 created: "2026-07-11T09:56:44Z"
 queued: "2026-07-11T10:08:01Z"
+started: "2026-07-11T10:18:00Z"
+completed: "2026-07-11T10:19:46Z"
 ---
 
 <summary>
