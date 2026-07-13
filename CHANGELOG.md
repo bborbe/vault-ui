@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.51.2
 
 - fix(goals): Deferred goals now disappear from the board like deferred tasks. `GET /api/goals` gained the `defer_date` filter + `upcoming_hours` window the tasks endpoint already had (future-deferred goals are hidden; in-window ones return `upcoming: true`), `loadGoals()` sends the upcoming-window value, and goal cards grey out when upcoming. In-window (upcoming) and hold goals now also sink to the bottom of their column (`active → upcoming → hold` bucketing) instead of holding their priority slot — mirroring the task ordering. Previously deferring a goal wrote `defer_date` but left the card on the board in place.
 
