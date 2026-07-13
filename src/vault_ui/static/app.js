@@ -2083,6 +2083,11 @@ function renderColumnHeaders() {
             if (unknownCol) unknownCol.remove();
         }
     }
+    // Status columns are destroyed and recreated on every call (status mode);
+    // re-wire drop handlers so goal drag-and-drop survives a view switch.
+    // Idempotent for the surviving static phase columns (addEventListener
+    // de-dups identical named-handler triples).
+    setupDragAndDrop();
 }
 
 function updateViewToggle() {
