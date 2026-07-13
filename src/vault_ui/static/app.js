@@ -971,6 +971,9 @@ async function loadGoals() {
         currentStatuses.forEach(s => params.append('status', s));
         currentAssignees.forEach(a => params.append('assignee', a));
 
+        // Upcoming-window cutoff (hours ahead) — 0 hides all deferred goals
+        params.set('upcoming_hours', String(upcomingHours));
+
         const response = await fetch(`/api/goals?${params.toString()}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -1182,6 +1185,7 @@ function createGoalCard(goal) {
     card.dataset.kind = 'goal';
     card.draggable = true;
     if (goal.status === 'hold') card.classList.add('on-hold');
+    if (goal.upcoming) card.classList.add('upcoming');
 
     // Drag handlers — mirror createTaskCard, set dataTransfer to the goal id
     // so handleDrop can detect goal-vs-task via cache lookup (goalsCache hit

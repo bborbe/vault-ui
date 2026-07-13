@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(goals): Deferred goals now disappear from the board like deferred tasks. `GET /api/goals` gained the `defer_date` filter + `upcoming_hours` window the tasks endpoint already had (future-deferred goals are hidden; in-window ones return `upcoming: true`), `loadGoals()` sends the upcoming-window value, and goal cards grey out when upcoming. Previously deferring a goal wrote `defer_date` but left the card on the board.
+
 ## v0.51.0
 
 - feat(ui): Declutter the header on narrow viewports (laptops). Below a 1500px viewport width, hide the "Vault UI" title (pure branding) and the "Upcoming" window `<select>` (a rarely-toggled setting) via a CSS media query, so the vault/status/assignee selectors and the board columns get the reclaimed width. Full-width monitors are unchanged; the elements stay in the DOM (hidden by CSS only). Bumps the `style.css` cache-bust token.

@@ -105,6 +105,7 @@ class GoalResponse(BaseModel):
     # does, or "Start" again if the mint failed / the session was reset / cleanup.
     claude_session_started: str | None = None
     assignee: str | None = None
+    upcoming: bool = False
 
 
 class SessionResponse(BaseModel):
