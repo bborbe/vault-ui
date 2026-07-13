@@ -1005,7 +1005,15 @@ async function loadGoals() {
             return (a.id || '').localeCompare(b.id || '');
         });
 
-        goals.forEach(goal => {
+        // Split goals into buckets so upcoming (deferred, within-window) and hold
+        // goals sink to the bottom of their column — mirrors the task bucketing
+        // (active → upcoming → hold). Hold takes precedence over upcoming so a
+        // held goal with a future defer_date still sinks.
+        const holdGoals = goals.filter(g => g.status === 'hold');
+        const upcomingGoals = goals.filter(g => g.status !== 'hold' && g.upcoming);
+        const activeGoals = goals.filter(g => g.status !== 'hold' && !g.upcoming);
+
+        [...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal => {
             let containerId;
             if (currentGroupBy === 'status') {
                 // Status-mode for goals: status is the column discriminator

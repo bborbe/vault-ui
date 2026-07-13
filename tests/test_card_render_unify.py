@@ -56,5 +56,5 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
 
 def test_cachebust_token_bumped() -> None:
     """index.html points at the new app.js token; the prior token is gone."""
-    assert "app.js?v=2026-07-13-goal-defer" in INDEX_HTML
+    assert "app.js?v=2026-07-13-goal-defer-order" in INDEX_HTML
     assert "app.js?v=2026-07-13-fix-goal-drag-drop" not in INDEX_HTML

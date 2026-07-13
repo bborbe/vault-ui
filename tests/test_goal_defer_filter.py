@@ -43,3 +43,14 @@ def test_create_goal_card_greys_upcoming() -> None:
         "createGoalCard must add 'upcoming' class when goal.upcoming is true, "
         "mirroring createTaskCard"
     )
+
+
+def test_load_goals_buckets_upcoming_to_bottom() -> None:
+    """loadGoals() renders active goals first, then upcoming, then hold — so deferred
+    (upcoming) goals sink to the bottom of their column, mirroring the task bucketing."""
+    with open("src/vault_ui/static/app.js") as f:
+        app_js = f.read()
+
+    assert "const upcomingGoals = goals.filter(" in app_js
+    assert "const activeGoals = goals.filter(" in app_js
+    assert "[...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal =>" in app_js
