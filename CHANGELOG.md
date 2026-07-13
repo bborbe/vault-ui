@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(goals): Deferred goals now disappear from the board like deferred tasks. `GET /api/goals` gained the `defer_date` filter + `upcoming_hours` window the tasks endpoint already had (future-deferred goals are hidden; in-window ones return `upcoming: true`), `loadGoals()` sends the upcoming-window value, and goal cards grey out when upcoming. In-window (upcoming) and hold goals now also sink to the bottom of their column (`active → upcoming → hold` bucketing) instead of holding their priority slot — mirroring the task ordering. Previously deferring a goal wrote `defer_date` but left the card on the board in place.
+
 ## v0.51.1
 
 - fix(ui): Goal drag-and-drop survives a Tasks → Goals → back navigation. The Goals view rebuilds its status columns from scratch on every view switch (`renderColumnHeaders` in `app.js` removes and recreates them), but drop-target listeners were only attached once at page load, so the freshly-built columns had no `drop`/`dragover`/`dragleave` handlers and goal cards could no longer be moved between statuses. `renderColumnHeaders` now re-wires drop handlers on all columns after every rebuild (idempotent for the surviving static Tasks phase columns). Direct `?view=goals` loads and Tasks-view drag-and-drop were and remain unaffected. Bumps the `app.js` cache-bust token so already-open boards fetch the fixed script.

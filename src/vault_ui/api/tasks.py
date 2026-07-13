@@ -676,7 +676,10 @@ async def list_tasks(
 
 
 def _goal_to_response(
-    goal: Goal, vault_config: VaultConfig, claude_session_started: str | None = None
+    goal: Goal,
+    vault_config: VaultConfig,
+    claude_session_started: str | None = None,
+    upcoming: bool = False,
 ) -> GoalResponse:
     """Convert Goal to GoalResponse.
 
@@ -711,6 +714,7 @@ def _goal_to_response(
         claude_session_id=goal.claude_session_id,
         claude_session_started=claude_session_started,
         assignee=goal.assignee,
+        upcoming=upcoming,
     )
 
 
@@ -719,6 +723,8 @@ async def _process_goal_vault(
     status_filter: list[str] | None,
     assignee_filter: list[str] | None,
     vault_goal_cache: dict[str, tuple[float, list[Goal]]],
+    now: datetime,
+    cutoff: datetime,
 ) -> list[GoalResponse]:
     """Fetch and filter goals for one vault (parallel to _process_vault).
 
@@ -757,6 +763,20 @@ async def _process_goal_vault(
             )
         ]
 
+    # Filter out deferred goals; include upcoming (within cutoff) with flag set.
+    # Completed goals bypass the defer filter (governed solely by the status filter above).
+    visible_goals: list[tuple[Goal, bool]] = []  # (goal, upcoming)
+    for g in goals:
+        if g.status == "completed" or g.defer_date is None:
+            visible_goals.append((g, False))
+        else:
+            defer_dt = _parse_defer_date(g.defer_date)
+            if defer_dt <= now:
+                visible_goals.append((g, False))
+            elif defer_dt <= cutoff:
+                visible_goals.append((g, True))
+            # else: defer_dt > cutoff → drop
+
     # Surface claude_session_started from the status cache — vault-cli's goal list does
     # not emit this custom field, so the durable "Starting…" flag reaches any concurrent
     # view only via the cache's direct frontmatter read.
@@ -766,8 +786,9 @@ async def _process_goal_vault(
             g,
             vault_config,
             claude_session_started=cache.get_session_started(vault_config.name, g.id),
+            upcoming=upcoming,
         )
-        for g in goals
+        for g, upcoming in visible_goals
     ]
 
 
@@ -777,14 +798,14 @@ async def list_goals(
     vault: Annotated[list[str] | None, Query()] = None,
     status: Annotated[list[str] | None, Query()] = None,
     assignee: Annotated[list[str] | None, Query()] = None,
+    upcoming_hours: Annotated[int, Query(ge=0, le=168)] = 8,
 ) -> list[GoalResponse]:
     """List goals from Obsidian vault(s).
 
     Accepts the same ``vault``, ``status``, ``assignee`` query parameters as
-    ``GET /api/tasks`` (no ``defer_date`` filter on goals — defer_date is
-    surfaced on the response but not used as a filter for the first pass;
-    the spec marks "match /api/tasks filters verbatim" as best-effort, and
-    a per-status filter covers the operator's actual need to scope a view).
+    ``GET /api/tasks`` and honors ``defer_date`` + ``upcoming_hours`` identically
+    to tasks: future-deferred goals are hidden; in-window ones return
+    ``upcoming: true`` and are greyed on the board.
 
     Returns:
         List of goals matching the filter, in the same vault-major order
@@ -797,11 +818,20 @@ async def list_goals(
 
     status_filter = _flatten_filter(status)
     assignee_filter_tokens = _flatten_assignee_filter(assignee)
+    now = datetime.now(UTC)
+    cutoff = now + timedelta(hours=upcoming_hours)
 
     vault_goal_cache: dict[str, tuple[float, list[Goal]]] = request.app.state.vault_goal_cache
     results = await asyncio.gather(
         *[
-            _process_goal_vault(vault_name, status_filter, assignee_filter_tokens, vault_goal_cache)
+            _process_goal_vault(
+                vault_name,
+                status_filter,
+                assignee_filter_tokens,
+                vault_goal_cache,
+                now,
+                cutoff,
+            )
             for vault_name in vault_names
         ],
         return_exceptions=True,

@@ -1576,6 +1576,104 @@ def test_list_tasks_completed_no_completed_date_falls_back_to_modified_date(
     assert task_resp["recently_completed"] is True
 
 
+# --- goal defer filtering tests ---
+
+
+def test_list_goals_future_defer_date_excluded(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Goal with defer_date more than upcoming_hours in the future is excluded entirely."""
+    from datetime import date, timedelta
+
+    future_date = (date.today() + timedelta(days=30)).isoformat()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Future Deferred Goal", status="in_progress", defer_date=future_date)
+    )
+
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    goal_ids = [g["id"] for g in response.json()]
+    assert "Future Deferred Goal" not in goal_ids
+
+
+def test_list_goals_today_defer_date_included(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Goal with defer_date=today is included with upcoming=False."""
+    from datetime import date
+
+    today = date.today().isoformat()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Today Deferred Goal", status="in_progress", defer_date=today)
+    )
+
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    goals = response.json()
+    goal = next((g for g in goals if g["id"] == "Today Deferred Goal"), None)
+    assert goal is not None
+    assert goal["upcoming"] is False
+
+
+def test_list_goals_in_window_defer_date_upcoming(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Goal with defer_date within the upcoming window is included with upcoming=True."""
+    # 4 hours from now — within the default 8h window
+    defer_dt = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Soon Goal", status="in_progress", defer_date=defer_dt)
+    )
+
+    response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    goals = response.json()
+    goal = next((g for g in goals if g["id"] == "Soon Goal"), None)
+    assert goal is not None
+    assert goal["upcoming"] is True
+
+
+def test_list_goals_upcoming_hours_zero_hides_in_window(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Goal with defer_date in the 8h window is excluded when upcoming_hours=0."""
+    defer_dt = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Soon Goal", status="in_progress", defer_date=defer_dt)
+    )
+
+    response = test_client_with_goals.get("/api/goals?vault=TestVault&upcoming_hours=0")
+
+    assert response.status_code == 200
+    goal_ids = [g["id"] for g in response.json()]
+    assert "Soon Goal" not in goal_ids
+
+
+def test_list_goals_completed_bypasses_defer_filter(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Completed goal with future defer_date is returned (defer filter skipped)."""
+    from datetime import date, timedelta
+
+    future_date = (date.today() + timedelta(days=30)).isoformat()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(
+            goal_id="Completed Future Deferred Goal",
+            status="completed",
+            defer_date=future_date,
+        )
+    )
+
+    response = test_client_with_goals.get("/api/goals?vault=TestVault&status=completed")
+
+    assert response.status_code == 200
+    goal_ids = [g["id"] for g in response.json()]
+    assert "Completed Future Deferred Goal" in goal_ids
+
+
 def _make_streaming_proc(response_json: bytes = b'{"session_id": "test-session-id"}') -> MagicMock:
     """Mock subprocess compatible with start_vault_cli_session's streaming interface."""
 
