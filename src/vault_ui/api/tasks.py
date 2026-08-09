@@ -16,6 +16,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from vault_ui.activity import compute_activity_date
 from vault_ui.api.models import (
     AssigneesResponse,
     Goal,
@@ -1783,6 +1784,12 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
     file_path = f"{vault_config.tasks_folder}/{task.id}.md"
     obsidian_url = f"obsidian://open?vault={quote(vault_config.vault_name)}&file={quote(file_path)}"
 
+    activity_date = compute_activity_date(
+        task.modified_date,
+        task.claude_session_id,
+        derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
+    )
+
     return TaskResponse(
         id=task.id,
         title=task.title,
@@ -1807,4 +1814,5 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         recently_completed=task.recently_completed,
         vault=vault_config.name,
         goals=task.goals,
+        activity_date=activity_date,
     )

@@ -82,6 +82,9 @@ class TaskResponse(BaseModel):
     recently_completed: bool = False
     vault: str  # Vault name this task belongs to
     goals: list[str] | None = None
+    # Newer of the task file mtime and the mtime of the claude_session_id
+    # transcript — "when did anything last happen here". See activity.py.
+    activity_date: datetime | None = None
 
 
 class GoalResponse(BaseModel):

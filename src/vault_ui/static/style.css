@@ -937,6 +937,17 @@ h1 {
     white-space: nowrap;
 }
 
+/* Time since anything last happened on the card. Deliberately plain text, not a
+   chip — it is ambient context, and should lose against the badges beside it. */
+.activity-age {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    line-height: 1rem;
+    color: #64748b;             /* slate-500 */
+    white-space: nowrap;
+}
+
 /* View toggle (Tasks / Goals) */
 .view-toggle {
     display: inline-flex;
