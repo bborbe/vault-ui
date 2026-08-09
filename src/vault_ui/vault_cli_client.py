@@ -313,6 +313,11 @@ class VaultCLIClient:
         """
         goal_id = str(data.get("name", data.get("id", "")))
 
+        modified_date: datetime | None = None
+        if data.get("modified_date"):
+            with suppress(ValueError, TypeError):
+                modified_date = datetime.fromisoformat(str(data["modified_date"]))
+
         priority: int | str | None = data.get("priority")
         if isinstance(priority, bool):
             # bool is a subclass of int — guard before the int() check below
@@ -334,4 +339,5 @@ class VaultCLIClient:
             defer_date=data.get("defer_date"),
             target_date=data.get("target_date"),
             completed_date=data.get("completed_date"),
+            modified_date=modified_date,
         )

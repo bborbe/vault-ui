@@ -54,6 +54,7 @@ class Goal:
     target_date: str | None = None  # From frontmatter: YYYY-MM-DD
     completed_date: str | None = None  # From frontmatter: ISO 8601 datetime
     obsidian_url: str | None = None  # obsidian://open?vault=...&file=... (built by API layer)
+    modified_date: datetime | None = None  # File modification time
 
 
 class TaskResponse(BaseModel):
@@ -109,6 +110,9 @@ class GoalResponse(BaseModel):
     claude_session_started: str | None = None
     assignee: str | None = None
     upcoming: bool = False
+    # Newer of the goal file mtime and the mtime of the claude_session_id
+    # transcript — same signal the task cards use. See activity.py.
+    activity_date: datetime | None = None
 
 
 class SessionResponse(BaseModel):

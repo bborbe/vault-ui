@@ -702,6 +702,12 @@ def _goal_to_response(
     file_path = f"{goals_folder}/{goal.id}.md"
     obsidian_url = f"obsidian://open?vault={quote(vault_config.vault_name)}&file={quote(file_path)}"
 
+    activity_date = compute_activity_date(
+        goal.modified_date,
+        goal.claude_session_id,
+        derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
+    )
+
     return GoalResponse(
         id=goal.id,
         title=goal.title,
@@ -716,6 +722,7 @@ def _goal_to_response(
         claude_session_started=claude_session_started,
         assignee=goal.assignee,
         upcoming=upcoming,
+        activity_date=activity_date,
     )
 
 

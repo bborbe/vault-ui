@@ -116,6 +116,27 @@ def test_activity_none_when_no_signal(tmp_path: Path) -> None:
     assert compute_activity_date(None, None, projects_root / "-vault", projects_root) is None
 
 
+def test_goal_parse_carries_modified_date() -> None:
+    """Goals need a file mtime to fall back on, same as tasks."""
+    from vault_ui.vault_cli_client import VaultCLIClient
+
+    client = VaultCLIClient("vault-cli", "personal")
+    goal = client._parse_goal(
+        {"name": "G1", "title": "Ship It", "modified_date": "2026-08-09T08:58:32Z"}
+    )
+
+    assert goal.modified_date is not None
+    assert goal.modified_date.year == 2026
+
+
+def test_goal_parse_tolerates_missing_modified_date() -> None:
+    from vault_ui.vault_cli_client import VaultCLIClient
+
+    client = VaultCLIClient("vault-cli", "personal")
+
+    assert client._parse_goal({"name": "G1", "title": "Ship It"}).modified_date is None
+
+
 def test_formatter_uses_single_largest_unit() -> None:
     """Static assertion: the JS formatter covers every unit with no decimals."""
     start = APP_JS.find("function formatActivityAge")
@@ -132,6 +153,11 @@ def test_task_card_renders_activity_age() -> None:
     assert "activityAgeHtml(task.activity_date)" in APP_JS
     assert 'class="activity-age"' in APP_JS
     assert "Last activity:" in APP_JS
+
+
+def test_goal_card_renders_activity_age() -> None:
+    """Goal cards carry the same badge — staleness matters there too."""
+    assert "activityAgeHtml(goal.activity_date)" in APP_JS
 
 
 def test_activity_age_styled_small_and_grey() -> None:
