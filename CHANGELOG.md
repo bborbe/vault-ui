@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): Task and goal cards show how long it has been since anything last happened on them — a small grey duration (`<1m`, `47m`, `2h`, `4d`, `3w`) in the card footer, with the full timestamp on hover. The timestamp is the newer of the file's mtime and the mtime of the Claude session transcript named by the card's `claude_session_id` (new `activity.py`, surfaced as `activity_date` on `TaskResponse` and `GoalResponse`). Neither signal works alone: the file only changes when something is written to it, so an agent mid-turn looks stale for hours, while the transcript keeps a dead session's timestamp once that session ends. Cards with no `claude_session_id` (human tasks) and sessions whose transcript is not on this machine (cloud/container) fall back to the file mtime. `Goal` gained a `modified_date` field to make that fallback possible. Bumps the `app.js` and `style.css` cache-bust tokens.
+
 ## v0.51.2
 
 - fix(goals): Deferred goals now disappear from the board like deferred tasks. `GET /api/goals` gained the `defer_date` filter + `upcoming_hours` window the tasks endpoint already had (future-deferred goals are hidden; in-window ones return `upcoming: true`), `loadGoals()` sends the upcoming-window value, and goal cards grey out when upcoming. In-window (upcoming) and hold goals now also sink to the bottom of their column (`active → upcoming → hold` bucketing) instead of holding their priority slot — mirroring the task ordering. Previously deferring a goal wrote `defer_date` but left the card on the board in place.

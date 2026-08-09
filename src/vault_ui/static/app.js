@@ -1105,6 +1105,36 @@ function sessionButtonHtml(kind, item) {
 // Shared card body: menu button + title block + footer skeleton. The kind-specific
 // footer-left content (badges/assignee), card classes, dataset, urgency/on-hold, and
 // drag wiring stay in the thin createTaskCard/createGoalCard wrappers.
+// Age of the last activity on a card, as a single largest unit with no decimals.
+// The server resolves the timestamp (newer of task file mtime and Claude session
+// transcript mtime); this only formats it. Glanceable staleness, not precision —
+// so "2h" rather than "2h 14m".
+function formatActivityAge(iso) {
+    if (!iso) return '';
+    const then = new Date(iso);
+    if (isNaN(then.getTime())) return '';
+
+    const seconds = Math.floor((Date.now() - then.getTime()) / 1000);
+    if (seconds < 60) return '<1m';
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d`;
+
+    return `${Math.floor(days / 7)}w`;
+}
+
+function activityAgeHtml(activityDate) {
+    const age = formatActivityAge(activityDate);
+    if (!age) return '';
+    return `<span class="activity-age" title="Last activity: ${escapeHtml(activityDate)}">${escapeHtml(age)}</span>`;
+}
+
 function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml) {
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + id + '\')">⋮</button>';
     return `
@@ -1181,6 +1211,7 @@ function createTaskCard(task) {
         ${jiraBadge}
         ${assigneeBadge}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
+        ${activityAgeHtml(task.activity_date)}
     `;
     card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, startButton);
     return card;
@@ -1229,6 +1260,7 @@ function createGoalCard(goal) {
             ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
             : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeHtml(goal.id)}', '${escapeHtml(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
         ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
+        ${activityAgeHtml(goal.activity_date)}
     `;
     card.innerHTML = `
         ${menuButton}
