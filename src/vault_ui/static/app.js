@@ -12,6 +12,7 @@ const ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'ab
 let tasksCache = {}; // Map of task ID -> task data
 let goalsCache = {}; // Map of goal ID -> goal data (mirrors tasksCache)
 let currentView = 'tasks'; // 'tasks' | 'goals' — synced to ?view= URL param, default 'tasks'
+let currentSort = 'default'; // 'default' | 'priority' | 'modified' — column sort key, synced to ?sort= URL param
 let currentGroupBy = 'phase'; // 'phase' | 'status' — derived from currentView (tasks→phase, goals→status); not user-selectable
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
@@ -109,6 +110,15 @@ function parseURLParams() {
     }
     // else: keep the module-level default ['in_progress', 'hold', 'completed'] for Tasks view.
 
+    // Parse sort parameter — single string from the allowlist; absent or
+    // unknown values fall back to 'default' (each view's existing ordering).
+    const sortParam = params.get('sort');
+    if (sortParam === 'priority' || sortParam === 'modified') {
+        currentSort = sortParam;
+    } else {
+        currentSort = 'default';
+    }
+
     // Grouping is derived from view: tasks→phase, goals→status.
     // The groupBy UI selector + URL param were removed (the cross-axis combinations
     // weren't useful: tasks-by-status duplicates the status filter dropdown; goals-by-phase
@@ -136,6 +146,7 @@ function setupEventListeners() {
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
     setupUpcomingWindow();
+    setupSortControl();
     setupModalBackdropClose();
     setupDragAndDrop();
 
@@ -169,6 +180,24 @@ function setupUpcomingWindow() {
             upcomingHours = next;
             localStorage.setItem('upcomingHours', String(next));
             loadCurrentView();
+        }
+    });
+}
+
+// Sort-select: syncs the control to the current sort key, and on change
+// re-renders the active view from cache (no refetch) so cards reorder
+// immediately. The URL is rewritten so reloads preserve the same order.
+function setupSortControl() {
+    const select = document.getElementById('sort-select');
+    if (!select) return;
+    select.value = currentSort;
+    select.addEventListener('change', () => {
+        currentSort = select.value;
+        updateURL();
+        if (currentView === 'goals') {
+            renderGoals();
+        } else {
+            renderTasks();
         }
     });
 }
@@ -771,6 +800,9 @@ function updateURL() {
     // Add view parameter — always emit explicitly (so reload lands in the same view)
     params.set('view', currentView);
 
+    // Add sort parameter — always emit explicitly (so reload lands in the same order)
+    params.set('sort', currentSort);
+
 
     // Update URL without reload
     const newURL = params.toString() ? `?${params.toString()}` : window.location.pathname;
@@ -885,67 +917,7 @@ async function loadTasks() {
             tasksCache[task.id] = task;
         });
 
-        // Clear existing cards
-        ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'].forEach(phase => {
-            const container = document.getElementById(`cards-${phase}`);
-            if (container) {
-                container.innerHTML = '';
-            }
-        });
-
-        // Sort tasks by urgency tier first (0=overdue, 1=due-today, 2=scheduled, 3=none),
-        // then by priority within each tier (high=1, medium=2, low=3, null=999)
-        tasks.sort((a, b) => {
-            const urgencyA = getUrgencyTier(a);
-            const urgencyB = getUrgencyTier(b);
-            if (urgencyA !== urgencyB) return urgencyA - urgencyB;
-            return normalizePriority(a.priority) - normalizePriority(b.priority);
-        });
-
-        // Split tasks into buckets that fix column ordering: active → upcoming → hold,
-        // with recently_completed pinned to the bottom of the Done lane.
-        // Hold takes precedence over upcoming so a hold task with a future defer_date
-        // still sinks to the bottom (parked/blocked, not actionable now).
-        const recentlyCompletedTasks = tasks.filter(t => t.recently_completed);
-        const holdTasks = tasks.filter(t => !t.recently_completed && t.status === 'hold');
-        const upcomingTasks = tasks.filter(
-            t => !t.recently_completed && t.status !== 'hold' && t.upcoming
-        );
-        const activeTasks = tasks.filter(
-            t => !t.recently_completed && t.status !== 'hold' && !t.upcoming
-        );
-
-        // Populate cards: active first, then upcoming, then hold at the bottom;
-        // recently-completed always at bottom of done.
-        const validPhases = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'];
-        [...activeTasks, ...upcomingTasks, ...holdTasks].forEach(task => {
-            let containerId;
-            if (currentGroupBy === 'status') {
-                // Status-mode for tasks: status is the column discriminator.
-                // Tasks without a matching status land in the first column
-                // (in_progress) as a fallback — tasks should always have a
-                // status, but defensiveness costs nothing here.
-                const taskStatus = task.status || 'in_progress';
-                containerId = `cards-${taskStatus}`;
-            } else {
-                // phase-mode: existing behavior — in_progress → execution alias.
-                const displayPhase = task.phase === 'in_progress' ? 'execution' : task.phase;
-                const phase = displayPhase && validPhases.includes(displayPhase) ? displayPhase : 'todo';
-                containerId = `cards-${phase}`;
-            }
-            const container = document.getElementById(containerId);
-            if (container) {
-                const card = createTaskCard(task);
-                container.appendChild(card);
-            }
-        });
-        // Recently completed always go to done lane at the very bottom
-        const doneContainer = document.getElementById('cards-done');
-        if (doneContainer) {
-            recentlyCompletedTasks.forEach(task => {
-                doneContainer.appendChild(createTaskCard(task));
-            });
-        }
+        renderTasks();
 
         // Refresh the assignee dropdown so options reflect the freshly loaded data.
         renderAssigneeDropdown();
@@ -954,6 +926,70 @@ async function loadTasks() {
     } catch (error) {
         console.error('Failed to load tasks:', error);
         showToast(error.message, true);
+    }
+}
+
+// Render the board from the tasks cache, ordered by the active sort key.
+// Split out of loadTasks so a sort change can re-render without refetching.
+function renderTasks() {
+    const tasks = Object.values(tasksCache);
+
+    // Clear existing cards
+    ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'].forEach(phase => {
+        const container = document.getElementById(`cards-${phase}`);
+        if (container) {
+            container.innerHTML = '';
+        }
+    });
+
+    // Sort tasks by the active sort key (see sortBoardItems). The default
+    // order is urgency tier first (0=overdue, 1=due-today, 2=scheduled, 3=none),
+    // then by priority within each tier (high=1, medium=2, low=3, null=999).
+    tasks.sort((a, b) => sortBoardItems(a, b, 'task'));
+
+    // Split tasks into buckets that fix column ordering: active → upcoming → hold,
+    // with recently_completed pinned to the bottom of the Done lane.
+    // Hold takes precedence over upcoming so a hold task with a future defer_date
+    // still sinks to the bottom (parked/blocked, not actionable now).
+    const recentlyCompletedTasks = tasks.filter(t => t.recently_completed);
+    const holdTasks = tasks.filter(t => !t.recently_completed && t.status === 'hold');
+    const upcomingTasks = tasks.filter(
+        t => !t.recently_completed && t.status !== 'hold' && t.upcoming
+    );
+    const activeTasks = tasks.filter(
+        t => !t.recently_completed && t.status !== 'hold' && !t.upcoming
+    );
+
+    // Populate cards: active first, then upcoming, then hold at the bottom;
+    // recently-completed always at bottom of done.
+    const validPhases = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'];
+    [...activeTasks, ...upcomingTasks, ...holdTasks].forEach(task => {
+        let containerId;
+        if (currentGroupBy === 'status') {
+            // Status-mode for tasks: status is the column discriminator.
+            // Tasks without a matching status land in the first column
+            // (in_progress) as a fallback — tasks should always have a
+            // status, but defensiveness costs nothing here.
+            const taskStatus = task.status || 'in_progress';
+            containerId = `cards-${taskStatus}`;
+        } else {
+            // phase-mode: existing behavior — in_progress → execution alias.
+            const displayPhase = task.phase === 'in_progress' ? 'execution' : task.phase;
+            const phase = displayPhase && validPhases.includes(displayPhase) ? displayPhase : 'todo';
+            containerId = `cards-${phase}`;
+        }
+        const container = document.getElementById(containerId);
+        if (container) {
+            const card = createTaskCard(task);
+            container.appendChild(card);
+        }
+    });
+    // Recently completed always go to done lane at the very bottom
+    const doneContainer = document.getElementById('cards-done');
+    if (doneContainer) {
+        recentlyCompletedTasks.forEach(task => {
+            doneContainer.appendChild(createTaskCard(task));
+        });
     }
 }
 
@@ -985,57 +1021,60 @@ async function loadGoals() {
             goalsCache[goal.id] = goal;
         });
 
-        // Clear all cards containers that match the active grouping's columns.
-        const containerIds = currentGroupBy === 'status'
-            ? ['in_progress', 'next', 'backlog', 'completed', 'hold', 'aborted']
-            : ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'];
-        containerIds.forEach(id => {
-            const container = document.getElementById(`cards-${id}`);
-            if (container) container.innerHTML = '';
-        });
-
-        // Sort goals by priority (1=highest, null=999=last), then alphabetically
-        // by id within same priority — mirrors the priority-first ordering tasks
-        // already use (see line ~865 task sort) so cards in each column read
-        // top-down from most-important to least.
-        goals.sort((a, b) => {
-            const pa = normalizePriority(a.priority);
-            const pb = normalizePriority(b.priority);
-            if (pa !== pb) return pa - pb;
-            return (a.id || '').localeCompare(b.id || '');
-        });
-
-        // Split goals into buckets so upcoming (deferred, within-window) and hold
-        // goals sink to the bottom of their column — mirrors the task bucketing
-        // (active → upcoming → hold). Hold takes precedence over upcoming so a
-        // held goal with a future defer_date still sinks.
-        const holdGoals = goals.filter(g => g.status === 'hold');
-        const upcomingGoals = goals.filter(g => g.status !== 'hold' && g.upcoming);
-        const activeGoals = goals.filter(g => g.status !== 'hold' && !g.upcoming);
-
-        [...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal => {
-            let containerId;
-            if (currentGroupBy === 'status') {
-                // Status-mode for goals: status is the column discriminator
-                // (same as tasks in status-mode). Goals should always have
-                // a status; missing status → 'in_progress' as fallback.
-                const goalStatus = goal.status || 'in_progress';
-                containerId = `cards-${goalStatus}`;
-            } else {
-                // phase-mode for goals: goals don't have a phase field,
-                // so they all land in the "—" column.
-                containerId = 'cards-unknown';
-            }
-            const container = document.getElementById(containerId);
-            if (container) {
-                const card = createGoalCard(goal);
-                container.appendChild(card);
-            }
-        });
+        renderGoals();
     } catch (error) {
         console.error('Failed to load goals:', error);
         showToast(error.message, true);
     }
+}
+
+// Render the goals board from the goals cache, ordered by the active sort key.
+// Split out of loadGoals so a sort change can re-render without refetching.
+function renderGoals() {
+    const goals = Object.values(goalsCache);
+
+    // Clear all cards containers that match the active grouping's columns.
+    const containerIds = currentGroupBy === 'status'
+        ? ['in_progress', 'next', 'backlog', 'completed', 'hold', 'aborted']
+        : ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'];
+    containerIds.forEach(id => {
+        const container = document.getElementById(`cards-${id}`);
+        if (container) container.innerHTML = '';
+    });
+
+    // Sort goals by the active sort key (see sortBoardItems). The default
+    // order is priority (1=highest, null=999=last), then alphabetically
+    // by id within same priority, so cards in each column read top-down
+    // from most-important to least.
+    goals.sort((a, b) => sortBoardItems(a, b, 'goal'));
+
+    // Split goals into buckets so upcoming (deferred, within-window) and hold
+    // goals sink to the bottom of their column — mirrors the task bucketing
+    // (active → upcoming → hold). Hold takes precedence over upcoming so a
+    // held goal with a future defer_date still sinks.
+    const holdGoals = goals.filter(g => g.status === 'hold');
+    const upcomingGoals = goals.filter(g => g.status !== 'hold' && g.upcoming);
+    const activeGoals = goals.filter(g => g.status !== 'hold' && !g.upcoming);
+
+    [...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal => {
+        let containerId;
+        if (currentGroupBy === 'status') {
+            // Status-mode for goals: status is the column discriminator
+            // (same as tasks in status-mode). Goals should always have
+            // a status; missing status → 'in_progress' as fallback.
+            const goalStatus = goal.status || 'in_progress';
+            containerId = `cards-${goalStatus}`;
+        } else {
+            // phase-mode for goals: goals don't have a phase field,
+            // so they all land in the "—" column.
+            containerId = 'cards-unknown';
+        }
+        const container = document.getElementById(containerId);
+        if (container) {
+            const card = createGoalCard(goal);
+            container.appendChild(card);
+        }
+    });
 }
 
 async function loadCurrentView() {
@@ -1485,6 +1524,50 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Sort cards within a column by the active sort key (currentSort, driven by
+// the header sort-select). 'default' keeps each view's existing ordering
+// (tasks: urgency tier → priority; goals: priority → id). 'priority' is
+// priority-only (highest first). 'modified' is most-recent-activity first via
+// activity_date — the small age number each card shows — with items lacking a
+// date sinking to the bottom. Ties fall through to the default ordering so
+// cards don't jitter between renders.
+function sortBoardItems(a, b, kind) {
+    if (currentSort === 'priority') {
+        return normalizePriority(a.priority) - normalizePriority(b.priority);
+    }
+    if (currentSort === 'modified') {
+        const ma = activityDateMs(a);
+        const mb = activityDateMs(b);
+        if (ma !== mb) return mb - ma; // descending; -Infinity (missing date) sinks
+    }
+    return defaultSortCompare(a, b, kind);
+}
+
+// Millisecond epoch of activity_date, or -Infinity when absent so the item
+// sinks under the descending 'modified' order.
+function activityDateMs(item) {
+    return item.activity_date ? new Date(item.activity_date).getTime() : -Infinity;
+}
+
+// The ordering each view used before the sort control existed — preserved
+// verbatim as the 'default' branch so nothing changes when no sort is chosen.
+function defaultSortCompare(a, b, kind) {
+    if (kind === 'goal') {
+        // Goals carry no due/planned dates, so there is no urgency tier:
+        // priority first, then id for a stable tiebreak.
+        const pa = normalizePriority(a.priority);
+        const pb = normalizePriority(b.priority);
+        if (pa !== pb) return pa - pb;
+        return (a.id || '').localeCompare(b.id || '');
+    }
+    // Tasks: urgency tier (0=overdue, 1=due-today, 2=scheduled, 3=none), then
+    // priority within each tier.
+    const ta = getUrgencyTier(a);
+    const tb = getUrgencyTier(b);
+    if (ta !== tb) return ta - tb;
+    return normalizePriority(a.priority) - normalizePriority(b.priority);
 }
 
 function normalizePriority(priority) {
