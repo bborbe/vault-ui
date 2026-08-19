@@ -26,10 +26,12 @@ from vault_ui.config import Config, VaultConfig
 pytestmark = pytest.mark.integration
 
 # Tasks all land in the Execution column (phase=execution). Distinct due dates,
-# priorities and mtimes make every sort key produce a different, assertable order:
-#   Default  : Overdue Low (tier 0) → High Recent (P1) → Med Mid (P2) → None Old (none)
-#   Priority : High Recent (P1) → Med Mid (P2) → Overdue Low (P3) → None Old (none)
-#   Modified : High Recent (newest) → Med Mid → None Old → Overdue Low (oldest)
+# priorities and mtimes make every sort key produce a different, assertable order;
+# "No Date" has no mtime at all so its activity_date is None — it must sink to the
+# bottom of every sort (incl. 'modified', where the missing date is -Infinity):
+#   Default  : Overdue Low (tier 0) → High Recent (P1) → Med Mid (P2) → None Old (none) → No Date (none)
+#   Priority : High Recent (P1) → Med Mid (P2) → Overdue Low (P3) → None Old (none) → No Date (none)
+#   Modified : High Recent (newest) → Med Mid → None Old → Overdue Low (oldest) → No Date (no date)
 TASKS = [
     Task(
         id="Overdue Low",
@@ -106,6 +108,30 @@ TASKS = [
         content="",
         description=None,
         modified_date=datetime(2026, 1, 15),
+        defer_date=None,
+        planned_date=None,
+        due_date=None,
+        priority=None,
+        category=None,
+        recurring=None,
+        claude_session_id=None,
+        claude_session_started=None,
+        assignee=None,
+        blocked_by=None,
+        completed_date=None,
+        goals=None,
+    ),
+    # No modified_date and no session → activity_date is None → sinks last under
+    # every sort key, exercising the mixed present/missing -Infinity comparator.
+    Task(
+        id="No Date",
+        title="No Date",
+        status="in_progress",
+        phase="execution",
+        project_path=None,
+        content="",
+        description=None,
+        modified_date=None,
         defer_date=None,
         planned_date=None,
         due_date=None,
@@ -290,18 +316,19 @@ def test_sort_select_renders_with_three_options(live_server, page):
 
 def test_default_order_matches_legacy_sort(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    expect(page.locator(".task-card")).to_have_count(4)
+    expect(page.locator(".task-card")).to_have_count(5)
     assert _column_ids(page, "Execution") == [
         "Overdue Low",
         "High Recent",
         "Med Mid",
         "None Old",
+        "No Date",
     ]
 
 
 def test_priority_sort_reorders_and_persists(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    expect(page.locator(".task-card")).to_have_count(4)
+    expect(page.locator(".task-card")).to_have_count(5)
 
     page.select_option("#sort-select", "priority")
     assert "sort=priority" in page.url
@@ -310,43 +337,50 @@ def test_priority_sort_reorders_and_persists(live_server, page):
         "Med Mid",
         "Overdue Low",
         "None Old",
+        "No Date",
     ]
 
     # Reload preserves both the selection and the order.
     page.reload()
     expect(page.locator("#sort-select")).to_have_value("priority")
-    expect(page.locator(".task-card")).to_have_count(4)
+    expect(page.locator(".task-card")).to_have_count(5)
     assert _column_ids(page, "Execution") == [
         "High Recent",
         "Med Mid",
         "Overdue Low",
         "None Old",
+        "No Date",
     ]
 
 
 def test_modified_sort_orders_by_activity_newest_first(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    expect(page.locator(".task-card")).to_have_count(4)
+    expect(page.locator(".task-card")).to_have_count(5)
 
     page.select_option("#sort-select", "modified")
     assert "sort=modified" in page.url
+    # Most recent activity first; the task with no activity_date sinks to the
+    # bottom even when adjacent to the oldest-dated one (regression pin for the
+    # mixed present/missing -Infinity comparator path).
     assert _column_ids(page, "Execution") == [
         "High Recent",
         "Med Mid",
         "None Old",
         "Overdue Low",
+        "No Date",
     ]
 
 
 def test_unknown_sort_value_falls_back_to_default(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks&sort=bogus")
-    expect(page.locator(".task-card")).to_have_count(4)
+    expect(page.locator(".task-card")).to_have_count(5)
     expect(page.locator("#sort-select")).to_have_value("default")
     assert _column_ids(page, "Execution") == [
         "Overdue Low",
         "High Recent",
         "Med Mid",
         "None Old",
+        "No Date",
     ]
 
 
