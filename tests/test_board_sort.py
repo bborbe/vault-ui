@@ -29,9 +29,9 @@ pytestmark = pytest.mark.integration
 # priorities and mtimes make every sort key produce a different, assertable order;
 # "No Date" has no mtime at all so its activity_date is None — it must sink to the
 # bottom of every sort (incl. 'modified', where the missing date is -Infinity):
-#   Default  : Overdue Low (tier 0) → High Recent (P1) → Med Mid (P2) → None Old (none) → No Date (none)
-#   Priority : High Recent (P1) → Med Mid (P2) → Overdue Low (P3) → None Old (none) → No Date (none)
-#   Modified : High Recent (newest) → Med Mid → None Old → Overdue Low (oldest) → No Date (no date)
+#   Default  : Overdue Low (t0) → High Recent (P1) → Med Mid (P2) → None Old → No Date
+#   Priority : High Recent (P1) → Med Mid (P2) → Overdue Low (P3) → None Old → No Date
+#   Modified : High Recent → Med Mid → None Old → Overdue Low (oldest) → No Date
 TASKS = [
     Task(
         id="Overdue Low",
