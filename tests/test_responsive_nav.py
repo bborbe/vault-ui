@@ -32,7 +32,8 @@ def test_narrow_media_hides_title() -> None:
 def test_narrow_media_hides_upcoming_window() -> None:
     block = _narrow_media_block()
     assert "#upcoming-window" in block
-    assert re.search(r"#upcoming-window\s*\{\s*display:\s*none", block)
+    # Combined with #sort-select since both header controls share the rule.
+    assert re.search(r"#upcoming-window\s*,\s*#sort-select\s*\{\s*display:\s*none", block)
 
 
 def test_title_and_upcoming_still_present_by_default() -> None:
@@ -43,5 +44,5 @@ def test_title_and_upcoming_still_present_by_default() -> None:
 
 def test_style_css_cache_bust_bumped() -> None:
     # a style.css change must bump the cache-bust token so open boards refetch it
-    assert "style.css?v=2026-08-09-activity-age" in INDEX_HTML
-    assert "style.css?v=2026-07-11-responsive-nav" not in INDEX_HTML
+    assert "style.css?v=2026-08-19-board-sort" in INDEX_HTML
+    assert "style.css?v=2026-08-09-activity-age" not in INDEX_HTML

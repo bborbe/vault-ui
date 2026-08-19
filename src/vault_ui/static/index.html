@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vault UI</title>
-    <link rel="stylesheet" href="style.css?v=2026-08-09-activity-age">
+    <link rel="stylesheet" href="style.css?v=2026-08-19-board-sort">
 </head>
 <body>
     <div class="app">
@@ -43,6 +43,11 @@
                     <option value="8" selected>Upcoming: 8h</option>
                     <option value="12">Upcoming: 12h</option>
                     <option value="24">Upcoming: 24h</option>
+                </select>
+                <select id="sort-select" title="Order cards within each column">
+                    <option value="default" selected>Sort: Default</option>
+                    <option value="priority">Sort: Priority</option>
+                    <option value="modified">Sort: Last modified</option>
                 </select>
                 <span id="ws-status" class="ws-status disconnected" title="WebSocket disconnected">●</span>
                 <button id="refresh-btn">↻ Refresh</button>
@@ -106,6 +111,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=2026-08-09-activity-age"></script>
+    <script src="app.js?v=2026-08-19-board-sort"></script>
 </body>
 </html>

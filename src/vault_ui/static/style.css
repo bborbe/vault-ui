@@ -257,7 +257,7 @@ h1 {
     gap: 0.5rem;
 }
 
-#upcoming-window {
+#upcoming-window, #sort-select {
     background: #3a3a3a;
     border: 1px solid #4a4a4a;
     padding: 0.5rem 1rem;
@@ -269,11 +269,11 @@ h1 {
     -webkit-appearance: none;
 }
 
-#upcoming-window:hover {
+#upcoming-window:hover, #sort-select:hover {
     background: #4a4a4a;
 }
 
-#upcoming-window:focus {
+#upcoming-window:focus, #sort-select:focus {
     outline: 2px solid #60a5fa;
     outline-offset: 2px;
 }
@@ -1063,7 +1063,7 @@ h1 {
     header h1 {
         display: none;
     }
-    #upcoming-window {
+    #upcoming-window, #sort-select {
         display: none;
     }
 }
