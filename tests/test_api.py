@@ -1171,7 +1171,7 @@ def test_update_goal_status_invalidates_goal_cache(test_client: TestClient) -> N
     """A successful goal status write pops the per-vault goal cache synchronously, so
     the operator's own change surfaces on the next /api/goals read without waiting for
     the async watcher (the mtime cache key can't detect in-place frontmatter edits)."""
-    test_client.app.state.vault_goal_cache["TestVault"] = (123.0, [])
+    test_client.app.state.vault_goal_cache["TestVault"] = (123.0, 0.0, [])
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -1188,7 +1188,7 @@ def test_update_goal_status_invalidates_goal_cache(test_client: TestClient) -> N
 
 def test_update_task_status_invalidates_task_cache(test_client: TestClient) -> None:
     """A successful task status write pops the per-vault task cache synchronously."""
-    test_client.app.state.vault_task_cache["TestVault"] = (123.0, [])
+    test_client.app.state.vault_task_cache["TestVault"] = (123.0, 0.0, [])
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -3304,6 +3304,117 @@ def test_list_tasks_cache_miss_on_mtime_change(
     assert response1.status_code == 200
     assert response2.status_code == 200
     assert client.list_tasks.await_count == 2  # mtime change caused cache miss
+
+
+def test_list_tasks_cache_ttl_self_heals_stale_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached list older than the TTL is a miss even when the directory mtime
+    is unchanged — a status flip self-heals without a watcher event or a server
+    restart (the mtime key alone cannot detect in-place frontmatter edits)."""
+    vault1 = tmp_path / "v1"
+    tasks_dir = vault1 / "Tasks"
+    tasks_dir.mkdir(parents=True)
+
+    # Pin the mtime so it cannot drift between the two requests.
+    fixed_mtime = 1_000_000.0
+    os.utime(tasks_dir, (fixed_mtime, fixed_mtime))
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+
+    # The mock returns the FRESH status; the stale in_progress lives only in cache.
+    fresh_task = _make_task(task_id="CacheTask", status="next")
+    client = MagicMock()
+    client.list_tasks = AsyncMock(return_value=[fresh_task])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    def seed_stale_cache() -> None:
+        # Same mtime as the dir, but cached_at far in the past (older than the TTL).
+        app.state.vault_task_cache["V1"] = (
+            fixed_mtime,
+            time.time() - 3600,
+            [_make_task(task_id="CacheTask", status="in_progress")],
+        )
+
+    seed_stale_cache()
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response1 = http_client.get("/api/tasks")
+        # The first request's refetch stores a fresh cached_at, so re-seed the
+        # stale entry to prove the second request ALSO refetches via the TTL
+        # (otherwise it would be a cache hit and await_count would be 1).
+        seed_stale_cache()
+        response2 = http_client.get("/api/tasks")
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert [t["status"] for t in response1.json()] == ["next"]  # fresh, not stale in_progress
+    assert [t["status"] for t in response2.json()] == ["next"]
+    assert client.list_tasks.await_count == 2  # TTL (not mtime) forced both misses
+
+
+def test_list_goals_cache_ttl_self_heals_stale_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Goal cache TTL mirror of the task test: a stale entry (unchanged vault-root
+    mtime, cached_at older than the TTL) is refetched on both requests."""
+    vault1 = tmp_path / "v1"
+    vault1.mkdir(parents=True)
+
+    fixed_mtime = 1_000_000.0
+    os.utime(vault1, (fixed_mtime, fixed_mtime))
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(name="V1", vault_path=str(vault1), vault_name="V1", tasks_folder="Tasks"),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+
+    # The mock returns the FRESH status; the stale in_progress lives only in cache.
+    fresh_goal = _make_goal(goal_id="CacheGoal", status="next")
+    client = MagicMock()
+    client.list_goals = AsyncMock(return_value=[fresh_goal])
+
+    app = create_app()
+    http_client = TestClient(app)
+
+    def seed_stale_cache() -> None:
+        app.state.vault_goal_cache["V1"] = (
+            fixed_mtime,
+            time.time() - 3600,
+            [_make_goal(goal_id="CacheGoal", status="in_progress")],
+        )
+
+    seed_stale_cache()
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response1 = http_client.get("/api/goals")
+        seed_stale_cache()  # re-seed so the second request is also TTL-expired
+        response2 = http_client.get("/api/goals")
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert [g["status"] for g in response1.json()] == ["next"]  # fresh, not stale in_progress
+    assert [g["status"] for g in response2.json()] == ["next"]
+    assert client.list_goals.await_count == 2  # TTL (not mtime) forced both misses
 
 
 def test_list_tasks_missing_tasks_dir_is_cache_miss(
