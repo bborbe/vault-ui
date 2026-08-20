@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(api): Add a 30-second time-to-live to the per-vault task and goal list caches. The cache key is the directory (or vault-root) mtime, which POSIX does not bump on in-place frontmatter edits, so a task or goal flipped to `status: next` could keep surfacing under stale in_progress/hold/completed filters until the vault-cli watcher callback happened to fire (or the server restarted). Cache entries are now `(dir_mtime, cached_at_epoch, items)` and any entry older than `_CACHE_TTL_SECONDS` (30s) is treated as a miss and re-fetched from vault-cli on the next request — a missed or delayed watcher event self-heals instead of persisting indefinitely. The watcher-callback invalidation and the synchronous cache pops on status/execute-command writes are preserved unchanged. Both `/api/tasks` and `/api/goals` share the TTL bound.
+
 ## v0.52.0
 
 - feat(ui): Add a Sort control to the board header with three within-column orderings — Default (unchanged: urgency tier → priority for tasks, priority → id for goals), Priority (highest first), and Last modified (most-recent activity first, via the card's `activity_date` — the small grey duration each card shows). The choice persists in the URL as `?sort=` so reloads and shared links keep the order; an unknown value falls back to Default. Applies to both Tasks and Goals views through a shared comparator, with the active → upcoming → hold bucketing and recently-completed pinning preserved. Shipped as a frontend-only direct-flow change (no dark-factory — the YOLO container cannot run a browser) and verified by a new integration-marked Playwright E2E suite (`make test-integration`, `tests/test_board_sort.py`) that starts the app in-process on a random port with a mocked vault-cli and asserts reorder + URL persistence in a real browser. Adds `pytest-playwright` as a dev dependency; the decision tables (`vault-ui/CLAUDE.md`, `dark-factory/docs/choosing-a-flow.md`, vault KB) gain a frontend-only → direct carve-out. Bumps the `app.js` and `style.css` cache-bust tokens.

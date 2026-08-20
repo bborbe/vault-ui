@@ -159,8 +159,8 @@ async def _try_resolve_goal_session(
 
 
 def start_task_watchers(
-    vault_task_cache: dict[str, tuple[float, list[Task]]],
-    vault_goal_cache: dict[str, tuple[float, list[Goal]]],
+    vault_task_cache: dict[str, tuple[float, float, list[Task]]],
+    vault_goal_cache: dict[str, tuple[float, float, list[Goal]]],
 ) -> None:
     """Start vault-cli watchers for all vaults.
 

@@ -22,8 +22,8 @@ def _run_callback(callback: Any, *args: Any) -> None:
 def _build_callback(
     connection_manager: MagicMock,
     cache: MagicMock,
-    vault_task_cache: dict[str, tuple[float, list[Any]]],
-    vault_goal_cache: dict[str, tuple[float, list[Any]]],
+    vault_task_cache: dict[str, tuple[float, float, list[Any]]],
+    vault_goal_cache: dict[str, tuple[float, float, list[Any]]],
     loop: asyncio.AbstractEventLoop,
 ) -> Any:
     """Replicate the closure body from ``start_task_watchers``.
@@ -69,8 +69,8 @@ async def test_watcher_callback_broadcasts_item_kind_task() -> None:
     cache = MagicMock()
     cache.invalidate = MagicMock()
 
-    vault_task_cache: dict[str, tuple[float, list[Any]]] = {}
-    vault_goal_cache: dict[str, tuple[float, list[Any]]] = {}
+    vault_task_cache: dict[str, tuple[float, float, list[Any]]] = {}
+    vault_goal_cache: dict[str, tuple[float, float, list[Any]]] = {}
 
     loop = asyncio.get_running_loop()
     cb = _build_callback(connection_manager, cache, vault_task_cache, vault_goal_cache, loop)
@@ -101,8 +101,8 @@ async def test_watcher_callback_broadcasts_item_kind_goal() -> None:
     cache = MagicMock()
     cache.invalidate = MagicMock()
 
-    vault_task_cache: dict[str, tuple[float, list[Any]]] = {}
-    vault_goal_cache: dict[str, tuple[float, list[Any]]] = {}
+    vault_task_cache: dict[str, tuple[float, float, list[Any]]] = {}
+    vault_goal_cache: dict[str, tuple[float, float, list[Any]]] = {}
 
     loop = asyncio.get_running_loop()
     cb = _build_callback(connection_manager, cache, vault_task_cache, vault_goal_cache, loop)
@@ -129,11 +129,11 @@ async def test_no_cross_rerender_invariant() -> None:
     cache = MagicMock()
     cache.invalidate = MagicMock()
 
-    vault_task_cache: dict[str, tuple[float, list[Any]]] = {
-        "TestVault": (1.0, [])  # pre-populated
+    vault_task_cache: dict[str, tuple[float, float, list[Any]]] = {
+        "TestVault": (1.0, 0.0, [])  # pre-populated
     }
-    vault_goal_cache: dict[str, tuple[float, list[Any]]] = {
-        "TestVault": (1.0, [])  # pre-populated
+    vault_goal_cache: dict[str, tuple[float, float, list[Any]]] = {
+        "TestVault": (1.0, 0.0, [])  # pre-populated
     }
 
     loop = asyncio.get_running_loop()
@@ -149,8 +149,8 @@ async def test_no_cross_rerender_invariant() -> None:
     assert "TestVault" not in vault_task_cache, "task event did not invalidate task cache"
 
     # Reset for the second half
-    vault_task_cache["TestVault"] = (1.0, [])
-    vault_goal_cache["TestVault"] = (1.0, [])
+    vault_task_cache["TestVault"] = (1.0, 0.0, [])
+    vault_goal_cache["TestVault"] = (1.0, 0.0, [])
 
     # Simulate a goal event
     _run_callback(cb, "modified", "G1", "TestVault", "goal")
@@ -179,8 +179,8 @@ async def test_theme_event_does_not_invalidate_either_cache() -> None:
     cache = MagicMock()
     cache.invalidate = MagicMock()
 
-    vault_task_cache: dict[str, tuple[float, list[Any]]] = {"TestVault": (1.0, [])}
-    vault_goal_cache: dict[str, tuple[float, list[Any]]] = {"TestVault": (1.0, [])}
+    vault_task_cache: dict[str, tuple[float, float, list[Any]]] = {"TestVault": (1.0, 0.0, [])}
+    vault_goal_cache: dict[str, tuple[float, float, list[Any]]] = {"TestVault": (1.0, 0.0, [])}
 
     loop = asyncio.get_running_loop()
     cb = _build_callback(connection_manager, cache, vault_task_cache, vault_goal_cache, loop)

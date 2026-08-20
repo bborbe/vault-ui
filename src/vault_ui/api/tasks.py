@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shlex
+import time
 from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -45,6 +46,14 @@ router = APIRouter()
 # Sentinel distinguishing "no JSON value found" from a legitimately-parsed None
 # (JSON ``null``) in _last_json_value.
 _UNSET = object()
+
+# Max age of a cached per-vault task/goal list before it is treated as a miss and
+# re-fetched from vault-cli. The cache key is the directory mtime, which POSIX
+# does NOT bump on in-place frontmatter edits, so invalidation relies on the
+# vault-cli watcher callback (and synchronous pops on writes). If a watcher event
+# is missed or delayed, this TTL makes the stale entry self-heal on the next
+# request instead of persisting until a server restart.
+_CACHE_TTL_SECONDS = 30.0
 
 
 def _last_json_value(text: str) -> Any:
@@ -470,7 +479,7 @@ async def _process_vault(
     now: datetime,
     cutoff: datetime,
     lookback: datetime,
-    vault_task_cache: dict[str, tuple[float, list[Task]]],
+    vault_task_cache: dict[str, tuple[float, float, list[Task]]],
 ) -> list[TaskResponse]:
     client = get_vault_cli_client_for_vault(vault_name)
     vault_config = get_vault_config(vault_name)
@@ -493,14 +502,19 @@ async def _process_vault(
     # Concurrent misses on the same vault can both write; outcome is idempotent
     # (same key, same value) so the race is benign.
     cached = vault_task_cache.get(vault_name)
-    if current_mtime is not None and cached is not None and cached[0] == current_mtime:
-        raw_tasks = list(cached[1])  # cache hit — no subprocess
+    if (
+        current_mtime is not None
+        and cached is not None
+        and cached[0] == current_mtime
+        and time.time() - cached[1] < _CACHE_TTL_SECONDS
+    ):
+        raw_tasks = list(cached[2])  # cache hit — no subprocess
     else:
         # Fetch the full unfiltered list (show_all=True passes --all to vault-cli).
         # Status filtering happens in Python below so the cache stays single-slot per vault.
         raw_tasks = await client.list_tasks(show_all=True)
         if current_mtime is not None:
-            vault_task_cache[vault_name] = (current_mtime, list(raw_tasks))
+            vault_task_cache[vault_name] = (current_mtime, time.time(), list(raw_tasks))
 
     # Apply the status filter in Python over the unfiltered cached list
     tasks = [t for t in raw_tasks if t.status in effective_status_filter]
@@ -645,7 +659,9 @@ async def list_tasks(
     cutoff = now + timedelta(hours=upcoming_hours)
     lookback = now - timedelta(hours=8)
 
-    vault_task_cache: dict[str, tuple[float, list[Task]]] = request.app.state.vault_task_cache
+    vault_task_cache: dict[str, tuple[float, float, list[Task]]] = (
+        request.app.state.vault_task_cache
+    )
     results = await asyncio.gather(
         *[
             _process_vault(
@@ -730,7 +746,7 @@ async def _process_goal_vault(
     vault_name: str,
     status_filter: list[str] | None,
     assignee_filter: list[str] | None,
-    vault_goal_cache: dict[str, tuple[float, list[Goal]]],
+    vault_goal_cache: dict[str, tuple[float, float, list[Goal]]],
     now: datetime,
     cutoff: datetime,
 ) -> list[GoalResponse]:
@@ -751,12 +767,17 @@ async def _process_goal_vault(
         current_mtime = None
 
     cached = vault_goal_cache.get(vault_name)
-    if current_mtime is not None and cached is not None and cached[0] == current_mtime:
-        raw_goals = list(cached[1])
+    if (
+        current_mtime is not None
+        and cached is not None
+        and cached[0] == current_mtime
+        and time.time() - cached[1] < _CACHE_TTL_SECONDS
+    ):
+        raw_goals = list(cached[2])
     else:
         raw_goals = await client.list_goals(show_all=True)
         if current_mtime is not None:
-            vault_goal_cache[vault_name] = (current_mtime, list(raw_goals))
+            vault_goal_cache[vault_name] = (current_mtime, time.time(), list(raw_goals))
 
     goals = raw_goals
     if status_filter:
@@ -829,7 +850,9 @@ async def list_goals(
     now = datetime.now(UTC)
     cutoff = now + timedelta(hours=upcoming_hours)
 
-    vault_goal_cache: dict[str, tuple[float, list[Goal]]] = request.app.state.vault_goal_cache
+    vault_goal_cache: dict[str, tuple[float, float, list[Goal]]] = (
+        request.app.state.vault_goal_cache
+    )
     results = await asyncio.gather(
         *[
             _process_goal_vault(
