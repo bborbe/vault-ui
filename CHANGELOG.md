@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.52.1
 
 - fix(api): Add a 30-second time-to-live to the per-vault task and goal list caches. The cache key is the directory (or vault-root) mtime, which POSIX does not bump on in-place frontmatter edits, so a task or goal flipped to `status: next` could keep surfacing under stale in_progress/hold/completed filters until the vault-cli watcher callback happened to fire (or the server restarted). Cache entries are now `(dir_mtime, cached_at_epoch, items)` and any entry older than `_CACHE_TTL_SECONDS` (30s) is treated as a miss and re-fetched from vault-cli on the next request — a missed or delayed watcher event self-heals instead of persisting indefinitely. The watcher-callback invalidation and the synchronous cache pops on status/execute-command writes are preserved unchanged. Both `/api/tasks` and `/api/goals` share the TTL bound.
 
