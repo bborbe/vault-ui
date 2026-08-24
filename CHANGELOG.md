@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): Closing out a task or goal — Abort and Complete via the card menu, and dragging a card into Done (tasks) / Completed (goals) — now prompts for a free-text reason before the UI sends the change, and asks where any trigger / gate / threshold / recurring check the item owns moves (gate successor, `none` if nothing is inherited). Both fields are passed to vault-cli as `--reason` and `--gate-successor`, restoring close-outs against vault-cli v0.116.0+, which rejects aborted/completed writes without `aborted_reason` and `gate_successor` frontmatter. A blank or whitespace-only reason is blocked in the browser (Confirm stays disabled) and by the API (HTTP 400 naming the missing field); a missing gate-successor defaults to `none` on both sides. Non-close-out actions (Hold/Resume/defer and phase moves other than done) are unchanged. Bumps the `app.js` and `style.css` cache-bust tokens.
+
 ## v0.52.1
 
 - fix(api): Add a 30-second time-to-live to the per-vault task and goal list caches. The cache key is the directory (or vault-root) mtime, which POSIX does not bump on in-place frontmatter edits, so a task or goal flipped to `status: next` could keep surfacing under stale in_progress/hold/completed filters until the vault-cli watcher callback happened to fire (or the server restarted). Cache entries are now `(dir_mtime, cached_at_epoch, items)` and any entry older than `_CACHE_TTL_SECONDS` (30s) is treated as a miss and re-fetched from vault-cli on the next request — a missed or delayed watcher event self-heals instead of persisting indefinitely. The watcher-callback invalidation and the synchronous cache pops on status/execute-command writes are preserved unchanged. Both `/api/tasks` and `/api/goals` share the TTL bound.

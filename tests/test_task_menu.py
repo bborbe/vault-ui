@@ -32,7 +32,7 @@ def test_abort_routes_to_status_endpoint() -> None:
     so the /status fetch now lives in patchStatus, not inline in dispatchMenuAction.
     """
     fn_start = APP_JS.find("async function dispatchMenuAction")
-    fn_body = APP_JS[fn_start : fn_start + 2600]
+    fn_body = APP_JS[fn_start : fn_start + 3200]
     assert "abort_task" in fn_body
     assert "patchStatus('task'" in fn_body
     assert "'aborted'" in fn_body
@@ -54,7 +54,7 @@ def test_hold_task_toggle_present() -> None:
 def test_hold_resume_route_via_patch_status() -> None:
     """Task hold/resume dispatch through the shared patchStatus helper to /status."""
     fn_start = APP_JS.find("async function dispatchMenuAction")
-    fn_body = APP_JS[fn_start : fn_start + 2600]
+    fn_body = APP_JS[fn_start : fn_start + 3200]
     assert "patchStatus('task'" in fn_body
     assert "'hold'" in fn_body
     assert "'in_progress'" in fn_body

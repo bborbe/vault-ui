@@ -842,11 +842,23 @@ async function handleDrop(e) {
     const goal = goalsCache[itemId];
 
     if (task) {
+        // Dropping into the Done column is a close-out (status auto-writes
+        // completed) — require a reason + gate successor first; cancel aborts.
+        let closeOut = null;
+        if (targetKey === 'done') {
+            closeOut = await askCloseOut('task', 'complete');
+            if (closeOut === null) return;
+        }
         try {
+            const body = { phase: targetKey };
+            if (closeOut) {
+                body.reason = closeOut.reason;
+                body.gate_successor = closeOut.gate_successor;
+            }
             const response = await fetch(`/api/tasks/${itemId}/phase?vault=${encodeURIComponent(task.vault)}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phase: targetKey }),
+                body: JSON.stringify(body),
             });
             if (!response.ok) throw new Error(await parseErrorResponse(response));
             await loadCurrentView();
@@ -858,11 +870,22 @@ async function handleDrop(e) {
     }
 
     if (goal) {
+        // Dropping into the Completed column is a close-out — same prompt/cancel.
+        let closeOut = null;
+        if (targetKey === 'completed') {
+            closeOut = await askCloseOut('goal', 'complete');
+            if (closeOut === null) return;
+        }
         try {
+            const body = { status: targetKey };
+            if (closeOut) {
+                body.reason = closeOut.reason;
+                body.gate_successor = closeOut.gate_successor;
+            }
             const response = await fetch(`/api/goals/${encodeURIComponent(itemId)}/status?vault=${encodeURIComponent(goal.vault)}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: targetKey }),
+                body: JSON.stringify(body),
             });
             if (!response.ok) throw new Error(await parseErrorResponse(response));
             await loadCurrentView();
@@ -1462,6 +1485,66 @@ function closeModal() {
     document.getElementById('session-modal').classList.add('hidden');
 }
 
+// Open the close-out reason modal; resolve with { reason, gate_successor } on
+// Confirm, or null when the operator cancels. Confirm is disabled while the
+// reason is empty/whitespace-only, so a blank reason can never be submitted.
+function askCloseOut(kind, verb) {
+    const modal = document.getElementById('reason-modal');
+    const title = document.getElementById('reason-title');
+    const riskPrompt = document.getElementById('reason-risk-prompt');
+    const reasonInput = document.getElementById('reason-input');
+    const gateInput = document.getElementById('gate-successor-input');
+    const confirmBtn = document.getElementById('reason-confirm-btn');
+    const cancelBtn = document.getElementById('reason-cancel-btn');
+
+    const kindLabel = kind === 'goal' ? 'Goal' : 'Task';
+    const verbLabel = verb === 'abort' ? 'Abort' : 'Complete';
+    title.textContent = `${verbLabel} ${kindLabel}`;
+    riskPrompt.textContent = kind === 'goal'
+        ? "Does this goal own a trigger, gate, threshold or recurring check? If so, name where it moves (gate successor), or 'none'."
+        : "Does this task own a trigger, gate, threshold or recurring check? If so, name where it moves (gate successor), or 'none'.";
+
+    reasonInput.value = '';
+    gateInput.value = '';
+    confirmBtn.disabled = true;
+
+    let resolvePromise;
+    const teardown = () => {
+        reasonInput.removeEventListener('input', onReasonInput);
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', onCancel);
+    };
+    const onReasonInput = () => {
+        confirmBtn.disabled = !reasonInput.value.trim();
+    };
+    const onConfirm = () => {
+        const reason = reasonInput.value.trim();
+        if (!reason) {
+            return; // guard — Confirm is disabled while blank; never submit a blank reason
+        }
+        const result = { reason, gate_successor: gateInput.value.trim() || 'none' };
+        teardown();
+        modal.classList.add('hidden');
+        resolvePromise(result);
+    };
+    const onCancel = () => {
+        teardown();
+        modal.classList.add('hidden');
+        resolvePromise(null);
+    };
+
+    reasonInput.addEventListener('input', onReasonInput);
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+
+    modal.classList.remove('hidden');
+    reasonInput.focus();
+
+    return new Promise((resolve) => {
+        resolvePromise = resolve;
+    });
+}
+
 function updateModal(sessionId, command, workingDir, taskTitle = null, executedCommand = null, success = null, error = null) {
     // Only update if modal is already visible
     const modal = document.getElementById('session-modal');
@@ -1787,13 +1870,21 @@ async function dispatchMenuAction(kind, id, action) {
     if (kind === 'goal') {
         if (action === 'complete_goal' || action === 'defer_goal') {
             const command = action === 'complete_goal' ? 'complete-goal' : 'defer-goal';
+            // Close-out (complete_goal) prompts for a reason + gate successor first.
+            const closeOut = action === 'complete_goal' ? await askCloseOut('goal', 'complete') : null;
+            if (action === 'complete_goal' && closeOut === null) return;
             try {
+                const body = { command };
+                if (closeOut) {
+                    body.reason = closeOut.reason;
+                    body.gate_successor = closeOut.gate_successor;
+                }
                 const response = await fetch(
                     `/api/goals/${encodeURIComponent(id)}/execute-command?vault=${encodeURIComponent(item.vault)}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ command }),
+                        body: JSON.stringify(body),
                     }
                 );
                 if (!response.ok) {
@@ -1806,7 +1897,9 @@ async function dispatchMenuAction(kind, id, action) {
                 showToast(error.message, true);
             }
         } else if (action === 'abort_goal') {
-            await patchStatus('goal', id, item.vault, 'aborted', 'Goal aborted');
+            const closeOut = await askCloseOut('goal', 'abort');
+            if (closeOut === null) return;
+            await patchStatus('goal', id, item.vault, 'aborted', 'Goal aborted', closeOut);
         } else if (action === 'hold_goal') {
             await patchStatus('goal', id, item.vault, 'hold', 'Goal on hold');
         } else if (action === 'resume_goal') {
@@ -1817,9 +1910,14 @@ async function dispatchMenuAction(kind, id, action) {
 
     // kind === 'task'
     if (action === 'complete_task' || action === 'defer_task') {
-        await executeSlashCommand(id, action);
+        // Close-out (complete_task) prompts for a reason + gate successor first.
+        const closeOut = action === 'complete_task' ? await askCloseOut('task', 'complete') : null;
+        if (action === 'complete_task' && closeOut === null) return;
+        await executeSlashCommand(id, action, closeOut);
     } else if (action === 'abort_task') {
-        await patchStatus('task', id, item.vault, 'aborted', 'Task aborted');
+        const closeOut = await askCloseOut('task', 'abort');
+        if (closeOut === null) return;
+        await patchStatus('task', id, item.vault, 'aborted', 'Task aborted', closeOut);
     } else if (action === 'hold_task') {
         await patchStatus('task', id, item.vault, 'hold', 'Task on hold');
     } else if (action === 'resume_task') {
@@ -1829,15 +1927,22 @@ async function dispatchMenuAction(kind, id, action) {
 
 // PATCH a task or goal status via the shared /status endpoint, toast, then refresh.
 // kind: 'task' | 'goal'. Used by the card lifecycle menus for abort/hold/resume.
-async function patchStatus(kind, id, vault, status, successMsg) {
+// closeOut ({ reason, gate_successor } | null) is set for close-out statuses
+// (aborted/completed) and added to the request body when present.
+async function patchStatus(kind, id, vault, status, successMsg, closeOut = null) {
     const base = kind === 'goal' ? 'goals' : 'tasks';
     try {
+        const body = { status };
+        if (closeOut) {
+            body.reason = closeOut.reason;
+            body.gate_successor = closeOut.gate_successor;
+        }
         const response = await fetch(
             `/api/${base}/${encodeURIComponent(id)}/status?vault=${encodeURIComponent(vault)}`,
             {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status }),
+                body: JSON.stringify(body),
             }
         );
         if (!response.ok) {
@@ -1921,7 +2026,7 @@ function showToast(message, isError = false) {
     }, duration);
 }
 
-async function executeSlashCommand(taskId, commandType) {
+async function executeSlashCommand(taskId, commandType, closeOut = null) {
     const task = tasksCache[taskId];
     if (!task) {
         showToast('Task not found', true);
@@ -1952,13 +2057,19 @@ async function executeSlashCommand(taskId, commandType) {
         };
         const slashCommand = commandMap[commandType];
 
-        // Call backend endpoint
+        // Call backend endpoint. Close-out commands (complete-task) carry the
+        // reason + gate successor; defer passes no extra body fields.
+        const body = { command: slashCommand };
+        if (closeOut) {
+            body.reason = closeOut.reason;
+            body.gate_successor = closeOut.gate_successor;
+        }
         const response = await fetch(
             `/api/tasks/${encodeURIComponent(taskId)}/execute-command?vault=${encodeURIComponent(task.vault)}`,
             {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: slashCommand }),
+                body: JSON.stringify(body),
             }
         );
 

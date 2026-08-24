@@ -809,6 +809,61 @@ h1 {
     font-weight: 500;
 }
 
+/* Close-out reason modal form controls */
+#reason-risk-prompt {
+    color: #9ca3af;
+    font-size: 0.9rem;
+}
+
+.reason-form label {
+    display: block;
+    margin: 0.75rem 0 0.25rem;
+    color: #9ca3af;
+    font-size: 0.9rem;
+}
+
+.reason-form textarea,
+.reason-form input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 0.5rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+
+.reason-form textarea {
+    resize: vertical;
+    min-height: 3.5rem;
+}
+
+#reason-confirm-btn {
+    background: #c0392b;
+    color: white;
+}
+
+#reason-confirm-btn:hover {
+    background: #a93226;
+}
+
+#reason-confirm-btn:disabled {
+    background: #3a3a3a;
+    color: #6b7280;
+    cursor: not-allowed;
+}
+
+#reason-cancel-btn {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+#reason-cancel-btn:hover {
+    background: #4a4a4a;
+}
+
 #copy-btn {
     background: #60a5fa;
     color: white;

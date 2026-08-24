@@ -44,5 +44,5 @@ def test_title_and_upcoming_still_present_by_default() -> None:
 
 def test_style_css_cache_bust_bumped() -> None:
     # a style.css change must bump the cache-bust token so open boards refetch it
-    assert "style.css?v=2026-08-19-board-sort" in INDEX_HTML
-    assert "style.css?v=2026-08-09-activity-age" not in INDEX_HTML
+    assert "style.css?v=2026-08-24-closeout-reason" in INDEX_HTML
+    assert "style.css?v=2026-08-19-board-sort" not in INDEX_HTML

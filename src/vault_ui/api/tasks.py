@@ -343,6 +343,13 @@ class UpdatePhaseRequest(BaseModel):
     """Request model for updating task phase."""
 
     phase: str
+    # Optional close-out fields: vault-cli v0.116.0+ rejects aborted/completed
+    # writes without a non-empty `aborted_reason` and `gate_successor`. They are
+    # plain optional fields — the conditional requirement (reason needed only for
+    # close-out targets) is endpoint logic via `_closeout_extra_args`, so the 400
+    # carries a clean string `detail` (a Pydantic 422 would return a list).
+    reason: str | None = None
+    gate_successor: str | None = None
 
 
 class UpdateStatusRequest(BaseModel):
@@ -355,6 +362,9 @@ class UpdateStatusRequest(BaseModel):
     """
 
     status: Literal["next", "in_progress", "backlog", "completed", "hold", "aborted"]
+    # Optional close-out fields — same contract as UpdatePhaseRequest.
+    reason: str | None = None
+    gate_successor: str | None = None
 
 
 class UpdateSessionRequest(BaseModel):
@@ -367,6 +377,31 @@ class ExecuteCommandRequest(BaseModel):
     """Request model for executing slash command."""
 
     command: str
+    # Optional close-out fields — same contract as UpdatePhaseRequest.
+    reason: str | None = None
+    gate_successor: str | None = None
+
+
+def _closeout_extra_args(reason: str | None, gate_successor: str | None) -> list[str]:
+    """Return vault-cli --reason/--gate-successor flags for a close-out write.
+
+    Raises HTTPException(400) naming `reason` when it is empty or whitespace-only
+    (a close-out must record why the work is being closed out). gate_successor
+    defaults to the literal string "none" when not supplied — the documented
+    no-inheritance value vault-cli accepts.
+    """
+    reason_trimmed = (reason or "").strip()
+    if not reason_trimmed:
+        raise HTTPException(
+            status_code=400,
+            detail="reason is required to close out a task or goal (aborted/completed)",
+        )
+    return [
+        "--reason",
+        reason_trimmed,
+        "--gate-successor",
+        (gate_successor or "").strip() or "none",
+    ]
 
 
 @router.get("/vaults", response_model=list[VaultResponse])
@@ -1077,6 +1112,10 @@ async def execute_slash_command(
                     "--vault",
                     vault_config.name.lower(),
                 ]
+                # Close-out gate: vault-cli v0.116.0+ rejects `task complete`
+                # without aborted_reason and gate_successor. The reason check
+                # happens here, before the write subprocess starts.
+                vault_cli_args[4:4] = _closeout_extra_args(request.reason, request.gate_successor)
 
             proc = await asyncio.create_subprocess_exec(
                 *vault_cli_args,
@@ -1214,6 +1253,17 @@ async def update_task_phase(
     try:
         vault_config = get_vault_config(vault)
 
+        # Close-out gate (phase done → status completed): the reason must be
+        # present before ANY write starts, so a blank/missing reason cannot leave
+        # the phase write half-applied. The flags themselves go on the STATUS
+        # subprocess only — vault-cli's phase-field write does not enforce the
+        # close-out guard, and the flags are not defined there.
+        closeout_flags = (
+            _closeout_extra_args(request.reason, request.gate_successor)
+            if request.phase == "done"
+            else []
+        )
+
         proc = await asyncio.create_subprocess_exec(
             vault_config.vault_cli_path,
             "task",
@@ -1253,7 +1303,7 @@ async def update_task_phase(
             new_status = None if current_status == "hold" else "in_progress"
 
         if new_status is not None:
-            status_proc = await asyncio.create_subprocess_exec(
+            status_args = [
                 vault_config.vault_cli_path,
                 "task",
                 "set",
@@ -1262,6 +1312,10 @@ async def update_task_phase(
                 new_status,
                 "--vault",
                 vault_config.name.lower(),
+            ]
+            status_args[6:6] = closeout_flags
+            status_proc = await asyncio.create_subprocess_exec(
+                *status_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1320,7 +1374,7 @@ async def update_goal_status(
     try:
         vault_config = get_vault_config(vault)
 
-        proc = await asyncio.create_subprocess_exec(
+        vault_cli_args = [
             vault_config.vault_cli_path,
             "goal",
             "set",
@@ -1329,6 +1383,15 @@ async def update_goal_status(
             request.status,
             "--vault",
             vault_config.name.lower(),
+        ]
+        # Close-out gate: vault-cli v0.116.0+ rejects aborted/completed goal
+        # status writes without aborted_reason and gate_successor (see
+        # update_task_status for the same fail-fast pattern).
+        if request.status in ("aborted", "completed"):
+            vault_cli_args[6:6] = _closeout_extra_args(request.reason, request.gate_successor)
+
+        proc = await asyncio.create_subprocess_exec(
+            *vault_cli_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -1420,6 +1483,10 @@ async def execute_goal_command(
                 "--vault",
                 vault_config.name.lower(),
             ]
+            # Close-out gate: vault-cli v0.116.0+ rejects `goal complete` without
+            # aborted_reason and gate_successor. Reason check is fail-fast, before
+            # the write subprocess starts.
+            vault_cli_args[4:4] = _closeout_extra_args(request.reason, request.gate_successor)
 
         proc = await asyncio.create_subprocess_exec(
             *vault_cli_args,
@@ -1487,7 +1554,7 @@ async def update_task_status(
     try:
         vault_config = get_vault_config(vault)
 
-        proc = await asyncio.create_subprocess_exec(
+        vault_cli_args = [
             vault_config.vault_cli_path,
             "task",
             "set",
@@ -1496,6 +1563,16 @@ async def update_task_status(
             request.status,
             "--vault",
             vault_config.name.lower(),
+        ]
+        # Close-out gate: vault-cli v0.116.0+ rejects aborted/completed status
+        # writes unless the frontmatter already holds aborted_reason and
+        # gate_successor. Enforce the reason requirement fail-fast (before the
+        # subprocess starts) and pass both fields through as flags.
+        if request.status in ("aborted", "completed"):
+            vault_cli_args[6:6] = _closeout_extra_args(request.reason, request.gate_successor)
+
+        proc = await asyncio.create_subprocess_exec(
+            *vault_cli_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -53,13 +53,13 @@ def test_show_menu_single_gated_on_kind() -> None:
 def test_dispatch_routes_lifecycle_and_clear() -> None:
     """dispatchMenuAction routes lifecycle via patchStatus(kind,...) and clear_session
     via the merged clearSession, per kind."""
-    body = _slice("async function dispatchMenuAction", 2600)
+    body = _slice("async function dispatchMenuAction", 3200)
     assert "clearSession(kind, id)" in body
     assert "patchStatus('task'" in body
     assert "patchStatus('goal'" in body
     assert "'aborted'" in body
     assert "/execute-command?vault=" in body  # goal complete/defer preserved
-    assert "executeSlashCommand(id, action)" in body  # task complete/defer preserved
+    assert "executeSlashCommand(id, action, closeOut)" in body  # task complete/defer preserved
 
 
 def test_clear_session_single_delete_from_kind() -> None:
@@ -76,7 +76,7 @@ def test_clear_session_single_delete_from_kind() -> None:
 def test_handle_drop_cache_routing_preserved() -> None:
     """handleDrop still resolves goal-vs-task by cache lookup: tasksCache hit → phase
     PATCH, goalsCache hit → status PATCH."""
-    body = _slice("async function handleDrop", 1400)
+    body = _slice("async function handleDrop", 2400)
     assert "tasksCache[itemId]" in body
     assert "goalsCache[itemId]" in body
     assert "/phase?vault=" in body

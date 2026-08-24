@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vault UI</title>
-    <link rel="stylesheet" href="style.css?v=2026-08-19-board-sort">
+    <link rel="stylesheet" href="style.css?v=2026-08-24-closeout-reason">
 </head>
 <body>
     <div class="app">
@@ -111,6 +111,24 @@
         </div>
     </div>
 
-    <script src="app.js?v=2026-08-19-board-sort"></script>
+    <!-- Close-out Reason Modal -->
+    <div id="reason-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="reason-title">Complete Task</h2>
+            <p id="reason-risk-prompt">Does this task own a trigger, gate, threshold or recurring check? If so, name where it moves (gate successor), or 'none'.</p>
+            <div class="reason-form">
+                <label for="reason-input">Reason (required)</label>
+                <textarea id="reason-input" rows="3" placeholder="Why is this work being closed out?"></textarea>
+                <label for="gate-successor-input">Gate successor</label>
+                <input type="text" id="gate-successor-input" placeholder="none">
+            </div>
+            <div class="modal-buttons">
+                <button id="reason-cancel-btn">Cancel</button>
+                <button id="reason-confirm-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=2026-08-24-closeout-reason"></script>
 </body>
 </html>
