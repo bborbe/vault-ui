@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.53.0
 
 - feat(ui): Closing out a task or goal — Abort and Complete via the card menu, and dragging a card into Done (tasks) / Completed (goals) — now prompts for a free-text reason before the UI sends the change, and asks where any trigger / gate / threshold / recurring check the item owns moves (gate successor, `none` if nothing is inherited). Both fields are passed to vault-cli as `--reason` and `--gate-successor`, restoring close-outs against vault-cli v0.116.0+, which rejects aborted/completed writes without `aborted_reason` and `gate_successor` frontmatter. A blank or whitespace-only reason is blocked in the browser (Confirm stays disabled) and by the API (HTTP 400 naming the missing field); a missing gate-successor defaults to `none` on both sides. Non-close-out actions (Hold/Resume/defer and phase moves other than done) are unchanged. Bumps the `app.js` and `style.css` cache-bust tokens.
 
