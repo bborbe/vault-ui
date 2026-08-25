@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-08-25T07:32:03Z"
 generating: "2026-08-25T07:32:04Z"
 prompted: "2026-08-25T07:45:01Z"
+verifying: "2026-08-25T08:15:15Z"
 branch: dark-factory/closeout-reason-abort-only
 ---
 
