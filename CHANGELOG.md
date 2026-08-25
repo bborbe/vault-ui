@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(api): Restrict the close-out reason gate to `aborted` — `completed` task/goal close-outs (complete-task, complete-goal, status → completed, phase done auto-status) now proceed without a reason and pass no `--reason`/`--gate-successor` flags to vault-cli, which no longer requires `aborted_reason`/`gate_successor` for completion (sibling vault-cli fix). Supplied close-out fields on a completed request are dropped deterministically. The `aborted` contract is unchanged: a missing/blank/whitespace reason still fails fast with HTTP 400 naming `reason` before any write starts, and the abort argv still carries both flag pairs. Backend half of the abort-only close-out change; the frontend (stop prompting on Complete) ships in a follow-up.
+
 ## v0.53.0
 
 - feat(ui): Closing out a task or goal — Abort and Complete via the card menu, and dragging a card into Done (tasks) / Completed (goals) — now prompts for a free-text reason before the UI sends the change, and asks where any trigger / gate / threshold / recurring check the item owns moves (gate successor, `none` if nothing is inherited). Both fields are passed to vault-cli as `--reason` and `--gate-successor`, restoring close-outs against vault-cli v0.116.0+, which rejects aborted/completed writes without `aborted_reason` and `gate_successor` frontmatter. A blank or whitespace-only reason is blocked in the browser (Confirm stays disabled) and by the API (HTTP 400 naming the missing field); a missing gate-successor defaults to `none` on both sides. Non-close-out actions (Hold/Resume/defer and phase moves other than done) are unchanged. Bumps the `app.js` and `style.css` cache-bust tokens.
