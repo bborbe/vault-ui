@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.54.0
 
 - feat(ui): Stop prompting for a close-out reason on Complete — completing a task or goal (Complete menu action, and dragging a card into Done / Completed) now closes out directly with no reason modal, and the request bodies carry no `reason` / `gate_successor` fields. This matches the abort-only backend contract: the API accepts a reason-free completion and drops any supplied `reason`/`gate_successor`, no `--reason`/`--gate-successor` flag reaches vault-cli, and completed task/goal files stay free of `aborted_reason`/`gate_successor`. Abort is unchanged — it still opens the reason modal (reason mandatory, HTTP 400 on blank, gate-successor defaulting to `none`) and sends both fields through `patchStatus`. Frontend half of the abort-only close-out change, matching the sibling vault-cli fix; bumps the `app.js` cache-buster token so already-open boards fetch the new script.
 - feat(api): Restrict the close-out reason gate to `aborted` — `completed` task/goal close-outs (complete-task, complete-goal, status → completed, phase done auto-status) now proceed without a reason and pass no `--reason`/`--gate-successor` flags to vault-cli, which no longer requires `aborted_reason`/`gate_successor` for completion (sibling vault-cli fix). Supplied close-out fields on a completed request are dropped deterministically. The `aborted` contract is unchanged: a missing/blank/whitespace reason still fails fast with HTTP 400 naming `reason` before any write starts, and the abort argv still carries both flag pairs. Backend half of the abort-only close-out change; the frontend (stop prompting on Complete) ships in a follow-up.
