@@ -56,5 +56,5 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
 
 def test_cachebust_token_bumped() -> None:
     """index.html points at the new app.js token; the prior token is gone."""
-    assert "app.js?v=2026-08-24-closeout-reason" in INDEX_HTML
+    assert "app.js?v=2026-08-25-closeout-abort-only" in INDEX_HTML
     assert "app.js?v=2026-08-19-board-sort" not in INDEX_HTML

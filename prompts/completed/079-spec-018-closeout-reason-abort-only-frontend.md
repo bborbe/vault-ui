@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [018-closeout-reason-abort-only]
+summary: Removed all Complete close-out reason prompts and close-out body fields from the vault-ui frontend (dispatchMenuAction, handleDrop, executeSlashCommand), keeping the Abort reason modal intact, bumped the app.js cache-buster token, rewired the static-source tests, and added a CHANGELOG Unreleased entry
+execution_id: vault-ui-aborted-reason-exec-079-spec-018-closeout-reason-abort-only-frontend
+dark-factory-version: dev
 created: "2026-08-25T09:46:00Z"
 queued: "2026-08-25T08:09:39Z"
+started: "2026-08-25T08:13:25Z"
+completed: "2026-08-25T08:15:15Z"
 branch: dark-factory/closeout-reason-abort-only
 ---
 

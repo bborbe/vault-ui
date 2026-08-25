@@ -842,19 +842,11 @@ async function handleDrop(e) {
     const goal = goalsCache[itemId];
 
     if (task) {
-        // Dropping into the Done column is a close-out (status auto-writes
-        // completed) — require a reason + gate successor first; cancel aborts.
-        let closeOut = null;
-        if (targetKey === 'done') {
-            closeOut = await askCloseOut('task', 'complete');
-            if (closeOut === null) return;
-        }
+        // Dropping into the Done column is a completed-targeting close-out —
+        // reason-free (abort-only contract); the PATCH body carries no
+        // close-out fields.
         try {
             const body = { phase: targetKey };
-            if (closeOut) {
-                body.reason = closeOut.reason;
-                body.gate_successor = closeOut.gate_successor;
-            }
             const response = await fetch(`/api/tasks/${itemId}/phase?vault=${encodeURIComponent(task.vault)}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -870,18 +862,11 @@ async function handleDrop(e) {
     }
 
     if (goal) {
-        // Dropping into the Completed column is a close-out — same prompt/cancel.
-        let closeOut = null;
-        if (targetKey === 'completed') {
-            closeOut = await askCloseOut('goal', 'complete');
-            if (closeOut === null) return;
-        }
+        // Dropping into the Completed column is a completed-targeting close-out —
+        // reason-free (abort-only contract); the PATCH body carries no
+        // close-out fields.
         try {
             const body = { status: targetKey };
-            if (closeOut) {
-                body.reason = closeOut.reason;
-                body.gate_successor = closeOut.gate_successor;
-            }
             const response = await fetch(`/api/goals/${encodeURIComponent(itemId)}/status?vault=${encodeURIComponent(goal.vault)}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -1870,15 +1855,10 @@ async function dispatchMenuAction(kind, id, action) {
     if (kind === 'goal') {
         if (action === 'complete_goal' || action === 'defer_goal') {
             const command = action === 'complete_goal' ? 'complete-goal' : 'defer-goal';
-            // Close-out (complete_goal) prompts for a reason + gate successor first.
-            const closeOut = action === 'complete_goal' ? await askCloseOut('goal', 'complete') : null;
-            if (action === 'complete_goal' && closeOut === null) return;
+            // complete_goal is a completed-targeting close-out — reason-free
+            // (abort-only contract); the POST body carries no close-out fields.
             try {
                 const body = { command };
-                if (closeOut) {
-                    body.reason = closeOut.reason;
-                    body.gate_successor = closeOut.gate_successor;
-                }
                 const response = await fetch(
                     `/api/goals/${encodeURIComponent(id)}/execute-command?vault=${encodeURIComponent(item.vault)}`,
                     {
@@ -1910,10 +1890,9 @@ async function dispatchMenuAction(kind, id, action) {
 
     // kind === 'task'
     if (action === 'complete_task' || action === 'defer_task') {
-        // Close-out (complete_task) prompts for a reason + gate successor first.
-        const closeOut = action === 'complete_task' ? await askCloseOut('task', 'complete') : null;
-        if (action === 'complete_task' && closeOut === null) return;
-        await executeSlashCommand(id, action, closeOut);
+        // complete_task is a completed-targeting close-out — reason-free
+        // (abort-only contract); executeSlashCommand sends no close-out fields.
+        await executeSlashCommand(id, action);
     } else if (action === 'abort_task') {
         const closeOut = await askCloseOut('task', 'abort');
         if (closeOut === null) return;
@@ -1927,8 +1906,8 @@ async function dispatchMenuAction(kind, id, action) {
 
 // PATCH a task or goal status via the shared /status endpoint, toast, then refresh.
 // kind: 'task' | 'goal'. Used by the card lifecycle menus for abort/hold/resume.
-// closeOut ({ reason, gate_successor } | null) is set for close-out statuses
-// (aborted/completed) and added to the request body when present.
+// closeOut ({ reason, gate_successor } | null) is set for the abort close-out
+// status and added to the request body when present (completed is reason-free).
 async function patchStatus(kind, id, vault, status, successMsg, closeOut = null) {
     const base = kind === 'goal' ? 'goals' : 'tasks';
     try {
@@ -2026,7 +2005,7 @@ function showToast(message, isError = false) {
     }, duration);
 }
 
-async function executeSlashCommand(taskId, commandType, closeOut = null) {
+async function executeSlashCommand(taskId, commandType) {
     const task = tasksCache[taskId];
     if (!task) {
         showToast('Task not found', true);
@@ -2057,13 +2036,9 @@ async function executeSlashCommand(taskId, commandType, closeOut = null) {
         };
         const slashCommand = commandMap[commandType];
 
-        // Call backend endpoint. Close-out commands (complete-task) carry the
-        // reason + gate successor; defer passes no extra body fields.
+        // Call backend endpoint. Neither complete-task nor defer-task carries
+        // close-out fields (completion is reason-free; defer never had any).
         const body = { command: slashCommand };
-        if (closeOut) {
-            body.reason = closeOut.reason;
-            body.gate_successor = closeOut.gate_successor;
-        }
         const response = await fetch(
             `/api/tasks/${encodeURIComponent(taskId)}/execute-command?vault=${encodeURIComponent(task.vault)}`,
             {
