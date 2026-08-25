@@ -804,15 +804,13 @@ def test_execute_complete_task_uses_vault_cli(
     assert data["response"] == "completed ok\n"
 
     called_args = mock_exec.call_args[0]
+    # `task complete` targets `completed`, which passes no close-out flags — the
+    # supplied reason/gate_successor in the request body are dropped.
     assert called_args == (
         "vault-cli",
         "task",
         "complete",
         "Test Task",
-        "--reason",
-        "closing out",
-        "--gate-successor",
-        "none",
         "--vault",
         "testvault",
     )
@@ -1225,15 +1223,13 @@ def test_execute_goal_command_complete_uses_vault_cli(test_client: TestClient) -
 
     assert response.status_code == 200
     assert response.json()["command"] == "complete-goal"
+    # `goal complete` targets `completed`, which passes no close-out flags — the
+    # supplied reason/gate_successor in the request body are dropped.
     assert mock_exec.call_args.args == (
         "vault-cli",
         "goal",
         "complete",
         "Some Goal",
-        "--reason",
-        "closing out",
-        "--gate-successor",
-        "none",
         "--vault",
         "testvault",
     )
@@ -1292,9 +1288,10 @@ def test_execute_goal_command_leading_dash_rejected(test_client: TestClient) -> 
 
 
 # --- close-out reason gate (spec 077) ---
-# vault-cli v0.116.0+ rejects aborted/completed writes unless the frontmatter
-# already holds aborted_reason and gate_successor; vault-ui enforces the reason
-# requirement in its request handling and passes both fields through as flags.
+# Abort-only: vault-cli rejects `aborted` writes unless the frontmatter holds
+# aborted_reason and gate_successor; vault-ui enforces the reason requirement in
+# its request handling and passes both fields through as flags. `completed`
+# writes require neither (sibling vault-cli fix) and pass no close-out flags.
 
 
 def test_update_task_status_aborted_without_reason_returns_400(test_client: TestClient) -> None:
@@ -1310,17 +1307,23 @@ def test_update_task_status_aborted_without_reason_returns_400(test_client: Test
     mock_exec.assert_not_called()
 
 
-def test_update_task_status_completed_without_reason_returns_400(test_client: TestClient) -> None:
-    """A completed status write without a reason is rejected with HTTP 400."""
-    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+def test_update_task_status_completed_without_reason_succeeds_flag_free(
+    test_client: TestClient,
+) -> None:
+    """A completed status write succeeds without a reason and passes no close-out flags."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
         response = test_client.patch(
             "/api/tasks/Test%20Task/status?vault=TestVault",
             json={"status": "completed"},
         )
 
-    assert response.status_code == 400
-    assert "reason" in response.json()["detail"]
-    mock_exec.assert_not_called()
+    assert response.status_code == 200
+    assert "--reason" not in mock_exec.call_args.args
+    assert "--gate-successor" not in mock_exec.call_args.args
 
 
 def test_update_goal_status_aborted_without_reason_returns_400(test_client: TestClient) -> None:
@@ -1336,47 +1339,87 @@ def test_update_goal_status_aborted_without_reason_returns_400(test_client: Test
     mock_exec.assert_not_called()
 
 
-def test_execute_complete_task_without_reason_returns_400(test_client: TestClient) -> None:
-    """complete-task without a reason is rejected with HTTP 400 before any subprocess."""
-    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+def test_execute_complete_task_without_reason_succeeds_flag_free(
+    test_client: TestClient,
+) -> None:
+    """complete-task succeeds without a reason and passes no close-out flags."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
         response = test_client.post(
             "/api/tasks/Test%20Task/execute-command?vault=TestVault",
             json={"command": "complete-task"},
         )
 
-    assert response.status_code == 400
-    assert "reason" in response.json()["detail"]
-    mock_exec.assert_not_called()
+    assert response.status_code == 200
+    assert "--reason" not in mock_exec.call_args.args
+    assert "--gate-successor" not in mock_exec.call_args.args
 
 
-def test_execute_complete_goal_without_reason_returns_400(test_client: TestClient) -> None:
-    """complete-goal without a reason is rejected with HTTP 400 before any subprocess."""
-    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+def test_execute_complete_goal_without_reason_succeeds_flag_free(
+    test_client: TestClient,
+) -> None:
+    """complete-goal succeeds without a reason and passes no close-out flags."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
         response = test_client.post(
             "/api/goals/Some%20Goal/execute-command?vault=TestVault",
             json={"command": "complete-goal"},
         )
 
-    assert response.status_code == 400
-    assert "reason" in response.json()["detail"]
-    mock_exec.assert_not_called()
+    assert response.status_code == 200
+    assert "--reason" not in mock_exec.call_args.args
+    assert "--gate-successor" not in mock_exec.call_args.args
 
 
-def test_update_phase_done_without_reason_returns_400(test_client: TestClient) -> None:
-    """Phase done (which auto-writes status completed) without a reason is rejected.
+def test_update_goal_status_completed_without_reason_succeeds_flag_free(
+    test_client: TestClient,
+) -> None:
+    """A goal completed status write succeeds without a reason, flag-free."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
-    The reason check fires before ANY subprocess starts, so the phase write
-    cannot be left half-applied when the close-out gate rejects the request.
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
+        response = test_client.patch(
+            "/api/goals/Some%20Goal/status?vault=TestVault",
+            json={"status": "completed"},
+        )
+
+    assert response.status_code == 200
+    assert "--reason" not in mock_exec.call_args.args
+    assert "--gate-successor" not in mock_exec.call_args.args
+
+
+def test_update_phase_done_without_reason_succeeds_flag_free(
+    test_client: TestClient,
+) -> None:
+    """Phase done (which auto-writes status completed) succeeds without a reason.
+
+    Both the phase write and the auto-status-completed write are flag-free —
+    `completed` requires no close-out reason.
     """
-    with patch("asyncio.create_subprocess_exec", AsyncMock()) as mock_exec:
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec:
         response = test_client.patch(
             "/api/tasks/Test%20Task/phase?vault=TestVault",
             json={"phase": "done"},
         )
 
-    assert response.status_code == 400
-    assert "reason" in response.json()["detail"]
-    mock_exec.assert_not_called()
+    assert response.status_code == 200
+    assert mock_exec.call_count == 2
+    assert all(
+        "--reason" not in call[0] and "--gate-successor" not in call[0]
+        for call in mock_exec.call_args_list
+    )
 
 
 def test_update_task_status_whitespace_reason_returns_400(test_client: TestClient) -> None:
@@ -1421,8 +1464,8 @@ def test_closeout_defaults_gate_successor_to_none(test_client: TestClient) -> No
     )
 
 
-def test_closeout_round_trips_explicit_gate_successor(test_client: TestClient) -> None:
-    """An explicit gate_successor round-trips through the boundary unchanged."""
+def test_completed_drops_supplied_closeout_fields(test_client: TestClient) -> None:
+    """A completed write drops supplied reason/gate_successor — they never reach vault-cli."""
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -1432,26 +1475,14 @@ def test_closeout_round_trips_explicit_gate_successor(test_client: TestClient) -
             "/api/goals/Some%20Goal/status?vault=TestVault",
             json={
                 "status": "completed",
-                "reason": "feature shipped",
-                "gate_successor": "next-goal",
+                "reason": "x",
+                "gate_successor": "y",
             },
         )
 
     assert response.status_code == 200
-    assert mock_exec.call_args.args == (
-        "vault-cli",
-        "goal",
-        "set",
-        "Some Goal",
-        "status",
-        "completed",
-        "--reason",
-        "feature shipped",
-        "--gate-successor",
-        "next-goal",
-        "--vault",
-        "testvault",
-    )
+    assert "--reason" not in mock_exec.call_args.args
+    assert "--gate-successor" not in mock_exec.call_args.args
 
 
 def test_non_closeout_status_stays_flag_free(test_client: TestClient) -> None:
@@ -3187,16 +3218,17 @@ def test_update_phase_done_writes_completed_status(test_client: TestClient) -> N
         f"Expected NO --reason flag on the phase subprocess: {first_call_args}"
     )
 
-    # The status subprocess carries the close-out flags (reason + gate successor).
+    # The status subprocess stays flag-free too — status `completed` passes no
+    # close-out flags (only `aborted` demands a reason + gate successor).
     second_call_args = mock_exec.call_args_list[1][0]
     assert _argv_has_pair(second_call_args, "status", "completed"), (
         f"Expected ('status', 'completed') pair in status write argv: {second_call_args}"
     )
-    assert _argv_has_pair(second_call_args, "--reason", "closing out"), (
-        f"Expected ('--reason', 'closing out') pair in status write argv: {second_call_args}"
+    assert "--reason" not in second_call_args, (
+        f"Expected NO --reason flag on the status subprocess: {second_call_args}"
     )
-    assert _argv_has_pair(second_call_args, "--gate-successor", "none"), (
-        f"Expected ('--gate-successor', 'none') pair in status write argv: {second_call_args}"
+    assert "--gate-successor" not in second_call_args, (
+        f"Expected NO --gate-successor flag on the status subprocess: {second_call_args}"
     )
 
 

@@ -59,7 +59,7 @@ def test_dispatch_routes_lifecycle_and_clear() -> None:
     assert "patchStatus('goal'" in body
     assert "'aborted'" in body
     assert "/execute-command?vault=" in body  # goal complete/defer preserved
-    assert "executeSlashCommand(id, action, closeOut)" in body  # task complete/defer preserved
+    assert "executeSlashCommand(id, action)" in body  # task complete/defer preserved (reason-free)
 
 
 def test_clear_session_single_delete_from_kind() -> None:

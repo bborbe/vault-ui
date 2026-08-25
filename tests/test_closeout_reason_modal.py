@@ -1,12 +1,14 @@
 """Static-source regression tests for the close-out reason modal (spec 077).
 
-Every close-out write (Abort/Complete via the card menu, drag-to-Done) must
-prompt for a free-text reason + optional gate successor before sending the
-request. This repo has no JS runtime, so these are the sanctioned in-container
+Only the Abort close-out (card-menu abort_task / abort_goal) prompts for a
+free-text reason + optional gate successor; Complete is reason-free — the UI
+never prompts on Complete (menu actions and drag into Done/Completed) and the
+request bodies carry no close-out fields, matching the abort-only backend
+contract. This repo has no JS runtime, so these are the sanctioned in-container
 guards: read the static sources via pathlib and assert on strings / brace-walked
 function bodies. The modal's interactive behavior is verified by the operator on
 the host with `make run`; these tests pin the wiring so a future edit cannot
-silently drop the reason prompt.
+silently drop the abort reason prompt or silently reintroduce a Complete prompt.
 """
 
 import re
@@ -17,7 +19,7 @@ STATIC_DIR = REPO_ROOT / "src" / "vault_ui" / "static"
 APP_JS = (STATIC_DIR / "app.js").read_text()
 INDEX_HTML = (STATIC_DIR / "index.html").read_text()
 
-NEW_TOKEN = "2026-08-24-closeout-reason"
+NEW_TOKEN = "2026-08-25-closeout-abort-only"
 
 
 def _function_body(source: str, fn_name: str) -> str:
@@ -84,9 +86,9 @@ def test_modal_reuses_existing_modal_classes() -> None:
 
 
 def test_cache_busters_bumped() -> None:
-    """index.html loads app.js and style.css with the NEW close-out-reason token."""
+    """index.html loads app.js with the NEW abort-only token; style.css is unchanged."""
     assert f"app.js?v={NEW_TOKEN}" in INDEX_HTML
-    assert f"style.css?v={NEW_TOKEN}" in INDEX_HTML
+    assert "style.css?v=2026-08-24-closeout-reason" in INDEX_HTML
     assert "2026-08-19-board-sort" not in INDEX_HTML
 
 
@@ -129,7 +131,7 @@ def test_risk_prompt_sentence_present() -> None:
     )
 
 
-# --- app.js: patchStatus carries the close-out fields ---
+# --- app.js: patchStatus carries the close-out fields (abort path) ---
 
 
 def test_patch_status_builds_close_out_body() -> None:
@@ -144,25 +146,31 @@ def test_patch_status_builds_close_out_body() -> None:
     assert "body.gate_successor = closeOut.gate_successor;" in body
 
 
-# --- app.js: dispatchMenuAction gates every close-out branch on a non-null result ---
+# --- app.js: dispatchMenuAction prompts via askCloseOut for abort only ---
 
 
-def test_dispatch_menu_action_calls_ask_close_out() -> None:
-    """dispatchMenuAction prompts via askCloseOut for every close-out action."""
+def test_dispatch_menu_action_asks_close_out_only_for_abort() -> None:
+    """dispatchMenuAction prompts via askCloseOut for abort only — zero 'complete' verbs."""
     body = _function_body(APP_JS, "dispatchMenuAction")
-    assert "askCloseOut('goal', 'complete')" in body
-    assert "askCloseOut('goal', 'abort')" in body
-    assert "askCloseOut('task', 'complete')" in body
     assert "askCloseOut('task', 'abort')" in body
+    assert "askCloseOut('goal', 'abort')" in body
+    assert "askCloseOut('task', 'complete')" not in body
+    assert "askCloseOut('goal', 'complete')" not in body
 
 
-def test_dispatch_menu_action_complete_task_gated() -> None:
-    """The complete_task branch awaits askCloseOut and returns on cancel."""
+def test_dispatch_menu_action_complete_task_reason_free() -> None:
+    """complete_task dispatches directly with no close-out prompt or fields."""
     body = _function_body(APP_JS, "dispatchMenuAction")
-    # complete_task is dispatched through executeSlashCommand(id, action, closeOut).
-    assert "action === 'complete_task' ? await askCloseOut('task', 'complete') : null" in body
-    assert "if (action === 'complete_task' && closeOut === null) return;" in body
-    assert "executeSlashCommand(id, action, closeOut)" in body
+    assert "askCloseOut('task', 'complete')" not in body
+    assert "executeSlashCommand(id, action)" in body
+
+
+def test_dispatch_menu_action_complete_goal_reason_free() -> None:
+    """complete_goal posts { command } with no close-out fields on the body."""
+    body = _function_body(APP_JS, "dispatchMenuAction")
+    assert "askCloseOut('goal', 'complete')" not in body
+    assert "body.reason" not in body
+    assert "body.gate_successor" not in body
 
 
 def test_dispatch_menu_action_abort_task_gated() -> None:
@@ -171,15 +179,6 @@ def test_dispatch_menu_action_abort_task_gated() -> None:
     assert "const closeOut = await askCloseOut('task', 'abort');" in body
     assert "if (closeOut === null) return;" in body
     assert "patchStatus('task', id, item.vault, 'aborted', 'Task aborted', closeOut)" in body
-
-
-def test_dispatch_menu_action_complete_goal_gated() -> None:
-    """The complete_goal branch awaits askCloseOut and returns on cancel."""
-    body = _function_body(APP_JS, "dispatchMenuAction")
-    assert "action === 'complete_goal' ? await askCloseOut('goal', 'complete') : null" in body
-    assert "if (action === 'complete_goal' && closeOut === null) return;" in body
-    # The inline /goals/{id}/execute-command POST body includes the close-out fields.
-    assert "body.reason = closeOut.reason;" in body
 
 
 def test_dispatch_menu_action_abort_goal_gated() -> None:
@@ -191,34 +190,26 @@ def test_dispatch_menu_action_abort_goal_gated() -> None:
 
 
 def test_dispatch_menu_action_defer_not_gated() -> None:
-    """Defer actions must NOT open the modal (no askCloseOut in their branch)."""
+    """defer_goal / defer_task dispatch without any askCloseOut prompt."""
     body = _function_body(APP_JS, "dispatchMenuAction")
-    # defer_goal / defer_task dispatch through the same command branches but only
-    # askCloseOut for the close-out (complete) variant.
-    assert "action === 'complete_goal' ? await askCloseOut('goal', 'complete') : null" in body
-    assert "action === 'complete_task' ? await askCloseOut('task', 'complete') : null" in body
+    assert "askCloseOut('task', 'complete')" not in body
+    assert "askCloseOut('goal', 'complete')" not in body
 
 
-# --- app.js: handleDrop prompts before a close-out drop ---
+# --- app.js: handleDrop completes are reason-free (no prompt, no fields) ---
 
 
-def test_handle_drop_task_done_guards_ask_close_out() -> None:
-    """Task drops into the 'done' column prompt first; cancel aborts the drop."""
+def test_handle_drop_task_done_reason_free() -> None:
+    """Task drops into the 'done' column are reason-free — no prompt, no close-out fields."""
     body = _function_body(APP_JS, "handleDrop")
-    done_block = _if_block(body, "targetKey === 'done'")
-    assert "askCloseOut('task', 'complete')" in done_block
-    assert "if (closeOut === null) return;" in done_block
-    # The close-out fields ride on the PATCH body (inside the subsequent
-    # `if (closeOut)` block) for the done drop.
-    assert "body.reason = closeOut.reason;" in body
-    assert "body.gate_successor = closeOut.gate_successor;" in body
+    assert "askCloseOut('task', 'complete')" not in body
+    assert "const body = { phase: targetKey };" in body
+    assert "body.reason" not in body
 
 
-def test_handle_drop_goal_completed_guards_ask_close_out() -> None:
-    """Goal drops into the 'completed' column prompt first; cancel aborts the drop."""
+def test_handle_drop_goal_completed_reason_free() -> None:
+    """Goal drops into the 'completed' column are reason-free — no prompt, no close-out fields."""
     body = _function_body(APP_JS, "handleDrop")
-    completed_block = _if_block(body, "targetKey === 'completed'")
-    assert "askCloseOut('goal', 'complete')" in completed_block
-    assert "if (closeOut === null) return;" in completed_block
-    assert "body.reason = closeOut.reason;" in body
-    assert "body.gate_successor = closeOut.gate_successor;" in body
+    assert "askCloseOut('goal', 'complete')" not in body
+    assert "const body = { status: targetKey };" in body
+    assert "body.reason" not in body
