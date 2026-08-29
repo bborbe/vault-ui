@@ -589,3 +589,69 @@ class TestSessionStartedMarkerValue:
         from vault_ui.api.tasks import _session_started_marker
 
         assert bool(_session_started_marker()) is True
+
+
+@pytest.mark.asyncio
+async def test_orphan_sweep_reads_marker_from_status_cache_not_the_task() -> None:
+    """The sweep must find a marker that ONLY exists in the StatusCache.
+
+    Regression lock for a no-op shipped in v0.55.0. `vault-cli task list
+    --output json` does not emit ``claude_session_started`` — the key is absent —
+    so every Task built from that output carries None, and the first version of
+    this sweep matched nothing while its unit tests passed, because they exercised
+    ``_marker_age_seconds`` in isolation and never the sweep's data source.
+
+    This test therefore builds the task the way the CLI really does (marker None)
+    and puts the marker only where the API gets it from.
+    """
+    config = _make_config(current_user="alice")
+    # Exactly what the CLI yields: no session id, and NO marker on the Task.
+    task = _make_task(session_id=None, assignee="alice", claude_session_started=None)
+
+    class _FakeCache:
+        def get_session_started(self, _vault: str, _item_id: str) -> str:
+            return "true"  # legacy marker → unknown age → expired
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_FakeCache()),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1, "sweep did not clear a marker visible only via the StatusCache"
+
+
+@pytest.mark.asyncio
+async def test_orphan_sweep_leaves_a_fresh_marker_alone() -> None:
+    """A turn that started seconds ago must not be swept out from under itself."""
+    from datetime import UTC, datetime
+
+    config = _make_config(current_user="alice")
+    task = _make_task(session_id=None, assignee="alice", claude_session_started=None)
+    fresh = datetime.now(UTC).isoformat()
+
+    class _FreshCache:
+        def get_session_started(self, _vault: str, _item_id: str) -> str:
+            return fresh
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_FreshCache()),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", new=AsyncMock()),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0

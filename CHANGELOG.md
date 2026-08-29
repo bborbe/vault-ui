@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(cleanup): The orphaned-"Starting"-marker sweep added in v0.55.0 never matched anything. It read `claude_session_started` off the `Task` objects returned by `VaultCLIClient.list_tasks()`, but `vault-cli task list --output json` does not emit that field at all — the key is absent, so every task carried `None` and the sweep skipped all of them. The API endpoint only sees the field because it enriches from the `StatusCache` after listing; the sweep now reads the same source. Verified against the live vault: v0.55.0 logged `cleared 0` with 6 orphaned markers present.
+- test: Lock the sweep's data source. The v0.55.0 tests exercised `_marker_age_seconds` in isolation and never ran `cleanup_stale_sessions`, so a sweep that matched nothing still passed them. The new tests build the task the way the CLI really does (marker `None`) with the marker only in the cache, and assert the clear happens — mutation-checked to fail against the v0.55.0 code.
+
 ## v0.55.0
 
 - fix(ui): A card no longer sits on `⏳ Starting...` after its `claude_session_id` has landed. The websocket reconnects after a drop but never replayed the events missed during the gap, and `ws.onopen` did not re-fetch — so the tab rendered its stale copy until manually refreshed. It now calls `loadCurrentView()` on reconnect (guarded so the first connect does not duplicate the page load's fetch). The window this exposes grew from ~10s to the full 2-5 min turn when vault-cli v0.117.1 began persisting the session id only after the headless turn finishes, which is what made it visible.
