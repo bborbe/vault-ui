@@ -174,8 +174,23 @@ async def cleanup_stale_sessions(config: Config) -> int:
             # session id. The loop above never sees them (it filters on
             # claude_session_id), so before this sweep nothing on any code path
             # could clear one left behind by a mid-launch server restart.
+            # The marker must come from the StatusCache, NOT from the Task objects
+            # above: `vault-cli task list --output json` does not emit
+            # claude_session_started at all, so every Task here carries None for it
+            # and a sweep reading that field silently matches nothing. The API
+            # endpoint only sees the field because it enriches from this same cache
+            # after listing (api/tasks.py, "Surface claude_session_started from the
+            # status cache"). Verified 2026-08-29: the key is absent from the CLI's
+            # JSON, and the first version of this sweep was a no-op because of it.
+            # Imported here, not at module scope: factory imports cleanup, so a
+            # top-level import closes a cycle.
+            from vault_ui.factory import get_status_cache
+
+            started_cache = get_status_cache()
             for task in tasks:
-                marker = task.claude_session_started
+                marker = started_cache.get_session_started(vault.name, task.id) or (
+                    task.claude_session_started
+                )
                 if not marker or task.claude_session_id:
                     continue
                 age = _marker_age_seconds(str(marker))
