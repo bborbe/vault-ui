@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.55.1
 
 - fix(cleanup): The orphaned-"Starting"-marker sweep added in v0.55.0 never matched anything. It read `claude_session_started` off the `Task` objects returned by `VaultCLIClient.list_tasks()`, but `vault-cli task list --output json` does not emit that field at all — the key is absent, so every task carried `None` and the sweep skipped all of them. The API endpoint only sees the field because it enriches from the `StatusCache` after listing; the sweep now reads the same source. Verified against the live vault: v0.55.0 logged `cleared 0` with 6 orphaned markers present.
 - test: Lock the sweep's data source. The v0.55.0 tests exercised `_marker_age_seconds` in isolation and never ran `cleanup_stale_sessions`, so a sweep that matched nothing still passed them. The new tests build the task the way the CLI really does (marker `None`) with the marker only in the cache, and assert the clear happens — mutation-checked to fail against the v0.55.0 code.
