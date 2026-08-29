@@ -515,3 +515,77 @@ async def test_cleanup_goal_started_flag_clear_failure_still_counts_cleared() ->
         cleared = await cleanup_stale_sessions(config)
 
     assert cleared == 1
+
+
+class TestOrphanedStartingMarker:
+    """Sweep for ``claude_session_started`` markers with no ``claude_session_id``.
+
+    The launch endpoint clears the marker in its own ``except`` when a launch
+    fails, so this sweep covers only what that cannot: a server restart mid-launch.
+    Before it existed the main sweep filtered on ``claude_session_id``, so an
+    orphan was never inspected and the card stuck on "Starting…" forever.
+    """
+
+    def test_unparseable_legacy_marker_is_treated_as_expired(self):
+        """A legacy ``"true"`` marker carries no age and must not survive forever."""
+        from vault_ui.cleanup import _marker_age_seconds
+
+        assert _marker_age_seconds("true") is None
+
+    def test_fresh_marker_is_not_expired(self):
+        """A turn that started seconds ago is still running — never clear it."""
+        from datetime import UTC, datetime
+
+        from vault_ui.cleanup import _STARTING_MARKER_TTL_SECONDS, _marker_age_seconds
+
+        age = _marker_age_seconds(datetime.now(UTC).isoformat())
+        assert age is not None
+        assert age < _STARTING_MARKER_TTL_SECONDS
+
+    def test_marker_older_than_ttl_is_expired(self):
+        from datetime import UTC, datetime, timedelta
+
+        from vault_ui.cleanup import _STARTING_MARKER_TTL_SECONDS, _marker_age_seconds
+
+        old = (datetime.now(UTC) - timedelta(seconds=_STARTING_MARKER_TTL_SECONDS + 60)).isoformat()
+        age = _marker_age_seconds(old)
+        assert age is not None
+        assert age > _STARTING_MARKER_TTL_SECONDS
+
+    def test_ttl_exceeds_vault_cli_turn_bound(self):
+        """Regression lock: the TTL must stay above vault-cli's 30m turn bound.
+
+        vault-cli v0.117.1 blocks until the headless turn finishes, bounded by its
+        own 30m ``sessionTurnTimeout``. A TTL at or below that would clear the
+        marker out from under a live turn and bounce the card to "Start"
+        mid-work. The July TTL was 15m; reverting to it would reintroduce exactly
+        that bug.
+        """
+        from vault_ui.cleanup import _STARTING_MARKER_TTL_SECONDS
+
+        assert _STARTING_MARKER_TTL_SECONDS > 30 * 60
+
+    def test_naive_timestamp_is_assumed_utc_not_crashed_on(self):
+        from datetime import UTC, datetime
+
+        from vault_ui.cleanup import _marker_age_seconds
+
+        naive = datetime.now(UTC).replace(tzinfo=None).isoformat()
+        assert _marker_age_seconds(naive) is not None
+
+
+class TestSessionStartedMarkerValue:
+    def test_launch_marker_is_a_parseable_instant(self):
+        """The marker must be an age source, not a bare boolean."""
+        from datetime import datetime
+
+        from vault_ui.api.tasks import _session_started_marker
+
+        marker = _session_started_marker()
+        assert marker != "true"
+        assert datetime.fromisoformat(marker) is not None
+
+    def test_marker_is_truthy_so_the_starting_gate_is_unchanged(self):
+        from vault_ui.api.tasks import _session_started_marker
+
+        assert bool(_session_started_marker()) is True
