@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(cleanup): Sweep orphaned "Starting" markers on **goals** too. The goal loop filtered on `claude_session_id`, so a goal whose marker was orphaned by a mid-launch server restart was never examined — the same defect the task sweep fixed in v0.55.1, left in the sibling code path. `run_goal` writes the marker via `set_goal_field`, so goals orphan exactly like tasks do. Reads from `StatusCache` for the same reason the task sweep does: `vault-cli goal list --output json` does not emit the field. Its cache handle is resolved independently of the task block's, which is a separate `try`, so an early failure there cannot turn the goal sweep into a `NameError`.
+
 ## v0.55.1
 
 - fix(cleanup): The orphaned-"Starting"-marker sweep added in v0.55.0 never matched anything. It read `claude_session_started` off the `Task` objects returned by `VaultCLIClient.list_tasks()`, but `vault-cli task list --output json` does not emit that field at all — the key is absent, so every task carried `None` and the sweep skipped all of them. The API endpoint only sees the field because it enriches from the `StatusCache` after listing; the sweep now reads the same source. Verified against the live vault: v0.55.0 logged `cleared 0` with 6 orphaned markers present.
