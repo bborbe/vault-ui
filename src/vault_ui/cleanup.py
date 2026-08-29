@@ -383,6 +383,72 @@ async def cleanup_stale_sessions(config: Config) -> int:
                             exc_info=True,
                         )
 
+                # Orphaned "Starting…" markers on GOALS — the mirror of the task
+                # sweep above. The loop just above filters on claude_session_id, so
+                # a goal whose marker was orphaned by a mid-launch server restart is
+                # never examined. run_goal writes the marker via set_goal_field, so
+                # the goal path can orphan exactly like the task path can.
+                #
+                # As on the task side the marker must come from the StatusCache:
+                # `vault-cli goal list --output json` does not emit
+                # claude_session_started, so reading goal.claude_session_started
+                # alone matches nothing (that bug shipped as a no-op in v0.55.0).
+                # Re-resolved rather than reusing the task block's binding: that
+                # block is a separate try/except, so an early failure there would
+                # leave the name unbound and turn a goal sweep into a NameError.
+                from vault_ui.factory import get_status_cache as _get_started_cache
+
+                goal_started_cache = _get_started_cache()
+                for goal in goals:
+                    # No `or goal.claude_session_started` fallback as on the task
+                    # side: the Goal model has no such field at all, so the cache is
+                    # the only source here.
+                    marker = goal_started_cache.get_session_started(vault.name, goal.id)
+                    if not marker or goal.claude_session_id:
+                        continue
+                    age = _marker_age_seconds(str(marker))
+                    if age is not None and age < _STARTING_MARKER_TTL_SECONDS:
+                        continue  # a turn this young may still be running
+                    try:
+                        goal_orphan_proc = await asyncio.create_subprocess_exec(
+                            vault.vault_cli_path,
+                            "goal",
+                            "clear",
+                            goal.id,
+                            "claude_session_started",
+                            "--vault",
+                            vault.name,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        _o, goal_orphan_err = await goal_orphan_proc.communicate()
+                        if goal_orphan_proc.returncode != 0:
+                            logger.error(
+                                "[Cleanup] Failed to clear orphaned Starting marker on goal"
+                                " %s in vault %s: %s",
+                                goal.id,
+                                vault.name,
+                                goal_orphan_err.decode().strip(),
+                            )
+                        else:
+                            logger.info(
+                                "[Cleanup] Cleared orphaned Starting marker (age=%s) from"
+                                " goal %s in vault %s",
+                                "unknown" if age is None else f"{age:.0f}s",
+                                goal.id,
+                                vault.name,
+                            )
+                            cleared += 1
+                    except Exception as e:
+                        logger.error(
+                            "[Cleanup] Exception clearing orphaned Starting marker on goal"
+                            " %s in vault %s: %s",
+                            goal.id,
+                            vault.name,
+                            e,
+                            exc_info=True,
+                        )
+
             except Exception as e:
                 error_text = str(e).lower()
                 if "no such file or directory" in error_text:

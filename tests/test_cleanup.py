@@ -655,3 +655,65 @@ async def test_orphan_sweep_leaves_a_fresh_marker_alone() -> None:
         cleared = await cleanup_stale_sessions(config)
 
     assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_goal_orphan_sweep_reads_marker_from_status_cache() -> None:
+    """The goal sweep mirrors the task sweep — same bug, same fix, own lock.
+
+    `run_goal` writes claude_session_started via set_goal_field, so a goal can be
+    orphaned by a mid-launch restart exactly like a task. Until this sweep existed
+    the goal loop filtered on claude_session_id and never examined such a goal.
+    As on the task side the marker lives only in the StatusCache, because
+    `vault-cli goal list --output json` does not emit it.
+    """
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice")
+
+    class _FakeCache:
+        def get_session_started(self, _vault: str, _item_id: str) -> str:
+            return "true"  # legacy marker → unknown age → expired
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_FakeCache()),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1, "goal sweep did not clear a marker visible only via the StatusCache"
+
+
+@pytest.mark.asyncio
+async def test_goal_orphan_sweep_leaves_a_fresh_marker_alone() -> None:
+    """A goal turn that started seconds ago must not be swept."""
+    from datetime import UTC, datetime
+
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice")
+    fresh = datetime.now(UTC).isoformat()
+
+    class _FreshCache:
+        def get_session_started(self, _vault: str, _item_id: str) -> str:
+            return fresh
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_FreshCache()),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", new=AsyncMock()),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
