@@ -159,3 +159,39 @@ def test_start_polling_uses_load_current_view() -> None:
     assert "loadTasks()" not in poll_body, (
         "startPolling still calls loadTasks — periodic poll will clobber Goals view"
     )
+
+
+def test_websocket_reconnect_refetches_via_dispatcher() -> None:
+    """ws.onopen must re-fetch on RECONNECT, through loadCurrentView().
+
+    Events emitted while the socket is down are never replayed, so without a
+    catch-up fetch the tab renders its stale copy until the user manually
+    refreshes — observed 2026-08-29, where a card sat on "Starting…" long after
+    claude_session_id had landed. The window used to be ~10s; since vault-cli
+    v0.117.1 blocks for the whole turn it is 2-5 min, so a reconnect landing
+    inside it is now likely rather than rare.
+
+    Must go through loadCurrentView(), not a hand-rolled currentView branch —
+    that is the Spec 013/014 cross-view invariant this module exists to protect.
+    """
+    onopen = APP_JS[APP_JS.index("ws.onopen") : APP_JS.index("ws.onmessage")]
+    assert "loadCurrentView()" in onopen
+    assert "loadTasks()" not in onopen
+    assert "loadGoals()" not in onopen
+    # Guarded, so the first connect does not duplicate the initial page load's fetch.
+    assert "wsHasConnected" in onopen
+
+
+def test_starting_badge_shows_elapsed_time() -> None:
+    """The Starting badge renders elapsed time from the timestamped marker.
+
+    A bare "Starting…" reads identically at 5s, at 3min, and at 6 days — which is
+    exactly the ambiguity that made a stuck card indistinguishable from a live
+    turn. Legacy "true" markers carry no age and must degrade to the bare label
+    rather than rendering NaN.
+    """
+    assert "function startingElapsedLabel" in APP_JS
+    helper = APP_JS[APP_JS.index("function startingElapsedLabel") :][:600]
+    assert "'true'" in helper  # legacy marker degrades, no age
+    assert "Number.isNaN" in helper  # unparseable degrades, never renders NaN
+    assert "startingElapsedLabel(item.claude_session_started)" in APP_JS

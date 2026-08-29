@@ -55,6 +55,16 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
 
 
 def test_cachebust_token_bumped() -> None:
-    """index.html points at the new app.js token; the prior token is gone."""
-    assert "app.js?v=2026-08-25-closeout-abort-only" in INDEX_HTML
+    """index.html carries a non-empty app.js token; known-stale tokens are gone.
+
+    Asserts the shape rather than the current value, matching
+    test_goal_session_controls.test_cachebust_token_bumped. Pinning the literal
+    token made every legitimate bump fail this test, which trains the bump to be
+    skipped — and an un-bumped token is exactly how this repo has previously
+    shipped a fix that browsers never received.
+    """
+    import re
+
+    assert re.search(r"app\.js\?v=\S+", INDEX_HTML)
     assert "app.js?v=2026-08-19-board-sort" not in INDEX_HTML
+    assert "app.js?v=2026-08-25-closeout-abort-only" not in INDEX_HTML

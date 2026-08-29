@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from vault_ui.api.models import Goal
@@ -12,6 +13,23 @@ from vault_ui.vault_cli_client import VaultCLIClient
 logger = logging.getLogger(__name__)
 
 _CLEANUP_INTERVAL_SECONDS = 300
+
+# How long a ``claude_session_started`` marker may sit without a
+# ``claude_session_id`` before the sweep treats it as orphaned and clears it,
+# returning the card to "Start".
+#
+# The launch endpoint clears the marker in its own ``except`` when a launch
+# fails, so this sweep only exists for the case that ``except`` cannot cover: the
+# server restarting mid-launch. Without it the card is stuck on "Starting…"
+# forever, because the main sweep below only inspects tasks that already HAVE a
+# session id.
+#
+# 45 minutes, NOT the 15 that shipped in July: since vault-cli v0.117.1 the
+# headless branch blocks until the turn finishes, bounded by its own 30m
+# ``sessionTurnTimeout``. Any TTL at or below 30m would clear the marker out from
+# under a legitimately running turn and bounce the card back to "Start"
+# mid-work — turning a stuck card into a lying one.
+_STARTING_MARKER_TTL_SECONDS = 45 * 60
 
 
 def derive_claude_project_dir(vault_path: str, session_project_dir: str = "") -> Path:
@@ -28,6 +46,23 @@ def derive_claude_project_dir(vault_path: str, session_project_dir: str = "") ->
     expanded = str(Path(source).expanduser())
     encoded = expanded.replace("/", "-")
     return Path.home() / ".claude" / "projects" / encoded
+
+
+def _marker_age_seconds(marker: str, now: datetime | None = None) -> float | None:
+    """Age in seconds of a ``claude_session_started`` marker, or None if unknown.
+
+    Returns None only when the marker carries no parseable instant. That covers
+    the legacy literal ``"true"`` written before 2026-08-29; callers treat an
+    unknown age as expired, since such a marker predates this release and cannot
+    belong to a turn started after it.
+    """
+    try:
+        started = datetime.fromisoformat(marker)
+    except (TypeError, ValueError):
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return ((now or datetime.now(UTC)) - started).total_seconds()
 
 
 async def cleanup_stale_sessions(config: Config) -> int:
@@ -129,6 +164,57 @@ async def cleanup_stale_sessions(config: Config) -> int:
                 except Exception as e:
                     logger.error(
                         "[Cleanup] Exception clearing session for task %s in vault %s: %s",
+                        task.id,
+                        vault.name,
+                        e,
+                        exc_info=True,
+                    )
+
+            # Orphaned "Starting…" markers — tasks carrying the marker but NO
+            # session id. The loop above never sees them (it filters on
+            # claude_session_id), so before this sweep nothing on any code path
+            # could clear one left behind by a mid-launch server restart.
+            for task in tasks:
+                marker = task.claude_session_started
+                if not marker or task.claude_session_id:
+                    continue
+                age = _marker_age_seconds(str(marker))
+                if age is not None and age < _STARTING_MARKER_TTL_SECONDS:
+                    continue  # a turn this young may still be running
+                try:
+                    orphan_proc = await asyncio.create_subprocess_exec(
+                        vault.vault_cli_path,
+                        "task",
+                        "clear",
+                        task.id,
+                        "claude_session_started",
+                        "--vault",
+                        vault.name,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _out, orphan_err = await orphan_proc.communicate()
+                    if orphan_proc.returncode != 0:
+                        logger.error(
+                            "[Cleanup] Failed to clear orphaned Starting marker on task %s"
+                            " in vault %s: %s",
+                            task.id,
+                            vault.name,
+                            orphan_err.decode().strip(),
+                        )
+                    else:
+                        logger.info(
+                            "[Cleanup] Cleared orphaned Starting marker (age=%s) from task %s"
+                            " in vault %s",
+                            "unknown" if age is None else f"{age:.0f}s",
+                            task.id,
+                            vault.name,
+                        )
+                        cleared += 1
+                except Exception as e:
+                    logger.error(
+                        "[Cleanup] Exception clearing orphaned Starting marker on task %s"
+                        " in vault %s: %s",
                         task.id,
                         vault.name,
                         e,

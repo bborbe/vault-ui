@@ -70,8 +70,14 @@ class StatusCache:
             file_path: Path to markdown file
 
         Returns:
-            ``(status, session_started)`` — status string or None, and "true" when
-            ``claude_session_started`` is truthy (else None).
+            ``(status, session_started)`` — status string or None, and the raw
+            ``claude_session_started`` value when truthy (else None).
+
+            The value is preserved verbatim rather than coerced to "true": since
+            2026-08-29 it carries an ISO-8601 launch timestamp, which the cleanup
+            sweep needs as an age and the card needs to render elapsed time.
+            Legacy ``true`` values stay truthy, so the Starting/Resume gate is
+            unchanged for them; only the age is unavailable.
         """
         try:
             content = file_path.read_text(encoding="utf-8")
@@ -80,9 +86,15 @@ class StatusCache:
                 frontmatter = yaml.safe_load(match.group(1))
                 if isinstance(frontmatter, dict):
                     status = frontmatter.get("status")
-                    # Normalize any truthy YAML value (True, "true") to "true"; a
-                    # cleared/absent/false field yields None. Never emits "false".
-                    session_started = "true" if frontmatter.get("claude_session_started") else None
+                    # Preserve the raw value (an ISO timestamp since 2026-08-29);
+                    # a cleared/absent/false field yields None. A legacy boolean
+                    # True is normalized to "true" so callers always get a str.
+                    raw_started = frontmatter.get("claude_session_started")
+                    session_started = (
+                        ("true" if raw_started is True else str(raw_started))
+                        if raw_started
+                        else None
+                    )
                     return status, session_started
             return None, None
         except Exception as e:
@@ -102,14 +114,15 @@ class StatusCache:
         return self._cache.get(vault_name, {}).get(item_id)
 
     def get_session_started(self, vault_name: str, item_id: str) -> str | None:
-        """Return "true" if the item's claude_session_started flag is set, else None.
+        """Return the item's claude_session_started marker, else None.
 
         Args:
             vault_name: Name of the vault
             item_id: Item ID (filename without .md extension)
 
         Returns:
-            "true" when the flag is set on the item's frontmatter, None otherwise.
+            The raw marker when set — an ISO-8601 launch timestamp, or the legacy
+            literal "true" for markers written before 2026-08-29. None otherwise.
         """
         return self._started.get(vault_name, {}).get(item_id)
 

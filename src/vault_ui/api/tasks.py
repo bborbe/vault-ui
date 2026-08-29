@@ -175,6 +175,20 @@ async def _drain_stream(
         )
 
 
+def _session_started_marker() -> str:
+    """Timestamp written to ``claude_session_started`` when a launch begins.
+
+    An ISO-8601 UTC instant rather than the literal ``"true"`` it replaced. Two
+    consumers need the age that a boolean cannot carry: the cleanup sweep, which
+    expires a marker orphaned by a mid-launch server restart, and the card, which
+    renders elapsed time so a live turn is distinguishable from a dead one.
+
+    Every non-empty value stays truthy, so the frontend's Starting/Resume gate is
+    unchanged and legacy ``"true"`` markers keep rendering "Starting…".
+    """
+    return datetime.now(UTC).isoformat()
+
+
 async def start_vault_cli_session(vault_config: VaultConfig, task_id: str) -> str:
     """Start a Claude session via vault-cli, returns session_id.
 
@@ -947,12 +961,14 @@ async def run_task(
         # Read task
         task = await client.show_task(task_id)
 
-        # Mark the session as started before launching. This is a durable flag
-        # (survives modal dismiss, page reload, second tab) that stays "true" until
-        # claude_session_id is cleared — it is NOT cleared here. The card shows
+        # Mark the session as started before launching. This is a durable marker
+        # (survives modal dismiss, page reload, second tab) that stays set until
+        # claude_session_id is cleared — it is NOT cleared here. Its value is the
+        # launch timestamp, so a marker orphaned by a server restart can be aged
+        # out by the cleanup sweep and the card can show elapsed time. The card shows
         # "Starting…" while the flag is set but no claude_session_id has landed yet,
         # then "Resume" once the session id lands.
-        await client.set_field(task_id, "claude_session_started", "true")
+        await client.set_field(task_id, "claude_session_started", _session_started_marker())
 
         try:
             logger.info(f"Starting vault-cli session for task {task_id}")
@@ -1026,7 +1042,7 @@ async def run_goal(
         # view sees "Starting…" while the mint is in flight, then "Resume" once the
         # session id lands. On mint failure the flag is cleared so the card returns
         # to "Start" instead of being stuck on "Starting…".
-        await client.set_goal_field(goal_id, "claude_session_started", "true")
+        await client.set_goal_field(goal_id, "claude_session_started", _session_started_marker())
 
         try:
             logger.info(f"Starting vault-cli goal session for goal {goal_id}")

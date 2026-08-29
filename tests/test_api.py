@@ -4095,7 +4095,13 @@ def test_run_task_sets_started_flag_and_does_not_clear_on_success(
     test_client: TestClient,
     mock_vault_client: MagicMock,
 ) -> None:
-    """run_task sets claude_session_started=true before launch and does NOT clear it on success."""
+    """run_task marks started before launch and does NOT clear it on success.
+
+    The marker is an ISO-8601 launch instant, not the literal "true" it replaced:
+    the cleanup sweep needs an age to expire an orphan, and the card needs one to
+    render elapsed time. Asserted as parseable-and-truthy so the Starting gate
+    contract is locked without pinning a wall-clock value.
+    """
     mock_vault_client.set_field.reset_mock()
     mock_vault_client.clear_field.reset_mock()
     mock_proc = _make_streaming_proc(b'{"session_id": "new-session-id"}')
@@ -4107,9 +4113,13 @@ def test_run_task_sets_started_flag_and_does_not_clear_on_success(
 
     # Flag was set to "true" before launch
     set_calls = mock_vault_client.set_field.await_args_list
-    assert any(c.args == ("Test Task", "claude_session_started", "true") for c in set_calls), (
-        set_calls
-    )
+    started = [
+        c.args[2] for c in set_calls if c.args[:2] == ("Test Task", "claude_session_started")
+    ]
+    assert started, set_calls
+    assert started[0] != "true"
+    assert bool(started[0]) is True
+    assert datetime.fromisoformat(started[0]) is not None
 
     # Flag is NOT cleared on success — it stays until claude_session_id is cleared
     started_clears = [
@@ -4146,7 +4156,7 @@ def test_run_task_clears_started_flag_on_launch_failure(
 
     # Flag was set before launch, then cleared because the launch failed
     assert any(
-        c.args == ("Test Task", "claude_session_started", "true")
+        c.args[:2] == ("Test Task", "claude_session_started")
         for c in mock_vault_client.set_field.await_args_list
     )
     mock_vault_client.clear_field.assert_awaited_once_with("Test Task", "claude_session_started")
@@ -4188,7 +4198,12 @@ def test_run_goal_endpoint_success(
         assert tok in argv, f"missing {tok!r} in vault-cli argv {argv}"
     # Two set_goal_field calls: first sets claude_session_started, then claude_session_id
     set_calls = mock_vault_client_with_goals.set_goal_field.await_args_list
-    assert any(c.args == ("Test Goal", "claude_session_started", "true") for c in set_calls)
+    goal_started = [
+        c.args[2] for c in set_calls if c.args[:2] == ("Test Goal", "claude_session_started")
+    ]
+    assert goal_started, set_calls
+    assert goal_started[0] != "true"
+    assert datetime.fromisoformat(goal_started[0]) is not None
     assert any(c.args == ("Test Goal", "claude_session_id", "goal-session-id") for c in set_calls)
 
 
@@ -4346,9 +4361,12 @@ def test_run_goal_sets_started_flag_and_does_not_clear_on_success(
 
     # Flag was set to "true" before mint
     set_calls = mock_vault_client_with_goals.set_goal_field.await_args_list
-    assert any(c.args == ("Test Goal", "claude_session_started", "true") for c in set_calls), (
-        set_calls
-    )
+    goal_started2 = [
+        c.args[2] for c in set_calls if c.args[:2] == ("Test Goal", "claude_session_started")
+    ]
+    assert goal_started2, set_calls
+    assert goal_started2[0] != "true"
+    assert datetime.fromisoformat(goal_started2[0]) is not None
 
     # Flag is NOT cleared on success — it stays until claude_session_id is cleared
     started_clears = [
@@ -4383,7 +4401,7 @@ def test_run_goal_clears_started_flag_on_launch_failure(
 
     # Flag was set before launch, then cleared because the launch failed
     assert any(
-        c.args == ("Test Goal", "claude_session_started", "true")
+        c.args[:2] == ("Test Goal", "claude_session_started")
         for c in mock_vault_client_with_goals.set_goal_field.await_args_list
     )
     mock_vault_client_with_goals.clear_goal_field.assert_called_once_with(

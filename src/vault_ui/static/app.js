@@ -1128,13 +1128,25 @@ function extractJiraIssue(title) {
 // both card renderers call it. hasSession/isStarting gate the three labels off
 // claude_session_id and the durable claude_session_started flag (plus the optimistic
 // per-tab starting set), mirroring the pre-collapse per-kind blocks exactly.
+// Elapsed time for the "Starting…" badge, from the claude_session_started marker.
+// The marker is an ISO-8601 launch instant; legacy markers are the literal "true"
+// and carry no age, so they render the bare label. Returns '' when unknown.
+function startingElapsedLabel(marker) {
+    if (!marker || marker === 'true') return '';
+    const started = Date.parse(marker);
+    if (Number.isNaN(started)) return '';
+    const secs = Math.max(0, Math.floor((Date.now() - started) / 1000));
+    const mins = Math.floor(secs / 60);
+    return ` ${mins}:${String(secs % 60).padStart(2, '0')}`;
+}
+
 function sessionButtonHtml(kind, item) {
     const startingSet = kind === 'goal' ? startingGoals : startingTasks;
     const hasSession = item.claude_session_id;
     const isStarting = !hasSession && (!!item.claude_session_started || startingSet.has(item.id));
     let buttonLabel, buttonClass, buttonDisabled;
     if (isStarting) {
-        buttonLabel = '⏳ Starting...';
+        buttonLabel = `⏳ Starting...${startingElapsedLabel(item.claude_session_started)}`;
         buttonClass = 'start-btn';
         buttonDisabled = true;
     } else if (hasSession) {
@@ -2088,6 +2100,12 @@ async function executeSlashCommand(taskId, commandType) {
 }
 
 // WebSocket functions for real-time updates
+
+// False until the socket opens for the first time. Distinguishes the initial
+// connect (whose data the page load already fetched) from a reconnect (which
+// must re-fetch, because events during the gap are lost, not queued).
+let wsHasConnected = false;
+
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -2097,6 +2115,16 @@ function connectWebSocket() {
     ws.onopen = () => {
         console.log('WebSocket connected');
         updateConnectionStatus(true);
+        // Catch-up re-fetch on RECONNECT only. Events emitted while the socket was
+        // down are never replayed, so without this the tab renders its stale copy
+        // until the user manually refreshes — the card sits on "Starting…" even
+        // though claude_session_id already landed. Skipped on the first connect,
+        // where the initial load has just fetched the same data.
+        if (wsHasConnected) {
+            console.log('WebSocket reconnected — re-fetching to catch up on missed events');
+            loadCurrentView();
+        }
+        wsHasConnected = true;
     };
 
     ws.onmessage = (event) => {
