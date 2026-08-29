@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.55.0
 
 - fix(ui): A card no longer sits on `⏳ Starting...` after its `claude_session_id` has landed. The websocket reconnects after a drop but never replayed the events missed during the gap, and `ws.onopen` did not re-fetch — so the tab rendered its stale copy until manually refreshed. It now calls `loadCurrentView()` on reconnect (guarded so the first connect does not duplicate the page load's fetch). The window this exposes grew from ~10s to the full 2-5 min turn when vault-cli v0.117.1 began persisting the session id only after the headless turn finishes, which is what made it visible.
 - fix(cleanup): Restore crash-recovery for orphaned "Starting" markers. The launch endpoint clears `claude_session_started` in its own `except` when a launch fails, but cannot cover the server restarting mid-launch; the existing sweep only inspected tasks that already had a `claude_session_id`, so an orphan was never examined and the card stuck on `⏳ Starting...` indefinitely (17 such tasks were live when this was found, several 11h and 6d old). A new sweep clears a marker with no session id once it exceeds a 45-minute TTL. The TTL is deliberately **not** the 15 minutes that shipped in July: vault-cli now blocks up to its own 30m `sessionTurnTimeout`, so any TTL at or below 30m would clear the marker out from under a live turn and bounce the card to Start mid-work. A test locks the TTL above 30m.
