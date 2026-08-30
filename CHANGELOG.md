@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.56.0
 
 - feat(ui): The wall now hides Resume on a card whose session is live (transcript written within ~5 min) — a green `● Live` badge holds the spot — and disables it when the session state is indeterminate (session id set but no transcript found, e.g. a manual terminal `/resume` in another cwd or a cloud/container session). A quiet session keeps the normal Resume. The classification is transcript-recency-only, surfaced as a new `session_state` field on task/goal responses (see `activity.py`), and agrees with vault-cli's per-session flock (v0.118.1): a session the wall shows as live is the same one the launch path refuses to start. Covered by unit tests for the classifier plus a new Playwright integration test (`make test-integration`).
 
