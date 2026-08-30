@@ -708,6 +708,37 @@ h1 {
     background: #03a9f4;
 }
 
+/* Live session (transcript < ~5 min) — replaces the Resume button: the launch
+   path refuses a second resume, so the card shows a green badge instead. */
+.live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #bbf7d0;             /* green-200 */
+    background: #15803d;        /* green-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+}
+
+/* Indeterminate session (id set, no transcript found) — cannot prove it dead,
+   so Resume is disabled with an amber tint and an explanatory tooltip. */
+.resume-btn.indeterminate {
+    background: #fcd34d;        /* amber-300 */
+    color: #78350f;             /* amber-900 */
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+.resume-btn.indeterminate:hover {
+    background: #fcd34d;
+}
+
 .menu-btn {
     position: absolute;
     top: 0.25rem;

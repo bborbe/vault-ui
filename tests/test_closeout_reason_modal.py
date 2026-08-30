@@ -84,15 +84,16 @@ def test_modal_reuses_existing_modal_classes() -> None:
 
 
 def test_cache_busters_bumped() -> None:
-    """index.html carries a non-empty app.js token; style.css is unchanged.
+    """index.html carries a non-empty app.js and style.css token; stale ones are gone.
 
     Asserts the shape, not the literal token: pinning it makes every legitimate
     cache-bust bump fail, which trains the bump to be skipped — and an un-bumped
     token is how this repo has previously shipped a fix browsers never received.
     """
     assert re.search(r"app\.js\?v=\S+", INDEX_HTML)
-    assert "style.css?v=2026-08-24-closeout-reason" in INDEX_HTML
+    assert re.search(r"style\.css\?v=\S+", INDEX_HTML)
     assert "2026-08-19-board-sort" not in INDEX_HTML
+    assert "style.css?v=2026-08-24-closeout-reason" not in INDEX_HTML
 
 
 # --- app.js: askCloseOut helper ---

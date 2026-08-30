@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): The wall now hides Resume on a card whose session is live (transcript written within ~5 min) — a green `● Live` badge holds the spot — and disables it when the session state is indeterminate (session id set but no transcript found, e.g. a manual terminal `/resume` in another cwd or a cloud/container session). A quiet session keeps the normal Resume. The classification is transcript-recency-only, surfaced as a new `session_state` field on task/goal responses (see `activity.py`), and agrees with vault-cli's per-session flock (v0.118.1): a session the wall shows as live is the same one the launch path refuses to start. Covered by unit tests for the classifier plus a new Playwright integration test (`make test-integration`).
+
 ## v0.55.2
 
 - fix(cleanup): Sweep orphaned "Starting" markers on **goals** too. The goal loop filtered on `claude_session_id`, so a goal whose marker was orphaned by a mid-launch server restart was never examined — the same defect the task sweep fixed in v0.55.1, left in the sibling code path. `run_goal` writes the marker via `set_goal_field`, so goals orphan exactly like tasks do. Reads from `StatusCache` for the same reason the task sweep does: `vault-cli goal list --output json` does not emit the field. Its cache handle is resolved independently of the task block's, which is a separate `try`, so an early failure there cannot turn the goal sweep into a `NameError`.
