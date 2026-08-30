@@ -86,6 +86,9 @@ class TaskResponse(BaseModel):
     # Newer of the task file mtime and the mtime of the claude_session_id
     # transcript — "when did anything last happen here". See activity.py.
     activity_date: datetime | None = None
+    # Live/quiet/indeterminate classification of the claude session, from
+    # transcript recency (see activity.py). None when no session id.
+    session_state: str | None = None
 
 
 class GoalResponse(BaseModel):
@@ -113,6 +116,9 @@ class GoalResponse(BaseModel):
     # Newer of the goal file mtime and the mtime of the claude_session_id
     # transcript — same signal the task cards use. See activity.py.
     activity_date: datetime | None = None
+    # Live/quiet/indeterminate classification of the claude session, from
+    # transcript recency (see activity.py). None when no session id.
+    session_state: str | None = None
 
 
 class SessionResponse(BaseModel):

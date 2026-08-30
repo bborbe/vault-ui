@@ -17,7 +17,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from vault_ui.activity import compute_activity_date
+from vault_ui.activity import classify_session_state, compute_activity_date
 from vault_ui.api.models import (
     AssigneesResponse,
     Goal,
@@ -778,6 +778,10 @@ def _goal_to_response(
         goal.claude_session_id,
         derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
     )
+    session_state = classify_session_state(
+        goal.claude_session_id,
+        derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
+    )
 
     return GoalResponse(
         id=goal.id,
@@ -794,6 +798,7 @@ def _goal_to_response(
         assignee=goal.assignee,
         upcoming=upcoming,
         activity_date=activity_date,
+        session_state=session_state,
     )
 
 
@@ -1929,6 +1934,10 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         task.claude_session_id,
         derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
     )
+    session_state = classify_session_state(
+        task.claude_session_id,
+        derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
+    )
 
     return TaskResponse(
         id=task.id,
@@ -1955,4 +1964,5 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         vault=vault_config.name,
         goals=task.goals,
         activity_date=activity_date,
+        session_state=session_state,
     )

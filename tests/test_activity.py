@@ -4,7 +4,12 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from vault_ui.activity import compute_activity_date, transcript_mtime
+from vault_ui.activity import (
+    LIVE_WINDOW,
+    classify_session_state,
+    compute_activity_date,
+    transcript_mtime,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
@@ -167,3 +172,104 @@ def test_activity_age_styled_small_and_grey() -> None:
 
     assert "font-size: 0.7rem" in rule
     assert "#64748b" in rule
+
+
+# --- session_state classification ---
+
+
+def test_classify_none_when_no_session_id(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+
+    assert classify_session_state(None, projects_root / "-vault", projects_root) is None
+    assert classify_session_state("", projects_root / "-vault", projects_root) is None
+
+
+def test_classify_live_within_window(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    _write_transcript(project_dir, SESSION_ID, timedelta(seconds=30))
+
+    assert classify_session_state(SESSION_ID, project_dir, projects_root) == "live"
+
+
+def test_classify_quiet_older_than_window(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    _write_transcript(project_dir, SESSION_ID, timedelta(hours=3))
+
+    assert classify_session_state(SESSION_ID, project_dir, projects_root) == "quiet"
+
+
+def test_classify_boundary_exactly_live_window(tmp_path: Path) -> None:
+    """A transcript exactly LIVE_WINDOW old is still live; just past it is quiet."""
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    path = _write_transcript(project_dir, SESSION_ID, timedelta(hours=1))
+    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+
+    assert (
+        classify_session_state(SESSION_ID, project_dir, projects_root, now=mtime + LIVE_WINDOW)
+        == "live"
+    )
+    assert (
+        classify_session_state(
+            SESSION_ID,
+            project_dir,
+            projects_root,
+            now=mtime + LIVE_WINDOW + timedelta(seconds=1),
+        )
+        == "quiet"
+    )
+
+
+def test_classify_indeterminate_when_no_transcript(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+
+    assert (
+        classify_session_state(SESSION_ID, projects_root / "-vault", projects_root)
+        == "indeterminate"
+    )
+
+
+def test_classify_liveness_is_transcript_only(tmp_path: Path) -> None:
+    """A fresh task file must NOT make a session live — liveness is transcript-only."""
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    modified = datetime.now(tz=UTC) - timedelta(seconds=10)
+
+    # compute_activity_date would report <1m via the file mtime, but the session
+    # itself has no transcript: the card must read indeterminate, not live.
+    result = compute_activity_date(modified, SESSION_ID, projects_root / "-vault", projects_root)
+    assert result is not None
+
+    state = classify_session_state(SESSION_ID, projects_root / "-vault", projects_root)
+    assert state == "indeterminate"
+
+
+def test_session_button_gates_on_session_state() -> None:
+    """Static assertion: the shared button hides Resume on 'live' and disables
+    it on 'indeterminate' — the two states SC1/SC4 require."""
+    start = APP_JS.find("function sessionButtonHtml")
+    assert start != -1, "sessionButtonHtml not found in app.js"
+    body = APP_JS[start : start + 2000]
+
+    assert "item.session_state === 'live'" in body
+    assert 'class="live-badge"' in body
+    assert "item.session_state === 'indeterminate'" in body
+    assert "resume-btn indeterminate" in body
+
+
+def test_live_badge_styled(tmp_path: Path) -> None:
+    start = STYLE_CSS.find(".live-badge")
+    assert start != -1, ".live-badge rule not found in style.css"
+    rule = STYLE_CSS[start : start + 400]
+
+    assert "border-radius: 999px" in rule
+    assert "#15803d" in rule  # green-700 background
+
+
+def test_indeterminate_resume_styled(tmp_path: Path) -> None:
+    assert ".resume-btn.indeterminate" in STYLE_CSS
+    assert "cursor: not-allowed" in STYLE_CSS

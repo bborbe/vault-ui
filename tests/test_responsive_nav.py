@@ -43,6 +43,13 @@ def test_title_and_upcoming_still_present_by_default() -> None:
 
 
 def test_style_css_cache_bust_bumped() -> None:
-    # a style.css change must bump the cache-bust token so open boards refetch it
-    assert "style.css?v=2026-08-24-closeout-reason" in INDEX_HTML
+    """index.html carries a non-empty style.css token; known-stale tokens are gone.
+
+    Asserts the shape rather than the current value (same rationale as
+    test_card_render_unify.test_cachebust_token_bumped): pinning the literal
+    made every legitimate bump fail, training the bump to be skipped — and an
+    un-bumped token is how this repo previously shipped a fix browsers never got.
+    """
+    assert re.search(r"style\.css\?v=\S+", INDEX_HTML)
     assert "style.css?v=2026-08-19-board-sort" not in INDEX_HTML
+    assert "style.css?v=2026-08-24-closeout-reason" not in INDEX_HTML

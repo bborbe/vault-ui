@@ -12,10 +12,15 @@ ran in the cloud or a container — does the same.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# A transcript written within this window counts as "live" — a Claude session is
+# running right now. Matches the launch-path flock (vault-cli v0.118.1): a live
+# session holds the per-session lock and a second resume is refused.
+LIVE_WINDOW = timedelta(minutes=5)
 
 
 def _claude_projects_root() -> Path:
@@ -89,3 +94,37 @@ def compute_activity_date(
     if not candidates:
         return None
     return max(candidates)
+
+
+def classify_session_state(
+    session_id: str | None,
+    project_dir: Path,
+    projects_root: Path | None = None,
+    now: datetime | None = None,
+) -> str | None:
+    """Classify the Claude session a task/goal card refers to.
+
+    Returns one of:
+
+    - ``None`` — no ``claude_session_id``; a human task, nothing to classify.
+    - ``"live"`` — the transcript was written within ``LIVE_WINDOW``; a session
+      is running right now and the wall must not offer Resume.
+    - ``"quiet"`` — a transcript exists but is older; the session ended and
+      Resume is safe (vault-cli's flock releases on process death).
+    - ``"indeterminate"`` — a session id is set but no transcript can be found;
+      the session cannot be proven dead (manual terminal ``/resume`` in another
+      cwd, a cloud/container session, an entity-name session the resolver can't
+      match). Do not offer a Resume we cannot honor.
+
+    Liveness is transcript-only on purpose: the task file mtime moves when a
+    human edits the file and says nothing about whether a Claude session runs.
+    """
+    if not session_id:
+        return None
+    mtime = transcript_mtime(session_id, project_dir, projects_root)
+    if mtime is None:
+        return "indeterminate"
+    now = now or datetime.now(tz=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return "live" if (now - mtime) <= LIVE_WINDOW else "quiet"

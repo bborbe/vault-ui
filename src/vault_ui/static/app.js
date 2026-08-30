@@ -1144,21 +1144,36 @@ function sessionButtonHtml(kind, item) {
     const startingSet = kind === 'goal' ? startingGoals : startingTasks;
     const hasSession = item.claude_session_id;
     const isStarting = !hasSession && (!!item.claude_session_started || startingSet.has(item.id));
-    let buttonLabel, buttonClass, buttonDisabled;
+    let buttonLabel, buttonClass, buttonDisabled, buttonTitle = '';
     if (isStarting) {
         buttonLabel = `⏳ Starting...${startingElapsedLabel(item.claude_session_started)}`;
         buttonClass = 'start-btn';
         buttonDisabled = true;
+    } else if (item.session_state === 'live') {
+        // Live session — transcript written within the last ~5 min. The launch
+        // path (vault-cli flock, v0.118.1) refuses a second resume while it
+        // runs, so offer no button: a badge holds the spot until it goes quiet.
+        return '<span class="live-badge" title="Session is live — running now; resume disabled">● Live</span>';
     } else if (hasSession) {
-        buttonLabel = '▶ Resume';
-        buttonClass = 'resume-btn';
-        buttonDisabled = false;
+        if (item.session_state === 'indeterminate') {
+            // Session id present but no transcript found — cannot prove it dead
+            // (manual terminal /resume in another cwd, cloud/container session).
+            // Mark it rather than offering a Resume we cannot honor.
+            buttonLabel = '▶ Resume';
+            buttonClass = 'resume-btn indeterminate';
+            buttonDisabled = true;
+            buttonTitle = ' title="Session state unknown — may be open elsewhere; resume disabled"';
+        } else {
+            buttonLabel = '▶ Resume';
+            buttonClass = 'resume-btn';
+            buttonDisabled = false;
+        }
     } else {
         buttonLabel = '▶ Start';
         buttonClass = 'start-btn';
         buttonDisabled = false;
     }
-    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${item.id}')"${buttonDisabled ? ' disabled' : ''}>${buttonLabel}</button>`;
+    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${item.id}')"${buttonDisabled ? ' disabled' : ''}${buttonTitle}>${buttonLabel}</button>`;
 }
 
 // Shared card body: menu button + title block + footer skeleton. The kind-specific
