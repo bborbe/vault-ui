@@ -451,3 +451,5 @@ def test_take_over_modal_markup_present() -> None:
 def test_take_over_badge_styled() -> None:
     assert ".live-badge" in STYLE_CSS
     assert "cursor: pointer" in STYLE_CSS
+    # keyboard-focusable (role=button, tabindex=0) → needs a visible focus ring
+    assert ".live-badge:focus-visible" in STYLE_CSS

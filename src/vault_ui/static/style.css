@@ -740,6 +740,11 @@ h1 {
     background: #15803d;        /* green-700 */
 }
 
+.live-badge:focus-visible {
+    outline: 2px solid #bbf7d0; /* green-200 */
+    outline-offset: 1px;
+}
+
 /* Indeterminate session (id set, no transcript found) — cannot prove it dead,
    so Resume is disabled with an amber tint and an explanatory tooltip. */
 .resume-btn.indeterminate {
