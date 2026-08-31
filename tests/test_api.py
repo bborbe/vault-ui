@@ -1957,9 +1957,11 @@ def test_list_goals_today_defer_date_included(
     test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
 ) -> None:
     """Goal with defer_date=today is included with upcoming=False."""
-    from datetime import date
+    from datetime import datetime
 
-    today = date.today().isoformat()
+    # date-only defer_dates parse as midnight UTC; compare in the same frame the
+    # API uses (datetime.now(UTC)) so the test is timezone-independent.
+    today = datetime.now(UTC).date().isoformat()
     mock_vault_client_with_goals._goals.append(
         _make_goal(goal_id="Today Deferred Goal", status="in_progress", defer_date=today)
     )

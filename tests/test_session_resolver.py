@@ -1,9 +1,12 @@
 """Tests for session_resolver module."""
 
 import json
+import logging
 import os
 import stat
 from pathlib import Path
+
+import pytest
 
 from vault_ui.session_resolver import is_uuid, resolve_session_id
 
@@ -106,7 +109,8 @@ def test_resolve_path_traversal_in_custom_title(tmp_path: Path) -> None:
     assert result == stem
 
 
-def test_resolve_duplicate_titles(tmp_path: Path) -> None:
+def test_resolve_duplicate_titles(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Two sessions currently sharing a title resolve to nothing, not an arbitrary pick."""
     stem_a = "aaaaaaaa-0000-0000-0000-000000000001"
     stem_b = "bbbbbbbb-0000-0000-0000-000000000001"
     _write_jsonl(
@@ -117,8 +121,128 @@ def test_resolve_duplicate_titles(tmp_path: Path) -> None:
         tmp_path / f"{stem_b}.jsonl",
         [{"type": "custom-title", "customTitle": "shared-title"}],
     )
-    result = resolve_session_id("shared-title", tmp_path)
-    assert result in (stem_a, stem_b)
+    with caplog.at_level(logging.WARNING):
+        result = resolve_session_id("shared-title", tmp_path)
+    assert result is None
+    assert "shared-title" in caplog.text
+    assert stem_a in caplog.text
+    assert stem_b in caplog.text
+
+
+def test_resolve_ambiguity_judged_on_current_titles_only(tmp_path: Path) -> None:
+    """A session renamed away from a title no longer counts as a candidate for it."""
+    stem_a = "aaaaaaaa-0000-0000-0000-000000000002"
+    stem_b = "bbbbbbbb-0000-0000-0000-000000000002"
+    _write_jsonl(
+        tmp_path / f"{stem_a}.jsonl",
+        [
+            {"type": "custom-title", "customTitle": "shared-title"},
+            {"type": "custom-title", "customTitle": "renamed-away"},
+        ],
+    )
+    _write_jsonl(
+        tmp_path / f"{stem_b}.jsonl",
+        [{"type": "custom-title", "customTitle": "shared-title"}],
+    )
+    assert resolve_session_id("shared-title", tmp_path) == stem_b
+
+
+def test_resolve_renamed_away_session_matches_only_current_title(tmp_path: Path) -> None:
+    """A session's old title no longer resolves once a newer title is set."""
+    stem = "abc12345-0000-0000-0000-000000000011"
+    _write_jsonl(
+        tmp_path / f"{stem}.jsonl",
+        [
+            {"type": "summary", "summary": "some summary"},
+            {"type": "custom-title", "customTitle": "Old Task Name"},
+            {"type": "user", "message": "hello"},
+            {"type": "custom-title", "customTitle": "New Task Name"},
+        ],
+    )
+    assert resolve_session_id("Old Task Name", tmp_path) is None
+    assert resolve_session_id("New Task Name", tmp_path) == stem
+
+
+def test_resolve_many_historical_entries_uses_current_title(tmp_path: Path) -> None:
+    """Many entries under an old title do not outvote the single current title."""
+    stem = "abc12345-0000-0000-0000-000000000012"
+    lines = [{"type": "custom-title", "customTitle": "Old Task Name"}] * 5
+    lines.append({"type": "summary", "summary": "interlude"})
+    lines.extend([{"type": "custom-title", "customTitle": "New Task Name"}] * 3)
+    _write_jsonl(tmp_path / f"{stem}.jsonl", lines)
+    assert resolve_session_id("Old Task Name", tmp_path) is None
+    assert resolve_session_id("New Task Name", tmp_path) == stem
+
+
+def test_resolve_keyless_trailing_custom_title_does_not_erase(tmp_path: Path) -> None:
+    """A trailing custom-title line without a customTitle key keeps the prior title current."""
+    stem = "abc12345-0000-0000-0000-000000000013"
+    _write_jsonl(
+        tmp_path / f"{stem}.jsonl",
+        [
+            {"type": "custom-title", "customTitle": "Real Title"},
+            {"type": "custom-title"},
+        ],
+    )
+    assert resolve_session_id("Real Title", tmp_path) == stem
+
+
+def test_resolve_integration_mixed_directory(tmp_path: Path) -> None:
+    """One pass through real glob + real file I/O exercising the whole resolution contract."""
+    stem_renamed = "aaaa1111-0000-0000-0000-000000000001"
+    stem_prometheus = "bbbb2222-0000-0000-0000-000000000002"
+    stem_cleanup_a = "cccc3333-0000-0000-0000-000000000003"
+    stem_cleanup_b = "dddd4444-0000-0000-0000-000000000004"
+    stem_audit = "eeee5555-0000-0000-0000-000000000005"
+
+    # file 1: renamed away — the Prometheus title is its current title, Gate Failure is history
+    _write_jsonl(
+        tmp_path / f"{stem_renamed}.jsonl",
+        [
+            {"type": "custom-title", "customTitle": "Agent Gate Failure"},
+            {"type": "summary", "summary": "interlude"},
+            {"type": "custom-title", "customTitle": "Check Prometheus Alerts - 2026-08-31"},
+        ],
+    )
+    # file 2: genuinely titled Check Prometheus Alerts — a second current match
+    _write_jsonl(
+        tmp_path / f"{stem_prometheus}.jsonl",
+        [{"type": "custom-title", "customTitle": "Check Prometheus Alerts - 2026-08-31"}],
+    )
+    # file 3: oversized line must be tolerated (raw write; _write_jsonl cannot emit it)
+    path_cleanup_a = tmp_path / f"{stem_cleanup_a}.jsonl"
+    with path_cleanup_a.open("w") as f:
+        f.write("x" * 5000 + "\n")
+        f.write(
+            json.dumps(
+                {"type": "custom-title", "customTitle": "Cleanup OmniFocus Inbox - 2026-08-31"}
+            )
+            + "\n"
+        )
+    # file 4: malformed JSON line must be tolerated (raw write)
+    path_cleanup_b = tmp_path / f"{stem_cleanup_b}.jsonl"
+    with path_cleanup_b.open("w") as f:
+        f.write("this is not json\n")
+        f.write(
+            json.dumps(
+                {"type": "custom-title", "customTitle": "Cleanup OmniFocus Inbox - 2026-08-31"}
+            )
+            + "\n"
+        )
+    # file 5: the only unique current title in the directory — the unique-match control
+    _write_jsonl(
+        tmp_path / f"{stem_audit}.jsonl",
+        [{"type": "custom-title", "customTitle": "Audit Prompt - 2026-08-31"}],
+    )
+
+    # historical-only name: no current match
+    assert resolve_session_id("Agent Gate Failure", tmp_path) is None
+    # two current matches (files 1 and 2)
+    assert resolve_session_id("Check Prometheus Alerts - 2026-08-31", tmp_path) is None
+    # two current matches (files 3 and 4), both with a tolerated bad line
+    assert resolve_session_id("Cleanup OmniFocus Inbox - 2026-08-31", tmp_path) is None
+    # single current match
+    assert resolve_session_id("Audit Prompt - 2026-08-31", tmp_path) == stem_audit
 
 
 def test_resolve_line_too_long(tmp_path: Path) -> None:
