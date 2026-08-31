@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.59.0
 
 - feat(ui): Make the live card's `● Live` badge itself the take-over affordance — the separate `⚡ Take Over` button is removed for a more discreet card. The badge (now `role="button"`, pointer cursor, hover outline) opens the same confirm dialog ("End the running turn and resume this session? In-flight work is lost unless already saved"); Cancel still performs no action, confirming still SIGTERMs the matched `claude --resume <uuid>` process and returns the resume command. Cache-bust token bumped to `2026-08-31-live-badge-click` so the new badge reaches the wall.
 
