@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vault UI</title>
-    <link rel="stylesheet" href="style.css?v=2026-08-30-session-live-gating">
+    <link rel="stylesheet" href="style.css?v=2026-08-31-take-over">
 </head>
 <body>
     <div class="app">
@@ -129,6 +129,18 @@
         </div>
     </div>
 
-    <script src="app.js?v=2026-08-30-session-live-gating"></script>
+    <!-- Take-Over Confirm Modal -->
+    <div id="takeover-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="takeover-title">Take Over Session</h2>
+            <p id="takeover-prompt">End the running turn and resume this session? In-flight work is lost unless already saved.</p>
+            <div class="modal-buttons">
+                <button id="takeover-cancel-btn">Cancel</button>
+                <button id="takeover-confirm-btn">End &amp; Resume</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=2026-08-31-take-over"></script>
 </body>
 </html>

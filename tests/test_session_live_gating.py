@@ -289,3 +289,55 @@ def test_goal_card_gates_live_session_too(live_server, page):
     card = page.locator(".task-card").filter(has_text="Live Goal")
     expect(card.locator(".live-badge")).to_have_count(1)
     expect(card.locator(".resume-btn")).to_have_count(0)
+
+
+def test_live_session_offers_take_over_affordance(live_server, page):
+    """SC1: a live card offers a take-over affordance distinct from quiet's Resume."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Live Task")
+    expect(card.locator(".live-badge")).to_have_count(1)
+    expect(card.locator(".take-over-btn")).to_have_count(1)
+    expect(card.locator(".resume-btn")).to_have_count(0)
+
+
+def test_take_over_cancel_performs_no_action(live_server, page):
+    """SC4: the cancel path performs no action — no take-over request fires."""
+    take_over_requests = []
+
+    def _track(request):
+        if "/take-over" in request.url:
+            take_over_requests.append(request.url)
+
+    page.on("request", _track)
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Live Task")
+    card.locator(".take-over-btn").click()
+
+    # Confirm dialog appears (destructive-action gate)
+    confirm_modal = page.locator("#takeover-modal")
+    expect(confirm_modal).to_be_visible()
+
+    page.locator("#takeover-cancel-btn").click()
+    expect(confirm_modal).to_be_hidden()
+
+    # No POST to the take-over endpoint, no resume modal
+    expect(page.locator("#session-modal")).to_be_hidden()
+    assert take_over_requests == []
+
+
+def test_take_over_confirm_returns_resume_command(live_server, page):
+    """SC3: confirming terminates the process (hermetic: no real match → False)
+    and the returned resume command is surfaced in the session modal."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Live Task")
+    card.locator(".take-over-btn").click()
+
+    confirm_modal = page.locator("#takeover-modal")
+    expect(confirm_modal).to_be_visible()
+    page.locator("#takeover-confirm-btn").click()
+
+    # Session modal shows the resume command containing the session id
+    session_modal = page.locator("#session-modal")
+    expect(session_modal).to_be_visible()
+    expect(page.locator("#handoff-command")).to_contain_text(f"--resume {LIVE_ID}")
+    expect(page.locator("#task-title")).to_have_text("Live Task")

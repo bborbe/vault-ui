@@ -37,6 +37,7 @@ def _make_task(
     completed_date: str | None = None,
     goals: list[str] | None = None,
     claude_session_started: str | None = None,
+    claude_session_id: str | None = None,
     **_kwargs: Any,
 ) -> Task:
     return Task(
@@ -54,7 +55,7 @@ def _make_task(
         priority=priority,
         category=category,
         recurring=None,
-        claude_session_id=None,
+        claude_session_id=claude_session_id,
         claude_session_started=claude_session_started,
         assignee=assignee,
         blocked_by=blocked_by,
@@ -358,6 +359,105 @@ def test_run_task_endpoint_no_project(
     data = response.json()
     assert "session_id" in data
     assert "command" in data
+
+
+# --- take-over endpoints ---
+
+SESSION_UUID = "e0930886-0843-4ca9-adfa-58819443c032"
+
+
+def test_take_over_task_terminates_and_returns_resume_command(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """A live task's take-over SIGTERMs the matched process and returns the resume command."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=SESSION_UUID)
+    )
+
+    with patch("vault_ui.api.tasks.terminate_resumed_session", return_value=True) as term:
+        response = test_client.post("/api/tasks/Live%20Task/take-over?vault=TestVault")
+
+    term.assert_called_once_with(SESSION_UUID)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == SESSION_UUID
+    assert "claude --resume" in data["command"]
+    assert SESSION_UUID in data["command"]
+    assert data["task_title"] == "Live Task"
+
+
+def test_take_over_task_no_match_still_returns_resume_command(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """No matching process (already quiet) — terminate returns False but the resume
+    command is still returned: the session is safe to resume either way."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=SESSION_UUID)
+    )
+
+    with patch("vault_ui.api.tasks.terminate_resumed_session", return_value=False) as term:
+        response = test_client.post("/api/tasks/Live%20Task/take-over?vault=TestVault")
+
+    term.assert_called_once_with(SESSION_UUID)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == SESSION_UUID
+    assert SESSION_UUID in data["command"]
+
+
+def test_take_over_task_no_session_returns_400(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """A task without claude_session_id has nothing to take over."""
+    mock_vault_client._tasks.append(_make_task(task_id="No Session", status="in_progress"))
+    response = test_client.post("/api/tasks/No%20Session/take-over?vault=TestVault")
+    assert response.status_code == 400
+
+
+def test_take_over_task_not_found_returns_404(test_client: TestClient) -> None:
+    response = test_client.post("/api/tasks/NonExistent/take-over?vault=TestVault")
+    assert response.status_code == 404
+
+
+def test_take_over_task_leading_dash_rejected(test_client: TestClient) -> None:
+    response = test_client.post("/api/tasks/-x/take-over?vault=TestVault")
+    assert response.status_code == 400
+
+
+def test_take_over_goal_terminates_and_returns_resume_command(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Live goal cards carry the same take-over affordance."""
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Live Goal", status="in_progress", claude_session_id=SESSION_UUID)
+    )
+
+    with patch("vault_ui.api.tasks.terminate_resumed_session", return_value=True) as term:
+        response = test_client_with_goals.post("/api/goals/Live%20Goal/take-over?vault=TestVault")
+
+    term.assert_called_once_with(SESSION_UUID)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == SESSION_UUID
+    assert "claude --resume" in data["command"]
+    assert data["task_title"] == "Live Goal"
+
+
+def test_take_over_goal_no_session_returns_400(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="No Session Goal", status="in_progress")
+    )
+    response = test_client_with_goals.post(
+        "/api/goals/No%20Session%20Goal/take-over?vault=TestVault"
+    )
+    assert response.status_code == 400
+
+
+def test_take_over_goal_not_found_returns_404(test_client_with_goals: TestClient) -> None:
+    response = test_client_with_goals.post("/api/goals/NonExistent/take-over?vault=TestVault")
+    assert response.status_code == 404
 
 
 async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureFixture) -> None:

@@ -12,7 +12,9 @@ ran in the cloud or a container — does the same.
 """
 
 import logging
+import os
 import re
+import signal
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
@@ -156,6 +158,67 @@ def _cached_resume_session_ids(ttl: float = _PS_CACHE_TTL_SECONDS) -> set[str]:
     ids = _current_resume_session_ids()
     _ps_cache = (now, frozenset(ids))
     return ids
+
+
+def _parse_resume_processes(ps_output: str) -> dict[str, int]:
+    """Map session id → PID of live ``claude --resume <uuid>`` processes.
+
+    The narrow ``--resume <uuid>`` matcher from ``_parse_resume_session_ids``
+    applied to ``ps -o pid=,args=`` output (the first whitespace field is the
+    PID, the rest the command line). Same claude-only filter: the launcher
+    wrapper (``bash cc-personal --resume <id>``) is not a claude process and is
+    never a termination target.
+    """
+    processes: dict[str, int] = {}
+    for line in ps_output.splitlines():
+        if "claude" not in line:
+            continue
+        m = re.search(r"--resume\s+(" + _UUID_RE.pattern + ")", line)
+        if not m:
+            continue
+        fields = line.split(None, 1)
+        if not fields:
+            continue
+        pid_token, _rest = fields
+        try:
+            processes[m.group(1)] = int(pid_token)
+        except ValueError:
+            continue
+    return processes
+
+
+def _current_resume_processes() -> dict[str, int]:
+    """Live ``claude --resume <uuid>`` session id → PID map from ``ps``."""
+    try:
+        ps = subprocess.run(
+            ["ps", "-axww", "-o", "pid=,args="], capture_output=True, text=True
+        ).stdout
+    except OSError as e:
+        logger.debug("[Activity] Cannot run ps: %s", e)
+        return {}
+    return _parse_resume_processes(ps)
+
+
+def terminate_resumed_session(session_id: str) -> bool:
+    """SIGTERM the live ``claude --resume <uuid>`` process for ``session_id``.
+
+    Returns ``True`` when a matching process was found and signaled, ``False``
+    when no process matches (the session is already quiet — nothing to kill).
+    The take-over path: end the live writer first so the per-session flock
+    (vault-cli v0.118.1) releases on process death and a normal resume succeeds.
+    """
+    pid = _current_resume_processes().get(session_id)
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # Process died between the ps scan and the kill — nothing to terminate.
+        return False
+    except OSError as e:
+        logger.warning("[Activity] Cannot SIGTERM pid %s for session %s: %s", pid, session_id, e)
+        return False
+    return True
 
 
 def classify_session_state(

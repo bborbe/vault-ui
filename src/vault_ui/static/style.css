@@ -726,6 +726,29 @@ h1 {
     white-space: nowrap;
 }
 
+/* Take-over button on live cards — the deliberate rescue path that ends the
+   running turn (SIGTERM via the ps --resume match) so Resume works again.
+   Amber tint signals "destructive-ish": in-flight work is lost on confirm. */
+.take-over-btn {
+    background: #fb923c;        /* orange-400 */
+    border: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    color: #1a1a1a;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.take-over-btn:hover {
+    background: #f97316;        /* orange-500 */
+}
+
+.take-over-btn:active {
+    background: #ea580c;        /* orange-600 */
+}
+
 /* Indeterminate session (id set, no transcript found) — cannot prove it dead,
    so Resume is disabled with an amber tint and an explanatory tooltip. */
 .resume-btn.indeterminate {

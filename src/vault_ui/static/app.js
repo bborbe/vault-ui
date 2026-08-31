@@ -1150,10 +1150,13 @@ function sessionButtonHtml(kind, item) {
         buttonClass = 'start-btn';
         buttonDisabled = true;
     } else if (item.session_state === 'live') {
-        // Live session — transcript written within the last ~5 min. The launch
-        // path (vault-cli flock, v0.118.1) refuses a second resume while it
-        // runs, so offer no button: a badge holds the spot until it goes quiet.
-        return '<span class="live-badge" title="Session is live — running now; resume disabled">● Live</span>';
+        // Live session — running now. A plain resume is flock-refused (vault-cli
+        // path) or corrupting (launcher path), so offer take-over instead: the
+        // confirm dialog ends the running turn (SIGTERM via the ps --resume
+        // match), then Resume works normally. In-flight work is lost — that is
+        // the accepted trade-off, stated in the confirm dialog.
+        return '<span class="live-badge" title="Session is live — running now">● Live</span>'
+            + `<button class="take-over-btn" onclick="takeOverSession('${kind}', '${item.id}')" title="End the running turn and resume this session (in-flight work is lost)">⚡ Take Over</button>`;
     } else if (hasSession) {
         if (item.session_state === 'indeterminate') {
             // Session id present but no transcript found — cannot prove it dead
@@ -1453,6 +1456,80 @@ async function runSession(kind, id) {
             event.target.textContent = '▶ Start';
             event.target.disabled = false;
         }
+    }
+}
+
+// Take-over confirm dialog: asks the operator to end the running turn before
+// resuming a live session. Resolves true on Confirm, false on Cancel — mirror
+// of askCloseOut's promise shape, minus the free-text reason fields.
+function askTakeOver() {
+    const modal = document.getElementById('takeover-modal');
+    const confirmBtn = document.getElementById('takeover-confirm-btn');
+    const cancelBtn = document.getElementById('takeover-cancel-btn');
+
+    let resolvePromise;
+    const teardown = () => {
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', onCancel);
+    };
+    const onConfirm = () => {
+        teardown();
+        modal.classList.add('hidden');
+        resolvePromise(true);
+    };
+    const onCancel = () => {
+        teardown();
+        modal.classList.add('hidden');
+        resolvePromise(false);
+    };
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+
+    modal.classList.remove('hidden');
+
+    return new Promise((resolve) => {
+        resolvePromise = resolve;
+    });
+}
+
+// Take over a live session: confirm, then POST to the backend which SIGTERMs the
+// matched `claude --resume <uuid>` process (releasing the flock) and returns the
+// resume command — shown in the session modal so the operator can resume.
+async function takeOverSession(kind, id) {
+    // Arg-injection guard (mirrors runSession).
+    if (typeof id === 'string' && id.startsWith('-')) {
+        showToast('Invalid id', true);
+        return;
+    }
+
+    const base = kind === 'goal' ? 'goals' : 'tasks';
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const item = cache[id];
+    if (!item) {
+        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
+        return;
+    }
+
+    // Destructive-action gate (SC2): cancel performs no action.
+    const confirmed = await askTakeOver();
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(
+            `/api/${base}/${encodeURIComponent(id)}/take-over?vault=${encodeURIComponent(item.vault)}`,
+            { method: 'POST' }
+        );
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
+        }
+
+        const data = await response.json();
+        showModal(data.session_id, data.command, data.working_dir, data.task_title);
+        await loadCurrentView();
+    } catch (error) {
+        console.error(`Failed to take over ${kind}:`, error);
+        showToast(error.message, true);
     }
 }
 
