@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): Make the live card's `● Live` badge itself the take-over affordance — the separate `⚡ Take Over` button is removed for a more discreet card. The badge (now `role="button"`, pointer cursor, hover outline) opens the same confirm dialog ("End the running turn and resume this session? In-flight work is lost unless already saved"); Cancel still performs no action, confirming still SIGTERMs the matched `claude --resume <uuid>` process and returns the resume command. Cache-bust token bumped to `2026-08-31-live-badge-click` so the new badge reaches the wall.
+
 ## v0.58.1
 
 - fix(ui): Bump the `app.js`/`style.css` cache-bust token to `2026-08-31-goal-take-over`. v0.58.0 removed the task-only gate on the goal take-over button without bumping the token, so browsers that cached the v0.57.0 `app.js` (which carried the gate) under the unchanged `?v=2026-08-31-take-over` URL never refetched and kept hiding the goal button. This token change forces the refetch so the goal take-over affordance actually reaches the wall.
