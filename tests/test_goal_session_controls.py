@@ -17,7 +17,7 @@ def test_goal_card_renders_start_and_resume_gated_on_session() -> None:
     """createGoalCard offers BOTH Resume (session present) and Start (no session),
     gated on goal.claude_session_id — so an always-Start impl fails."""
     # Label/class/condition literals now live in the shared sessionButtonHtml helper
-    body = _slice("function sessionButtonHtml", 2400)
+    body = _slice("function sessionButtonHtml", 2600)
     assert "claude_session_id" in body
     assert "▶ Resume" in body
     assert "resume-btn" in body

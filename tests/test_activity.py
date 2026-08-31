@@ -1,14 +1,18 @@
 """Activity-age resolution: newer of task file mtime and session transcript mtime."""
 
 import os
+import signal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from vault_ui.activity import (
     LIVE_WINDOW,
+    _parse_resume_processes,
     _parse_resume_session_ids,
     classify_session_state,
     compute_activity_date,
+    terminate_resumed_session,
     transcript_mtime,
 )
 
@@ -349,3 +353,99 @@ def test_live_badge_styled(tmp_path: Path) -> None:
 def test_indeterminate_resume_styled(tmp_path: Path) -> None:
     assert ".resume-btn.indeterminate" in STYLE_CSS
     assert "cursor: not-allowed" in STYLE_CSS
+
+
+# --- ps --resume process termination (take-over path) ---
+
+
+def test_parse_resume_processes_maps_session_id_to_pid() -> None:
+    """``ps -o pid=,args=`` output maps session id → pid for claude --resume matches."""
+    ps = (
+        " 12345 claude --settings {} --model claude-opus-5[1m] --resume "
+        "7cbde4f8-239c-4f3d-92d7-1e550b0afa88 /vault-cli:work-on-task foo\n"
+        " 67890 claude --settings {} --model deepseek-v4-flash-max[1m] --resume "
+        "c20647e6-ef96-47b8-866b-220f8dca685d\n"
+        " 23478 bash cc-personal --resume a55b44d0-cc04-4740-a5d9-df0a3e462cf4\n"
+        " 28430 claude --settings {} --print -p 'no resume here'\n"
+    )
+    assert _parse_resume_processes(ps) == {
+        "7cbde4f8-239c-4f3d-92d7-1e550b0afa88": 12345,
+        "c20647e6-ef96-47b8-866b-220f8dca685d": 67890,
+    }
+
+
+def test_parse_resume_processes_skips_non_numeric_pid() -> None:
+    """A malformed ps line (no numeric pid prefix) is skipped, not fatal."""
+    ps = (
+        "claude --settings {} --model claude-opus-5[1m] --resume "
+        "7cbde4f8-239c-4f3d-92d7-1e550b0afa88\n"
+    )
+    assert _parse_resume_processes(ps) == {}
+
+
+def test_terminate_resumed_session_kills_matching_process() -> None:
+    """A matched pid receives SIGTERM; returns True."""
+    with (
+        patch("vault_ui.activity._current_resume_processes") as procs,
+        patch("vault_ui.activity.os.kill") as kill,
+    ):
+        procs.return_value = {SESSION_ID: 4242}
+        assert terminate_resumed_session(SESSION_ID) is True
+        kill.assert_called_once_with(4242, signal.SIGTERM)
+
+
+def test_terminate_resumed_session_no_match_returns_false() -> None:
+    """No matching --resume process → no kill, returns False."""
+    with (
+        patch("vault_ui.activity._current_resume_processes") as procs,
+        patch("vault_ui.activity.os.kill") as kill,
+    ):
+        procs.return_value = {"some-other-session": 4242}
+        assert terminate_resumed_session(SESSION_ID) is False
+        kill.assert_not_called()
+
+
+def test_terminate_resumed_session_swallows_oserror() -> None:
+    """SIGTERM failure (OSError) is logged and reported as False, not raised."""
+    with (
+        patch("vault_ui.activity._current_resume_processes") as procs,
+        patch("vault_ui.activity.os.kill", side_effect=OSError("nope")) as kill,
+    ):
+        procs.return_value = {SESSION_ID: 4242}
+        assert terminate_resumed_session(SESSION_ID) is False
+        kill.assert_called_once_with(4242, signal.SIGTERM)
+
+
+def test_take_over_button_wired_into_live_branch() -> None:
+    """Static assertion: the live branch renders the take-over affordance, and the
+    quiet branch keeps Resume — SC1/SC5 from the task."""
+    start = APP_JS.find("function sessionButtonHtml")
+    assert start != -1, "sessionButtonHtml not found in app.js"
+    body = APP_JS[start : start + 2200]
+
+    assert "take-over-btn" in body
+    assert "takeOverSession" in body
+    # quiet (hasSession, not indeterminate) still gets the normal Resume button
+    assert "buttonLabel = '▶ Resume'" in body
+
+
+def test_take_over_modal_markup_present() -> None:
+    """index.html carries every take-over modal element id the JS depends on."""
+    from vault_ui import activity as _a  # noqa: F401  (module import sanity)
+
+    INDEX_HTML = (
+        Path(__file__).resolve().parent.parent / "src" / "vault_ui" / "static" / "index.html"
+    ).read_text()
+    for element_id in (
+        'id="takeover-modal"',
+        'id="takeover-title"',
+        'id="takeover-prompt"',
+        'id="takeover-confirm-btn"',
+        'id="takeover-cancel-btn"',
+    ):
+        assert element_id in INDEX_HTML, element_id
+
+
+def test_take_over_button_styled() -> None:
+    assert ".take-over-btn" in STYLE_CSS
+    assert "cursor: pointer" in STYLE_CSS

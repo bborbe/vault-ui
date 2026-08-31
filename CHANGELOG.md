@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): A live task card now offers a `⚡ Take Over` affordance instead of being untouchable — previously the `● Live` badge had no button and a live session could not be resumed from the wall at all (a plain resume is flock-refused on the vault-cli path, or starts a second claude on the same transcript on the launcher path). Clicking it shows a confirm dialog ("End the running turn and resume this session? In-flight work is lost unless already saved") whose Cancel performs no action; confirming calls a new take-over endpoint that SIGTERMs the matched `claude --resume <uuid>` process (reusing v0.56.1's narrow `ps` matcher, now also resolving the PID), releasing the per-session flock, and returns the normal resume command. A quiet session keeps its `▶ Resume` unchanged; live goal cards keep the bare badge (goal take-over ships in a follow-up). Covered by unit tests for the PID parser + terminate helper, API tests for the task take-over endpoint (terminate, no-match, no-session, 404, leading-dash), and Playwright integration tests for the affordance + cancel path + confirm flow.
+
 ## v0.56.1
 
 - fix(liveness): The wall no longer wrongly offers Resume on an open-but-idle session. `classify_session_state` cross-checks a stale transcript against `ps` for an exact `claude --resume <uuid>` process (the narrow matcher from `~/.claude/scripts/fleet-sessions.py`): a session whose process is alive but paused (e.g. launched via `cc-personal --resume <id>`) stays `live` instead of flipping to `quiet` after 5 min, so the wall keeps Resume hidden and is not invited to start a second claude on the same transcript. Recency remains the signal for everything else (fresh headless turns, remote/container sessions); the `ps` scan is cached ~30s, not per-request-per-card. Covered by unit tests for the ps matcher.

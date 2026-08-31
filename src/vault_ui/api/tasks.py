@@ -17,7 +17,11 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from vault_ui.activity import classify_session_state, compute_activity_date
+from vault_ui.activity import (
+    classify_session_state,
+    compute_activity_date,
+    terminate_resumed_session,
+)
 from vault_ui.api.models import (
     AssigneesResponse,
     Goal,
@@ -1004,6 +1008,80 @@ async def run_task(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.exception(f"Error creating session: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/tasks/{task_id}/take-over", response_model=SessionResponse)
+async def take_over_task(
+    vault: str,
+    task_id: str,
+) -> SessionResponse:
+    """Take over a live session: terminate its process and return the resume command.
+
+    A live card's ``● Live`` badge hides Resume by design — a plain resume of a
+    live session is flock-refused (vault-cli path, ``ErrSessionBusy``) or would
+    start a second claude on the same transcript (launcher/direct path).
+    Take-over is the deliberate rescue: SIGTERM the matched ``claude --resume
+    <uuid>`` process (the same ps cross-check v0.56.1 uses for liveness), which
+    releases the per-session flock on process death, then return the normal
+    resume command so the operator can take over the session. The running
+    turn's in-flight state is lost — that is the accepted trade-off, surfaced
+    by the frontend confirm dialog before this endpoint is called.
+
+    Access model: ``vault`` is a route selector, not a privilege boundary —
+    this service binds loopback (127.0.0.1) for its single operator, and every
+    vault-scoped endpoint (run, execute-command, clear-session, assign-to-me)
+    takes the same unauthenticated ``vault`` query param. There is no per-user
+    auth in this API by design; the destructive gate is the frontend confirm
+    dialog. Adding an authorization check to this endpoint alone would be
+    inconsistent with every sibling — auth belongs at the service boundary, not
+    per-endpoint.
+
+    Args:
+        vault: Vault name
+        task_id: Task ID (filename without .md)
+
+    Returns:
+        SessionResponse with the resume command (session_id, command,
+        working_dir, task_title) — same shape the Resume flow hands back.
+
+    Raises:
+        HTTPException 400: task_id starts with '-', or the task has no session
+        HTTPException 404: task not found
+        HTTPException 500: vault-cli failure or unexpected error
+    """
+    if task_id.startswith("-"):
+        raise HTTPException(status_code=400, detail="task_id must not start with '-'")
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        vault_config = get_vault_config(vault)
+
+        task = await client.show_task(task_id)
+        session_id = task.claude_session_id or ""
+        if not session_id:
+            raise HTTPException(
+                status_code=400, detail=f"Task has no Claude session to take over: {task_id}"
+            )
+
+        terminated = terminate_resumed_session(session_id)
+        logger.info("take-over task %s session %s terminated=%s", task_id, session_id, terminated)
+
+        command = _build_resume_command(vault_config, session_id, task_title=task.title)
+
+        return SessionResponse(
+            session_id=session_id,
+            command=command,
+            working_dir=vault_config.vault_path,
+            task_title=task.title,
+        )
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        logger.error(f"Task not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception(f"Error taking over task: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
