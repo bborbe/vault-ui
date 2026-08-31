@@ -6,6 +6,7 @@ from pathlib import Path
 
 from vault_ui.activity import (
     LIVE_WINDOW,
+    _parse_resume_session_ids,
     classify_session_state,
     compute_activity_date,
     transcript_mtime,
@@ -198,7 +199,12 @@ def test_classify_quiet_older_than_window(tmp_path: Path) -> None:
     project_dir = projects_root / "-vault"
     _write_transcript(project_dir, SESSION_ID, timedelta(hours=3))
 
-    assert classify_session_state(SESSION_ID, project_dir, projects_root) == "quiet"
+    # Hermetic: no running process (injected empty set), so the stale transcript
+    # reads quiet rather than hitting the real ps scan.
+    assert (
+        classify_session_state(SESSION_ID, project_dir, projects_root, resume_session_ids=set())
+        == "quiet"
+    )
 
 
 def test_classify_boundary_exactly_live_window(tmp_path: Path) -> None:
@@ -218,6 +224,7 @@ def test_classify_boundary_exactly_live_window(tmp_path: Path) -> None:
             project_dir,
             projects_root,
             now=mtime + LIVE_WINDOW + timedelta(seconds=1),
+            resume_session_ids=set(),
         )
         == "quiet"
     )
@@ -230,6 +237,75 @@ def test_classify_indeterminate_when_no_transcript(tmp_path: Path) -> None:
     assert (
         classify_session_state(SESSION_ID, projects_root / "-vault", projects_root)
         == "indeterminate"
+    )
+
+
+# --- ps --resume cross-check ---
+
+
+def test_parse_resume_session_ids_extracts_exact_resume_match() -> None:
+    ps = (
+        "  PID TTY STAT TIME COMMAND\n"
+        '13862 ?? S 0:00.01 claude --settings {"theme":"x"} --model claude-opus-5[1m] '
+        "--resume 7cbde4f8-239c-4f3d-92d7-1e550b0afa88 /vault-cli:work-on-task foo\n"
+        " 94284 ?? S 0:00.02 claude --settings {} --model deepseek-v4-flash-max[1m] "
+        "--resume c20647e6-ef96-47b8-866b-220f8dca685d\n"
+        " 23478 ?? S 0:00.03 some other process --resume a55b44d0-cc04-4740-a5d9-df0a3e462cf4\n"
+        " 28430 ?? S 0:00.04 claude --settings {} --print -p 'no resume here'\n"
+    )
+    assert _parse_resume_session_ids(ps) == {
+        "7cbde4f8-239c-4f3d-92d7-1e550b0afa88",
+        "c20647e6-ef96-47b8-866b-220f8dca685d",
+    }
+
+
+def test_parse_resume_session_ids_ignores_non_claude_and_prints() -> None:
+    ps = (
+        " 94282 bash cc-personal --resume c20647e6-ef96-47b8-866b-220f8dca685d\n"
+        " 94284 claude --model claude-opus-5[1m] --print -p hi\n"
+        " 40075 claude --settings {} --model deepseek[1m] --resume "
+        "5df6f0a9-927d-4a99-84f8-ce9ff2350ec5\n"
+    )
+    # Non-claude `--resume` (the launcher wrapper) and `--print` (headless, no
+    # resume) are not provable liveness — only the exact claude --model --resume
+    # process counts, exactly like fleet-sessions.py.
+    assert _parse_resume_session_ids(ps) == {"5df6f0a9-927d-4a99-84f8-ce9ff2350ec5"}
+
+
+def test_classify_open_but_idle_session_stays_live(tmp_path: Path) -> None:
+    """A stale transcript with a live `--resume` process is still live — the
+    open-but-idle session (e.g. cc-personal launcher) the wall must not offer
+    Resume on."""
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    _write_transcript(project_dir, SESSION_ID, timedelta(hours=3))
+
+    assert (
+        classify_session_state(
+            SESSION_ID,
+            project_dir,
+            projects_root,
+            resume_session_ids={SESSION_ID},
+        )
+        == "live"
+    )
+
+
+def test_classify_stale_transcript_without_process_is_quiet(tmp_path: Path) -> None:
+    """No process match → the stale transcript reads quiet, so Resume returns
+    (flock is free — process death released it)."""
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    _write_transcript(project_dir, SESSION_ID, timedelta(hours=3))
+
+    assert (
+        classify_session_state(
+            SESSION_ID,
+            project_dir,
+            projects_root,
+            resume_session_ids={"some-other-session"},
+        )
+        == "quiet"
     )
 
 

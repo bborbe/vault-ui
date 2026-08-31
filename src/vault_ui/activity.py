@@ -12,6 +12,9 @@ ran in the cloud or a container — does the same.
 """
 
 import logging
+import re
+import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +24,19 @@ logger = logging.getLogger(__name__)
 # running right now. Matches the launch-path flock (vault-cli v0.118.1): a live
 # session holds the per-session lock and a second resume is refused.
 LIVE_WINDOW = timedelta(minutes=5)
+
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
+
+# A stale-transcript session stays "live" only when a `claude --resume <uuid>`
+# process match confirms it. The `ps` scan is one subprocess for the whole
+# process table, so cache it briefly — the wall lists many cards and must not
+# shell out per stale transcript per request.
+_PS_CACHE_TTL_SECONDS = 30.0
+
+_ps_cache: tuple[float, frozenset[str]] | None = None
 
 
 def _claude_projects_root() -> Path:
@@ -96,28 +112,83 @@ def compute_activity_date(
     return max(candidates)
 
 
+def _parse_resume_session_ids(ps_output: str) -> set[str]:
+    """Session ids of live `claude --resume <uuid>` processes from a ps table.
+
+    Mirrors ``fleet-sessions.py``'s ``live_processes()``: an exact
+    ``--resume <uuid>`` match only. A process keeps neither its transcript open
+    nor the session id in argv except via ``--resume``, so nothing broader is
+    provable from ``ps`` — recency stays the signal for everything else.
+    """
+    ids: set[str] = set()
+    for line in ps_output.splitlines():
+        # Only actual claude invocations count. The launcher wrapper
+        # (`bash cc-personal --resume <id>`) carries the id but is not a claude
+        # process — resuming through it is a fresh launch, not a liveness proof.
+        if "claude" not in line:
+            continue
+        m = re.search(r"--resume\s+(" + _UUID_RE.pattern + ")", line)
+        if m:
+            ids.add(m.group(1))
+    return ids
+
+
+def _current_resume_session_ids() -> set[str]:
+    """Live ``claude --resume <uuid>`` session ids from ``ps`` on this host."""
+    try:
+        ps = subprocess.run(["ps", "-axww", "-o", "args="], capture_output=True, text=True).stdout
+    except OSError as e:
+        logger.debug("[Activity] Cannot run ps: %s", e)
+        return set()
+    return _parse_resume_session_ids(ps)
+
+
+def _cached_resume_session_ids(ttl: float = _PS_CACHE_TTL_SECONDS) -> set[str]:
+    """The live resumed-session set, cached for ``ttl`` seconds.
+
+    ``_ps_cache`` is module state on purpose — one TTL for the whole process
+    table, not per-card. Callers that already hold the set (tests) pass it in.
+    """
+    global _ps_cache
+    now = time.monotonic()
+    if _ps_cache is not None and now - _ps_cache[0] < ttl:
+        return set(_ps_cache[1])
+    ids = _current_resume_session_ids()
+    _ps_cache = (now, frozenset(ids))
+    return ids
+
+
 def classify_session_state(
     session_id: str | None,
     project_dir: Path,
     projects_root: Path | None = None,
     now: datetime | None = None,
+    resume_session_ids: set[str] | None = None,
 ) -> str | None:
     """Classify the Claude session a task/goal card refers to.
 
     Returns one of:
 
     - ``None`` — no ``claude_session_id``; a human task, nothing to classify.
-    - ``"live"`` — the transcript was written within ``LIVE_WINDOW``; a session
-      is running right now and the wall must not offer Resume.
-    - ``"quiet"`` — a transcript exists but is older; the session ended and
-      Resume is safe (vault-cli's flock releases on process death).
+    - ``"live"`` — the transcript was written within ``LIVE_WINDOW``, OR the
+      transcript is stale but a ``claude --resume <uuid>`` process for this
+      session is alive on this host. Either way a session is running right now
+      and the wall must not offer Resume.
+    - ``"quiet"`` — a transcript exists, is older than ``LIVE_WINDOW``, and no
+      live ``--resume`` process matches; the session ended and Resume is safe
+      (vault-cli's flock releases on process death).
     - ``"indeterminate"`` — a session id is set but no transcript can be found;
       the session cannot be proven dead (manual terminal ``/resume`` in another
       cwd, a cloud/container session, an entity-name session the resolver can't
       match). Do not offer a Resume we cannot honor.
 
-    Liveness is transcript-only on purpose: the task file mtime moves when a
-    human edits the file and says nothing about whether a Claude session runs.
+    Liveness is transcript-recency plus a ``--resume`` process cross-check. The
+    task file mtime alone is never a liveness signal — it moves when a human
+    edits the file and says nothing about whether a Claude session runs. The
+    ``ps`` cross-check closes the open-but-idle gap: a session launched via
+    ``cc-personal --resume <id>`` (or any direct resume) keeps its process alive
+    while its transcript stops being written, so recency alone would wrongly
+    read it as quiet and the wall would offer a corrupting Resume.
     """
     if not session_id:
         return None
@@ -127,4 +198,8 @@ def classify_session_state(
     now = now or datetime.now(tz=UTC)
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
-    return "live" if (now - mtime) <= LIVE_WINDOW else "quiet"
+    if (now - mtime) <= LIVE_WINDOW:
+        return "live"
+    if resume_session_ids is None:
+        resume_session_ids = _cached_resume_session_ids()
+    return "live" if session_id in resume_session_ids else "quiet"
