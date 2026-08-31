@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.56.1
 
 - fix(liveness): The wall no longer wrongly offers Resume on an open-but-idle session. `classify_session_state` cross-checks a stale transcript against `ps` for an exact `claude --resume <uuid>` process (the narrow matcher from `~/.claude/scripts/fleet-sessions.py`): a session whose process is alive but paused (e.g. launched via `cc-personal --resume <id>`) stays `live` instead of flipping to `quiet` after 5 min, so the wall keeps Resume hidden and is not invited to start a second claude on the same transcript. Recency remains the signal for everything else (fresh headless turns, remote/container sessions); the `ps` scan is cached ~30s, not per-request-per-card. Covered by unit tests for the ps matcher.
 
