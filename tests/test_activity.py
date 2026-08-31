@@ -416,15 +416,17 @@ def test_terminate_resumed_session_swallows_oserror() -> None:
         kill.assert_called_once_with(4242, signal.SIGTERM)
 
 
-def test_take_over_button_wired_into_live_branch() -> None:
-    """Static assertion: the live branch renders the take-over affordance, and the
-    quiet branch keeps Resume — SC1/SC5 from the task."""
+def test_take_over_badge_wired_into_live_branch() -> None:
+    """Static assertion: the live branch renders the take-over affordance on the
+    badge itself (discreet — no separate button), and the quiet branch keeps
+    Resume — SC1/SC5 from the task."""
     start = APP_JS.find("function sessionButtonHtml")
     assert start != -1, "sessionButtonHtml not found in app.js"
     body = APP_JS[start : start + 2200]
 
-    assert "take-over-btn" in body
-    assert "takeOverSession" in body
+    assert 'class="live-badge"' in body
+    assert 'onclick="takeOverSession' in body
+    assert "take-over-btn" not in body  # button removed — badge is the affordance
     # quiet (hasSession, not indeterminate) still gets the normal Resume button
     assert "buttonLabel = '▶ Resume'" in body
 
@@ -446,6 +448,8 @@ def test_take_over_modal_markup_present() -> None:
         assert element_id in INDEX_HTML, element_id
 
 
-def test_take_over_button_styled() -> None:
-    assert ".take-over-btn" in STYLE_CSS
+def test_take_over_badge_styled() -> None:
+    assert ".live-badge" in STYLE_CSS
     assert "cursor: pointer" in STYLE_CSS
+    # keyboard-focusable (role=button, tabindex=0) → needs a visible focus ring
+    assert ".live-badge:focus-visible" in STYLE_CSS

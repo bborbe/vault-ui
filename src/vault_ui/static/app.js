@@ -1152,11 +1152,11 @@ function sessionButtonHtml(kind, item) {
     } else if (item.session_state === 'live') {
         // Live session — running now. A plain resume is flock-refused (vault-cli
         // path) or corrupting (launcher path), so offer take-over instead: the
-        // confirm dialog ends the running turn (SIGTERM via the ps --resume
-        // match), then Resume works normally. In-flight work is lost — that is
-        // the accepted trade-off, stated in the confirm dialog.
-        return '<span class="live-badge" title="Session is live — running now">● Live</span>'
-            + `<button class="take-over-btn" onclick="takeOverSession('${kind}', '${item.id}')" title="End the running turn and resume this session (in-flight work is lost)">⚡ Take Over</button>`;
+        // badge itself is the affordance (discreet — no extra button). Clicking
+        // it opens the confirm dialog, which ends the running turn (SIGTERM via
+        // the ps --resume match), then Resume works normally. In-flight work is
+        // lost — that is the accepted trade-off, stated in the confirm dialog.
+        return `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${item.id}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
     } else if (hasSession) {
         if (item.session_state === 'indeterminate') {
             // Session id present but no transcript found — cannot prove it dead

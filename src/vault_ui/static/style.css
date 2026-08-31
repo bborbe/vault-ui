@@ -709,7 +709,11 @@ h1 {
 }
 
 /* Live session (transcript < ~5 min) — replaces the Resume button: the launch
-   path refuses a second resume, so the card shows a green badge instead. */
+   path refuses a second resume, so the card shows a green badge instead.
+   The badge is itself the take-over affordance (discreet, no separate button):
+   click opens the confirm dialog that ends the running turn (SIGTERM via the
+   ps --resume match) so Resume works again. Pointer cursor + hover shade
+   signal the click; in-flight work is lost on confirm (stated in the dialog). */
 .live-badge {
     display: inline-flex;
     align-items: center;
@@ -724,29 +728,21 @@ h1 {
     border-radius: 999px;
     max-width: fit-content;
     white-space: nowrap;
-}
-
-/* Take-over button on live cards — the deliberate rescue path that ends the
-   running turn (SIGTERM via the ps --resume match) so Resume works again.
-   Amber tint signals "destructive-ish": in-flight work is lost on confirm. */
-.take-over-btn {
-    background: #fb923c;        /* orange-400 */
-    border: none;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    color: #1a1a1a;
     cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 600;
-    white-space: nowrap;
 }
 
-.take-over-btn:hover {
-    background: #f97316;        /* orange-500 */
+.live-badge:hover {
+    background: #16a34a;        /* green-600 */
+    outline: 1px solid #bbf7d0; /* green-200 */
 }
 
-.take-over-btn:active {
-    background: #ea580c;        /* orange-600 */
+.live-badge:active {
+    background: #15803d;        /* green-700 */
+}
+
+.live-badge:focus-visible {
+    outline: 2px solid #bbf7d0; /* green-200 */
+    outline-offset: 1px;
 }
 
 /* Indeterminate session (id set, no transcript found) — cannot prove it dead,

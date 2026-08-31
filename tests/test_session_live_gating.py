@@ -292,11 +292,12 @@ def test_goal_card_gates_live_session_too(live_server, page):
 
 
 def test_live_session_offers_take_over_affordance(live_server, page):
-    """SC1: a live card offers a take-over affordance distinct from quiet's Resume."""
+    """SC1: a live card offers a take-over affordance distinct from quiet's Resume.
+    The badge itself is the affordance (discreet) — no separate button."""
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Live Task")
     expect(card.locator(".live-badge")).to_have_count(1)
-    expect(card.locator(".take-over-btn")).to_have_count(1)
+    expect(card.locator(".take-over-btn")).to_have_count(0)
     expect(card.locator(".resume-btn")).to_have_count(0)
 
 
@@ -311,7 +312,7 @@ def test_take_over_cancel_performs_no_action(live_server, page):
     page.on("request", _track)
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Live Task")
-    card.locator(".take-over-btn").click()
+    card.locator(".live-badge").click()
 
     # Confirm dialog appears (destructive-action gate)
     confirm_modal = page.locator("#takeover-modal")
@@ -330,7 +331,7 @@ def test_take_over_confirm_returns_resume_command(live_server, page):
     and the returned resume command is surfaced in the session modal."""
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Live Task")
-    card.locator(".take-over-btn").click()
+    card.locator(".live-badge").click()
 
     confirm_modal = page.locator("#takeover-modal")
     expect(confirm_modal).to_be_visible()
@@ -348,7 +349,7 @@ def test_goal_card_offers_take_over_affordance(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=goals")
     card = page.locator(".task-card").filter(has_text="Live Goal")
     expect(card.locator(".live-badge")).to_have_count(1)
-    expect(card.locator(".take-over-btn")).to_have_count(1)
+    expect(card.locator(".take-over-btn")).to_have_count(0)
     expect(card.locator(".resume-btn")).to_have_count(0)
 
 
@@ -356,7 +357,7 @@ def test_goal_take_over_confirm_returns_resume_command(live_server, page):
     """Confirming goal take-over surfaces the resume command in the session modal."""
     page.goto(f"{live_server}/?status=in_progress&view=goals")
     card = page.locator(".task-card").filter(has_text="Live Goal")
-    card.locator(".take-over-btn").click()
+    card.locator(".live-badge").click()
 
     confirm_modal = page.locator("#takeover-modal")
     expect(confirm_modal).to_be_visible()
