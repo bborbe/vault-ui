@@ -424,6 +424,42 @@ def test_take_over_task_leading_dash_rejected(test_client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_take_over_goal_terminates_and_returns_resume_command(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Live goal cards carry the same take-over affordance."""
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Live Goal", status="in_progress", claude_session_id=SESSION_UUID)
+    )
+
+    with patch("vault_ui.api.tasks.terminate_resumed_session", return_value=True) as term:
+        response = test_client_with_goals.post("/api/goals/Live%20Goal/take-over?vault=TestVault")
+
+    term.assert_called_once_with(SESSION_UUID)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == SESSION_UUID
+    assert "claude --resume" in data["command"]
+    assert data["task_title"] == "Live Goal"
+
+
+def test_take_over_goal_no_session_returns_400(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="No Session Goal", status="in_progress")
+    )
+    response = test_client_with_goals.post(
+        "/api/goals/No%20Session%20Goal/take-over?vault=TestVault"
+    )
+    assert response.status_code == 400
+
+
+def test_take_over_goal_not_found_returns_404(test_client_with_goals: TestClient) -> None:
+    response = test_client_with_goals.post("/api/goals/NonExistent/take-over?vault=TestVault")
+    assert response.status_code == 404
+
+
 async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureFixture) -> None:
     """Subprocess stdout is logged at DEBUG line-by-line as it arrives, not buffered at exit.
 

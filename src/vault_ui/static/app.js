@@ -1155,11 +1155,6 @@ function sessionButtonHtml(kind, item) {
         // confirm dialog ends the running turn (SIGTERM via the ps --resume
         // match), then Resume works normally. In-flight work is lost — that is
         // the accepted trade-off, stated in the confirm dialog.
-        // Tasks only for now: the goal take-over endpoint ships in a follow-up,
-        // so a goal button would 404. Goals keep the bare badge until then.
-        if (kind === 'goal') {
-            return '<span class="live-badge" title="Session is live — running now">● Live</span>';
-        }
         return '<span class="live-badge" title="Session is live — running now">● Live</span>'
             + `<button class="take-over-btn" onclick="takeOverSession('${kind}', '${item.id}')" title="End the running turn and resume this session (in-flight work is lost)">⚡ Take Over</button>`;
     } else if (hasSession) {
