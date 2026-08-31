@@ -341,3 +341,28 @@ def test_take_over_confirm_returns_resume_command(live_server, page):
     expect(session_modal).to_be_visible()
     expect(page.locator("#handoff-command")).to_contain_text(f"--resume {LIVE_ID}")
     expect(page.locator("#task-title")).to_have_text("Live Task")
+
+
+def test_goal_card_offers_take_over_affordance(live_server, page):
+    """Goal cards carry the same take-over affordance on a live session."""
+    page.goto(f"{live_server}/?status=in_progress&view=goals")
+    card = page.locator(".task-card").filter(has_text="Live Goal")
+    expect(card.locator(".live-badge")).to_have_count(1)
+    expect(card.locator(".take-over-btn")).to_have_count(1)
+    expect(card.locator(".resume-btn")).to_have_count(0)
+
+
+def test_goal_take_over_confirm_returns_resume_command(live_server, page):
+    """Confirming goal take-over surfaces the resume command in the session modal."""
+    page.goto(f"{live_server}/?status=in_progress&view=goals")
+    card = page.locator(".task-card").filter(has_text="Live Goal")
+    card.locator(".take-over-btn").click()
+
+    confirm_modal = page.locator("#takeover-modal")
+    expect(confirm_modal).to_be_visible()
+    page.locator("#takeover-confirm-btn").click()
+
+    session_modal = page.locator("#session-modal")
+    expect(session_modal).to_be_visible()
+    expect(page.locator("#handoff-command")).to_contain_text(f"--resume {LIVE_ID}")
+    expect(page.locator("#task-title")).to_have_text("Live Goal")

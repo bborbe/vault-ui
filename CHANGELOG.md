@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ui): Live **goal** cards now carry the same `⚡ Take Over` affordance as task cards — the follow-up half of the take-over feature (v0.57.0 shipped the task side). A live goal's `● Live` badge previously had no button; now clicking it shows the same confirm dialog ("End the running turn and resume this session? In-flight work is lost unless already saved"), Cancel performs no action, and confirming calls the goal take-over endpoint that SIGTERMs the matched `claude --resume <uuid>` process and returns the normal resume command. Covered by API tests (terminate, no-session, 404) and Playwright integration tests (goal affordance + confirm flow).
+
 ## v0.57.0
 
 - feat(ui): A live task card now offers a `⚡ Take Over` affordance instead of being untouchable — previously the `● Live` badge had no button and a live session could not be resumed from the wall at all (a plain resume is flock-refused on the vault-cli path, or starts a second claude on the same transcript on the launcher path). Clicking it shows a confirm dialog ("End the running turn and resume this session? In-flight work is lost unless already saved") whose Cancel performs no action; confirming calls a new take-over endpoint that SIGTERMs the matched `claude --resume <uuid>` process (reusing v0.56.1's narrow `ps` matcher, now also resolving the PID), releasing the per-session flock, and returns the normal resume command. A quiet session keeps its `▶ Resume` unchanged; live goal cards keep the bare badge (goal take-over ships in a follow-up). Covered by unit tests for the PID parser + terminate helper, API tests for the task take-over endpoint (terminate, no-match, no-session, 404, leading-dash), and Playwright integration tests for the affordance + cancel path + confirm flow.
