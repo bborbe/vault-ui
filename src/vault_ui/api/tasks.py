@@ -1154,61 +1154,6 @@ async def run_goal(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/goals/{goal_id}/take-over", response_model=SessionResponse)
-async def take_over_goal(
-    vault: str,
-    goal_id: str,
-) -> SessionResponse:
-    """Take over a live goal session: terminate its process and return the resume command.
-
-    Mirrors ``take_over_task`` for goals (live goal cards carry the same
-    ``● Live`` badge with Resume hidden). SIGTERM the matched ``claude --resume
-    <uuid>`` process, then return the normal resume command.
-
-    Raises:
-        HTTPException 400: goal_id starts with '-', or the goal has no session
-        HTTPException 404: goal not found
-        HTTPException 500: vault-cli failure or unexpected error
-    """
-    if goal_id.startswith("-"):
-        raise HTTPException(status_code=400, detail="goal_id must not start with '-'")
-
-    try:
-        client = get_vault_cli_client_for_vault(vault)
-        vault_config = get_vault_config(vault)
-
-        goals = await client.list_goals(show_all=True)
-        goal = next((g for g in goals if g.id == goal_id), None)
-        if goal is None:
-            raise HTTPException(status_code=404, detail=f"Goal not found: {goal_id}")
-
-        session_id = goal.claude_session_id or ""
-        if not session_id:
-            raise HTTPException(
-                status_code=400, detail=f"Goal has no Claude session to take over: {goal_id}"
-            )
-
-        terminated = terminate_resumed_session(session_id)
-        logger.info("take-over goal %s session %s terminated=%s", goal_id, session_id, terminated)
-
-        command = _build_resume_command(vault_config, session_id, task_title=goal.title)
-
-        return SessionResponse(
-            session_id=session_id,
-            command=command,
-            working_dir=vault_config.vault_path,
-            task_title=goal.title,
-        )
-    except HTTPException:
-        raise
-    except FileNotFoundError as e:
-        logger.error(f"Goal not found: {e}")
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except Exception as e:
-        logger.exception(f"Error taking over goal: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
 @router.post("/tasks/{task_id}/execute-command", response_model=SessionResponse)
 async def execute_slash_command(
     vault: str,

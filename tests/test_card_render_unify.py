@@ -17,7 +17,7 @@ def _slice(marker: str, length: int) -> str:
 def test_session_button_helper_shared() -> None:
     """One session-button helper gates all three labels off session id + durable flag,
     and both card renderers call it instead of inlining the three-way gate."""
-    body = _slice("function sessionButtonHtml", 2400)
+    body = _slice("function sessionButtonHtml", 2600)
     assert "claude_session_id" in body
     assert "claude_session_started" in body
     assert "▶ Start" in body
