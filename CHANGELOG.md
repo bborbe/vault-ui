@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.60.0
 
 - fix: `resolve_session_id` now matches a display name only against a session's **current** title (the last `custom-title` entry in its transcript), never a title the session used to have, and an ambiguous name — two or more sessions currently sharing the same title — resolves to `None` instead of whichever file the filesystem listed first, so Resume can no longer be pointed at a conversation that worked a different task. The ambiguity is logged at warning level with all tied session ids; callers keep the display name in frontmatter for a human to resolve.
 
