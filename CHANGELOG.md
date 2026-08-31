@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(ui): Bump the `app.js`/`style.css` cache-bust token to `2026-08-31-goal-take-over`. v0.58.0 removed the task-only gate on the goal take-over button without bumping the token, so browsers that cached the v0.57.0 `app.js` (which carried the gate) under the unchanged `?v=2026-08-31-take-over` URL never refetched and kept hiding the goal button. This token change forces the refetch so the goal take-over affordance actually reaches the wall.
+
 ## v0.58.0
 
 - feat(ui): Live **goal** cards now carry the same `⚡ Take Over` affordance as task cards — the follow-up half of the take-over feature (v0.57.0 shipped the task side). A live goal's `● Live` badge previously had no button; now clicking it shows the same confirm dialog ("End the running turn and resume this session? In-flight work is lost unless already saved"), Cancel performs no action, and confirming calls the goal take-over endpoint that SIGTERMs the matched `claude --resume <uuid>` process and returns the normal resume command. Covered by API tests (terminate, no-session, 404) and Playwright integration tests (goal affordance + confirm flow).
