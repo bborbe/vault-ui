@@ -1028,6 +1028,15 @@ async def take_over_task(
     turn's in-flight state is lost — that is the accepted trade-off, surfaced
     by the frontend confirm dialog before this endpoint is called.
 
+    Access model: ``vault`` is a route selector, not a privilege boundary —
+    this service binds loopback (127.0.0.1) for its single operator, and every
+    vault-scoped endpoint (run, execute-command, clear-session, assign-to-me)
+    takes the same unauthenticated ``vault`` query param. There is no per-user
+    auth in this API by design; the destructive gate is the frontend confirm
+    dialog. Adding an authorization check to this endpoint alone would be
+    inconsistent with every sibling — auth belongs at the service boundary, not
+    per-endpoint.
+
     Args:
         vault: Vault name
         task_id: Task ID (filename without .md)
