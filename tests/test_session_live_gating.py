@@ -32,6 +32,7 @@ pytestmark = pytest.mark.integration
 LIVE_ID = "aaaaaaaa-0000-0000-0000-000000000001"
 QUIET_ID = "bbbbbbbb-0000-0000-0000-000000000002"
 UNKNOWN_ID = "cccccccc-0000-0000-0000-000000000003"
+STARTING_ID = "dddddddd-0000-0000-0000-000000000004"
 
 TASKS = [
     Task(
@@ -118,6 +119,32 @@ TASKS = [
         claude_session_id=None,
         claude_session_started=None,
         assignee=None,
+        blocked_by=None,
+        completed_date=None,
+        goals=None,
+    ),
+    # The bug-state card: session id landed mid-turn (assistant session-connect)
+    # while the durable claude_session_started marker is still set and the
+    # transcript is fresh (session_state=live). The marker must win — "Starting…",
+    # never the take-over badge or a Resume.
+    Task(
+        id="Starting Task",
+        title="Starting Task",
+        status="in_progress",
+        phase="execution",
+        project_path=None,
+        content="",
+        description=None,
+        modified_date=datetime.now(tz=UTC) - timedelta(seconds=30),
+        defer_date=None,
+        planned_date=None,
+        due_date=None,
+        priority=None,
+        category=None,
+        recurring=None,
+        claude_session_id=STARTING_ID,
+        claude_session_started=datetime.now(tz=UTC).isoformat(),
+        assignee="bborbe",
         blocked_by=None,
         completed_date=None,
         goals=None,
@@ -218,6 +245,8 @@ def live_server(tmp_path, monkeypatch):
     projects_root = tmp_path / "claude-projects"
     _write_transcript(projects_root, LIVE_ID, timedelta(seconds=30))
     _write_transcript(projects_root, QUIET_ID, timedelta(hours=3))
+    # The bug-state transcript: freshly written, so session_state classifies live.
+    _write_transcript(projects_root, STARTING_ID, timedelta(seconds=30))
 
     monkeypatch.setattr("vault_ui.activity._claude_projects_root", lambda: projects_root)
 
@@ -281,6 +310,22 @@ def test_no_session_shows_start(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Human Task")
     expect(card.locator(".start-btn")).to_have_count(1)
+    expect(card.locator(".resume-btn")).to_have_count(0)
+
+
+def test_starting_task_with_id_and_marker_shows_starting_not_live(live_server, page):
+    """Bug lock: a card whose id landed mid-turn but whose launch turn is still
+    in flight (marker set + fresh transcript = session_state live) must render
+    'Starting…', NOT the take-over badge — a reload during launch shows Starting."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Starting Task")
+    # The marker gate wins: the button is the disabled "Starting..." start-btn.
+    start_btn = card.locator(".start-btn")
+    expect(start_btn).to_have_count(1)
+    expect(start_btn).to_be_disabled()
+    expect(start_btn).to_contain_text("Starting")
+    # Never the take-over badge nor a Resume on a booting session.
+    expect(card.locator(".live-badge")).to_have_count(0)
     expect(card.locator(".resume-btn")).to_have_count(0)
 
 
