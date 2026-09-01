@@ -146,6 +146,7 @@ def _make_vault_client(tasks: list[Task] | None = None) -> MagicMock:
     client.clear_field = AsyncMock()
     client.set_field = AsyncMock()
     client.set_goal_field = AsyncMock()
+    client.clear_goal_field = AsyncMock()
     client._tasks = task_list
     return client
 
@@ -4193,16 +4194,24 @@ def test_list_tasks_claude_session_started_null_when_absent(
     assert task["claude_session_started"] is None
 
 
-def test_run_task_sets_started_flag_and_does_not_clear_on_success(
+def test_run_task_sets_started_flag_and_clears_on_success(
     test_client: TestClient,
     mock_vault_client: MagicMock,
 ) -> None:
-    """run_task marks started before launch and does NOT clear it on success.
+    """run_task marks started before launch and clears it once the launch completes.
 
     The marker is an ISO-8601 launch instant, not the literal "true" it replaced:
     the cleanup sweep needs an age to expire an orphan, and the card needs one to
     render elapsed time. Asserted as parseable-and-truthy so the Starting gate
     contract is locked without pinning a wall-clock value.
+
+    The marker means exactly "a launch turn is in flight": set before the headless
+    turn, cleared on success (turn completed — the session is resumable), on
+    failure, on session reset, and by the stale-marker cleanup sweep. Clearing on
+    success is what lets the card flip off "Starting…" to "Resume"/"Live"; the
+    frontend gate keys "Starting…" off the marker alone so a reload mid-launch
+    (id already landed via the assistant's session-connect) still shows
+    "Starting…", not the take-over badge.
     """
     mock_vault_client.set_field.reset_mock()
     mock_vault_client.clear_field.reset_mock()
@@ -4213,7 +4222,7 @@ def test_run_task_sets_started_flag_and_does_not_clear_on_success(
 
     assert response.status_code == 200
 
-    # Flag was set to "true" before launch
+    # Flag was set to an ISO instant before launch
     set_calls = mock_vault_client.set_field.await_args_list
     started = [
         c.args[2] for c in set_calls if c.args[:2] == ("Test Task", "claude_session_started")
@@ -4223,13 +4232,13 @@ def test_run_task_sets_started_flag_and_does_not_clear_on_success(
     assert bool(started[0]) is True
     assert datetime.fromisoformat(started[0]) is not None
 
-    # Flag is NOT cleared on success — it stays until claude_session_id is cleared
+    # Flag IS cleared on success — the launch turn completed, card flips to Resume
     started_clears = [
         c
         for c in mock_vault_client.clear_field.await_args_list
         if c.args[1] == "claude_session_started"
     ]
-    assert started_clears == []
+    assert started_clears, mock_vault_client.clear_field.await_args_list
 
 
 def test_run_task_clears_started_flag_on_launch_failure(
@@ -4304,6 +4313,13 @@ def test_run_goal_endpoint_success(
         c.args[2] for c in set_calls if c.args[:2] == ("Test Goal", "claude_session_started")
     ]
     assert goal_started, set_calls
+    # Marker is cleared on success — mint completed, card flips off "Starting…"
+    started_clears = [
+        c
+        for c in mock_vault_client_with_goals.clear_goal_field.await_args_list
+        if c.args[1] == "claude_session_started"
+    ]
+    assert started_clears, mock_vault_client_with_goals.clear_goal_field.await_args_list
     assert goal_started[0] != "true"
     assert datetime.fromisoformat(goal_started[0]) is not None
     assert any(c.args == ("Test Goal", "claude_session_id", "goal-session-id") for c in set_calls)
@@ -4448,10 +4464,10 @@ def test_list_goals_claude_session_started_null_when_absent(
     assert goal["claude_session_started"] is None
 
 
-def test_run_goal_sets_started_flag_and_does_not_clear_on_success(
+def test_run_goal_sets_started_flag_and_clears_on_success(
     test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
 ) -> None:
-    """run_goal sets claude_session_started='true' before mint and does NOT clear on success."""
+    """run_goal sets claude_session_started before mint and clears it on success."""
     mock_vault_client_with_goals.set_goal_field.reset_mock()
     mock_vault_client_with_goals.clear_goal_field.reset_mock()
     mock_proc = _make_streaming_proc(b'{"session_id": "goal-session-id"}')
@@ -4461,7 +4477,7 @@ def test_run_goal_sets_started_flag_and_does_not_clear_on_success(
 
     assert response.status_code == 200
 
-    # Flag was set to "true" before mint
+    # Flag was set to an ISO instant before mint
     set_calls = mock_vault_client_with_goals.set_goal_field.await_args_list
     goal_started2 = [
         c.args[2] for c in set_calls if c.args[:2] == ("Test Goal", "claude_session_started")
@@ -4470,13 +4486,13 @@ def test_run_goal_sets_started_flag_and_does_not_clear_on_success(
     assert goal_started2[0] != "true"
     assert datetime.fromisoformat(goal_started2[0]) is not None
 
-    # Flag is NOT cleared on success — it stays until claude_session_id is cleared
+    # Flag IS cleared on success — the mint completed, card flips off "Starting…"
     started_clears = [
         c
         for c in mock_vault_client_with_goals.clear_goal_field.await_args_list
         if c.args[1] == "claude_session_started"
     ]
-    assert started_clears == []
+    assert started_clears, mock_vault_client_with_goals.clear_goal_field.await_args_list
 
 
 def test_run_goal_clears_started_flag_on_launch_failure(

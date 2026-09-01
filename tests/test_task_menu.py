@@ -113,6 +113,12 @@ def test_goal_starting_state_mirrors_tasks() -> None:
     # The gate logic moved into sessionButtonHtml which uses startingSet
     assert "function sessionButtonHtml" in APP_JS
     assert "!!item.claude_session_started || startingSet.has(item.id)" in APP_JS
+    # The Starting gate must NOT require !hasSession: the durable marker alone wins,
+    # because the assistant writes claude_session_id mid-turn — an id present under a
+    # set marker is still the launch, not a resumable session. A reload mid-launch
+    # must render "Starting…", not the take-over badge.
+    assert "!hasSession && (!!item.claude_session_started" not in APP_JS
+    assert "const isStarting = !!item.claude_session_started || startingSet.has(item.id);" in APP_JS
     # Merged runSession uses startingSet derived from kind
     assert "kind === 'goal' ? startingGoals : startingTasks" in APP_JS
     assert "startingSet.add(id)" in APP_JS
