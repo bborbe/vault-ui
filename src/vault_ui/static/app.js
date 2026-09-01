@@ -1143,7 +1143,10 @@ function startingElapsedLabel(marker) {
 function sessionButtonHtml(kind, item) {
     const startingSet = kind === 'goal' ? startingGoals : startingTasks;
     const hasSession = item.claude_session_id;
-    const isStarting = !hasSession && (!!item.claude_session_started || startingSet.has(item.id));
+    // Marker means "launch turn in flight": Starting wins even once the id lands
+    // (assistant writes it mid-turn), so a reload mid-launch stays "Starting…"
+    // instead of rendering the take-over badge for a booting session.
+    const isStarting = !!item.claude_session_started || startingSet.has(item.id);
     let buttonLabel, buttonClass, buttonDisabled, buttonTitle = '';
     if (isStarting) {
         buttonLabel = `⏳ Starting...${startingElapsedLabel(item.claude_session_started)}`;
@@ -1435,6 +1438,10 @@ async function runSession(kind, id) {
         }
         startingSet.delete(id);
         item.claude_session_id = data.session_id;
+        // The backend clears the durable marker once the launch turn completes; mirror
+        // that here so a same-tab re-render (before the next API poll) does not flip
+        // the card back to "Starting…" via the marker gate.
+        item.claude_session_started = null;
 
         if (!userDismissed) {
             showModal(data.session_id, data.command, data.working_dir, data.task_title);

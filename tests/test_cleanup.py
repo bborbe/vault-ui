@@ -658,6 +658,92 @@ async def test_orphan_sweep_leaves_a_fresh_marker_alone() -> None:
 
 
 @pytest.mark.asyncio
+async def test_orphan_sweep_clears_stale_marker_on_id_bearing_task() -> None:
+    """A stale marker on a task that ALREADY has a session id is cleared too.
+
+    Migration lock for the 2026-09-01 marker-lifecycle change: the marker means
+    "launch turn in flight" and run_task/run_goal now clear it on success, so an
+    id-bearing task whose marker is older than the TTL is a launch that predates
+    that change (or one whose success-clear failed) — either way the turn is long
+    done and the card must flip off "Starting…". Before this change the sweep
+    skipped id-bearing tasks entirely, so such a marker survived forever and the
+    card stuck on "Starting…".
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from vault_ui.cleanup import _STARTING_MARKER_TTL_SECONDS
+
+    config = _make_config(current_user="alice")
+    # Session id present → the main sweep leaves it alone (session file "exists").
+    task = _make_task(
+        session_id="12345678-1234-1234-1234-123456789abc",
+        assignee="alice",
+        claude_session_started=None,
+    )
+    old = (datetime.now(UTC) - timedelta(seconds=_STARTING_MARKER_TTL_SECONDS + 60)).isoformat()
+
+    class _OldMarkerCache:
+        def get_session_started(self, _vault: str, _item_id: str) -> str:
+            return old
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_OldMarkerCache()),
+        patch("vault_ui.cleanup.Path.exists", return_value=True),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1, "stale marker on an id-bearing task was not cleared"
+    # The id itself is left intact — only the marker is swept.
+    calls = mock_subprocess.call_args_list
+    started_clears = [c for c in calls if "clear" in c.args and "claude_session_started" in c.args]
+    assert started_clears, calls
+    assert not any("claude_session_id" in c.args for c in started_clears)
+
+
+@pytest.mark.asyncio
+async def test_orphan_sweep_leaves_fresh_marker_on_id_bearing_task() -> None:
+    """A fresh marker on an id-bearing task is a mid-launch — never swept."""
+    from datetime import UTC, datetime
+
+    config = _make_config(current_user="alice")
+    task = _make_task(
+        session_id="12345678-1234-1234-1234-123456789abc",
+        assignee="alice",
+        claude_session_started=None,
+    )
+    fresh = datetime.now(UTC).isoformat()
+
+    class _FreshCache:
+        def get_session_started(self, _vault: str, _item_id: str) -> str:
+            return fresh
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_FreshCache()),
+        patch("vault_ui.cleanup.Path.exists", return_value=True),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", new=AsyncMock()),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+
+
+@pytest.mark.asyncio
 async def test_goal_orphan_sweep_reads_marker_from_status_cache() -> None:
     """The goal sweep mirrors the task sweep — same bug, same fix, own lock.
 

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(ui): A page reload during a session launch no longer shows the `● Live` take-over badge on a task/goal that is still booting. `isStarting` is now gated on the durable `claude_session_started` marker alone (not `!claude_session_id`), because the assistant's session-connect writes `claude_session_id` mid-turn — before the headless turn finishes — so an id present under a set marker is the launch, not a resumable session. To keep the marker meaning exactly "launch turn in flight", `run_task`/`run_goal` now also clear it on success (previously only on failure/reset), and the stale-marker cleanup sweep now clears expired markers on id-bearing tasks too (migrates launches that predate the clear-on-success change). Cache-bust token bumped to `2026-09-01-starting-marker-wins` so the fixed gate reaches the wall.
+
 ## v0.60.0
 
 - fix: `resolve_session_id` now matches a display name only against a session's **current** title (the last `custom-title` entry in its transcript), never a title the session used to have, and an ambiguous name — two or more sessions currently sharing the same title — resolves to `None` instead of whichever file the filesystem listed first, so Resume can no longer be pointed at a conversation that worked a different task. The ambiguity is logged at warning level with all tied session ids; callers keep the display name in frontmatter for a human to resolve.

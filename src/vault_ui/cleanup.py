@@ -170,8 +170,15 @@ async def cleanup_stale_sessions(config: Config) -> int:
                         exc_info=True,
                     )
 
-            # Orphaned "Starting…" markers — tasks carrying the marker but NO
-            # session id. The loop above never sees them (it filters on
+            # Stale "Starting…" markers. Originally this sweep only handled tasks
+            # carrying the marker but NO session id (a marker orphaned by a mid-launch
+            # server restart); since 2026-09-01 it also clears markers on id-bearing
+            # tasks once the marker is old. The marker means "launch turn in flight",
+            # and it is now cleared on successful launch (run_task / run_goal) — so an
+            # id-bearing task with a marker older than the TTL is either a launch that
+            # predates that clear-on-success change or one whose clear failed; either
+            # way the turn is long done and the card must not stay on "Starting…".
+            # The loop above never sees marker-only tasks (it filters on
             # claude_session_id), so before this sweep nothing on any code path
             # could clear one left behind by a mid-launch server restart.
             # The marker must come from the StatusCache, NOT from the Task objects
@@ -191,8 +198,17 @@ async def cleanup_stale_sessions(config: Config) -> int:
                 marker = started_cache.get_session_started(vault.name, task.id) or (
                     task.claude_session_started
                 )
-                if not marker or task.claude_session_id:
+                if not marker:
                     continue
+                # An id-bearing task whose session file does NOT exist is a stale
+                # session the main sweep already cleared (id AND marker together in
+                # lockstep) — skip it here to avoid a redundant second clear. This
+                # sweep only extends the main sweep for id-bearing tasks with a
+                # VALID session file, which the main sweep deliberately leaves alone.
+                if task.claude_session_id:
+                    session_file = project_dir / f"{task.claude_session_id}.jsonl"
+                    if not session_file.exists():
+                        continue
                 age = _marker_age_seconds(str(marker))
                 if age is not None and age < _STARTING_MARKER_TTL_SECONDS:
                     continue  # a turn this young may still be running
@@ -404,8 +420,17 @@ async def cleanup_stale_sessions(config: Config) -> int:
                     # side: the Goal model has no such field at all, so the cache is
                     # the only source here.
                     marker = goal_started_cache.get_session_started(vault.name, goal.id)
-                    if not marker or goal.claude_session_id:
+                    if not marker:
                         continue
+                    # Same guard as the task side: an id-bearing goal whose session
+                    # file does NOT exist is a stale session the main goal sweep
+                    # already cleared (id AND marker in lockstep) — skip the redundant
+                    # second clear. Only id-bearing goals with a VALID session file
+                    # reach the age check below.
+                    if goal.claude_session_id:
+                        goal_session_file = project_dir / f"{goal.claude_session_id}.jsonl"
+                        if not goal_session_file.exists():
+                            continue
                     age = _marker_age_seconds(str(marker))
                     if age is not None and age < _STARTING_MARKER_TTL_SECONDS:
                         continue  # a turn this young may still be running

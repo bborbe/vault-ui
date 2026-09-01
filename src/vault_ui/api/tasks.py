@@ -971,12 +971,15 @@ async def run_task(
         task = await client.show_task(task_id)
 
         # Mark the session as started before launching. This is a durable marker
-        # (survives modal dismiss, page reload, second tab) that stays set until
-        # claude_session_id is cleared — it is NOT cleared here. Its value is the
-        # launch timestamp, so a marker orphaned by a server restart can be aged
-        # out by the cleanup sweep and the card can show elapsed time. The card shows
-        # "Starting…" while the flag is set but no claude_session_id has landed yet,
-        # then "Resume" once the session id lands.
+        # (survives modal dismiss, page reload, second tab) whose value is the launch
+        # timestamp, so a marker orphaned by a server restart can be aged out by the
+        # cleanup sweep and the card can show elapsed time. The marker means exactly
+        # "a launch turn is in flight": the frontend shows "Starting…" while it is
+        # set, regardless of whether claude_session_id has landed yet — the assistant
+        # writes the id mid-turn, before the turn finishes, so an id present under a
+        # set marker is still the launch, not a resumable session. It is cleared on
+        # success (below, once the turn completes), on failure (except below), on
+        # session reset, and by the stale-marker cleanup sweep.
         await client.set_field(task_id, "claude_session_started", _session_started_marker())
 
         try:
@@ -990,6 +993,13 @@ async def run_task(
             with suppress(Exception):
                 await client.clear_field(task_id, "claude_session_started")
             raise
+
+        # Launch succeeded — the turn has completed and the session is resumable.
+        # Clear the marker so the card flips off "Starting…" to "Resume"/"Live".
+        # Suppressed: a clear failure must not turn a successful launch into a 500;
+        # the stale-marker cleanup sweep converges it within its TTL.
+        with suppress(Exception):
+            await client.clear_field(task_id, "claude_session_started")
 
         # Build command: use vault-specific script from config (handles cd internally)
         command = _build_resume_command(vault_config, session_id, task_title=task.title)
@@ -1123,8 +1133,11 @@ async def run_goal(
         # Mark the session as started before minting. This is a durable flag that
         # survives concurrent views, page reloads, and cross-tab renders — any
         # view sees "Starting…" while the mint is in flight, then "Resume" once the
-        # session id lands. On mint failure the flag is cleared so the card returns
-        # to "Start" instead of being stuck on "Starting…".
+        # session id lands. The marker means exactly "a launch turn is in flight":
+        # the assistant writes the id mid-turn, so an id present under a set marker
+        # is still the launch, not a resumable session. On mint failure the flag is
+        # cleared so the card returns to "Start" instead of being stuck on
+        # "Starting…".
         await client.set_goal_field(goal_id, "claude_session_started", _session_started_marker())
 
         try:
@@ -1143,6 +1156,13 @@ async def run_goal(
         # Store the minted session id on the goal via vault-cli (not a direct file
         # write) so /api/goals surfaces it and the card flips to Resume.
         await client.set_goal_field(goal_id, "claude_session_id", session_id)
+
+        # Mint succeeded — the turn has completed and the session is resumable.
+        # Clear the marker so the card flips off "Starting…" to "Resume"/"Live".
+        # Suppressed: a clear failure must not turn a successful mint into a 500;
+        # the stale-marker cleanup sweep converges it within its TTL.
+        with suppress(Exception):
+            await client.clear_goal_field(goal_id, "claude_session_started")
 
         command = _build_resume_command(vault_config, session_id, task_title=goal.title)
 
