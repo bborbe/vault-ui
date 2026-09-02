@@ -219,6 +219,30 @@ async def test_parse_task_with_dates_and_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parse_task_flag_true() -> None:
+    """_parse_task maps the flag field from vault-cli JSON."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, _task_json(flag=True))
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        task = await client.show_task("Test Task")
+
+    assert task.flag is True
+
+
+@pytest.mark.asyncio
+async def test_parse_task_flag_absent_defaults_false() -> None:
+    """A task without a flag in vault-cli JSON reads as un-flagged."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, _task_json())
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        task = await client.show_task("Test Task")
+
+    assert task.flag is False
+
+
+@pytest.mark.asyncio
 async def test_parse_task_without_project() -> None:
     """Test _parse_task handles missing project field."""
     client = VaultCLIClient("vault-cli", "TestVault")

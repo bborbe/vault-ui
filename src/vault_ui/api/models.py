@@ -38,6 +38,7 @@ class Task:
     goals: list[str] | None = (
         None  # From frontmatter: list of goal names with [[ ]] brackets stripped
     )
+    flag: bool = False  # From frontmatter: true if the task is flagged (picked for today)
 
 
 @dataclass
@@ -83,6 +84,7 @@ class TaskResponse(BaseModel):
     recently_completed: bool = False
     vault: str  # Vault name this task belongs to
     goals: list[str] | None = None
+    flag: bool = False  # From frontmatter: true if the task is flagged (picked for today)
     # Newer of the task file mtime and the mtime of the claude_session_id
     # transcript — "when did anything last happen here". See activity.py.
     activity_date: datetime | None = None

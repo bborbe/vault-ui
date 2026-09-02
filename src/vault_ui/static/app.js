@@ -1713,6 +1713,11 @@ function escapeHtml(text) {
 // date sinking to the bottom. Ties fall through to the default ordering so
 // cards don't jitter between renders.
 function sortBoardItems(a, b, kind) {
+    // Flagged cards always sort to the top, before any sort mode applies —
+    // the "picked for today" marker beats urgency tier, priority and recency.
+    const fa = !!a.flag;
+    const fb = !!b.flag;
+    if (fa !== fb) return fa ? -1 : 1;
     if (currentSort === 'priority') {
         return normalizePriority(a.priority) - normalizePriority(b.priority);
     }

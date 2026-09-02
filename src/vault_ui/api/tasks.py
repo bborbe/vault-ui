@@ -2118,6 +2118,7 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         recently_completed=task.recently_completed,
         vault=vault_config.name,
         goals=task.goals,
+        flag=task.flag,
         activity_date=activity_date,
         session_state=session_state,
     )

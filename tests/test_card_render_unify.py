@@ -54,6 +54,19 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
     assert 'href="${goal.obsidian_url}"' in body  # title link preserved inline
 
 
+def test_flag_check_leads_every_sort_mode() -> None:
+    """Flagged cards sort to the top before any sort mode applies — the flag
+    comparison must precede the priority/modified/default branches, otherwise
+    the header sort-select would override the "picked for today" marker."""
+    body = _slice("function sortBoardItems", 700)
+    assert "!!a.flag" in body
+    assert "!!b.flag" in body
+    # The flag branch must come before every mode-specific branch.
+    assert body.index("!!a.flag") < body.index("currentSort === 'priority'")
+    assert body.index("!!a.flag") < body.index("currentSort === 'modified'")
+    assert body.index("!!a.flag") < body.index("defaultSortCompare")
+
+
 def test_cachebust_token_bumped() -> None:
     """index.html carries a non-empty app.js token; known-stale tokens are gone.
 

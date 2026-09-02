@@ -302,6 +302,7 @@ class VaultCLIClient:
             assignee=data.get("assignee"),
             blocked_by=blocked_by,
             goals=goals,
+            flag=bool(data.get("flag", False)),
         )
 
     def _parse_goal(self, data: dict[str, Any]) -> Goal:

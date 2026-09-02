@@ -145,6 +145,32 @@ TASKS = [
         completed_date=None,
         goals=None,
     ),
+    # Flagged pick — low priority, no dates, old mtime: it must still jump to
+    # the top of every sort mode, because the flag beats urgency tier, priority
+    # and recency.
+    Task(
+        id="Flagged Pick",
+        title="Flagged Pick",
+        status="in_progress",
+        phase="execution",
+        project_path=None,
+        content="",
+        description=None,
+        modified_date=datetime(2025, 12, 1),
+        defer_date=None,
+        planned_date=None,
+        due_date=None,
+        priority=4,
+        category=None,
+        recurring=None,
+        claude_session_id=None,
+        claude_session_started=None,
+        assignee=None,
+        blocked_by=None,
+        completed_date=None,
+        goals=None,
+        flag=True,
+    ),
 ]
 
 # Goals land in the In Progress status column. Priorities and mtimes are
@@ -316,8 +342,9 @@ def test_sort_select_renders_with_three_options(live_server, page):
 
 def test_default_order_matches_legacy_sort(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    expect(page.locator(".task-card")).to_have_count(5)
+    expect(page.locator(".task-card")).to_have_count(6)
     assert _column_ids(page, "Execution") == [
+        "Flagged Pick",
         "Overdue Low",
         "High Recent",
         "Med Mid",
@@ -328,11 +355,12 @@ def test_default_order_matches_legacy_sort(live_server, page):
 
 def test_priority_sort_reorders_and_persists(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    expect(page.locator(".task-card")).to_have_count(5)
+    expect(page.locator(".task-card")).to_have_count(6)
 
     page.select_option("#sort-select", "priority")
     assert "sort=priority" in page.url
     assert _column_ids(page, "Execution") == [
+        "Flagged Pick",
         "High Recent",
         "Med Mid",
         "Overdue Low",
@@ -343,8 +371,9 @@ def test_priority_sort_reorders_and_persists(live_server, page):
     # Reload preserves both the selection and the order.
     page.reload()
     expect(page.locator("#sort-select")).to_have_value("priority")
-    expect(page.locator(".task-card")).to_have_count(5)
+    expect(page.locator(".task-card")).to_have_count(6)
     assert _column_ids(page, "Execution") == [
+        "Flagged Pick",
         "High Recent",
         "Med Mid",
         "Overdue Low",
@@ -355,14 +384,16 @@ def test_priority_sort_reorders_and_persists(live_server, page):
 
 def test_modified_sort_orders_by_activity_newest_first(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    expect(page.locator(".task-card")).to_have_count(5)
+    expect(page.locator(".task-card")).to_have_count(6)
 
     page.select_option("#sort-select", "modified")
     assert "sort=modified" in page.url
     # Most recent activity first; the task with no activity_date sinks to the
     # bottom even when adjacent to the oldest-dated one (regression pin for the
-    # mixed present/missing -Infinity comparator path).
+    # mixed present/missing -Infinity comparator path). Flagged Pick still
+    # leads — the flag beats recency.
     assert _column_ids(page, "Execution") == [
+        "Flagged Pick",
         "High Recent",
         "Med Mid",
         "None Old",
@@ -373,15 +404,26 @@ def test_modified_sort_orders_by_activity_newest_first(live_server, page):
 
 def test_unknown_sort_value_falls_back_to_default(live_server, page):
     page.goto(f"{live_server}/?status=in_progress&view=tasks&sort=bogus")
-    expect(page.locator(".task-card")).to_have_count(5)
+    expect(page.locator(".task-card")).to_have_count(6)
     expect(page.locator("#sort-select")).to_have_value("default")
     assert _column_ids(page, "Execution") == [
+        "Flagged Pick",
         "Overdue Low",
         "High Recent",
         "Med Mid",
         "None Old",
         "No Date",
     ]
+
+
+def test_flagged_task_sorts_to_top_in_all_modes(live_server, page):
+    """The flag is the primary sort key: Flagged Pick leads under every mode,
+    including 'modified' where its old mtime would otherwise sink it."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    expect(page.locator(".task-card")).to_have_count(6)
+    for mode in ("default", "priority", "modified"):
+        page.select_option("#sort-select", mode)
+        assert _column_ids(page, "Execution")[0] == "Flagged Pick", f"mode={mode}"
 
 
 def test_goals_view_honors_sort(live_server, page):
