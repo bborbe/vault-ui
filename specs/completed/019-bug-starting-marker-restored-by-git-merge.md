@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-09-03T17:15:03Z"
 generating: "2026-09-03T17:41:06Z"
 prompted: "2026-09-03T17:52:47Z"
 verifying: "2026-09-03T18:16:17Z"
+completed: "2026-09-03T18:25:25Z"
 branch: dark-factory/bug-starting-marker-restored-by-git-merge
 ---
 
