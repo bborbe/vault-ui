@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.0
 
 - feat: Cap Start-button session launches at the configurable `max_concurrent_sessions` limit (default 20, set in config.yaml); excess clicks are refused with HTTP 429 (hard refuse, no queue) naming the current count and cap, surfaced as a toast by the existing error path
 
