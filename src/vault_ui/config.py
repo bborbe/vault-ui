@@ -31,6 +31,9 @@ class Config:
     vaults: list[VaultConfig] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8000
+    # Maximum concurrent Claude sessions admitted via the Start button; excess
+    # clicks are refused with HTTP 429 (hard refuse, no queue).
+    max_concurrent_sessions: int = 20
     current_user: str = ""
 
     def get_vault(self, name: str) -> VaultConfig | None:
@@ -168,5 +171,6 @@ def load_config(config_path: Path | None = None) -> Config:
         vaults=vaults,
         host=data.get("host", "127.0.0.1"),
         port=data.get("port", 8000),
+        max_concurrent_sessions=int(data.get("max_concurrent_sessions", 20)),
         current_user=current_user,
     )

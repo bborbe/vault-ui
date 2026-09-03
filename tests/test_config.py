@@ -117,6 +117,37 @@ def test_load_config_optional_overrides(tmp_path: Path) -> None:
     assert config.port == 9000
 
 
+def test_load_config_max_concurrent_sessions_default(tmp_path: Path) -> None:
+    """load_config defaults max_concurrent_sessions to 20 when the key is absent."""
+    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults:\n  personal: {}\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert config.max_concurrent_sessions == 20
+
+
+def test_load_config_max_concurrent_sessions_override(tmp_path: Path) -> None:
+    """load_config reads max_concurrent_sessions from YAML."""
+    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults:\n  personal: {}\nmax_concurrent_sessions: 5\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert config.max_concurrent_sessions == 5
+
+
+def test_load_config_max_concurrent_sessions_coerces_string(tmp_path: Path) -> None:
+    """A string YAML value is coerced to int — the gate compares count >= cap as ints."""
+    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text('vaults:\n  personal: {}\nmax_concurrent_sessions: "5"\n')
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert config.max_concurrent_sessions == 5
+    assert isinstance(config.max_concurrent_sessions, int)
+
+
 def test_load_config_missing_file_raises(tmp_path: Path) -> None:
     """load_config raises FileNotFoundError when config.yaml is missing."""
     with pytest.raises(FileNotFoundError, match=r"config\.yaml not found"):

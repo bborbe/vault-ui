@@ -40,6 +40,11 @@ package = true
 
 [tool.hatch.version]
 source = "vcs"
+# hideGit masks /workspace/.git as a character device, which breaks
+# setuptools-scm's version detection inside uv's isolated build. fallback-version
+# is the official hatch-vcs escape hatch, only used when git is unavailable —
+# normal git-tag-based releases are unaffected.
+fallback-version = "0.61.1"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vault_ui"]

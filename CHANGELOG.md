@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Cap Start-button session launches at the configurable `max_concurrent_sessions` limit (default 20, set in config.yaml); excess clicks are refused with HTTP 429 (hard refuse, no queue) naming the current count and cap, surfaced as a toast by the existing error path
+
 ## v0.61.1
 - Fix two ruff errors in `api/tasks.py` flag endpoint (unused `vault_config` assignment, `raise` in `except` without `from`) that broke `make lint` on master and failed CI for three consecutive runs including the v0.61.0 release
 
