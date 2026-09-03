@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: tasks carry a frontmatter `flag` field ("picked for today"). Flagged cards sort to the top of every column under all sort modes (default / priority / last modified) and render with an amber ring; the card-footer toggle sets/clears the flag via `PATCH /api/tasks/{id}/flag`, writing through `vault-cli task set/clear flag`. Needs a vault-cli release exposing `flag` in `task list`/`show` JSON.
+
 ## v0.60.1
 
 - fix(ui): A page reload during a session launch no longer shows the `● Live` take-over badge on a task/goal that is still booting. `isStarting` is now gated on the durable `claude_session_started` marker alone (not `!claude_session_id`), because the assistant's session-connect writes `claude_session_id` mid-turn — before the headless turn finishes — so an id present under a set marker is the launch, not a resumable session. To keep the marker meaning exactly "launch turn in flight", `run_task`/`run_goal` now also clear it on success (previously only on failure/reset), and the stale-marker cleanup sweep now clears expired markers on id-bearing tasks too (migrates launches that predate the clear-on-success change). Cache-bust token bumped to `2026-09-01-starting-marker-wins` so the fixed gate reaches the wall.
