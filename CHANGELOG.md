@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.1
 
 - fix: A relaunch that starts while the cleanup sweep is clearing a resurrected `claude_session_started` marker for the same `(vault, item_id)` keeps its `LaunchRegistry` record — the post-clear eviction now drops the record only if it is still FINISHED (`evict_if_finished`), so a `begin()` that lands during the awaited `task clear`/`goal clear` subprocess is not undone by the sweep and the relaunch stays protected against a resurrected marker.
 - fix: The cleanup sweep now re-clears a `claude_session_started` marker that a concurrent git merge (obsidian-git pulling a `git-rest` commit) restored after the launch's own clear — at most once per finished `LaunchRegistry` record, re-clearing via the existing `task clear`/`goal clear` subprocess form, evicting the record only once the marker is confirmed gone from the file (successful clear or already absent), and logging a failed re-clear at WARNING with vault + id + error so the next pass retries — so a finished launch can never re-surface "Starting…" and the in-memory registry stays bounded.
