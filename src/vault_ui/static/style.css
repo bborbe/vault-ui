@@ -999,6 +999,30 @@ h1 {
     opacity: 0.55;
 }
 
+/* Flagged (picked for today) — amber ring + slightly lighter fill so it reads
+   as the day's focus even when the card also carries an urgency left-border. */
+.task-card.flagged {
+    border: 2px solid #fbbf24; /* amber-400 */
+    background: #424242;
+}
+
+.flag-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+    opacity: 0.6;
+    filter: grayscale(1);
+    align-self: center;
+}
+
+.flag-btn.flagged {
+    opacity: 1;
+    filter: none;
+}
+
 .task-card.recently-completed {
     border-left: 4px solid #86efac; /* green-300 — recently completed */
     opacity: 0.55;

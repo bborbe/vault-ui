@@ -357,6 +357,12 @@ class VaultResponse(BaseModel):
     claude_script: str
 
 
+class UpdateFlagRequest(BaseModel):
+    """Request model for updating the task flag (picked-for-today marker)."""
+
+    flag: bool = True
+
+
 class UpdatePhaseRequest(BaseModel):
     """Request model for updating task phase."""
 
@@ -1528,6 +1534,53 @@ async def update_task_phase(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.patch("/tasks/{task_id}/flag")
+async def update_task_flag(
+    vault: str,
+    task_id: str,
+    request: UpdateFlagRequest,
+) -> dict[str, str | bool]:
+    """Set or clear the task's flag (picked-for-today marker).
+
+    Writes through vault-cli's validated field path, so an invalid value can
+    never reach frontmatter from here. On success the change is broadcast so
+    open boards re-render with the flagged card sorted to the top.
+
+    Args:
+        vault: Vault name
+        task_id: Task ID (filename without .md)
+        request: Flag update request
+
+    Returns:
+        Success message with the new flag value
+
+    Raises:
+        HTTPException: If vault unknown or the vault-cli write fails
+    """
+    try:
+        vault_config = get_vault_config(vault)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown vault: {vault}")
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        if request.flag:
+            await client.set_field(task_id, "flag", "true")
+        else:
+            await client.clear_field(task_id, "flag")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if _connection_manager:
+        await _connection_manager.broadcast(
+            {"type": "task_updated", "task_id": task_id, "item_kind": "task", "vault": vault}
+        )
+
+    return {"status": "success", "task_id": task_id, "flag": request.flag}
 
 
 @router.patch("/goals/{goal_id}/status")

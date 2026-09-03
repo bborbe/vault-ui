@@ -1250,6 +1250,7 @@ function createTaskCard(task) {
     if (task.upcoming) card.classList.add('upcoming');
     if (task.recently_completed) card.classList.add('recently-completed');
     if (task.status === 'hold') card.classList.add('on-hold');
+    if (task.flag) card.classList.add('flagged');
 
     // Drag handlers
     card.addEventListener('dragstart', (e) => {
@@ -1286,7 +1287,9 @@ function createTaskCard(task) {
         : `<a class="assign-to-me-link" onclick="assignToMe('${escapeHtml(task.id)}', '${escapeHtml(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
 
     const startButton = sessionButtonHtml('task', task);
+    const flagButton = `<button class="flag-btn ${task.flag ? 'flagged' : ''}" onclick="toggleFlag('${escapeHtml(task.id)}', '${escapeHtml(task.vault)}', ${task.flag})" title="${task.flag ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${task.flag ? '🚩' : '⚑'}</button>`;
     const footerLeft = `
+        ${flagButton}
         ${holdBadge}
         ${jiraBadge}
         ${assigneeBadge}
@@ -1295,6 +1298,20 @@ function createTaskCard(task) {
     `;
     card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, startButton);
     return card;
+}
+
+async function toggleFlag(taskId, vault, current) {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/flag?vault=${encodeURIComponent(vault)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flag: !current }),
+    });
+    if (response.ok) {
+        await loadCurrentView();
+    } else {
+        const err = await response.json().catch(() => ({}));
+        alert(`Failed to update flag: ${err.detail || response.status}`);
+    }
 }
 
 function createGoalCard(goal) {

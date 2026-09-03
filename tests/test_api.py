@@ -1065,6 +1065,52 @@ def test_update_task_phase_vault_cli_failure_returns_500(
     assert "phase update failed" in response.json()["detail"]
 
 
+def test_update_task_flag_sets_field(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/flag with flag=true writes flag via vault-cli set_field."""
+    mock_vault_client.set_field = AsyncMock()
+    response = test_client.patch(
+        "/api/tasks/Test%20Task/flag?vault=TestVault",
+        json={"flag": True},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "task_id": "Test Task", "flag": True}
+    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "flag", "true")
+
+
+def test_update_task_flag_clears_field(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/flag with flag=false clears the flag via vault-cli."""
+    mock_vault_client.clear_field = AsyncMock()
+    response = test_client.patch(
+        "/api/tasks/Test%20Task/flag?vault=TestVault",
+        json={"flag": False},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "task_id": "Test Task", "flag": False}
+    mock_vault_client.clear_field.assert_awaited_once_with("Test Task", "flag")
+
+
+def test_update_task_flag_unknown_vault_404(
+    test_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PATCH /tasks/{id}/flag on an unknown vault returns 404."""
+    monkeypatch.setattr(
+        "vault_ui.api.tasks.get_vault_config",
+        lambda vault: (_ for _ in ()).throw(ValueError(vault)),
+    )
+    response = test_client.patch(
+        "/api/tasks/Test%20Task/flag?vault=NoSuchVault",
+        json={"flag": True},
+    )
+    assert response.status_code == 404
+
+
 def test_update_task_phase_preserves_hold_status(
     tmp_vault: Path,
     sample_task_file: Path,

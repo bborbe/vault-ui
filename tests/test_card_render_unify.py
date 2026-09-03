@@ -38,7 +38,7 @@ def test_shared_card_shell_used_by_both_kinds() -> None:
 
 def test_task_wrapper_keeps_urgency_and_jira() -> None:
     """The task wrapper still carries urgency-tier + Jira-badge logic."""
-    body = _slice("function createTaskCard", 3000)
+    body = _slice("function createTaskCard", 3400)
     assert "getUrgencyTier(task)" in body
     assert "urgency-overdue" in body
     assert "extractJiraIssue(task.title)" in body
@@ -52,6 +52,13 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
     assert "dataset.kind = 'goal'" in body
     assert "'on-hold'" in body or "status === 'hold'" in body
     assert 'href="${goal.obsidian_url}"' in body  # title link preserved inline
+
+
+def test_flag_control_present_on_task_cards() -> None:
+    """Task cards carry a flag toggle and the flagged class + toggle function."""
+    assert "toggleFlag(" in APP_JS
+    assert "classList.add('flagged')" in APP_JS
+    assert "task.flag ? '🚩' : '⚑'" in APP_JS
 
 
 def test_flag_check_leads_every_sort_mode() -> None:
