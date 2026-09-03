@@ -9,6 +9,7 @@ import pytest
 from vault_ui.api.models import Goal, Task
 from vault_ui.cleanup import cleanup_stale_sessions, derive_claude_project_dir
 from vault_ui.config import Config, VaultConfig
+from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 
 
 def _make_task(
@@ -803,3 +804,499 @@ async def test_goal_orphan_sweep_leaves_a_fresh_marker_alone() -> None:
         cleared = await cleanup_stale_sessions(config)
 
     assert cleared == 0
+
+
+# --- LaunchRegistry-aware cleanup sweep tests ---
+#
+# The launch registry records which launches the server knows are in flight vs
+# finished. A finished record makes the sweep re-clear a resurrected
+# "Starting…" marker from the file (once per record, then evict); an in-flight
+# record makes the sweep never clear that marker, no matter how old. Markers
+# with NO registry record (the post-restart orphan case) keep the plain TTL
+# fallback. Every test patches the registry with a real instance so cleanup's
+# lazy in-function import resolves the patched attribute at call time.
+
+
+class _NoMarkerCache:
+    """Status cache that reports no ``claude_session_started`` marker."""
+
+    def get_session_started(self, _vault: str, _item_id: str) -> None:
+        return None
+
+
+class _MarkerCache:
+    """Status cache that reports a fixed ``claude_session_started`` marker."""
+
+    def __init__(self, marker: str) -> None:
+        self._marker = marker
+
+    def get_session_started(self, _vault: str, _item_id: str) -> str:
+        return self._marker
+
+
+@pytest.mark.asyncio
+async def test_registry_finished_task_without_marker_is_evicted() -> None:
+    """A finished record whose marker is already gone is dropped without a clear.
+
+    This is the normal post-launch path: the launch's own clear already won, so
+    the sweep just removes the registry record. No clear subprocess is spawned.
+    """
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+    registry.finish("testvault", "stale-task")
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_subprocess = AsyncMock()
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_NoMarkerCache()),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "stale-task") is None, (
+        "record should be evicted once the marker is confirmed gone"
+    )
+    assert mock_subprocess.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_registry_resurrected_task_marker_recleared_exactly_once() -> None:
+    """A finished launch's resurrected task marker is re-cleared once, not on TTL.
+
+    The cache returns a FRESH marker (younger than the TTL), proving the
+    registry re-clear does not wait on the TTL. After one pass the record is
+    evicted, so a second pass cannot clear it again.
+    """
+    from datetime import UTC, datetime
+
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+    registry.finish("testvault", "stale-task")
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+    fresh = datetime.now(UTC).isoformat()
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache(fresh)),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1
+    assert registry.state("testvault", "stale-task") is None, (
+        "record should be evicted after the successful re-clear"
+    )
+    calls = mock_subprocess.call_args_list
+    assert len(calls) == 1, calls
+    args = calls[0].args
+    assert "task" in args and "clear" in args and "stale-task" in args
+    assert "claude_session_started" in args
+    assert "--vault" in args and "testvault" in args
+
+
+@pytest.mark.asyncio
+async def test_registry_resurrected_goal_marker_recleared_exactly_once() -> None:
+    """A finished launch's resurrected goal marker is re-cleared once.
+
+    The goal carries NO session id so the main goal sweep cannot spawn its own
+    ``goal clear … claude_session_started`` and break the "exactly one" count.
+    """
+    registry = LaunchRegistry()
+    registry.begin("testvault", "goal-1", "goal")
+    registry.finish("testvault", "goal-1")
+
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice", goal_id="goal-1")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1
+    assert registry.state("testvault", "goal-1") is None, (
+        "record should be evicted after the successful re-clear"
+    )
+    calls = mock_subprocess.call_args_list
+    assert len(calls) == 1, calls
+    args = calls[0].args
+    assert "goal" in args and "clear" in args and "goal-1" in args
+    assert "claude_session_started" in args
+
+
+@pytest.mark.asyncio
+async def test_registry_kind_dispatch_does_not_cross_clear() -> None:
+    """Task and goal finished records each fire only their own subcommand."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+    registry.finish("testvault", "stale-task")
+    registry.begin("testvault", "goal-1", "goal")
+    registry.finish("testvault", "goal-1")
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+    goal = _make_goal(session_id=None, assignee="alice", goal_id="goal-1")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 2
+    assert registry.state("testvault", "stale-task") is None
+    assert registry.state("testvault", "goal-1") is None
+    calls = mock_subprocess.call_args_list
+    task_clears = [
+        c
+        for c in calls
+        if c.args[1] == "task" and "clear" in c.args and "claude_session_started" in c.args
+    ]
+    goal_clears = [
+        c
+        for c in calls
+        if c.args[1] == "goal" and "clear" in c.args and "claude_session_started" in c.args
+    ]
+    assert len(task_clears) == 1, calls
+    assert len(goal_clears) == 1, calls
+
+
+@pytest.mark.asyncio
+async def test_registry_failed_reclear_keeps_record_and_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed re-clear retains the record for the next pass and logs WARNING.
+
+    The record is NOT evicted on failure, so the sweep re-clears on its next
+    pass. The failure is logged (not swallowed) with vault + id + error.
+    """
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+    registry.finish("testvault", "stale-task")
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 1
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"boom"))
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", return_value=mock_proc),
+        caplog.at_level(logging.WARNING, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "stale-task") == FINISHED, (
+        "record must be retained after a failed clear so the next pass retries"
+    )
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("stale-task" in r.message and "testvault" in r.message for r in warnings), (
+        "failed re-clear must be logged at WARNING with vault + id"
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_in_flight_launch_is_never_cleared() -> None:
+    """An IN_FLIGHT launch is never cleared, even when the marker is old.
+
+    The registry skip in the TTL loop protects an in-flight launch: the server
+    knows that turn is still running. An OLD marker is used so the plain TTL
+    path WOULD have cleared it, proving the registry skip wins.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from vault_ui.cleanup import _STARTING_MARKER_TTL_SECONDS
+
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")  # IN_FLIGHT only
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+    old = (datetime.now(UTC) - timedelta(seconds=_STARTING_MARKER_TTL_SECONDS + 60)).isoformat()
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_subprocess = AsyncMock()
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache(old)),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "stale-task") == IN_FLIGHT
+    assert mock_subprocess.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_registry_ttl_fallback_still_works_without_record() -> None:
+    """Markers with NO registry record keep the existing orphan TTL path."""
+    from datetime import UTC, datetime, timedelta
+
+    from vault_ui.cleanup import _STARTING_MARKER_TTL_SECONDS
+
+    registry = LaunchRegistry()  # empty — no record for the task
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+    old = (datetime.now(UTC) - timedelta(seconds=_STARTING_MARKER_TTL_SECONDS + 60)).isoformat()
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache(old)),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1
+    calls = mock_subprocess.call_args_list
+    task_clears = [
+        c
+        for c in calls
+        if c.args[1] == "task" and "clear" in c.args and "claude_session_started" in c.args
+    ]
+    assert len(task_clears) == 1, calls
+    assert registry.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_registry_size_line_emitted_per_pass(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each sweep pass emits an INFO line reporting the registry size."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")  # in-flight, never evicted
+
+    config = _make_config(current_user="alice")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_NoMarkerCache()),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        caplog.at_level(logging.INFO, logger="vault_ui.cleanup"),
+    ):
+        await cleanup_stale_sessions(config)
+
+    infos = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert any("registry size" in r.message for r in infos), (
+        "per-pass registry size line must be emitted at INFO"
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_reclear_exception_keeps_record_and_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exception during the task re-clear retains the record and logs WARNING."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+    registry.finish("testvault", "stale-task")
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    async def _boom(*args: object, **kwargs: object) -> AsyncMock:
+        raise RuntimeError("boom")
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", side_effect=_boom),
+        caplog.at_level(logging.WARNING, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "stale-task") == FINISHED, (
+        "record must be retained after an exception so the next pass retries"
+    )
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("stale-task" in r.message and "testvault" in r.message for r in warnings), (
+        "re-clear exception must be logged at WARNING with vault + id"
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_failed_goal_reclear_keeps_record_and_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed goal re-clear retains the record and logs WARNING."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "goal-1", "goal")
+    registry.finish("testvault", "goal-1")
+
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice", goal_id="goal-1")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 1
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"boom"))
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", return_value=mock_proc),
+        caplog.at_level(logging.WARNING, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "goal-1") == FINISHED, (
+        "record must be retained after a failed clear so the next pass retries"
+    )
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("goal-1" in r.message and "testvault" in r.message for r in warnings), (
+        "failed goal re-clear must be logged at WARNING with vault + id"
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_finished_goal_without_marker_is_evicted() -> None:
+    """A finished goal record whose marker is already gone is dropped without a clear."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "goal-1", "goal")
+    registry.finish("testvault", "goal-1")
+
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice", goal_id="goal-1")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    mock_subprocess = AsyncMock()
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_NoMarkerCache()),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "goal-1") is None, (
+        "goal record should be evicted once the marker is confirmed gone"
+    )
+    assert mock_subprocess.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_registry_goal_reclear_exception_keeps_record_and_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exception during the goal re-clear retains the record and logs WARNING."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "goal-1", "goal")
+    registry.finish("testvault", "goal-1")
+
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice", goal_id="goal-1")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    async def _boom(*args: object, **kwargs: object) -> AsyncMock:
+        raise RuntimeError("boom")
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", side_effect=_boom),
+        caplog.at_level(logging.WARNING, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert registry.state("testvault", "goal-1") == FINISHED, (
+        "record must be retained after an exception so the next pass retries"
+    )
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("goal-1" in r.message and "testvault" in r.message for r in warnings), (
+        "goal re-clear exception must be logged at WARNING with vault + id"
+    )

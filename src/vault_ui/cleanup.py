@@ -71,6 +71,12 @@ async def cleanup_stale_sessions(config: Config) -> int:
     Returns the number of session IDs cleared across all vaults.
     """
     cleared = 0
+    # Imported here, not at module scope: factory imports cleanup, so a
+    # top-level import closes a cycle (same lazy-import idiom as
+    # get_status_cache below).
+    from vault_ui.factory import get_launch_registry
+
+    launch_registry = get_launch_registry()
     for vault in config.vaults:
         try:
             client = VaultCLIClient(vault.vault_cli_path, vault.name)
@@ -200,6 +206,14 @@ async def cleanup_stale_sessions(config: Config) -> int:
                 )
                 if not marker:
                     continue
+                # A launch the registry knows about is never cleared by this TTL
+                # loop: an IN_FLIGHT record means the server knows the turn is
+                # still running (never clear, regardless of age), and a FINISHED
+                # record is handled by the re-clear pass below. The TTL logic
+                # applies only to markers with NO registry record — the
+                # post-restart orphan case.
+                if launch_registry.state(vault.name, task.id) is not None:
+                    continue
                 # An id-bearing task whose session file does NOT exist is a stale
                 # session the main sweep already cleared (id AND marker together in
                 # lockstep) — skip it here to avoid a redundant second clear. This
@@ -251,6 +265,61 @@ async def cleanup_stale_sessions(config: Config) -> int:
                         e,
                         exc_info=True,
                     )
+
+            # Re-clear resurrected "Starting…" markers for launches the registry
+            # records as finished. A finished launch's marker is dead even if a
+            # concurrent writer (e.g. an obsidian-git merge) restored it after the
+            # launch's own clear — clear it from disk so the file converges with the
+            # server's view. Fires at most once per finished record: the record is
+            # evicted once the clear succeeds or the marker is already gone, and a
+            # failed clear is logged (not swallowed) so the next pass retries.
+            for finished_id, kind in launch_registry.finished(vault.name):
+                if kind != "task":
+                    continue
+                marker = started_cache.get_session_started(vault.name, finished_id)
+                if not marker:
+                    launch_registry.evict(vault.name, finished_id)
+                    continue
+                try:
+                    resurrected_proc = await asyncio.create_subprocess_exec(
+                        vault.vault_cli_path,
+                        "task",
+                        "clear",
+                        finished_id,
+                        "claude_session_started",
+                        "--vault",
+                        vault.name,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _out, resurrected_err = await resurrected_proc.communicate()
+                    if resurrected_proc.returncode != 0:
+                        logger.warning(
+                            "[Cleanup] Failed to clear resurrected Starting marker on task %s"
+                            " in vault %s: %s",
+                            finished_id,
+                            vault.name,
+                            resurrected_err.decode().strip(),
+                        )
+                        # record retained -> retried on the next pass
+                    else:
+                        logger.info(
+                            "[Cleanup] Cleared resurrected Starting marker from task %s"
+                            " in vault %s",
+                            finished_id,
+                            vault.name,
+                        )
+                        cleared += 1
+                        launch_registry.evict(vault.name, finished_id)
+                except Exception as e:
+                    logger.warning(
+                        "[Cleanup] Exception clearing resurrected Starting marker on task %s"
+                        " in vault %s: %s",
+                        finished_id,
+                        vault.name,
+                        e,
+                    )
+                    # record retained -> retried on the next pass
 
             # Goal cleanup — independent try/except so a goal-list failure
             # does not abort the task pass that already completed above
@@ -422,6 +491,12 @@ async def cleanup_stale_sessions(config: Config) -> int:
                     marker = goal_started_cache.get_session_started(vault.name, goal.id)
                     if not marker:
                         continue
+                    # Same registry skip as the task side: an IN_FLIGHT record
+                    # means the server knows the turn is still running (never
+                    # clear), a FINISHED record is handled by the re-clear pass
+                    # below, and only markers with NO record reach the TTL logic.
+                    if launch_registry.state(vault.name, goal.id) is not None:
+                        continue
                     # Same guard as the task side: an id-bearing goal whose session
                     # file does NOT exist is a stale session the main goal sweep
                     # already cleared (id AND marker in lockstep) — skip the redundant
@@ -474,6 +549,59 @@ async def cleanup_stale_sessions(config: Config) -> int:
                             exc_info=True,
                         )
 
+                # Re-clear resurrected "Starting…" markers for GOALS the registry
+                # records as finished — the mirror of the task-side pass above.
+                # Fires at most once per finished record: evicted once the clear
+                # succeeds or the marker is already gone; a failed clear is logged
+                # (not swallowed) so the next pass retries.
+                for finished_id, kind in launch_registry.finished(vault.name):
+                    if kind != "goal":
+                        continue
+                    marker = goal_started_cache.get_session_started(vault.name, finished_id)
+                    if not marker:
+                        launch_registry.evict(vault.name, finished_id)
+                        continue
+                    try:
+                        resurrected_goal_proc = await asyncio.create_subprocess_exec(
+                            vault.vault_cli_path,
+                            "goal",
+                            "clear",
+                            finished_id,
+                            "claude_session_started",
+                            "--vault",
+                            vault.name,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        _og, resurrected_goal_err = await resurrected_goal_proc.communicate()
+                        if resurrected_goal_proc.returncode != 0:
+                            logger.warning(
+                                "[Cleanup] Failed to clear resurrected Starting marker on"
+                                " goal %s in vault %s: %s",
+                                finished_id,
+                                vault.name,
+                                resurrected_goal_err.decode().strip(),
+                            )
+                            # record retained -> retried on the next pass
+                        else:
+                            logger.info(
+                                "[Cleanup] Cleared resurrected Starting marker from goal %s"
+                                " in vault %s",
+                                finished_id,
+                                vault.name,
+                            )
+                            cleared += 1
+                            launch_registry.evict(vault.name, finished_id)
+                    except Exception as e:
+                        logger.warning(
+                            "[Cleanup] Exception clearing resurrected Starting marker on"
+                            " goal %s in vault %s: %s",
+                            finished_id,
+                            vault.name,
+                            e,
+                        )
+                        # record retained -> retried on the next pass
+
             except Exception as e:
                 error_text = str(e).lower()
                 if "no such file or directory" in error_text:
@@ -497,6 +625,7 @@ async def cleanup_stale_sessions(config: Config) -> int:
                 exc_info=True,
             )
 
+    logger.info("[Cleanup] registry size=%d", launch_registry.size())
     logger.info("[Cleanup] Pass complete: cleared %d stale session(s)", cleared)
     return cleared
 

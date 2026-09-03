@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [019-bug-starting-marker-restored-by-git-merge]
+summary: The cleanup sweep now re-clears resurrected claude_session_started markers for launches the LaunchRegistry records as finished — once per finished record, evicting only on confirmed removal and logging failed re-clears at WARNING — skips registry-known items in both task/goal TTL sweeps, and emits a per-pass registry size INFO line, backed by 12 new tests, a lifecycle doc, and a CHANGELOG entry
+execution_id: vault-ui-starting-marker-exec-083-spec-019-sweep-converges-marker-and-docs
+dark-factory-version: dev
 created: "2026-09-03T17:50:00Z"
 queued: "2026-09-03T18:01:41Z"
+started: "2026-09-03T18:10:28Z"
+completed: "2026-09-03T18:16:17Z"
 branch: dark-factory/bug-starting-marker-restored-by-git-merge
 ---
 
