@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.61.1
 - Fix two ruff errors in `api/tasks.py` flag endpoint (unused `vault_config` assignment, `raise` in `except` without `from`) that broke `make lint` on master and failed CI for three consecutive runs including the v0.61.0 release
 
 ## v0.61.0
