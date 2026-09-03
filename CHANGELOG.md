@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.61.0
 
 - feat: tasks carry a frontmatter `flag` field ("picked for today"). Flagged cards sort to the top of every column under all sort modes (default / priority / last modified) and render with an amber ring; the card-footer toggle sets/clears the flag via `PATCH /api/tasks/{id}/flag`, writing through `vault-cli task set/clear flag`. Needs a vault-cli release exposing `flag` in `task list`/`show` JSON.
 
