@@ -36,6 +36,32 @@ def test_evict_drops_record() -> None:
     assert registry.size() == 0
 
 
+def test_evict_if_finished_drops_finished_record() -> None:
+    """evict_if_finished on a FINISHED record removes it and returns True."""
+    registry = LaunchRegistry()
+    registry.begin("vault-a", "item", "task")
+    registry.finish("vault-a", "item")
+    assert registry.evict_if_finished("vault-a", "item") is True
+    assert registry.state("vault-a", "item") is None
+    assert registry.size() == 0
+
+
+def test_evict_if_finished_leaves_in_flight_record() -> None:
+    """evict_if_finished on an IN_FLIGHT record leaves it and returns False."""
+    registry = LaunchRegistry()
+    registry.begin("vault-a", "item", "task")
+    assert registry.evict_if_finished("vault-a", "item") is False
+    assert registry.state("vault-a", "item") == IN_FLIGHT
+    assert registry.size() == 1
+
+
+def test_evict_if_finished_absent_key_returns_false() -> None:
+    """evict_if_finished on an absent key returns False and does not raise."""
+    registry = LaunchRegistry()
+    assert registry.evict_if_finished("vault-a", "nope") is False
+    assert registry.size() == 0
+
+
 def test_finished_filters_by_vault_and_excludes_in_flight() -> None:
     """finished(vault) returns only that vault's FINISHED records."""
     registry = LaunchRegistry()

@@ -917,6 +917,57 @@ async def test_registry_resurrected_task_marker_recleared_exactly_once() -> None
 
 
 @pytest.mark.asyncio
+async def test_registry_task_reclear_keeps_record_on_concurrent_relaunch() -> None:
+    """A relaunch that begins while the clear subprocess is awaited survives the sweep.
+
+    The re-clear pass materializes its FINISHED snapshot, then awaits
+    ``communicate()``; a concurrent ``begin()`` for the same id flips the record
+    back to IN_FLIGHT during that await. The sweep must not then evict that fresh
+    record — an unconditional evict would delete it and leave the relaunch
+    unprotected. This test MUST fail against the current unconditional
+    ``evict()`` and pass after ``evict_if_finished``.
+    """
+    from datetime import UTC, datetime
+
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+    registry.finish("testvault", "stale-task")
+
+    config = _make_config(current_user="alice")
+    task = _make_task(task_id="stale-task", session_id=None, assignee="alice")
+    fresh = datetime.now(UTC).isoformat()
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[task])
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    async def _communicate() -> tuple[bytes, bytes]:
+        # Simulates a POST /run landing during the await: a new launch re-begins
+        # the record while the clear subprocess is still awaited.
+        registry.begin("testvault", "stale-task", "task")
+        return (b"", b"")
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = _communicate
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache(fresh)),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1
+    assert registry.state("testvault", "stale-task") == IN_FLIGHT, (
+        "the relaunch's fresh IN_FLIGHT record must survive the sweep"
+    )
+    assert registry.size() == 1
+
+
+@pytest.mark.asyncio
 async def test_registry_resurrected_goal_marker_recleared_exactly_once() -> None:
     """A finished launch's resurrected goal marker is re-cleared once.
 
@@ -956,6 +1007,52 @@ async def test_registry_resurrected_goal_marker_recleared_exactly_once() -> None
     args = calls[0].args
     assert "goal" in args and "clear" in args and "goal-1" in args
     assert "claude_session_started" in args
+
+
+@pytest.mark.asyncio
+async def test_registry_goal_reclear_keeps_record_on_concurrent_relaunch() -> None:
+    """A goal relaunch that begins while the clear subprocess is awaited survives.
+
+    Mirror of the task-side race: the goal re-clear pass awaits ``communicate()``
+    after materializing its FINISHED snapshot, and a concurrent ``begin()`` for
+    the same id must not be undone by the sweep. This test MUST fail against the
+    current unconditional ``evict()`` and pass after ``evict_if_finished``.
+    """
+    registry = LaunchRegistry()
+    registry.begin("testvault", "goal-1", "goal")
+    registry.finish("testvault", "goal-1")
+
+    config = _make_config(current_user="alice")
+    goal = _make_goal(session_id=None, assignee="alice", goal_id="goal-1")
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=[])
+    mock_client.list_goals = AsyncMock(return_value=[goal])
+
+    async def _communicate() -> tuple[bytes, bytes]:
+        # Simulates a POST /goals/{id}/run landing during the await: a new launch
+        # re-begins the record while the clear subprocess is still awaited.
+        registry.begin("testvault", "goal-1", "goal")
+        return (b"", b"")
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = _communicate
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_status_cache", return_value=_MarkerCache("true")),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 1
+    assert registry.state("testvault", "goal-1") == IN_FLIGHT, (
+        "the relaunch's fresh IN_FLIGHT record must survive the sweep"
+    )
+    assert registry.size() == 1
 
 
 @pytest.mark.asyncio

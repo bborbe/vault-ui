@@ -62,6 +62,25 @@ class LaunchRegistry:
         """Drop the record once the sweep confirms the marker is gone from the file."""
         self._records.pop((vault, item_id), None)
 
+    def evict_if_finished(self, vault: str, item_id: str) -> bool:
+        """Drop the record for ``(vault, item_id)`` only if it is still FINISHED.
+
+        The cleanup sweep decides what to evict from a snapshot taken before it
+        awaits a clear subprocess. During that await a concurrent launch can call
+        ``begin()`` for the same id, flipping the record back to IN_FLIGHT; an
+        unconditional evict would delete that fresh record and leave the relaunch
+        unprotected. Re-checking and deleting in one synchronous step closes that
+        window — there is no await between the check and the delete, so under the
+        single-worker assumption no coroutine can interleave.
+
+        Returns True when a FINISHED record was removed, False otherwise.
+        """
+        record = self._records.get((vault, item_id))
+        if record is None or record[0] != FINISHED:
+            return False
+        self._records.pop((vault, item_id))
+        return True
+
     def finished(self, vault: str) -> list[tuple[str, str]]:
         """Return ``(item_id, kind)`` for every FINISHED record in this vault."""
         return [

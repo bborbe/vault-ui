@@ -69,6 +69,8 @@ the merge restores it after the launch's clear — the file is back to
 The registry + sweep converge the file within one cleanup interval: the next
 sweep pass sees the FINISHED record, re-clears the marker from disk, and evicts
 the record once the marker is confirmed gone — so a finished launch can never
-re-surface "Starting…" and the in-memory registry stays bounded. A failed
-re-clear is logged at WARNING and retried on the next pass; the re-clear fires
-only from the cleanup sweep, never from a list request.
+re-surface "Starting…" and the in-memory registry stays bounded. Eviction is
+conditional: the record is dropped only if it is still FINISHED, so a relaunch
+that begins while the clear subprocess is running keeps its fresh record. A
+failed re-clear is logged at WARNING and retried on the next pass; the re-clear
+fires only from the cleanup sweep, never from a list request.

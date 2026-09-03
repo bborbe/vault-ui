@@ -310,7 +310,10 @@ async def cleanup_stale_sessions(config: Config) -> int:
                             vault.name,
                         )
                         cleared += 1
-                        launch_registry.evict(vault.name, finished_id)
+                        # Evict only if the record is still FINISHED — a concurrent
+                        # launch may have re-begun it while the clear subprocess was
+                        # awaited, and that fresh record must survive.
+                        launch_registry.evict_if_finished(vault.name, finished_id)
                 except Exception as e:
                     logger.warning(
                         "[Cleanup] Exception clearing resurrected Starting marker on task %s"
@@ -591,7 +594,10 @@ async def cleanup_stale_sessions(config: Config) -> int:
                                 vault.name,
                             )
                             cleared += 1
-                            launch_registry.evict(vault.name, finished_id)
+                            # Evict only if the record is still FINISHED — a concurrent
+                            # launch may have re-begun it while the clear subprocess was
+                            # awaited, and that fresh record must survive.
+                            launch_registry.evict_if_finished(vault.name, finished_id)
                     except Exception as e:
                         logger.warning(
                             "[Cleanup] Exception clearing resurrected Starting marker on"
