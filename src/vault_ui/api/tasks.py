@@ -1560,9 +1560,9 @@ async def update_task_flag(
         HTTPException: If vault unknown or the vault-cli write fails
     """
     try:
-        vault_config = get_vault_config(vault)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"Unknown vault: {vault}")
+        get_vault_config(vault)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Unknown vault: {vault}") from e
 
     try:
         client = get_vault_cli_client_for_vault(vault)

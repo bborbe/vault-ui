@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+- Fix two ruff errors in `api/tasks.py` flag endpoint (unused `vault_config` assignment, `raise` in `except` without `from`) that broke `make lint` on master and failed CI for three consecutive runs including the v0.61.0 release
+
 ## v0.61.0
 
 - feat: tasks carry a frontmatter `flag` field ("picked for today"). Flagged cards sort to the top of every column under all sort modes (default / priority / last modified) and render with an amber ring; the card-footer toggle sets/clears the flag via `PATCH /api/tasks/{id}/flag`, writing through `vault-cli task set/clear flag`. Needs a vault-cli release exposing `flag` in `task list`/`show` JSON.
