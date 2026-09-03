@@ -5,6 +5,8 @@
 vault_cli_path: vault-cli  # optional, defaults to "vault-cli"
 host: 127.0.0.1
 port: 8000
+# Cap on concurrent Claude sessions admitted via the Start button; excess clicks are refused with HTTP 429.
+max_concurrent_sessions: 20
 vaults:
   # List vaults vault-ui should manage.
   # claude_script is inherited automatically from vault-cli's registry — no need to repeat it here.

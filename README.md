@@ -103,6 +103,7 @@ vault-ui looks for config in this order:
 - `claude_cli` - Claude CLI command (default: `claude`)
 - `host` - Server host (default: `127.0.0.1`)
 - `port` - Server port (default: `8000`)
+- `max_concurrent_sessions` - Cap on concurrent Claude sessions admitted via the Start button (default: `20`); excess Start clicks are refused with HTTP 429
 
 **Per-vault fields** (under `vaults:`):
 - `name` - Display name for the vault

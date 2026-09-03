@@ -972,6 +972,56 @@ async def list_goals(
     return all_goals
 
 
+async def count_concurrent_sessions() -> int:
+    """Count tasks with a live or launching Claude session across all vaults.
+
+    The Start-button admission gate (``run_task``) derives the current session
+    count fresh on every request — never from ``app.state.vault_task_cache``,
+    which can be up to 30s stale and would undercount a burst. The count spans
+    every configured vault because the vaults share one Anthropic subscription.
+
+    A task counts exactly once, marker branch first: a set
+    ``claude_session_started`` marker (a launch turn in flight) wins over the
+    live check, because during a launch the assistant writes
+    ``claude_session_id`` mid-turn — a task can be BOTH marked and have a fresh
+    transcript, and counting both signals would double-count it. Otherwise a
+    live transcript counts.
+
+    A transient vault-cli failure for one vault is logged and skipped (fail
+    open): the function never raises, so a counting hiccup cannot block a Start
+    or surface a false "cap reached".
+
+    Returns:
+        Number of tasks with a live or launching Claude session.
+    """
+    total = 0
+    for vault in get_config().vaults:
+        try:
+            client = get_vault_cli_client_for_vault(vault.name)
+            tasks = await client.list_tasks(show_all=True)
+        except Exception as e:
+            logger.warning(
+                "Failed to count concurrent sessions for vault %s: %s",
+                vault.name,
+                e,
+                exc_info=True,
+            )
+            continue
+        cache = get_status_cache()
+        project_dir = derive_claude_project_dir(vault.vault_path, vault.session_project_dir)
+        for task in tasks:
+            # Marker branch wins over the live check: during a launch the
+            # assistant writes claude_session_id mid-turn, so a task can be BOTH
+            # marked and have a fresh transcript — counting both would
+            # double-count it. The continue makes count-exactly-once explicit.
+            if cache.get_session_started(vault.name, task.id):
+                total += 1
+                continue
+            if classify_session_state(task.claude_session_id, project_dir) == "live":
+                total += 1
+    return total
+
+
 @router.post("/tasks/{task_id}/run", response_model=SessionResponse)
 async def run_task(
     vault: str,
@@ -990,6 +1040,19 @@ async def run_task(
         HTTPException: If task not found or session creation fails
     """
     logger.info(f"run_task called: vault={vault}, task_id={task_id}")
+
+    # Admission gate: refuse when the current concurrent-session count is already
+    # at/over the cap (admitting would make it cap+1). Raised BEFORE the try: —
+    # run_task's `except Exception` clause has no `except HTTPException: raise`
+    # guard (unlike its siblings), so a 429 raised inside the try: would be
+    # re-wrapped into a 500. A refused Start never sets the Starting marker.
+    concurrent = await count_concurrent_sessions()
+    cap = get_config().max_concurrent_sessions
+    if concurrent >= cap:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{concurrent} concurrent sessions running, cap {cap}",
+        )
 
     try:
         client = get_vault_cli_client_for_vault(vault)
