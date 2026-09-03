@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- fix: `GET /api/tasks` and `GET /api/goals` now suppress `claude_session_started` for any task/goal whose launch the server's in-memory `LaunchRegistry` records as finished, so a concurrent writer restoring the marker (e.g. an obsidian-git merge) can no longer leave a card stuck on "Starting…"; the frontmatter marker remains the fallback across a server restart (and an in-flight launch still reports it), and the list endpoints never re-clear — disk convergence stays with the cleanup sweep.
 - fix: `run_task`/`run_goal` now record in-flight/finished launches in a process-local `LaunchRegistry` — the server-authoritative "Starting…" signal for the follow-up list-endpoint fix — begun before the durable `claude_session_started` marker is written and finished exactly once per launch on success or failure; a marker clear that fails is logged at WARNING with vault + id + error instead of being swallowed by `suppress(Exception)`.
 - chore: Add `fallback-version` under `[tool.hatch.version]` in `pyproject.toml` so builds work without git metadata (hatch-vcs cannot detect a version when `.git` is unavailable)
 

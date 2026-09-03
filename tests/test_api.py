@@ -4832,3 +4832,326 @@ def test_run_goal_failed_clear_logged_warning_does_not_mask_launch_error(
     assert any("Test Goal" in r.getMessage() and "TestVault" in r.getMessage() for r in warnings), (
         f"no WARNING naming goal+vault in {[r.getMessage() for r in warnings]}"
     )
+
+
+# --- launch registry as the list-endpoint arbiter (claude_session_started suppression) ---
+#
+# The read path consults the registry's state() for each (vault, id). A FINISHED
+# record means this server knows the launch turn has returned, so any marker the
+# cache/file still carries is dead — suppress it. IN_FLIGHT and no-record both keep
+# reporting the marker (the launch is genuinely running / the fresh-process fallback).
+
+
+def _mock_cache_with_fresh_marker() -> MagicMock:
+    """StatusCache mock whose get_session_started returns a marker younger than the TTL.
+
+    ``_STARTING_MARKER_TTL_SECONDS`` is 45 minutes; a hardcoded literal instant would
+    be permanently TTL-expired and make the no-record fallback tests pass for the wrong
+    reason, so the marker is generated at call time.
+    """
+    mock_cache = MagicMock()
+    mock_cache.get_session_started = MagicMock(return_value=datetime.now(tz=UTC).isoformat())
+    return mock_cache
+
+
+def test_list_tasks_suppresses_started_when_registry_finished(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """AC 1: a FINISHED registry record suppresses claude_session_started even when both
+    the task and the status cache still carry a marker (a concurrent writer such as an
+    obsidian-git merge may have restored it after the launch's own clear)."""
+    registry = LaunchRegistry()
+    registry.begin("TestVault", "Test Task", "task")
+    registry.finish("TestVault", "Test Task")
+
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(
+            task_id="Test Task",
+            status="in_progress",
+            claude_session_started="true",
+        )
+    )
+    mock_cache = _mock_cache_with_fresh_marker()
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Test Task")
+    assert task["claude_session_started"] is None
+
+
+def test_list_goals_suppresses_started_when_registry_finished(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+) -> None:
+    """AC 2: a FINISHED registry record suppresses the goal's marker even when the status
+    cache still carries it."""
+    registry = LaunchRegistry()
+    registry.begin("TestVault", "Test Goal", "goal")
+    registry.finish("TestVault", "Test Goal")
+
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="Test Goal"))
+    mock_cache = _mock_cache_with_fresh_marker()
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    goal = next(g for g in response.json() if g["id"] == "Test Goal")
+    assert goal["claude_session_started"] is None
+
+
+def test_list_tasks_reports_marker_when_no_registry_record(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """AC 6: with no registry record (post-restart), a marker younger than the TTL is
+    still reported — locks today's behavior as the no-record fallback and is the
+    regression guard for a fresh server process."""
+    registry = LaunchRegistry()  # empty — no begin/finish
+    marker = datetime.now(tz=UTC).isoformat()
+    mock_cache = MagicMock()
+    mock_cache.get_session_started = MagicMock(return_value=marker)
+
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Starting Task", status="in_progress"))
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Starting Task")
+    assert task["claude_session_started"] == marker
+
+
+def test_list_goals_reports_marker_when_no_registry_record(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+) -> None:
+    """AC 6, goal side: an explicitly empty registry falls back to the cache marker."""
+    registry = LaunchRegistry()  # empty — no begin/finish
+    marker = datetime.now(tz=UTC).isoformat()
+    mock_cache = MagicMock()
+    mock_cache.get_session_started = MagicMock(return_value=marker)
+
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="Starting Goal"))
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    goal = next(g for g in response.json() if g["id"] == "Starting Goal")
+    assert goal["claude_session_started"] == marker
+
+
+def test_list_tasks_reports_marker_when_registry_in_flight(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """AC 7: an IN_FLIGHT record means the launch turn is genuinely running — the marker
+    still renders "Starting…"."""
+    registry = LaunchRegistry()
+    registry.begin("TestVault", "Starting Task", "task")
+
+    marker = datetime.now(tz=UTC).isoformat()
+    mock_cache = MagicMock()
+    mock_cache.get_session_started = MagicMock(return_value=marker)
+
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Starting Task", status="in_progress"))
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Starting Task")
+    assert task["claude_session_started"] == marker
+
+
+def test_list_goals_reports_marker_when_registry_in_flight(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+) -> None:
+    """AC 7, goal side: an IN_FLIGHT record means the launch is running — marker reported."""
+    registry = LaunchRegistry()
+    registry.begin("TestVault", "Starting Goal", "goal")
+
+    marker = datetime.now(tz=UTC).isoformat()
+    mock_cache = MagicMock()
+    mock_cache.get_session_started = MagicMock(return_value=marker)
+
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="Starting Goal"))
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    goal = next(g for g in response.json() if g["id"] == "Starting Goal")
+    assert goal["claude_session_started"] == marker
+
+
+def test_list_tasks_suppresses_started_after_failed_launch(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """AC 3: a launch that failed still suppresses the marker on the next list read — the
+    registry marks it FINISHED even on the 500 path. POST, registry assertion, and GET
+    run inside the same get_launch_registry patch so the GET reads the same registry."""
+    registry = LaunchRegistry()
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(
+        _make_task(
+            task_id="Test Task",
+            status="in_progress",
+            claude_session_started="true",
+        )
+    )
+    mock_cache = _mock_cache_with_fresh_marker()
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        run_resp = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+        assert run_resp.status_code == 500
+        assert registry.state("TestVault", "Test Task") == FINISHED
+        list_resp = test_client.get("/api/tasks?vault=TestVault")
+
+    assert list_resp.status_code == 200
+    task = next(t for t in list_resp.json() if t["id"] == "Test Task")
+    assert task["claude_session_started"] is None
+
+
+def test_list_goals_suppresses_started_after_failed_launch(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+) -> None:
+    """AC 3, goal side: a failed mint still suppresses the goal marker on the next list
+    read, because the registry marks it FINISHED even on the 500 path."""
+    registry = LaunchRegistry()
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(_make_goal(goal_id="Test Goal"))
+    mock_cache = _mock_cache_with_fresh_marker()
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        run_resp = test_client_with_goals.post("/api/goals/Test%20Goal/run?vault=TestVault")
+        assert run_resp.status_code == 500
+        assert registry.state("TestVault", "Test Goal") == FINISHED
+        list_resp = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert list_resp.status_code == 200
+    goal = next(g for g in list_resp.json() if g["id"] == "Test Goal")
+    assert goal["claude_session_started"] is None
+
+
+def test_list_tasks_suppression_scoped_to_exact_vault_and_id(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """Suppression is per (vault, id): a FINISHED record for one task never suppresses
+    another card's marker."""
+    registry = LaunchRegistry()
+    registry.begin("TestVault", "Finished Task", "task")
+    registry.finish("TestVault", "Finished Task")
+
+    marker = datetime.now(tz=UTC).isoformat()
+    mock_cache = MagicMock()
+    mock_cache.get_session_started = MagicMock(return_value=marker)
+
+    mock_vault_client._tasks.clear()
+    mock_vault_client._tasks.append(_make_task(task_id="Finished Task", status="in_progress"))
+    mock_vault_client._tasks.append(_make_task(task_id="Other Task", status="in_progress"))
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=mock_cache),
+    ):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    tasks = {t["id"]: t for t in response.json()}
+    assert tasks["Finished Task"]["claude_session_started"] is None
+    assert tasks["Other Task"]["claude_session_started"] == marker
+
+
+def test_list_endpoints_spawn_zero_clears_on_finished_record(
+    test_client: TestClient,
+    test_client_with_goals: TestClient,
+    mock_vault_client: MagicMock,
+    mock_vault_client_with_goals: MagicMock,
+) -> None:
+    """AC 4 (second half): N list requests spawn zero vault-cli clear subprocesses and
+    zero sanctioned clear calls — the read path never re-clears; disk convergence is the
+    cleanup sweep's job. create_subprocess_exec is patched to catch a raw subprocess; the
+    clear_* mocks catch a clear issued through the sanctioned VaultCLIClient surface."""
+    registry = LaunchRegistry()
+    registry.begin("TestVault", "Test Task", "task")
+    registry.finish("TestVault", "Test Task")
+    registry.begin("TestVault", "Test Goal", "goal")
+    registry.finish("TestVault", "Test Goal")
+
+    mock_exec = AsyncMock()
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", mock_exec),
+    ):
+        for _ in range(5):
+            task_resp = test_client.get("/api/tasks?vault=TestVault")
+            assert task_resp.status_code == 200
+            goal_resp = test_client_with_goals.get("/api/goals?vault=TestVault")
+            assert goal_resp.status_code == 200
+
+    mock_exec.assert_not_called()
+    assert mock_vault_client.clear_field.await_count == 0
+    assert mock_vault_client_with_goals.clear_field.await_count == 0
+    assert mock_vault_client_with_goals.clear_goal_field.await_count == 0

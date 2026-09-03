@@ -39,6 +39,7 @@ from vault_ui.factory import (
     get_vault_cli_client_for_vault,
     get_vault_config,
 )
+from vault_ui.launch_registry import FINISHED
 from vault_ui.session_resolver import is_uuid, resolve_session_id
 
 if TYPE_CHECKING:
@@ -675,12 +676,21 @@ async def _process_vault(
 
     # Surface claude_session_started from the status cache — vault-cli's task list
     # does not emit this custom field, so the durable "Starting" flag reaches the UI
-    # only via the cache's direct frontmatter read. The cache is authoritative; the
-    # `or` fallback keeps whatever the parse already had if the cache lacks it.
+    # only via the cache's direct frontmatter read. The launch registry is the
+    # arbiter: a record marked FINISHED means this server knows the launch turn has
+    # returned, so any marker the cache/file still carries is dead — suppress it (a
+    # concurrent writer such as an obsidian-git merge may have restored the marker
+    # after the launch's own clear). With an IN_FLIGHT record the marker stands —
+    # the turn is genuinely running. With no record (post-restart) the marker stands
+    # too, subject to the existing TTL sweep.
+    registry = get_launch_registry()
     for task in tasks:
-        task.claude_session_started = (
-            cache.get_session_started(vault_config.name, task.id) or task.claude_session_started
-        )
+        if registry.state(vault_config.name, task.id) == FINISHED:
+            task.claude_session_started = None
+        else:
+            task.claude_session_started = (
+                cache.get_session_started(vault_config.name, task.id) or task.claude_session_started
+            )
 
     # Convert to response models
     return [_task_to_response(task, vault_config) for task in tasks]
@@ -879,13 +889,24 @@ async def _process_goal_vault(
 
     # Surface claude_session_started from the status cache — vault-cli's goal list does
     # not emit this custom field, so the durable "Starting…" flag reaches any concurrent
-    # view only via the cache's direct frontmatter read.
+    # view only via the cache's direct frontmatter read. The launch registry is the
+    # arbiter: a record marked FINISHED means this server knows the launch turn has
+    # returned, so any marker the cache/file still carries is dead — suppress it (a
+    # concurrent writer such as an obsidian-git merge may have restored the marker
+    # after the launch's own clear). With an IN_FLIGHT record the marker stands — the
+    # turn is genuinely running. With no record (post-restart) the marker stands too,
+    # subject to the existing TTL sweep.
     cache = get_status_cache()
+    registry = get_launch_registry()
     return [
         _goal_to_response(
             g,
             vault_config,
-            claude_session_started=cache.get_session_started(vault_config.name, g.id),
+            claude_session_started=(
+                None
+                if registry.state(vault_config.name, g.id) == FINISHED
+                else cache.get_session_started(vault_config.name, g.id)
+            ),
             upcoming=upcoming,
         )
         for g, upcoming in visible_goals

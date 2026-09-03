@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [019-bug-starting-marker-restored-by-git-merge]
+summary: 'Made the launch registry authoritative for the list endpoints: _process_vault and _process_goal_vault now suppress claude_session_started for any task/goal whose launch is FINISHED, with 10 new TDD tests covering suppression, no-record/in-flight fallback, failed-launch integration, per-(vault,id) scoping, and zero clears on the read path; CHANGELOG updated; make precommit exits 0.'
+execution_id: vault-ui-starting-marker-exec-082-spec-019-registry-authoritative-surfacing
+dark-factory-version: dev
 created: "2026-09-03T17:50:00Z"
 queued: "2026-09-03T18:01:41Z"
+started: "2026-09-03T18:07:07Z"
+completed: "2026-09-03T18:10:27Z"
 branch: dark-factory/bug-starting-marker-restored-by-git-merge
 ---
 
