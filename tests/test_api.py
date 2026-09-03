@@ -19,6 +19,7 @@ from vault_ui.__main__ import create_app
 from vault_ui.api.models import Goal, Task
 from vault_ui.api.tasks import _build_resume_command
 from vault_ui.config import Config, VaultConfig
+from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 from vault_ui.vault_cli_client import VaultCLIClient
 
 
@@ -174,6 +175,20 @@ def mock_vault_client_with_goals() -> MagicMock:
 
     client.list_goals = AsyncMock(side_effect=_list_goals)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _reset_launch_registry() -> None:
+    """Reset the process-global launch registry singleton before each test.
+
+    The registry is a module-global singleton in ``factory.py`` like
+    ``_status_cache``; without a reset, a FINISHED record left by one /run test
+    exercising the real (unpatched) singleton could leak into a later test.
+    Tests that patch ``vault_ui.api.tasks.get_launch_registry`` use their own
+    fresh instance and are unaffected, but the reset keeps the two worlds from
+    ever sharing state.
+    """
+    _factory_module._launch_registry = None
 
 
 @pytest.fixture
@@ -4624,3 +4639,196 @@ def test_run_goal_flag_set_failure_before_mint_500_no_mint(
 
     assert response.status_code == 500
     mock_exec.assert_not_called()
+
+
+# --- launch registry wiring tests (in-flight before marker write, finished on return) ---
+
+
+def test_get_launch_registry_returns_same_instance() -> None:
+    """get_launch_registry() returns the same singleton on consecutive calls."""
+    from vault_ui.factory import get_launch_registry
+
+    assert get_launch_registry() is get_launch_registry()
+
+
+def test_run_task_begins_before_marker_write_and_finishes_on_success(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """begin() precedes the marker write (state IN_FLIGHT at write time) and the
+    record is FINISHED once the launch turn returns successfully."""
+    registry = LaunchRegistry()
+    state_at_marker_write: list[str | None] = []
+
+    async def _record_state(task_id: str, key: str, value: str) -> None:
+        if key == "claude_session_started":
+            state_at_marker_write.append(registry.state("TestVault", task_id))
+
+    mock_vault_client.set_field = AsyncMock(side_effect=_record_state)
+    mock_vault_client.clear_field.reset_mock()
+    mock_proc = _make_streaming_proc(b'{"session_id": "new-session-id"}')
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
+    ):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 200
+    # begin happened before the marker write → state was IN_FLIGHT at write time
+    assert state_at_marker_write == [IN_FLIGHT]
+    # the returning turn marked the record finished → evictable by the sweep
+    assert registry.state("TestVault", "Test Task") == FINISHED
+
+
+def test_run_goal_begins_before_marker_write_and_finishes_on_success(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+) -> None:
+    """run_goal begins before the marker write and finishes on a successful mint."""
+    registry = LaunchRegistry()
+    state_at_marker_write: list[str | None] = []
+
+    async def _record_state(goal_id: str, key: str, value: str) -> None:
+        if key == "claude_session_started":
+            state_at_marker_write.append(registry.state("TestVault", goal_id))
+
+    mock_vault_client_with_goals.set_goal_field = AsyncMock(side_effect=_record_state)
+    mock_vault_client_with_goals.clear_goal_field.reset_mock()
+    mock_proc = _make_streaming_proc(b'{"session_id": "goal-session-id"}')
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
+    ):
+        response = test_client_with_goals.post("/api/goals/Test%20Goal/run?vault=TestVault")
+
+    assert response.status_code == 200
+    assert state_at_marker_write == [IN_FLIGHT]
+    assert registry.state("TestVault", "Test Goal") == FINISHED
+
+
+def test_run_task_launch_failure_marks_record_finished(
+    test_client: TestClient,
+) -> None:
+    """A failed launch (wait returns 1 → 500) still marks the record FINISHED."""
+    registry = LaunchRegistry()
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)),
+    ):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 500
+    assert registry.state("TestVault", "Test Task") == FINISHED
+
+
+def test_run_goal_launch_failure_marks_record_finished(
+    test_client_with_goals: TestClient,
+) -> None:
+    """A failed mint (wait returns 1 → 500) still marks the record FINISHED."""
+    registry = LaunchRegistry()
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)),
+    ):
+        response = test_client_with_goals.post("/api/goals/Test%20Goal/run?vault=TestVault")
+
+    assert response.status_code == 500
+    assert registry.state("TestVault", "Test Goal") == FINISHED
+
+
+def test_run_task_marker_write_failure_does_not_leak_in_flight_record(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """A marker-write failure (500) finishes the record so the sweep can evict it."""
+    registry = LaunchRegistry()
+    mock_vault_client.set_field.side_effect = Exception("boom")
+
+    with patch("vault_ui.api.tasks.get_launch_registry", return_value=registry):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 500
+    assert registry.state("TestVault", "Test Task") == FINISHED
+
+
+def test_run_task_failed_clear_logged_warning_launch_still_succeeds(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed success-path clear is logged at WARNING and does not turn a
+    successful launch into a 500."""
+    registry = LaunchRegistry()
+    mock_vault_client.set_field.reset_mock()
+    mock_vault_client.clear_field = AsyncMock(side_effect=Exception("clear boom"))
+    mock_proc = _make_streaming_proc(b'{"session_id": "new-session-id"}')
+    caplog.set_level(logging.WARNING, logger="vault_ui.api.tasks")
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
+    ):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 200
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Test Task" in r.getMessage() and "TestVault" in r.getMessage() for r in warnings), (
+        f"no WARNING naming task+vault in {[r.getMessage() for r in warnings]}"
+    )
+
+
+def test_run_goal_failed_clear_logged_warning_does_not_mask_launch_error(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed clear inside the launch-failure block is logged at WARNING and does
+    not mask the original launch error (still 500)."""
+    registry = LaunchRegistry()
+
+    class _FailingStream:
+        async def readline(self) -> bytes:
+            return b""
+
+    failing_proc = MagicMock()
+    failing_proc.stdout = _FailingStream()
+    failing_proc.stderr = _FailingStream()
+    failing_proc.wait = AsyncMock(return_value=1)
+
+    mock_vault_client_with_goals.set_goal_field.reset_mock()
+    mock_vault_client_with_goals.clear_goal_field = AsyncMock(side_effect=Exception("clear boom"))
+    caplog.set_level(logging.WARNING, logger="vault_ui.api.tasks")
+
+    with (
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=registry),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=failing_proc)),
+    ):
+        response = test_client_with_goals.post("/api/goals/Test%20Goal/run?vault=TestVault")
+
+    assert response.status_code == 500
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Test Goal" in r.getMessage() and "TestVault" in r.getMessage() for r in warnings), (
+        f"no WARNING naming goal+vault in {[r.getMessage() for r in warnings]}"
+    )

@@ -34,6 +34,7 @@ from vault_ui.cleanup import derive_claude_project_dir
 from vault_ui.config import VaultConfig
 from vault_ui.factory import (
     get_config,
+    get_launch_registry,
     get_status_cache,
     get_vault_cli_client_for_vault,
     get_vault_config,
@@ -976,36 +977,71 @@ async def run_task(
         # Read task
         task = await client.show_task(task_id)
 
-        # Mark the session as started before launching. This is a durable marker
-        # (survives modal dismiss, page reload, second tab) whose value is the launch
-        # timestamp, so a marker orphaned by a server restart can be aged out by the
-        # cleanup sweep and the card can show elapsed time. The marker means exactly
-        # "a launch turn is in flight": the frontend shows "Starting…" while it is
-        # set, regardless of whether claude_session_id has landed yet — the assistant
-        # writes the id mid-turn, before the turn finishes, so an id present under a
-        # set marker is still the launch, not a resumable session. It is cleared on
-        # success (below, once the turn completes), on failure (except below), on
-        # session reset, and by the stale-marker cleanup sweep.
-        await client.set_field(task_id, "claude_session_started", _session_started_marker())
+        # Record the launch as in-flight BEFORE writing the durable marker, so the
+        # server-side registry is the authoritative "a launch turn is in flight"
+        # signal the moment the marker exists. A concurrent writer restoring the
+        # marker later cannot fool the registry; the marker itself is demoted to a
+        # restart-only fallback.
+        get_launch_registry().begin(vault, task_id, "task")
 
         try:
-            logger.info(f"Starting vault-cli session for task {task_id}")
-            session_id = await start_vault_cli_session(vault_config, task_id)
-            logger.info(f"Session {session_id} created")
+            # Mark the session as started before launching. This is a durable marker
+            # (survives modal dismiss, page reload, second tab) whose value is the launch
+            # timestamp, so a marker orphaned by a server restart can be aged out by the
+            # cleanup sweep and the card can show elapsed time. The marker means exactly
+            # "a launch turn is in flight": the frontend shows "Starting…" while it is
+            # set, regardless of whether claude_session_id has landed yet — the assistant
+            # writes the id mid-turn, before the turn finishes, so an id present under a
+            # set marker is still the launch, not a resumable session. It is cleared on
+            # success (below, once the turn completes), on failure (except below), on
+            # session reset, and by the stale-marker cleanup sweep. The process-local
+            # registry begun above is the authoritative in-flight signal for the list
+            # endpoints; the marker is the restart-only fallback.
+            await client.set_field(task_id, "claude_session_started", _session_started_marker())
+
+            try:
+                logger.info(f"Starting vault-cli session for task {task_id}")
+                session_id = await start_vault_cli_session(vault_config, task_id)
+                logger.info(f"Session {session_id} created")
+            except Exception:
+                # Launch failed — no session id was established, so nothing will ever
+                # clear the started flag via the session-id lifecycle. Clear it here
+                # so the card returns to "Start". A clear failure is logged at
+                # WARNING (never swallowed, never masking the original launch error).
+                try:
+                    await client.clear_field(task_id, "claude_session_started")
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clear claude_session_started for task %s in vault %s: %s",
+                        task_id,
+                        vault,
+                        e,
+                    )
+                raise
         except Exception:
-            # Launch failed — no session id was established, so nothing will ever
-            # clear the started flag via the session-id lifecycle. Clear it here so
-            # the card returns to "Start" instead of sticking on "Starting…".
-            with suppress(Exception):
-                await client.clear_field(task_id, "claude_session_started")
+            # Any failure after begin (marker write or the launch itself) must still
+            # mark the launch finished so the registry never leaks an in-flight
+            # record and a later list/sweep can suppress a resurrected marker.
+            # Re-raise to the existing handlers below (400/404/500 mapping unchanged).
+            get_launch_registry().finish(vault, task_id)
             raise
 
         # Launch succeeded — the turn has completed and the session is resumable.
-        # Clear the marker so the card flips off "Starting…" to "Resume"/"Live".
-        # Suppressed: a clear failure must not turn a successful launch into a 500;
-        # the stale-marker cleanup sweep converges it within its TTL.
-        with suppress(Exception):
+        # Mark it finished (this is what makes the list endpoints suppress any
+        # resurrected marker), then clear the marker so the card flips to
+        # "Resume"/"Live". A clear failure is logged at WARNING, never swallowed,
+        # and never turns a successful launch into a 500; the cleanup sweep
+        # converges the file within one pass.
+        get_launch_registry().finish(vault, task_id)
+        try:
             await client.clear_field(task_id, "claude_session_started")
+        except Exception as e:
+            logger.warning(
+                "Failed to clear claude_session_started for task %s in vault %s: %s",
+                task_id,
+                vault,
+                e,
+            )
 
         # Build command: use vault-specific script from config (handles cd internally)
         command = _build_resume_command(vault_config, session_id, task_title=task.title)
@@ -1136,39 +1172,72 @@ async def run_goal(
         if goal is None:
             raise HTTPException(status_code=404, detail=f"Goal not found: {goal_id}")
 
-        # Mark the session as started before minting. This is a durable flag that
-        # survives concurrent views, page reloads, and cross-tab renders — any
-        # view sees "Starting…" while the mint is in flight, then "Resume" once the
-        # session id lands. The marker means exactly "a launch turn is in flight":
-        # the assistant writes the id mid-turn, so an id present under a set marker
-        # is still the launch, not a resumable session. On mint failure the flag is
-        # cleared so the card returns to "Start" instead of being stuck on
-        # "Starting…".
-        await client.set_goal_field(goal_id, "claude_session_started", _session_started_marker())
+        # Record the launch as in-flight BEFORE writing the durable marker, so the
+        # server-side registry is the authoritative "a launch turn is in flight"
+        # signal the moment the marker exists (same as run_task). A concurrent
+        # writer restoring the marker later cannot fool the registry; the marker
+        # itself is demoted to a restart-only fallback.
+        get_launch_registry().begin(vault, goal_id, "goal")
 
         try:
-            logger.info(f"Starting vault-cli goal session for goal {goal_id}")
-            session_id = await start_vault_cli_goal_session(vault_config, goal_id)
-            logger.info(f"Goal session {session_id} created")
+            # Mark the session as started before minting. This is a durable flag that
+            # survives concurrent views, page reloads, and cross-tab renders — any
+            # view sees "Starting…" while the mint is in flight, then "Resume" once the
+            # session id lands. The marker means exactly "a launch turn is in flight":
+            # the assistant writes the id mid-turn, so an id present under a set marker
+            # is still the launch, not a resumable session. On mint failure the flag is
+            # cleared so the card returns to "Start" instead of being stuck on
+            # "Starting…". The process-local registry begun above is the authoritative
+            # in-flight signal for the list endpoints; the marker is the restart-only
+            # fallback.
+            await client.set_goal_field(
+                goal_id, "claude_session_started", _session_started_marker()
+            )
+
+            try:
+                logger.info(f"Starting vault-cli goal session for goal {goal_id}")
+                session_id = await start_vault_cli_goal_session(vault_config, goal_id)
+                logger.info(f"Goal session {session_id} created")
+            except Exception:
+                # Mint failed — no session id was established, so nothing will ever clear
+                # the started flag via the session-id lifecycle. Clear it here so the
+                # card returns to "Start" instead of being stuck on "Starting…". A clear
+                # failure is logged at WARNING (never swallowed, never masking the
+                # original mint error).
+                try:
+                    await client.clear_goal_field(goal_id, "claude_session_started")
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clear claude_session_started for goal %s in vault %s: %s",
+                        goal_id,
+                        vault,
+                        e,
+                    )
+                raise
         except Exception:
-            # Mint failed — no session id was established, so nothing will ever clear
-            # the started flag via the session-id lifecycle. Clear it here so the
-            # card returns to "Start" instead of being stuck on "Starting…". The clear
-            # is suppressed so a clear failure cannot mask the original mint error.
-            with suppress(Exception):
-                await client.clear_goal_field(goal_id, "claude_session_started")
+            # Any failure after begin (marker write or the mint itself) must still
+            # mark the launch finished so the registry never leaks an in-flight
+            # record. Re-raise to the existing handlers below (400/404/500 unchanged).
+            get_launch_registry().finish(vault, goal_id)
             raise
 
-        # Store the minted session id on the goal via vault-cli (not a direct file
-        # write) so /api/goals surfaces it and the card flips to Resume.
+        # Mint succeeded — the turn has completed and the session is resumable. Mark
+        # it finished (this is what makes the list endpoints suppress any resurrected
+        # marker), then store the session id, then clear the marker so the card flips
+        # to "Resume"/"Live". A clear failure is logged at WARNING, never swallowed,
+        # and never turns a successful mint into a 500; the cleanup sweep converges
+        # the file within one pass.
+        get_launch_registry().finish(vault, goal_id)
         await client.set_goal_field(goal_id, "claude_session_id", session_id)
-
-        # Mint succeeded — the turn has completed and the session is resumable.
-        # Clear the marker so the card flips off "Starting…" to "Resume"/"Live".
-        # Suppressed: a clear failure must not turn a successful mint into a 500;
-        # the stale-marker cleanup sweep converges it within its TTL.
-        with suppress(Exception):
+        try:
             await client.clear_goal_field(goal_id, "claude_session_started")
+        except Exception as e:
+            logger.warning(
+                "Failed to clear claude_session_started for goal %s in vault %s: %s",
+                goal_id,
+                vault,
+                e,
+            )
 
         command = _build_resume_command(vault_config, session_id, task_title=goal.title)
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: `run_task`/`run_goal` now record in-flight/finished launches in a process-local `LaunchRegistry` — the server-authoritative "Starting…" signal for the follow-up list-endpoint fix — begun before the durable `claude_session_started` marker is written and finished exactly once per launch on success or failure; a marker clear that fails is logged at WARNING with vault + id + error instead of being swallowed by `suppress(Exception)`.
+- chore: Add `fallback-version` under `[tool.hatch.version]` in `pyproject.toml` so builds work without git metadata (hatch-vcs cannot detect a version when `.git` is unavailable)
+
 ## v0.61.1
 - Fix two ruff errors in `api/tasks.py` flag endpoint (unused `vault_config` assignment, `raise` in `except` without `from`) that broke `make lint` on master and failed CI for three consecutive runs including the v0.61.0 release
 
