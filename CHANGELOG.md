@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.2
 
 - fix: The Start-button admission gate now counts only launches in flight (cards showing "Starting…"), not open sessions — a task counts only when its durable `claude_session_started` marker is set and the `LaunchRegistry` does not record the launch as finished (a resurrected marker no longer counts), so `max_concurrent_sessions` limits simultaneous Start-button launches instead of the total number of running sessions
 
