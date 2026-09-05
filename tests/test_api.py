@@ -17,8 +17,9 @@ from fastapi.testclient import TestClient
 from vault_ui import factory as _factory_module
 from vault_ui.__main__ import create_app
 from vault_ui.api.models import Goal, Task
-from vault_ui.api.tasks import _build_resume_command, count_concurrent_sessions
+from vault_ui.api.tasks import _build_resume_command, count_launching_sessions
 from vault_ui.config import Config, VaultConfig
+from vault_ui.factory import get_launch_registry
 from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 from vault_ui.vault_cli_client import VaultCLIClient
 
@@ -377,27 +378,12 @@ def test_run_task_endpoint_no_project(
     assert "command" in data
 
 
-# --- concurrent-session counting (Start-button admission gate) ---
+# --- launching-session counting (Start-button admission gate) ---
 
-# Distinct session UUIDs for seeding live tasks. SESSION_UUID itself is defined
-# in the take-over section below; these are resolved at call time, after module
-# load, so the forward reference is safe.
+# Distinct session UUID for seeding live tasks. SESSION_UUID itself is defined
+# in the take-over section below; resolved at call time, after module load, so
+# the forward reference is safe.
 SESSION_UUID_2 = "7cbde4f8-239c-4f3d-92d7-1e550b0afa88"
-SESSION_UUID_3 = "3f3b8c9d-6a2e-4f5b-9c8d-1e2f3a4b5c6d"
-
-
-def _write_transcript(directory: Path, session_id: str) -> Path:
-    """Write a fresh session transcript (mirrors tests/test_activity.py).
-
-    ``classify_session_state`` marks a transcript written within LIVE_WINDOW
-    (5 min) as "live"; backdating the mtime to now makes the session read live.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{session_id}.jsonl"
-    path.write_text('{"type":"mode"}\n')
-    when = datetime.now(tz=UTC).timestamp()
-    os.utime(path, (when, when))
-    return path
 
 
 def _make_status_cache_mock(
@@ -437,19 +423,16 @@ async def _count_sessions(
     monkeypatch: pytest.MonkeyPatch,
     clients: dict[str, MagicMock],
     markers: dict[tuple[str, str], str] | None = None,
-    project_dir: Path | None = None,
 ) -> int:
-    """Run count_concurrent_sessions against per-vault mock clients.
+    """Run count_launching_sessions against per-vault mock clients.
 
-    Patching the module-level helpers so the REAL classify_session_state runs
-    against a real transcript file (the count function's live boundary).
+    ``get_launch_registry`` is NOT patched — the tests exercise the real
+    singleton, which the autouse ``_reset_launch_registry`` fixture empties
+    before each test (so markers count unless a test deliberately begins +
+    finishes a record first).
     """
     monkeypatch.setattr("vault_ui.factory._config", _count_config(list(clients)))
     with (
-        patch(
-            "vault_ui.api.tasks.derive_claude_project_dir",
-            return_value=project_dir or Path("/nonexistent/projects"),
-        ),
         patch(
             "vault_ui.api.tasks.get_vault_cli_client_for_vault",
             side_effect=lambda name: clients[name],
@@ -459,27 +442,30 @@ async def _count_sessions(
             return_value=_make_status_cache_mock(markers),
         ),
     ):
-        return await count_concurrent_sessions()
+        return await count_launching_sessions()
 
 
-async def test_count_concurrent_sessions_live_transcript_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_count_launching_sessions_open_session_does_not_count(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A task with a fresh transcript counts as one concurrent session."""
-    _write_transcript(tmp_path / "projects", SESSION_UUID)
+    """An open session (live transcript, no marker) does not count toward the cap.
+
+    The cap bounds simultaneous Start-button launches, not the total number of
+    already-running sessions — so a task with only a session id reads 0.
+    """
     clients = {
         "TestVault": _make_vault_client(
             [_make_task(task_id="Live Task", claude_session_id=SESSION_UUID)]
         )
     }
 
-    count = await _count_sessions(monkeypatch, clients, project_dir=tmp_path / "projects")
+    count = await _count_sessions(monkeypatch, clients)
 
-    assert count == 1
+    assert count == 0
 
 
-async def test_count_concurrent_sessions_starting_marker_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_count_launching_sessions_starting_marker_counts(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A launch in flight (marker set, no session id yet) counts toward the cap."""
     clients = {"TestVault": _make_vault_client([_make_task(task_id="Starting Task")])}
@@ -490,27 +476,28 @@ async def test_count_concurrent_sessions_starting_marker_counts(
     assert count == 1
 
 
-async def test_count_concurrent_sessions_sums_across_vaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_count_launching_sessions_sums_across_vaults(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The count spans every configured vault — they share one subscription."""
-    _write_transcript(tmp_path / "projects", SESSION_UUID)
-    _write_transcript(tmp_path / "projects", SESSION_UUID_2)
     clients = {
-        "Vault1": _make_vault_client([_make_task(task_id="T1", claude_session_id=SESSION_UUID)]),
-        "Vault2": _make_vault_client([_make_task(task_id="T2", claude_session_id=SESSION_UUID_2)]),
+        "Vault1": _make_vault_client([_make_task(task_id="T1")]),
+        "Vault2": _make_vault_client([_make_task(task_id="T2")]),
+    }
+    markers = {
+        ("Vault1", "T1"): "2026-09-03T00:00:00+00:00",
+        ("Vault2", "T2"): "2026-09-03T00:00:00+00:00",
     }
 
-    count = await _count_sessions(monkeypatch, clients, project_dir=tmp_path / "projects")
+    count = await _count_sessions(monkeypatch, clients, markers=markers)
 
     assert count == 2
 
 
-async def test_count_concurrent_sessions_no_double_count(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_count_launching_sessions_open_session_ignored_under_marker(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A marked launch with a fresh transcript counts once — marker branch wins."""
-    _write_transcript(tmp_path / "projects", SESSION_UUID)
+    """A marked launch with an open transcript counts once — live sessions are ignored."""
     clients = {
         "TestVault": _make_vault_client(
             [_make_task(task_id="Both", claude_session_id=SESSION_UUID)]
@@ -518,26 +505,45 @@ async def test_count_concurrent_sessions_no_double_count(
     }
     markers = {("TestVault", "Both"): "2026-09-03T00:00:00+00:00"}
 
-    count = await _count_sessions(
-        monkeypatch, clients, markers=markers, project_dir=tmp_path / "projects"
-    )
+    count = await _count_sessions(monkeypatch, clients, markers=markers)
 
     assert count == 1
 
 
-async def test_count_concurrent_sessions_fails_open_on_vault_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_count_launching_sessions_finished_registry_does_not_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resurrected marker whose launch the registry knows finished does not count.
+
+    A FINISHED record means the launch turn already returned — any marker the
+    file still carries (e.g. restored by an obsidian-git merge) is a leftover.
+    """
+    clients = {"TestVault": _make_vault_client([_make_task(task_id="Resurrected")])}
+    markers = {("TestVault", "Resurrected"): "2026-09-03T00:00:00+00:00"}
+
+    # Real singleton — fresh per test via the autouse _reset_launch_registry fixture.
+    registry = get_launch_registry()
+    registry.begin("TestVault", "Resurrected", "task")
+    registry.finish("TestVault", "Resurrected")
+
+    count = await _count_sessions(monkeypatch, clients, markers=markers)
+
+    assert count == 0
+
+
+async def test_count_launching_sessions_fails_open_on_vault_error(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A vault whose list_tasks raises is skipped — the other vault still counts."""
-    _write_transcript(tmp_path / "projects", SESSION_UUID)
     broken = _make_vault_client()
     broken.list_tasks.side_effect = RuntimeError("vault-cli hiccup")
     clients = {
-        "GoodVault": _make_vault_client([_make_task(task_id="T1", claude_session_id=SESSION_UUID)]),
+        "GoodVault": _make_vault_client([_make_task(task_id="T1")]),
         "BrokenVault": broken,
     }
+    markers = {("GoodVault", "T1"): "2026-09-03T00:00:00+00:00"}
 
-    count = await _count_sessions(monkeypatch, clients, project_dir=tmp_path / "projects")
+    count = await _count_sessions(monkeypatch, clients, markers=markers)
 
     assert count == 1
 
@@ -562,72 +568,64 @@ def _run_gate_config(tmp_vault: Path, cap: int) -> Config:
     )
 
 
-def _classify_live(live_sessions: set[str]):
-    """Side effect for classify_session_state: "live" for the given session ids.
-
-    The gate's count >= cap logic runs for real; only the classify boundary is
-    stubbed (that boundary is covered by the count-function tests above).
-    """
-
-    def _classify(session_id: str | None, project_dir: Path) -> str | None:
-        return "live" if session_id in live_sessions else None
-
-    return _classify
-
-
-def test_run_task_refuses_at_concurrent_cap(
+def test_run_task_refuses_at_launching_cap(
     tmp_vault: Path,
     sample_task_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """At-cap (2 live, cap 2) → 429 and no Starting marker is ever written."""
+    """At-cap (2 Starting markers, cap 2) → 429 and no Starting marker is ever written."""
     client = _make_vault_client(
         [
             _make_task(task_id="Target", status="in_progress"),
-            _make_task(task_id="Live A", status="in_progress", claude_session_id=SESSION_UUID),
-            _make_task(task_id="Live B", status="in_progress", claude_session_id=SESSION_UUID_2),
+            _make_task(task_id="Starting A", status="in_progress"),
+            _make_task(task_id="Starting B", status="in_progress"),
         ]
     )
     monkeypatch.setattr("vault_ui.factory._config", _run_gate_config(tmp_vault, cap=2))
     app = create_app()
+    status_cache = _make_status_cache_mock(
+        {
+            ("TestVault", "Starting A"): "2026-09-03T00:00:00+00:00",
+            ("TestVault", "Starting B"): "2026-09-03T00:00:00+00:00",
+        }
+    )
 
     with (
         patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
-        patch(
-            "vault_ui.api.tasks.classify_session_state",
-            side_effect=_classify_live({SESSION_UUID, SESSION_UUID_2}),
-        ),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=status_cache),
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=LaunchRegistry()),
     ):
         response = TestClient(app).post("/api/tasks/Target/run?vault=TestVault")
 
     assert response.status_code == 429
-    assert response.json() == {"detail": "2 concurrent sessions running, cap 2"}
+    assert response.json() == {"detail": "2 sessions starting, cap 2"}
     # The gate precedes the marker write — a refused Start never calls set_field.
     client.set_field.assert_not_called()
 
 
-def test_run_task_allows_under_cap(
+def test_run_task_allows_under_launching_cap(
     tmp_vault: Path,
     sample_task_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Under-cap (1 live, cap 2) → the Start proceeds normally (200)."""
+    """Under-cap (1 Starting marker, cap 2) → the Start proceeds normally (200)."""
     client = _make_vault_client(
         [
             _make_task(task_id="Target", status="in_progress"),
-            _make_task(task_id="Live A", status="in_progress", claude_session_id=SESSION_UUID),
+            _make_task(task_id="Starting A", status="in_progress"),
         ]
     )
     monkeypatch.setattr("vault_ui.factory._config", _run_gate_config(tmp_vault, cap=2))
     app = create_app()
+    status_cache = _make_status_cache_mock(
+        {("TestVault", "Starting A"): "2026-09-03T00:00:00+00:00"}
+    )
     mock_proc = _make_streaming_proc(b'{"session_id": "under-cap-session"}')
 
     with (
         patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
-        patch(
-            "vault_ui.api.tasks.classify_session_state",
-            side_effect=_classify_live({SESSION_UUID}),
-        ),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=status_cache),
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=LaunchRegistry()),
         patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
     ):
         response = TestClient(app).post("/api/tasks/Target/run?vault=TestVault")
@@ -636,67 +634,68 @@ def test_run_task_allows_under_cap(
     assert response.json()["session_id"] == "under-cap-session"
 
 
-def test_run_task_refuses_over_cap(
+def test_run_task_refuses_over_launching_cap(
     tmp_vault: Path,
     sample_task_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Over-cap (3 live, cap 2) → 429 naming the current count and cap."""
+    """Over-cap (3 Starting markers, cap 2) → 429 naming the current count and cap."""
     client = _make_vault_client(
         [
             _make_task(task_id="Target", status="in_progress"),
-            _make_task(task_id="Live A", status="in_progress", claude_session_id=SESSION_UUID),
-            _make_task(task_id="Live B", status="in_progress", claude_session_id=SESSION_UUID_2),
-            _make_task(task_id="Live C", status="in_progress", claude_session_id=SESSION_UUID_3),
-        ]
-    )
-    monkeypatch.setattr("vault_ui.factory._config", _run_gate_config(tmp_vault, cap=2))
-    app = create_app()
-
-    with (
-        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
-        patch(
-            "vault_ui.api.tasks.classify_session_state",
-            side_effect=_classify_live({SESSION_UUID, SESSION_UUID_2, SESSION_UUID_3}),
-        ),
-    ):
-        response = TestClient(app).post("/api/tasks/Target/run?vault=TestVault")
-
-    assert response.status_code == 429
-    assert response.json() == {"detail": "3 concurrent sessions running, cap 2"}
-
-
-def test_run_task_starting_marker_counts_toward_cap(
-    tmp_vault: Path,
-    sample_task_file: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A burst that only sets Starting markers still hits the cap (markers count)."""
-    client = _make_vault_client(
-        [
-            _make_task(task_id="Target", status="in_progress"),
-            _make_task(task_id="Live A", status="in_progress", claude_session_id=SESSION_UUID),
+            _make_task(task_id="Starting A", status="in_progress"),
             _make_task(task_id="Starting B", status="in_progress"),
+            _make_task(task_id="Starting C", status="in_progress"),
         ]
     )
     monkeypatch.setattr("vault_ui.factory._config", _run_gate_config(tmp_vault, cap=2))
     app = create_app()
     status_cache = _make_status_cache_mock(
-        {("TestVault", "Starting B"): "2026-09-03T00:00:00+00:00"}
+        {
+            ("TestVault", "Starting A"): "2026-09-03T00:00:00+00:00",
+            ("TestVault", "Starting B"): "2026-09-03T00:00:00+00:00",
+            ("TestVault", "Starting C"): "2026-09-03T00:00:00+00:00",
+        }
     )
 
     with (
         patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
-        patch(
-            "vault_ui.api.tasks.classify_session_state",
-            side_effect=_classify_live({SESSION_UUID}),
-        ),
         patch("vault_ui.api.tasks.get_status_cache", return_value=status_cache),
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=LaunchRegistry()),
     ):
         response = TestClient(app).post("/api/tasks/Target/run?vault=TestVault")
 
     assert response.status_code == 429
-    assert response.json() == {"detail": "2 concurrent sessions running, cap 2"}
+    assert response.json() == {"detail": "3 sessions starting, cap 2"}
+
+
+def test_run_task_open_sessions_do_not_consume_cap(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open sessions (session ids set, no markers) do not consume the cap → 200."""
+    client = _make_vault_client(
+        [
+            _make_task(task_id="Target", status="in_progress"),
+            _make_task(task_id="Live A", status="in_progress", claude_session_id=SESSION_UUID),
+            _make_task(task_id="Live B", status="in_progress", claude_session_id=SESSION_UUID_2),
+        ]
+    )
+    monkeypatch.setattr("vault_ui.factory._config", _run_gate_config(tmp_vault, cap=2))
+    app = create_app()
+    mock_proc = _make_streaming_proc(b'{"session_id": "live-ignored-session"}')
+
+    with (
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=_make_status_cache_mock()),
+        patch("vault_ui.api.tasks.get_launch_registry", return_value=LaunchRegistry()),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
+    ):
+        response = TestClient(app).post("/api/tasks/Target/run?vault=TestVault")
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == "live-ignored-session"
 
 
 # --- take-over endpoints ---

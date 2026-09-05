@@ -31,8 +31,10 @@ class Config:
     vaults: list[VaultConfig] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8000
-    # Maximum concurrent Claude sessions admitted via the Start button; excess
-    # clicks are refused with HTTP 429 (hard refuse, no queue).
+    # Maximum simultaneous Start-button launches admitted ("Starting…" cards);
+    # excess Starts are refused with HTTP 429 (hard refuse, no queue). Open
+    # sessions do not consume the cap — it bounds bursts of starts, not the
+    # total number of running sessions.
     max_concurrent_sessions: int = 20
     current_user: str = ""
 
