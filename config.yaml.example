@@ -5,7 +5,7 @@
 vault_cli_path: vault-cli  # optional, defaults to "vault-cli"
 host: 127.0.0.1
 port: 8000
-# Cap on concurrent Claude sessions admitted via the Start button; excess clicks are refused with HTTP 429.
+# Cap on simultaneous Start-button launches in flight ("Starting…" cards); excess Starts are refused with HTTP 429. Open sessions do not count toward the cap.
 max_concurrent_sessions: 20
 vaults:
   # List vaults vault-ui should manage.

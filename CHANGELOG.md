@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The Start-button admission gate now counts only launches in flight (cards showing "Starting…"), not open sessions — a task counts only when its durable `claude_session_started` marker is set and the `LaunchRegistry` does not record the launch as finished (a resurrected marker no longer counts), so `max_concurrent_sessions` limits simultaneous Start-button launches instead of the total number of running sessions
+
 ## v0.63.1
 
 - fix: A relaunch that starts while the cleanup sweep is clearing a resurrected `claude_session_started` marker for the same `(vault, item_id)` keeps its `LaunchRegistry` record — the post-clear eviction now drops the record only if it is still FINISHED (`evict_if_finished`), so a `begin()` that lands during the awaited `task clear`/`goal clear` subprocess is not undone by the sweep and the relaunch stays protected against a resurrected marker.
