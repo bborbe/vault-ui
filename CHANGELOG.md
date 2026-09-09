@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A task or goal whose session runs on another machine no longer loses its `claude_session_id` to a peer's cleanup sweep — the sweep now clears a valid UUID only when THIS instance launched the session (a `LaunchRegistry` record exists for the item) AND its transcript file is gone, so a binding assigned to another user or one with no local transcript and no registry record (a peer's session) is retained instead of cleared and published by the vault autocommit, and the board stops offering "Start" for work already running elsewhere.
+
 ## v0.63.5
 
 - fix: A session whose `-n <name>` is the final command-line argument now binds to its session id — the `cc-*` launcher scripts put `-n <task name>` last (after `--resume <uuid>`), and the ps-row name matcher's terminator required a flag after the name, so such a session never mapped and the board kept the task's display-name `claude_session_id`, unable to resolve it to a UUID or show Live. The matcher now also terminates at the end of the line (trailing whitespace tolerated), so launcher-started sessions resolve instead of keeping a display name forever; mid-argv `-n` shapes are unchanged, and a bare `-n` or a `-n` directly followed by a flag still produces no mapping.
