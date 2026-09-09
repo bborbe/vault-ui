@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.6
 
 - fix: A task or goal whose session runs on another machine no longer loses its `claude_session_id` to a peer's cleanup sweep — the sweep now clears a valid UUID only when THIS instance launched the session (a `LaunchRegistry` record exists for the item) AND its transcript file is gone, so a binding assigned to another user or one with no local transcript and no registry record (a peer's session) is retained instead of cleared and published by the vault autocommit, and the board stops offering "Start" for work already running elsewhere.
 
