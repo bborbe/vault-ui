@@ -43,8 +43,10 @@ _PS_CACHE_TTL_SECONDS = 30.0
 _SESSION_ID_FLAG_RE = re.compile(r"(?:--resume|--session-id)\s+(" + _UUID_RE.pattern + ")")
 
 # `-n <name>` value: unquoted in `ps` output and may contain spaces, so it runs
-# until the next flag (`-p /vault-cli:...`) rather than the first space.
-_SESSION_NAME_RE = re.compile(r"(?<!\w)-n\s+(.+?)(?=\s+-{1,2}[a-zA-Z])")
+# until the next flag (`-p /vault-cli:...`) or the end of the line — the
+# `cc-*` launcher scripts put `-n <name>` last. A name that itself starts with
+# `-` is never captured (junk, not a name).
+_SESSION_NAME_RE = re.compile(r"(?<!\w)-n\s+(?!-{1,2}[a-zA-Z])(.+?)(?=\s+-{1,2}[a-zA-Z]|\s*$)")
 
 # The raw process table is cached — one TTL for the whole board, not per-card —
 # and both derived views (live session ids and the name → session-id map) are
@@ -151,8 +153,9 @@ def _parse_live_session_names(ps_output: str) -> dict[str, str]:
     is shared by several transcripts still binds to the right session — a ps
     row carries the name and the session id together and cannot collide. The
     name is unquoted in ``ps`` output and may contain spaces, so it runs until
-    the next flag rather than the first space. A name bound to two different
-    uuids in one scan is ambiguous and omitted — the board must not pick one.
+    the next flag or the end of the line rather than the first space. A name
+    bound to two different uuids in one scan is ambiguous and omitted — the
+    board must not pick one.
     """
     by_name: dict[str, set[str]] = {}
     for line in ps_output.splitlines():

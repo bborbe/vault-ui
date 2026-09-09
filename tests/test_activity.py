@@ -42,6 +42,15 @@ PS_RESUME_BY_NAME = (
 )
 PS_NO_FLAG = '18880 claude --settings {"theme":"custom:private-blue"} --model x --add-dir /tmp\n'
 
+# A `cc-*` launcher row captured live (PID 42875, task `Check Failed Builds
+# Watcher` in the Brogrammers vault, flag order preserved, middle truncated):
+# `-n <name>` is the LAST argument, after `--resume <uuid>` — the shape whose
+# name previously never matched because no flag followed it.
+PS_LAUNCHER_NAME_LAST = (
+    'claude --settings {"theme":"custom:work-green"} --model x --add-dir /tmp '
+    "--resume ebd4c030-c912-47ef-96f2-5bd4da80d206 -n Check Failed Builds Watcher\n"
+)
+
 
 def _write_transcript(directory: Path, session_id: str, age: timedelta) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
@@ -349,6 +358,54 @@ def test_parse_live_session_names_omits_ambiguous_name() -> None:
         "--session-id cbe578a1-3338-4c7c-8fb6-f07cb34eda8d\n"
     )
     assert _parse_live_session_names(ps) == {}
+
+
+def test_parse_live_session_names_launcher_name_last_maps() -> None:
+    """A `cc-*` launcher row whose `-n <name>` is the final argument (after
+    `--resume <uuid>`, nothing after the name) now binds name → uuid — the
+    regression this change fixes."""
+    assert _parse_live_session_names(PS_LAUNCHER_NAME_LAST) == {
+        "Check Failed Builds Watcher": "ebd4c030-c912-47ef-96f2-5bd4da80d206"
+    }
+
+
+def test_parse_live_session_names_trailing_space_after_name_not_captured() -> None:
+    """A trailing space after the final name is tolerated — the name is
+    captured without it (ps lines may carry a trailing space)."""
+    ps = PS_LAUNCHER_NAME_LAST.rstrip("\n") + "   \n"
+    assert _parse_live_session_names(ps) == {
+        "Check Failed Builds Watcher": "ebd4c030-c912-47ef-96f2-5bd4da80d206"
+    }
+
+
+def test_parse_live_session_names_bare_dash_n_at_end_no_entry() -> None:
+    """A final `-n` with no value (bare or space-only) produces no name → uuid
+    entry — the widened matcher must not capture trailing junk as a name."""
+    ps = (
+        "claude --settings {} --model x --print "
+        "--session-id ebd4c030-c912-47ef-96f2-5bd4da80d206 -n\n"
+    )
+    assert _parse_live_session_names(ps) == {}
+    ps_space = (
+        "claude --settings {} --model x --print "
+        "--session-id ebd4c030-c912-47ef-96f2-5bd4da80d206 -n \n"
+    )
+    assert _parse_live_session_names(ps_space) == {}
+
+
+def test_parse_live_session_names_dash_n_followed_by_flag_no_entry() -> None:
+    """A `-n` directly followed by a flag (no name between them) produces no
+    entry — the widened matcher must not capture the flag itself as a name."""
+    ps = (
+        "claude --settings {} --model x --print -n -p /vault-cli:work-on-task "
+        '"/path/Task.md" --session-id ebd4c030-c912-47ef-96f2-5bd4da80d206\n'
+    )
+    assert _parse_live_session_names(ps) == {}
+    ps_end = (
+        "claude --settings {} --model x --print "
+        "--session-id ebd4c030-c912-47ef-96f2-5bd4da80d206 -n -p\n"
+    )
+    assert _parse_live_session_names(ps_end) == {}
 
 
 def test_classify_open_but_idle_session_stays_live(tmp_path: Path) -> None:
