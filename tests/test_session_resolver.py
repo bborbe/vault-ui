@@ -10,6 +10,15 @@ import pytest
 
 from vault_ui.session_resolver import is_uuid, resolve_session_id
 
+
+@pytest.fixture(autouse=True)
+def _no_live_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every resolve test is hermetic — the default live-process mapping never
+    shells out to the real `ps` table. Tests that exercise the process-table
+    path inject `live_session_names` explicitly."""
+    monkeypatch.setattr("vault_ui.activity._cached_live_session_names", lambda: {})
+
+
 # ---------------------------------------------------------------------------
 # is_uuid tests
 # ---------------------------------------------------------------------------
@@ -127,6 +136,44 @@ def test_resolve_duplicate_titles(tmp_path: Path, caplog: pytest.LogCaptureFixtu
     assert "shared-title" in caplog.text
     assert stem_a in caplog.text
     assert stem_b in caplog.text
+
+
+def test_resolve_prefers_live_process_over_ambiguous_transcripts(tmp_path: Path) -> None:
+    """The defect this change fixes: a live name whose title is shared by two
+    transcripts resolves from the process table instead of refusing as
+    ambiguous — a ps row binds name and session id together."""
+    stem_a = "aaaaaaaa-0000-0000-0000-000000000001"
+    stem_b = "bbbbbbbb-0000-0000-0000-000000000001"
+    live_stem = "0bc9bb57-7034-49b5-b73c-70fe0682e953"
+    _write_jsonl(
+        tmp_path / f"{stem_a}.jsonl",
+        [{"type": "custom-title", "customTitle": "BRO-21903 Check Builds"}],
+    )
+    _write_jsonl(
+        tmp_path / f"{stem_b}.jsonl",
+        [{"type": "custom-title", "customTitle": "BRO-21903 Check Builds"}],
+    )
+    live = {"BRO-21903 Check Builds": live_stem}
+    assert (
+        resolve_session_id("BRO-21903 Check Builds", tmp_path, live_session_names=live) == live_stem
+    )
+
+
+def test_resolve_ambiguous_transcripts_without_process_still_none(
+    tmp_path: Path,
+) -> None:
+    """No matching process → the transcript fallback keeps its ambiguity refusal."""
+    stem_a = "aaaaaaaa-0000-0000-0000-000000000001"
+    stem_b = "bbbbbbbb-0000-0000-0000-000000000001"
+    _write_jsonl(
+        tmp_path / f"{stem_a}.jsonl",
+        [{"type": "custom-title", "customTitle": "shared-title"}],
+    )
+    _write_jsonl(
+        tmp_path / f"{stem_b}.jsonl",
+        [{"type": "custom-title", "customTitle": "shared-title"}],
+    )
+    assert resolve_session_id("shared-title", tmp_path, live_session_names={}) is None
 
 
 def test_resolve_ambiguity_judged_on_current_titles_only(tmp_path: Path) -> None:

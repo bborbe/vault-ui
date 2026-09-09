@@ -20,14 +20,26 @@ def is_uuid(value: str) -> bool:
     return bool(_UUID_RE.match(value))
 
 
-def resolve_session_id(display_name: str, project_dir: Path) -> str | None:
-    """Resolve a session display name to its real UUID via each transcript's CURRENT title.
+def resolve_session_id(
+    display_name: str,
+    project_dir: Path,
+    live_session_names: dict[str, str] | None = None,
+) -> str | None:
+    """Resolve a session display name to its real UUID.
 
-    Each .jsonl session transcript in project_dir is scanned in full. A session's
-    current title is the customTitle of the LAST line whose type is "custom-title"
-    and which carries a customTitle key (transcripts are append-only, so the last
-    entry is the newest). The display name is matched only against that current
-    title, never against a title the session used to have.
+    The live process table is consulted first: a running claude process
+    launched with ``-n <name> --session-id <uuid>`` binds the name to its uuid
+    directly, and a running session is unambiguously the task's — two
+    transcripts may share the title but only one process can carry the name
+    right now. When no process currently carries the name, fall back to the
+    transcript scan below.
+
+    Each .jsonl session transcript in project_dir is scanned in full. A
+    session's current title is the customTitle of the LAST line whose type is
+    "custom-title" and which carries a customTitle key (transcripts are
+    append-only, so the last entry is the newest). The display name is matched
+    only against that current title, never against a title the session used to
+    have.
 
     Returns the UUID (filename stem) only when exactly one session currently
     carries the display name. Returns None when no session carries it, and None
@@ -37,7 +49,23 @@ def resolve_session_id(display_name: str, project_dir: Path) -> str | None:
     Args:
         display_name: The non-UUID session ID to resolve (e.g. "trading-alerts")
         project_dir: Directory containing .jsonl session files (e.g. ~/.claude/projects/...)
+        live_session_names: Optional name → session-id map of running claude
+            processes; defaults to the cached live map. Inject in tests so no
+            resolution path shells out to ``ps``.
     """
+    if live_session_names is None:
+        from vault_ui.activity import _cached_live_session_names
+
+        live_session_names = _cached_live_session_names()
+    if display_name in live_session_names:
+        session_id = live_session_names[display_name]
+        logger.info(
+            "[SessionResolver] Resolved live '%s' -> '%s' from process table",
+            display_name,
+            session_id,
+        )
+        return session_id
+
     if not project_dir.exists():
         logger.debug("[SessionResolver] project_dir does not exist: %s", project_dir)
         return None
