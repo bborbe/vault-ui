@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.5
 
 - fix: A session whose `-n <name>` is the final command-line argument now binds to its session id — the `cc-*` launcher scripts put `-n <task name>` last (after `--resume <uuid>`), and the ps-row name matcher's terminator required a flag after the name, so such a session never mapped and the board kept the task's display-name `claude_session_id`, unable to resolve it to a UUID or show Live. The matcher now also terminates at the end of the line (trailing whitespace tolerated), so launcher-started sessions resolve instead of keeping a display name forever; mid-argv `-n` shapes are unchanged, and a bare `-n` or a `-n` directly followed by a flag still produces no mapping.
 
