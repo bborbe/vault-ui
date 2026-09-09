@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 from vault_ui.activity import (
     LIVE_WINDOW,
-    _parse_resume_processes,
-    _parse_resume_session_ids,
+    _parse_live_processes,
+    _parse_live_session_ids,
+    _parse_live_session_names,
     classify_session_state,
     compute_activity_date,
     terminate_resumed_session,
@@ -21,6 +22,25 @@ APP_JS = (REPO_ROOT / "src" / "vault_ui" / "static" / "app.js").read_text()
 STYLE_CSS = (REPO_ROOT / "src" / "vault_ui" / "static" / "style.css").read_text()
 
 SESSION_ID = "e0930886-0843-4ca9-adfa-58819443c032"
+
+# Real observed `ps` rows (truncated for brevity, flag order preserved): a
+# headless launch (--session-id), an interactive resume (--resume <uuid>), a
+# resume by name (no uuid), and a bare session (no session flag at all).
+PS_HEADLESS = (
+    '64387 claude --settings {"theme":"custom:work-green"} --model x --print '
+    "-n BRO-21903 Check Builds -p /vault-cli:work-on-task "
+    '"/path/BRO-21903 Check Builds.md" --non-interactive --output-format json '
+    "--session-id 0bc9bb57-7034-49b5-b73c-70fe0682e953\n"
+)
+PS_RESUME = (
+    '40794 claude --settings {"theme":"custom:private-blue"} --model x '
+    "--add-dir /tmp --resume cbe578a1-3338-4c7c-8fb6-f07cb34eda8d\n"
+)
+PS_RESUME_BY_NAME = (
+    '76493 claude --settings {"theme":"custom:private-blue"} --model x '
+    "--add-dir /tmp --resume boss\n"
+)
+PS_NO_FLAG = '18880 claude --settings {"theme":"custom:private-blue"} --model x --add-dir /tmp\n'
 
 
 def _write_transcript(directory: Path, session_id: str, age: timedelta) -> Path:
@@ -244,10 +264,10 @@ def test_classify_indeterminate_when_no_transcript(tmp_path: Path) -> None:
     )
 
 
-# --- ps --resume cross-check ---
+# --- ps liveness cross-check ---
 
 
-def test_parse_resume_session_ids_extracts_exact_resume_match() -> None:
+def test_parse_live_session_ids_extracts_exact_resume_match() -> None:
     ps = (
         "  PID TTY STAT TIME COMMAND\n"
         '13862 ?? S 0:00.01 claude --settings {"theme":"x"} --model claude-opus-5[1m] '
@@ -257,13 +277,13 @@ def test_parse_resume_session_ids_extracts_exact_resume_match() -> None:
         " 23478 ?? S 0:00.03 some other process --resume a55b44d0-cc04-4740-a5d9-df0a3e462cf4\n"
         " 28430 ?? S 0:00.04 claude --settings {} --print -p 'no resume here'\n"
     )
-    assert _parse_resume_session_ids(ps) == {
+    assert _parse_live_session_ids(ps) == {
         "7cbde4f8-239c-4f3d-92d7-1e550b0afa88",
         "c20647e6-ef96-47b8-866b-220f8dca685d",
     }
 
 
-def test_parse_resume_session_ids_ignores_non_claude_and_prints() -> None:
+def test_parse_live_session_ids_ignores_non_claude_and_prints() -> None:
     ps = (
         " 94282 bash cc-personal --resume c20647e6-ef96-47b8-866b-220f8dca685d\n"
         " 94284 claude --model claude-opus-5[1m] --print -p hi\n"
@@ -271,9 +291,64 @@ def test_parse_resume_session_ids_ignores_non_claude_and_prints() -> None:
         "5df6f0a9-927d-4a99-84f8-ce9ff2350ec5\n"
     )
     # Non-claude `--resume` (the launcher wrapper) and `--print` (headless, no
-    # resume) are not provable liveness — only the exact claude --model --resume
-    # process counts, exactly like fleet-sessions.py.
-    assert _parse_resume_session_ids(ps) == {"5df6f0a9-927d-4a99-84f8-ce9ff2350ec5"}
+    # session flag) are not provable liveness — only the exact claude --model
+    # --resume process counts, exactly like fleet-sessions.py.
+    assert _parse_live_session_ids(ps) == {"5df6f0a9-927d-4a99-84f8-ce9ff2350ec5"}
+
+
+def test_parse_live_session_ids_extracts_session_id_flag() -> None:
+    """A headless `--session-id <uuid>` launch is provable liveness — the case
+    that used to classify quiet and offered a duplicate Start."""
+    assert _parse_live_session_ids(PS_HEADLESS) == {"0bc9bb57-7034-49b5-b73c-70fe0682e953"}
+
+
+def test_parse_live_session_ids_resume_flag_still_counts() -> None:
+    """The original `--resume <uuid>` matcher still recognises live sessions."""
+    assert _parse_live_session_ids(PS_RESUME) == {"cbe578a1-3338-4c7c-8fb6-f07cb34eda8d"}
+
+
+def test_parse_live_session_ids_ignores_no_flag_launcher_and_name_resume() -> None:
+    """A row with neither session flag yields no id, the launcher wrapper —
+    which carries the uuid but is not a claude process — still does not count,
+    and a `--resume` by name (no uuid) yields nothing either."""
+    ps = (
+        PS_HEADLESS
+        + PS_RESUME
+        + PS_RESUME_BY_NAME
+        + PS_NO_FLAG
+        + " 94282 bash cc-personal --resume c20647e6-ef96-47b8-866b-220f8dca685d\n"
+    )
+    assert _parse_live_session_ids(ps) == {
+        "0bc9bb57-7034-49b5-b73c-70fe0682e953",
+        "cbe578a1-3338-4c7c-8fb6-f07cb34eda8d",
+    }
+
+
+def test_parse_live_session_names_maps_name_to_session_id() -> None:
+    """A `-n <name>` + `--session-id <uuid>` row binds the name to the uuid,
+    with the multi-word name preserved in full."""
+    assert _parse_live_session_names(PS_HEADLESS) == {
+        "BRO-21903 Check Builds": "0bc9bb57-7034-49b5-b73c-70fe0682e953"
+    }
+
+
+def test_parse_live_session_names_requires_both_flags() -> None:
+    """Only rows carrying both `-n` and `--session-id` map; `--resume` rows and
+    no-flag rows produce no name → uuid entry."""
+    ps = PS_HEADLESS + PS_RESUME + PS_RESUME_BY_NAME + PS_NO_FLAG
+    assert _parse_live_session_names(ps) == {
+        "BRO-21903 Check Builds": "0bc9bb57-7034-49b5-b73c-70fe0682e953"
+    }
+
+
+def test_parse_live_session_names_omits_ambiguous_name() -> None:
+    """One name bound to two different uuids in a single scan is omitted, not
+    arbitrarily picked."""
+    ps = (
+        PS_HEADLESS + " 77112 claude --settings {} --model x --print -n BRO-21903 Check Builds "
+        "--session-id cbe578a1-3338-4c7c-8fb6-f07cb34eda8d\n"
+    )
+    assert _parse_live_session_names(ps) == {}
 
 
 def test_classify_open_but_idle_session_stays_live(tmp_path: Path) -> None:
@@ -290,6 +365,27 @@ def test_classify_open_but_idle_session_stays_live(tmp_path: Path) -> None:
             project_dir,
             projects_root,
             resume_session_ids={SESSION_ID},
+        )
+        == "live"
+    )
+
+
+def test_classify_session_id_flag_is_live(tmp_path: Path) -> None:
+    """A stale transcript whose `--session-id` headless process is alive stays
+    live — the defect this change fixes (previously quiet → duplicate Start)."""
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    session_id = "0bc9bb57-7034-49b5-b73c-70fe0682e953"
+    _write_transcript(project_dir, session_id, timedelta(hours=3))
+
+    live_ids = _parse_live_session_ids(PS_HEADLESS)
+
+    assert (
+        classify_session_state(
+            session_id,
+            project_dir,
+            projects_root,
+            resume_session_ids=live_ids,
         )
         == "live"
     )
@@ -355,11 +451,11 @@ def test_indeterminate_resume_styled(tmp_path: Path) -> None:
     assert "cursor: not-allowed" in STYLE_CSS
 
 
-# --- ps --resume process termination (take-over path) ---
+# --- ps process termination (take-over path) ---
 
 
-def test_parse_resume_processes_maps_session_id_to_pid() -> None:
-    """``ps -o pid=,args=`` output maps session id → pid for claude --resume matches."""
+def test_parse_live_processes_maps_session_id_to_pid() -> None:
+    """``ps -o pid=,args=`` output maps session id → pid for claude matches."""
     ps = (
         " 12345 claude --settings {} --model claude-opus-5[1m] --resume "
         "7cbde4f8-239c-4f3d-92d7-1e550b0afa88 /vault-cli:work-on-task foo\n"
@@ -368,25 +464,34 @@ def test_parse_resume_processes_maps_session_id_to_pid() -> None:
         " 23478 bash cc-personal --resume a55b44d0-cc04-4740-a5d9-df0a3e462cf4\n"
         " 28430 claude --settings {} --print -p 'no resume here'\n"
     )
-    assert _parse_resume_processes(ps) == {
+    assert _parse_live_processes(ps) == {
         "7cbde4f8-239c-4f3d-92d7-1e550b0afa88": 12345,
         "c20647e6-ef96-47b8-866b-220f8dca685d": 67890,
     }
 
 
-def test_parse_resume_processes_skips_non_numeric_pid() -> None:
+def test_parse_live_processes_finds_session_id_row() -> None:
+    """Take-over's process map finds a headless `--session-id` row — required so
+    the take-over button can signal the sessions this prompt newly reports live."""
+    assert _parse_live_processes(PS_HEADLESS + PS_RESUME) == {
+        "0bc9bb57-7034-49b5-b73c-70fe0682e953": 64387,
+        "cbe578a1-3338-4c7c-8fb6-f07cb34eda8d": 40794,
+    }
+
+
+def test_parse_live_processes_skips_non_numeric_pid() -> None:
     """A malformed ps line (no numeric pid prefix) is skipped, not fatal."""
     ps = (
         "claude --settings {} --model claude-opus-5[1m] --resume "
         "7cbde4f8-239c-4f3d-92d7-1e550b0afa88\n"
     )
-    assert _parse_resume_processes(ps) == {}
+    assert _parse_live_processes(ps) == {}
 
 
 def test_terminate_resumed_session_kills_matching_process() -> None:
     """A matched pid receives SIGTERM; returns True."""
     with (
-        patch("vault_ui.activity._current_resume_processes") as procs,
+        patch("vault_ui.activity._current_live_processes") as procs,
         patch("vault_ui.activity.os.kill") as kill,
     ):
         procs.return_value = {SESSION_ID: 4242}
@@ -395,9 +500,9 @@ def test_terminate_resumed_session_kills_matching_process() -> None:
 
 
 def test_terminate_resumed_session_no_match_returns_false() -> None:
-    """No matching --resume process → no kill, returns False."""
+    """No matching process → no kill, returns False."""
     with (
-        patch("vault_ui.activity._current_resume_processes") as procs,
+        patch("vault_ui.activity._current_live_processes") as procs,
         patch("vault_ui.activity.os.kill") as kill,
     ):
         procs.return_value = {"some-other-session": 4242}
@@ -408,7 +513,7 @@ def test_terminate_resumed_session_no_match_returns_false() -> None:
 def test_terminate_resumed_session_swallows_oserror() -> None:
     """SIGTERM failure (OSError) is logged and reported as False, not raised."""
     with (
-        patch("vault_ui.activity._current_resume_processes") as procs,
+        patch("vault_ui.activity._current_live_processes") as procs,
         patch("vault_ui.activity.os.kill", side_effect=OSError("nope")) as kill,
     ):
         procs.return_value = {SESSION_ID: 4242}

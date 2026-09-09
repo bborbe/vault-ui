@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The board now recognises sessions it started itself and binds a task to the right session even when several sessions share its name — a headless `--session-id <uuid>` launch counts as live (previously read as idle and offered a duplicate Start), and a task whose display name is shared by 2+ transcripts resolves to the running process's uuid from the process table instead of refusing as ambiguous; take-over can signal those headless processes too.
+
 ## v0.63.2
 
 - fix: The Start-button admission gate now counts only launches in flight (cards showing "Starting…"), not open sessions — a task counts only when its durable `claude_session_started` marker is set and the `LaunchRegistry` does not record the launch as finished (a resurrected marker no longer counts), so `max_concurrent_sessions` limits simultaneous Start-button launches instead of the total number of running sessions

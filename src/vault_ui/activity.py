@@ -33,12 +33,23 @@ _UUID_RE = re.compile(
 )
 
 # A stale-transcript session stays "live" only when a `claude --resume <uuid>`
-# process match confirms it. The `ps` scan is one subprocess for the whole
-# process table, so cache it briefly — the wall lists many cards and must not
-# shell out per stale transcript per request.
+# or `claude --session-id <uuid>` process match confirms it. The `ps` scan is
+# one subprocess for the whole process table, so cache it briefly — the wall
+# lists many cards and must not shell out per stale transcript per request.
 _PS_CACHE_TTL_SECONDS = 30.0
 
-_ps_cache: tuple[float, frozenset[str]] | None = None
+# Either session-pinning flag followed by an exact uuid: `--resume <uuid>`
+# (interactive resume) or `--session-id <uuid>` (headless launch).
+_SESSION_ID_FLAG_RE = re.compile(r"(?:--resume|--session-id)\s+(" + _UUID_RE.pattern + ")")
+
+# `-n <name>` value: unquoted in `ps` output and may contain spaces, so it runs
+# until the next flag (`-p /vault-cli:...`) rather than the first space.
+_SESSION_NAME_RE = re.compile(r"(?<!\w)-n\s+(.+?)(?=\s+-{1,2}[a-zA-Z])")
+
+# The raw process table is cached — one TTL for the whole board, not per-card —
+# and both derived views (live session ids and the name → session-id map) are
+# parsed from that single cached scan.
+_ps_cache: tuple[float, str] | None = None
 
 
 def _claude_projects_root() -> Path:
@@ -114,66 +125,98 @@ def compute_activity_date(
     return max(candidates)
 
 
-def _parse_resume_session_ids(ps_output: str) -> set[str]:
-    """Session ids of live `claude --resume <uuid>` processes from a ps table.
+def _parse_live_session_ids(ps_output: str) -> set[str]:
+    """Session ids of live claude processes from a ps table.
 
-    Mirrors ``fleet-sessions.py``'s ``live_processes()``: an exact
-    ``--resume <uuid>`` match only. A process keeps neither its transcript open
-    nor the session id in argv except via ``--resume``, so nothing broader is
-    provable from ``ps`` — recency stays the signal for everything else.
+    An exact ``--resume <uuid>`` or ``--session-id <uuid>`` match only — the
+    same ``live_processes()`` matcher as ``fleet-sessions.py``, widened to the
+    headless launcher's session pin. Only actual claude invocations count; the
+    launcher wrapper (``bash cc-personal --resume <id>``) carries the id but is
+    not a claude process and is never a liveness proof.
     """
     ids: set[str] = set()
     for line in ps_output.splitlines():
-        # Only actual claude invocations count. The launcher wrapper
-        # (`bash cc-personal --resume <id>`) carries the id but is not a claude
-        # process — resuming through it is a fresh launch, not a liveness proof.
         if "claude" not in line:
             continue
-        m = re.search(r"--resume\s+(" + _UUID_RE.pattern + ")", line)
+        m = _SESSION_ID_FLAG_RE.search(line)
         if m:
             ids.add(m.group(1))
     return ids
 
 
-def _current_resume_session_ids() -> set[str]:
-    """Live ``claude --resume <uuid>`` session ids from ``ps`` on this host."""
+def _parse_live_session_names(ps_output: str) -> dict[str, str]:
+    """Map ``-n <name>`` → ``--session-id <uuid>`` for live claude processes.
+
+    A headless launch carries both flags on the same row, so a task whose name
+    is shared by several transcripts still binds to the right session — a ps
+    row carries the name and the session id together and cannot collide. The
+    name is unquoted in ``ps`` output and may contain spaces, so it runs until
+    the next flag rather than the first space. A name bound to two different
+    uuids in one scan is ambiguous and omitted — the board must not pick one.
+    """
+    by_name: dict[str, set[str]] = {}
+    for line in ps_output.splitlines():
+        if "claude" not in line:
+            continue
+        m = _SESSION_ID_FLAG_RE.search(line)
+        if not m:
+            continue
+        name_m = _SESSION_NAME_RE.search(line)
+        if not name_m:
+            continue
+        by_name.setdefault(name_m.group(1), set()).add(m.group(1))
+    return {name: next(iter(uuids)) for name, uuids in by_name.items() if len(uuids) == 1}
+
+
+def _current_ps_output() -> str:
+    """Raw ``ps`` args for every process on this host, or ``""`` when ps fails."""
     try:
-        ps = subprocess.run(["ps", "-axww", "-o", "args="], capture_output=True, text=True).stdout
+        return subprocess.run(["ps", "-axww", "-o", "args="], capture_output=True, text=True).stdout
     except OSError as e:
         logger.debug("[Activity] Cannot run ps: %s", e)
-        return set()
-    return _parse_resume_session_ids(ps)
+        return ""
 
 
-def _cached_resume_session_ids(ttl: float = _PS_CACHE_TTL_SECONDS) -> set[str]:
-    """The live resumed-session set, cached for ``ttl`` seconds.
+def _cached_ps_output(ttl: float = _PS_CACHE_TTL_SECONDS) -> str:
+    """The raw process table, cached for ``ttl`` seconds.
 
     ``_ps_cache`` is module state on purpose — one TTL for the whole process
-    table, not per-card. Callers that already hold the set (tests) pass it in.
+    table, not per-card. Both derived views (live session ids and the name →
+    session-id map) are parsed from this single cached scan, so a board full of
+    cards never shells out more than once per TTL window.
     """
     global _ps_cache
     now = time.monotonic()
     if _ps_cache is not None and now - _ps_cache[0] < ttl:
-        return set(_ps_cache[1])
-    ids = _current_resume_session_ids()
-    _ps_cache = (now, frozenset(ids))
-    return ids
+        return _ps_cache[1]
+    ps = _current_ps_output()
+    _ps_cache = (now, ps)
+    return ps
 
 
-def _parse_resume_processes(ps_output: str) -> dict[str, int]:
-    """Map session id → PID of live ``claude --resume <uuid>`` processes.
+def _cached_live_session_ids(ttl: float = _PS_CACHE_TTL_SECONDS) -> set[str]:
+    """The live session-id set, cached for ``ttl`` seconds."""
+    return _parse_live_session_ids(_cached_ps_output(ttl))
 
-    The narrow ``--resume <uuid>`` matcher from ``_parse_resume_session_ids``
-    applied to ``ps -o pid=,args=`` output (the first whitespace field is the
-    PID, the rest the command line). Same claude-only filter: the launcher
-    wrapper (``bash cc-personal --resume <id>``) is not a claude process and is
+
+def _cached_live_session_names(ttl: float = _PS_CACHE_TTL_SECONDS) -> dict[str, str]:
+    """The live name → session-id map, cached for ``ttl`` seconds."""
+    return _parse_live_session_names(_cached_ps_output(ttl))
+
+
+def _parse_live_processes(ps_output: str) -> dict[str, int]:
+    """Map session id → PID of live claude processes from a ps table.
+
+    The both-flags matcher from ``_parse_live_session_ids`` applied to
+    ``ps -o pid=,args=`` output (the first whitespace field is the PID, the
+    rest the command line). Same claude-only filter: the launcher wrapper is
     never a termination target.
     """
     processes: dict[str, int] = {}
     for line in ps_output.splitlines():
         if "claude" not in line:
             continue
-        m = re.search(r"--resume\s+(" + _UUID_RE.pattern + ")", line)
+        m = _SESSION_ID_FLAG_RE.search(line)
         if not m:
             continue
         fields = line.split(None, 1)
@@ -187,8 +230,12 @@ def _parse_resume_processes(ps_output: str) -> dict[str, int]:
     return processes
 
 
-def _current_resume_processes() -> dict[str, int]:
-    """Live ``claude --resume <uuid>`` session id → PID map from ``ps``."""
+def _current_live_processes() -> dict[str, int]:
+    """Live session id → PID map from a fresh ``ps`` scan.
+
+    Un-cached on purpose: take-over is a rare user action and must signal the
+    process as it is right now, not as it was up to 30 s ago.
+    """
     try:
         ps = subprocess.run(
             ["ps", "-axww", "-o", "pid=,args="], capture_output=True, text=True
@@ -196,18 +243,18 @@ def _current_resume_processes() -> dict[str, int]:
     except OSError as e:
         logger.debug("[Activity] Cannot run ps: %s", e)
         return {}
-    return _parse_resume_processes(ps)
+    return _parse_live_processes(ps)
 
 
 def terminate_resumed_session(session_id: str) -> bool:
-    """SIGTERM the live ``claude --resume <uuid>`` process for ``session_id``.
+    """SIGTERM the live claude process for ``session_id``.
 
     Returns ``True`` when a matching process was found and signaled, ``False``
     when no process matches (the session is already quiet — nothing to kill).
     The take-over path: end the live writer first so the per-session flock
     (vault-cli v0.118.1) releases on process death and a normal resume succeeds.
     """
-    pid = _current_resume_processes().get(session_id)
+    pid = _current_live_processes().get(session_id)
     if pid is None:
         return False
     try:
@@ -234,24 +281,26 @@ def classify_session_state(
 
     - ``None`` — no ``claude_session_id``; a human task, nothing to classify.
     - ``"live"`` — the transcript was written within ``LIVE_WINDOW``, OR the
-      transcript is stale but a ``claude --resume <uuid>`` process for this
-      session is alive on this host. Either way a session is running right now
-      and the wall must not offer Resume.
+      transcript is stale but a ``claude --resume <uuid>`` or
+      ``claude --session-id <uuid>`` process for this session is alive on this
+      host. Either way a session is running right now and the wall must not
+      offer Resume.
     - ``"quiet"`` — a transcript exists, is older than ``LIVE_WINDOW``, and no
-      live ``--resume`` process matches; the session ended and Resume is safe
-      (vault-cli's flock releases on process death).
+      live ``--resume``/``--session-id`` process matches; the session ended and
+      Resume is safe (vault-cli's flock releases on process death).
     - ``"indeterminate"`` — a session id is set but no transcript can be found;
       the session cannot be proven dead (manual terminal ``/resume`` in another
       cwd, a cloud/container session, an entity-name session the resolver can't
       match). Do not offer a Resume we cannot honor.
 
-    Liveness is transcript-recency plus a ``--resume`` process cross-check. The
-    task file mtime alone is never a liveness signal — it moves when a human
-    edits the file and says nothing about whether a Claude session runs. The
-    ``ps`` cross-check closes the open-but-idle gap: a session launched via
-    ``cc-personal --resume <id>`` (or any direct resume) keeps its process alive
-    while its transcript stops being written, so recency alone would wrongly
-    read it as quiet and the wall would offer a corrupting Resume.
+    Liveness is transcript-recency plus a ``--resume``/``--session-id`` process
+    cross-check. The task file mtime alone is never a liveness signal — it moves
+    when a human edits the file and says nothing about whether a Claude session
+    runs. The ``ps`` cross-check closes the open-but-idle gap: a session
+    launched via ``cc-personal --resume <id>`` or a headless
+    ``--session-id <uuid>`` launch keeps its process alive while its transcript
+    stops being written, so recency alone would wrongly read it as quiet and
+    the wall would offer a corrupting Resume.
     """
     if not session_id:
         return None
@@ -264,5 +313,5 @@ def classify_session_state(
     if (now - mtime) <= LIVE_WINDOW:
         return "live"
     if resume_session_ids is None:
-        resume_session_ids = _cached_resume_session_ids()
+        resume_session_ids = _cached_live_session_ids()
     return "live" if session_id in resume_session_ids else "quiet"
