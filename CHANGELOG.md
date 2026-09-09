@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.4
 
 - fix: The background cleanup pass can no longer be frozen by a stuck `vault-cli task set` helper — the display-name repair now times out after 10s, kills and reaps the helper, logs a warning naming the task and vault, and leaves `claude_session_id` on disk untouched for the next sweep to retry — and two concurrent `PATCH /api/tasks/{id}/session` requests for the same task can no longer both slip past the UUID-overwrite guard: the read-check-write is serialised by a per-task lock, so exactly one write lands and the other is refused with HTTP 409 (a best-effort guard against vault-ui's own handlers, since the launched Claude session, obsidian-git and git-rest also write the field — see `docs/starting-marker-lifecycle.md`).
 - fix: A task's recorded session is no longer discarded when its name cannot be resolved — the cleanup sweep now repairs a resolvable display-name `claude_session_id` to its UUID and leaves an unresolvable one on disk untouched (previously it cleared every non-UUID within five minutes), and `PATCH /api/tasks/{id}/session` refuses with HTTP 409 to overwrite a task's existing valid session UUID, naming both ids and pointing the caller at `DELETE /api/tasks/{id}/session` to release it first — so a task whose session name collides with another keeps its binding and the board no longer offers "Start" for a task that already has a session running.
