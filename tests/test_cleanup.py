@@ -140,14 +140,67 @@ async def test_no_assignee_session_file_exists_not_cleared() -> None:
 
 
 @pytest.mark.asyncio
-async def test_display_name_session_id_always_cleared() -> None:
-    """A non-UUID session ID (display name) is cleared regardless of file existence."""
+async def test_unresolvable_display_name_session_id_retained() -> None:
+    """A non-UUID session ID that cannot be resolved is left on disk untouched.
+
+    Regression lock for the retention invariant: being unresolvable right now is
+    not evidence the binding is wrong — the session may simply not be running
+    this minute. No clear (nor any other) subprocess may fire for this task.
+    """
     config = _make_config(current_user="alice")
     tasks = [_make_task(session_id="trading-alerts", assignee="alice")]
-    # session_file_exists=True: even if a file happened to exist with that name,
-    # display names are always cleared without checking file existence
-    cleared = await _run_cleanup(config, tasks, session_file_exists=True)
-    assert cleared == 1
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    mock_subprocess = AsyncMock()
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.resolve_session_id", return_value=None),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert mock_subprocess.call_args_list == [], (
+        "an unresolvable display name must not be cleared (regression: it was cleared)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolvable_display_name_session_id_repaired_to_uuid() -> None:
+    """A resolvable non-UUID session ID is repaired to its UUID, never cleared."""
+    resolved_uuid = "abcdef12-1234-1234-1234-abcdef123456"
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id="trading-alerts", assignee="alice")]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+
+    set_proc = AsyncMock()
+    set_proc.returncode = 0
+    set_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    mock_subprocess = AsyncMock(return_value=set_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.cleanup.Path.exists", return_value=False),
+        patch("vault_ui.cleanup.resolve_session_id", return_value=resolved_uuid),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    # Resolution is a repair, not a clear — cleared count stays 0.
+    assert cleared == 0
+    calls = mock_subprocess.call_args_list
+    assert any("task" in c.args and "set" in c.args and resolved_uuid in c.args for c in calls), (
+        f"expected a task set to {resolved_uuid} in {calls}"
+    )
+    assert not any("clear" in c.args for c in calls), "a repaired display name must not be cleared"
 
 
 @pytest.mark.asyncio

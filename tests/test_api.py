@@ -2091,6 +2091,117 @@ def test_patch_session_display_name_no_match(
     )
 
 
+def test_patch_session_conflict_refuses_overwrite(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/session returns 409 when the task already holds a different UUID.
+
+    The stored value must be left unchanged — set_field must never be called.
+    """
+    existing = "11111111-1111-1111-1111-111111111111"
+    requested = "22222222-2222-2222-2222-222222222222"
+    mock_vault_client._tasks[0].claude_session_id = existing
+
+    response = test_client.patch(
+        "/api/tasks/Test%20Task/session?vault=TestVault",
+        json={"claude_session_id": requested},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert existing in detail
+    assert requested in detail
+    assert "DELETE /api/tasks/" in detail
+    mock_vault_client.set_field.assert_not_awaited()
+
+
+def test_patch_session_same_uuid_is_successful_noop(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/session with the already-stored UUID stays a successful no-op."""
+    existing = "11111111-1111-1111-1111-111111111111"
+    mock_vault_client._tasks[0].claude_session_id = existing
+
+    response = test_client.patch(
+        "/api/tasks/Test%20Task/session?vault=TestVault",
+        json={"claude_session_id": existing},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {
+        "status": "success",
+        "task_id": "Test Task",
+        "claude_session_id": existing,
+    }
+    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "claude_session_id", existing)
+
+
+def test_patch_session_display_name_current_allows_uuid_repair(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/session may replace a non-UUID display name with a UUID."""
+    requested = "22222222-2222-2222-2222-222222222222"
+    mock_vault_client._tasks[0].claude_session_id = "trading-alerts"
+
+    response = test_client.patch(
+        "/api/tasks/Test%20Task/session?vault=TestVault",
+        json={"claude_session_id": requested},
+    )
+
+    assert response.status_code == 200
+    mock_vault_client.set_field.assert_awaited_once_with(
+        "Test Task", "claude_session_id", requested
+    )
+
+
+def test_patch_session_display_name_resolving_to_stored_uuid_is_noop(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """A display name that resolves to the UUID already stored is a no-op, not a 409."""
+    existing = "11111111-1111-1111-1111-111111111111"
+    mock_vault_client._tasks[0].claude_session_id = existing
+
+    with patch("vault_ui.api.tasks.resolve_session_id", return_value=existing):
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/session?vault=TestVault",
+            json={"claude_session_id": "trading-alerts"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {
+        "status": "success",
+        "task_id": "Test Task",
+        "claude_session_id": existing,
+    }
+    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "claude_session_id", existing)
+
+
+def test_patch_session_succeeds_when_current_absent(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """PATCH /tasks/{id}/session succeeds when the task holds no session id."""
+    uuid_value = "12345678-1234-1234-1234-123456789abc"
+    mock_vault_client._tasks[0].claude_session_id = None
+
+    with patch("vault_ui.api.tasks.is_uuid", return_value=True):
+        response = test_client.patch(
+            "/api/tasks/Test%20Task/session?vault=TestVault",
+            json={"claude_session_id": uuid_value},
+        )
+
+    assert response.status_code == 200
+    mock_vault_client.set_field.assert_awaited_once_with(
+        "Test Task", "claude_session_id", uuid_value
+    )
+
+
 def test_patch_session_vault_not_found(
     test_client: TestClient,
 ) -> None:

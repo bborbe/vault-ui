@@ -2215,9 +2215,14 @@ async def set_task_session(
 ) -> dict[str, str]:
     """Set claude_session_id on a task, resolving display names to UUIDs eagerly.
 
-    If the supplied value is not a UUID, scans .jsonl files for a matching
-    custom-title entry and stores the resolved UUID instead. If no match is
-    found, the display name is stored as-is.
+    Retention invariant: a task's recorded session is never overwritten with a
+    different value. If the supplied value is not a UUID, scans .jsonl files for
+    a matching custom-title entry and stores the resolved UUID instead (repairing
+    a display name to its UUID — allowed, and a name that resolves to the UUID
+    already stored is a successful no-op, not a conflict). If no match is found,
+    the display name is stored as-is. If the task already holds a different
+    valid UUID, the write is refused with HTTP 409 naming both ids and pointing
+    the caller at ``DELETE /api/tasks/{id}/session`` to release it first.
 
     Returns:
         {"status": "success", "task_id": task_id, "claude_session_id": <stored_value>}
@@ -2243,8 +2248,21 @@ async def set_task_session(
             )
             stored_value = resolved if resolved is not None else request.claude_session_id
 
+        current_value = (await client.show_task(task_id)).claude_session_id
+        if current_value is not None and is_uuid(current_value) and current_value != stored_value:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Task {task_id} already holds session {current_value}; refusing to "
+                    f"overwrite with {stored_value}. Call DELETE /api/tasks/{task_id}/session "
+                    "to release it first."
+                ),
+            )
+
         await client.set_field(task_id, "claude_session_id", stored_value)
         return {"status": "success", "task_id": task_id, "claude_session_id": stored_value}
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

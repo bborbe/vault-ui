@@ -1,7 +1,12 @@
 ---
-status: approved
+status: completed
+summary: 'Implemented task session retention: the cleanup sweep now repairs resolvable display-name claude_session_ids and retains unresolvable ones instead of clearing them, and PATCH /api/tasks/{id}/session refuses with 409 to overwrite a task''s existing valid UUID'
+execution_id: vault-ui-exec-087-session-id-retention
+dark-factory-version: dev
 created: "2026-09-09T09:25:00Z"
 queued: "2026-09-09T07:49:23Z"
+started: "2026-09-09T08:03:15Z"
+completed: "2026-09-09T08:05:21Z"
 ---
 
 # Never delete or overwrite a task's bound session id
