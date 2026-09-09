@@ -1,7 +1,17 @@
-"""Background cleanup for stale Claude session IDs."""
+"""Background cleanup for stale Claude session IDs.
+
+Retention invariant for ``claude_session_id``: a valid UUID is never overwritten
+with a different value and never cleared except by the explicit session reset
+(``DELETE /api/tasks/{id}/session``) or the sanctioned sweep conditions
+(transcript file missing, assigned to another user). A non-UUID display name may
+be repaired to its resolved UUID; an unresolvable display name is left on disk
+untouched — being unresolvable right now is not evidence the binding is wrong,
+the session may simply not be running this minute.
+"""
 
 import asyncio
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -13,6 +23,14 @@ from vault_ui.vault_cli_client import VaultCLIClient
 logger = logging.getLogger(__name__)
 
 _CLEANUP_INTERVAL_SECONDS = 300
+
+# How long the display-name repair may wait on a ``vault-cli task set`` helper
+# before giving up. A stuck helper must not freeze the whole cleanup pass: the
+# 5-minute sweep is what eventually re-runs the repair, so a single hung
+# subprocess would otherwise starve every other task, goal and marker in every
+# vault. 10 seconds matches the timeout the request path applies to this exact
+# command (api/tasks.py update_task_phase).
+_SET_FIELD_TIMEOUT_SECONDS = 10
 
 # How long a ``claude_session_started`` marker may sit without a
 # ``claude_session_id`` before the sweep treats it as orphaned and clears it,
@@ -66,7 +84,14 @@ def _marker_age_seconds(marker: str, now: datetime | None = None) -> float | Non
 
 
 async def cleanup_stale_sessions(config: Config) -> int:
-    """Clear stale claude_session_id values from tasks whose session file no longer exists.
+    """Clear stale claude_session_id values, repairing or retaining display names.
+
+    Retention invariant: a valid UUID is cleared only when its transcript file
+    no longer exists or the task/goal is assigned to another user (the explicit
+    session reset is a separate, sanctioned path). A non-UUID display name is
+    repaired to its resolved UUID when one is found and otherwise left on disk
+    untouched, never cleared — except that the goal sweep still clears an
+    unresolvable display name (a deliberate, known divergence).
 
     Returns the number of session IDs cleared across all vaults.
     """
@@ -98,13 +123,88 @@ async def cleanup_stale_sessions(config: Config) -> int:
                     continue
 
                 if not is_uuid(session_id):
-                    logger.info(
-                        "[Cleanup] Clearing unresolved display-name session '%s'"
-                        " from task %s in vault %s",
-                        session_id,
-                        task.id,
-                        vault.name,
-                    )
+                    resolved = resolve_session_id(session_id, project_dir)
+                    if resolved is not None:
+                        try:
+                            set_args = [
+                                vault.vault_cli_path,
+                                "task",
+                                "set",
+                                task.id,
+                                "claude_session_id",
+                                resolved,
+                                "--vault",
+                                vault.name,
+                            ]
+                            proc = await asyncio.create_subprocess_exec(
+                                *set_args,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            try:
+                                _stdout, stderr = await asyncio.wait_for(
+                                    proc.communicate(),
+                                    timeout=_SET_FIELD_TIMEOUT_SECONDS,
+                                )
+                            except TimeoutError:
+                                # A stuck `vault-cli task set` must not freeze the
+                                # whole cleanup pass. Kill and reap the child so it
+                                # cannot linger as a zombie, leave claude_session_id
+                                # on disk untouched, and let the next sweep retry —
+                                # a timeout is not evidence the binding is wrong,
+                                # and clearing here would reintroduce the retention
+                                # defect this repair exists to fix.
+                                with suppress(ProcessLookupError):
+                                    proc.kill()
+                                await proc.wait()
+                                logger.warning(
+                                    "[Cleanup] Repair of session '%s' for task %s"
+                                    " in vault %s timed out after %ds; leaving"
+                                    " claude_session_id untouched",
+                                    session_id,
+                                    task.id,
+                                    vault.name,
+                                    _SET_FIELD_TIMEOUT_SECONDS,
+                                )
+                                continue
+                            if proc.returncode != 0:
+                                logger.warning(
+                                    "[Cleanup] Failed to set resolved session for task %s"
+                                    " in vault %s: %s",
+                                    task.id,
+                                    vault.name,
+                                    stderr.decode().strip(),
+                                )
+                            else:
+                                logger.info(
+                                    "[Cleanup] Resolved session '%s' -> '%s' for task %s"
+                                    " in vault %s",
+                                    session_id,
+                                    resolved,
+                                    task.id,
+                                    vault.name,
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                "[Cleanup] Exception resolving session for task %s in vault %s: %s",
+                                task.id,
+                                vault.name,
+                                e,
+                            )
+                        continue  # never fall through to the clear block
+                    else:
+                        logger.info(
+                            "[Cleanup] Retaining unresolved display-name session '%s'"
+                            " from task %s in vault %s",
+                            session_id,
+                            task.id,
+                            vault.name,
+                        )
+                        # Being unresolvable right now is not evidence the binding is
+                        # wrong — the session may simply not be running this minute.
+                        # Retain (the one deliberate divergence from the goal branch,
+                        # which still clears an unresolved display name).
+                        continue
                 else:
                     if task.assignee and task.assignee != config.current_user:
                         logger.info(
