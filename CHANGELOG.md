@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.3
 
 - fix: A task's recorded session is no longer discarded when its name cannot be resolved — the cleanup sweep now repairs a resolvable display-name `claude_session_id` to its UUID and leaves an unresolvable one on disk untouched (previously it cleared every non-UUID within five minutes), and `PATCH /api/tasks/{id}/session` refuses with HTTP 409 to overwrite a task's existing valid session UUID, naming both ids and pointing the caller at `DELETE /api/tasks/{id}/session` to release it first — so a task whose session name collides with another keeps its binding and the board no longer offers "Start" for a task that already has a session running.
 - fix: The board now recognises sessions it started itself and binds a task to the right session even when several sessions share its name — a headless `--session-id <uuid>` launch counts as live (previously read as idle and offered a duplicate Start), and a task whose display name is shared by 2+ transcripts resolves to the running process's uuid from the process table instead of refusing as ambiguous; take-over can signal those headless processes too.
