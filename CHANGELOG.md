@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.3
 
 - fix: The board now recognises sessions it started itself and binds a task to the right session even when several sessions share its name — a headless `--session-id <uuid>` launch counts as live (previously read as idle and offered a duplicate Start), and a task whose display name is shared by 2+ transcripts resolves to the running process's uuid from the process table instead of refusing as ambiguous; take-over can signal those headless processes too.
 
