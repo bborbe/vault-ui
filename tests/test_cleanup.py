@@ -65,11 +65,26 @@ def _make_config(current_user: str = "alice", session_project_dir: str = "") -> 
     return Config(vaults=[vault], current_user=current_user)
 
 
-async def _run_cleanup(config: Config, tasks: list[Task], session_file_exists: bool) -> int:
-    """Helper: run cleanup_stale_sessions with mocked VaultCLIClient and filesystem."""
+async def _run_cleanup(
+    config: Config,
+    tasks: list[Task],
+    session_file_exists: bool,
+    registry_known: bool = False,
+) -> int:
+    """Helper: run cleanup_stale_sessions with mocked VaultCLIClient and filesystem.
+
+    ``registry_known`` records the first task's launch in a fresh LaunchRegistry,
+    so the sweep treats its session as one THIS instance launched. The registry
+    is patched via ``vault_ui.factory.get_launch_registry`` (cleanup imports it
+    lazily inside the function body), never ``vault_ui.cleanup``.
+    """
     mock_client = AsyncMock()
     mock_client.list_tasks = AsyncMock(return_value=tasks)
     mock_client.list_goals = AsyncMock(return_value=[])
+
+    registry = LaunchRegistry()
+    if registry_known and tasks:
+        registry.begin("testvault", tasks[0].id, "task")
 
     mock_proc = AsyncMock()
     mock_proc.returncode = 0
@@ -77,6 +92,7 @@ async def _run_cleanup(config: Config, tasks: list[Task], session_file_exists: b
 
     with (
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.Path.exists", return_value=session_file_exists),
         patch(
             "vault_ui.cleanup.asyncio.create_subprocess_exec",
@@ -96,38 +112,48 @@ async def test_current_user_session_file_exists_not_cleared() -> None:
 
 
 @pytest.mark.asyncio
-async def test_current_user_session_file_missing_cleared() -> None:
-    """Task assigned to current user with missing session file IS cleared."""
+async def test_current_user_session_file_missing_cleared_when_launched_locally() -> None:
+    """Task the current user launched (registry record), transcript gone → cleared.
+
+    The SC4 regression: a missing transcript alone is not evidence the binding
+    is wrong — only a launch THIS instance recorded plus the missing transcript
+    is a dead local session worth clearing.
+    """
     config = _make_config(current_user="alice")
     tasks = [_make_task(assignee="alice")]
-    cleared = await _run_cleanup(config, tasks, session_file_exists=False)
+    cleared = await _run_cleanup(config, tasks, session_file_exists=False, registry_known=True)
     assert cleared == 1
 
 
 @pytest.mark.asyncio
-async def test_other_user_session_file_exists_always_cleared() -> None:
-    """Task assigned to other user is ALWAYS cleared even if session file exists."""
+async def test_other_user_session_file_exists_never_cleared() -> None:
+    """Task assigned to another user is retained even if the session file exists."""
     config = _make_config(current_user="alice")
     tasks = [_make_task(assignee="bob")]
     cleared = await _run_cleanup(config, tasks, session_file_exists=True)
-    assert cleared == 1
+    assert cleared == 0
 
 
 @pytest.mark.asyncio
-async def test_other_user_session_file_missing_always_cleared() -> None:
-    """Task assigned to other user is ALWAYS cleared when session file is missing."""
+async def test_other_user_session_file_missing_never_cleared() -> None:
+    """Task assigned to another user is retained even when the session file is missing.
+
+    The peer case: a missing transcript with no registry record and a foreign
+    assignee is a peer machine's session — clearing it publishes the deletion
+    and the board would offer "Start" for work already running elsewhere.
+    """
     config = _make_config(current_user="alice")
     tasks = [_make_task(assignee="bob")]
     cleared = await _run_cleanup(config, tasks, session_file_exists=False)
-    assert cleared == 1
+    assert cleared == 0
 
 
 @pytest.mark.asyncio
-async def test_no_assignee_session_file_missing_cleared() -> None:
-    """Task with no assignee and missing session file IS cleared."""
+async def test_no_assignee_session_file_missing_cleared_when_launched_locally() -> None:
+    """Task with no assignee, launched locally (registry record), transcript gone → cleared."""
     config = _make_config(current_user="alice")
     tasks = [_make_task(assignee=None)]
-    cleared = await _run_cleanup(config, tasks, session_file_exists=False)
+    cleared = await _run_cleanup(config, tasks, session_file_exists=False, registry_known=True)
     assert cleared == 1
 
 
@@ -137,6 +163,48 @@ async def test_no_assignee_session_file_exists_not_cleared() -> None:
     config = _make_config(current_user="alice")
     tasks = [_make_task(assignee=None)]
     cleared = await _run_cleanup(config, tasks, session_file_exists=True)
+    assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_foreign_assignee_retained_even_with_registry_record() -> None:
+    """A task assigned to another user is retained even when the registry knows the launch.
+
+    The SC3 regression: the assignee check comes FIRST in the gate, so a
+    registry record does not rescue a foreign-assignee binding — never write a
+    field on a task owned by someone else.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(assignee="bob")]
+    cleared = await _run_cleanup(config, tasks, session_file_exists=False, registry_known=True)
+    assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_live_transcript_retained_even_with_registry_record() -> None:
+    """A task whose transcript exists is retained even when the registry knows the launch.
+
+    The local-live case (no regression): a session file on disk is a running or
+    resumable session regardless of the registry — only a MISSING transcript
+    plus a registry record is a dead local session.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(assignee="alice")]
+    cleared = await _run_cleanup(config, tasks, session_file_exists=True, registry_known=True)
+    assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_current_user_missing_file_no_registry_retained() -> None:
+    """A current-user task with a missing transcript and no registry record is retained.
+
+    The non-local retain: without a launch-registry record the sweep cannot
+    prove THIS instance launched the session, so a missing transcript alone is
+    not cleared — it may be a session started from a terminal or another tool.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(assignee="alice")]
+    cleared = await _run_cleanup(config, tasks, session_file_exists=False)
     assert cleared == 0
 
 
@@ -358,11 +426,24 @@ async def _run_cleanup_with_goals(
     session_file_exists: bool,
     goal_set_returncode: int = 0,
     goal_clear_returncode: int = 0,
+    registry_known: bool = False,
 ) -> int:
-    """Helper: run cleanup with both task and goal mocks."""
+    """Helper: run cleanup with both task and goal mocks.
+
+    ``registry_known`` records the first goal's launch in a fresh LaunchRegistry
+    (falling back to the first task when no goal is given), patched via
+    ``vault_ui.factory.get_launch_registry``.
+    """
     mock_client = AsyncMock()
     mock_client.list_tasks = AsyncMock(return_value=tasks)
     mock_client.list_goals = AsyncMock(return_value=goals)
+
+    registry = LaunchRegistry()
+    if registry_known:
+        if goals:
+            registry.begin("testvault", goals[0].id, "goal")
+        elif tasks:
+            registry.begin("testvault", tasks[0].id, "task")
 
     async def _make_proc(*args: object, **kwargs: object) -> AsyncMock:
         proc = AsyncMock()
@@ -378,6 +459,7 @@ async def _run_cleanup_with_goals(
 
     with (
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.Path.exists", return_value=session_file_exists),
         patch(
             "vault_ui.cleanup.asyncio.create_subprocess_exec",
@@ -420,21 +502,55 @@ async def test_goal_display_name_resolved_to_uuid(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_goal_uuid_cleared_on_missing_file() -> None:
-    """A goal with UUID session ID is cleared when the session file no longer exists."""
+async def test_goal_uuid_cleared_on_missing_file_when_launched_locally() -> None:
+    """A goal the current user launched is cleared when its transcript is gone.
+
+    The goal-side SC4: a missing transcript plus a registry record is a dead
+    local session — cleared; a missing transcript alone would be retained.
+    """
     config = _make_config(current_user="alice")
     goals = [_make_goal(session_id="12345678-1234-1234-1234-123456789abc", assignee="alice")]
-    cleared = await _run_cleanup_with_goals(config, [], goals, session_file_exists=False)
+    cleared = await _run_cleanup_with_goals(
+        config, [], goals, session_file_exists=False, registry_known=True
+    )
     assert cleared == 1
 
 
 @pytest.mark.asyncio
-async def test_goal_cleared_on_assignee_mismatch() -> None:
-    """A goal assigned to another user has its session ID cleared."""
+async def test_goal_retained_on_assignee_mismatch() -> None:
+    """A goal assigned to another user is retained, never cleared."""
     config = _make_config(current_user="alice")
     goals = [_make_goal(session_id="12345678-1234-1234-1234-123456789abc", assignee="bob")]
     cleared = await _run_cleanup_with_goals(config, [], goals, session_file_exists=True)
-    assert cleared == 1
+    assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_foreign_assignee_goal_retained_even_with_registry_record() -> None:
+    """A goal assigned to another user is retained even when the registry knows the launch.
+
+    The goal-side SC3 mirror: the assignee check comes first in the gate, so a
+    registry record must not rescue a foreign-assignee goal binding.
+    """
+    config = _make_config(current_user="alice")
+    goals = [_make_goal(assignee="bob")]
+    cleared = await _run_cleanup_with_goals(
+        config, [], goals, session_file_exists=False, registry_known=True
+    )
+    assert cleared == 0
+
+
+@pytest.mark.asyncio
+async def test_current_user_goal_missing_file_no_registry_retained() -> None:
+    """A current-user goal with a missing transcript and no registry record is retained.
+
+    The goal-side non-local retain: no launch-registry record means the sweep
+    cannot prove THIS instance launched the goal, so it is never cleared.
+    """
+    config = _make_config(current_user="alice")
+    goals = [_make_goal(assignee="alice")]
+    cleared = await _run_cleanup_with_goals(config, [], goals, session_file_exists=False)
+    assert cleared == 0
 
 
 @pytest.mark.asyncio
@@ -473,7 +589,8 @@ async def test_goal_set_error_path_no_clear() -> None:
 async def test_goal_list_failure_does_not_abort_task_pass() -> None:
     """When vault-cli goal list raises, the task pass for that vault still completes."""
     config = _make_config(current_user="alice")
-    tasks = [_make_task(assignee="alice")]  # UUID session_id, file missing → cleared
+    # UUID session_id, file missing, registry knows the launch → cleared
+    tasks = [_make_task(assignee="alice")]
 
     mock_client = AsyncMock()
     mock_client.list_tasks = AsyncMock(return_value=tasks)
@@ -481,12 +598,16 @@ async def test_goal_list_failure_does_not_abort_task_pass() -> None:
         side_effect=RuntimeError("vault-cli goal list failed: unknown subcommand")
     )
 
+    registry = LaunchRegistry()
+    registry.begin("testvault", "task-1", "task")
+
     mock_proc = AsyncMock()
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with (
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch(
             "vault_ui.cleanup.asyncio.create_subprocess_exec",
@@ -539,7 +660,8 @@ async def test_goal_list_missing_directory_logs_debug_not_error(
 async def test_cleanup_clears_started_flag_with_stale_session() -> None:
     """When a stale claude_session_id is cleared, claude_session_started is cleared too."""
     config = _make_config(current_user="alice")
-    # UUID session whose .jsonl file will not exist → stale → cleared; flag is set.
+    # UUID session whose .jsonl file does not exist, launched locally (registry
+    # record) → dead local session → cleared; flag is set.
     tasks = [
         _make_task(
             task_id="stale-task",
@@ -552,6 +674,9 @@ async def test_cleanup_clears_started_flag_with_stale_session() -> None:
     mock_client.list_tasks = AsyncMock(return_value=tasks)
     mock_client.list_goals = AsyncMock(return_value=[])
 
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-task", "task")
+
     mock_proc = AsyncMock()
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -559,6 +684,7 @@ async def test_cleanup_clears_started_flag_with_stale_session() -> None:
 
     with (
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
     ):
         cleared = await cleanup_stale_sessions(config)
@@ -608,6 +734,7 @@ async def test_cleanup_no_started_clear_when_flag_absent() -> None:
 async def test_cleanup_goal_clears_started_flag_with_stale_session() -> None:
     """A stale goal session clear also fires a claude_session_started clear."""
     config = _make_config(current_user="alice")
+    # Goal launched locally (registry record), transcript gone → cleared.
     goals = [
         _make_goal(
             goal_id="stale-goal",
@@ -619,6 +746,9 @@ async def test_cleanup_goal_clears_started_flag_with_stale_session() -> None:
     mock_client.list_tasks = AsyncMock(return_value=[])
     mock_client.list_goals = AsyncMock(return_value=goals)
 
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-goal", "goal")
+
     mock_proc = AsyncMock()
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -626,6 +756,7 @@ async def test_cleanup_goal_clears_started_flag_with_stale_session() -> None:
 
     with (
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
     ):
@@ -641,6 +772,7 @@ async def test_cleanup_goal_clears_started_flag_with_stale_session() -> None:
 async def test_cleanup_goal_started_flag_clear_failure_still_counts_cleared() -> None:
     """If the started-flag clear fails after the id clear succeeded, cleared count is still 1."""
     config = _make_config(current_user="alice")
+    # Goal launched locally (registry record), transcript gone → id clear fires.
     goals = [
         _make_goal(
             goal_id="stale-goal",
@@ -651,6 +783,9 @@ async def test_cleanup_goal_started_flag_clear_failure_still_counts_cleared() ->
     mock_client = AsyncMock()
     mock_client.list_tasks = AsyncMock(return_value=[])
     mock_client.list_goals = AsyncMock(return_value=goals)
+
+    registry = LaunchRegistry()
+    registry.begin("testvault", "stale-goal", "goal")
 
     id_proc = AsyncMock()
     id_proc.returncode = 0
@@ -670,6 +805,7 @@ async def test_cleanup_goal_started_flag_clear_failure_still_counts_cleared() ->
 
     with (
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.Path.exists", return_value=False),
         patch("vault_ui.cleanup.asyncio.create_subprocess_exec", side_effect=_make_proc),
     ):

@@ -2,11 +2,14 @@
 
 Retention invariant for ``claude_session_id``: a valid UUID is never overwritten
 with a different value and never cleared except by the explicit session reset
-(``DELETE /api/tasks/{id}/session``) or the sanctioned sweep conditions
-(transcript file missing, assigned to another user). A non-UUID display name may
-be repaired to its resolved UUID; an unresolvable display name is left on disk
-untouched — being unresolvable right now is not evidence the binding is wrong,
-the session may simply not be running this minute.
+(``DELETE /api/tasks/{id}/session``) or when THIS instance launched it (the
+launch registry records the launch) and its transcript file is gone — a dead
+local session. A UUID is never cleared for assignee mismatch or a foreign
+transcript-missing alone: either may describe a session running on a peer
+machine and must be retained. A non-UUID display name may be repaired to its
+resolved UUID; an unresolvable display name is left on disk untouched — being
+unresolvable right now is not evidence the binding is wrong, the session may
+simply not be running this minute.
 """
 
 import asyncio
@@ -86,12 +89,15 @@ def _marker_age_seconds(marker: str, now: datetime | None = None) -> float | Non
 async def cleanup_stale_sessions(config: Config) -> int:
     """Clear stale claude_session_id values, repairing or retaining display names.
 
-    Retention invariant: a valid UUID is cleared only when its transcript file
-    no longer exists or the task/goal is assigned to another user (the explicit
-    session reset is a separate, sanctioned path). A non-UUID display name is
-    repaired to its resolved UUID when one is found and otherwise left on disk
-    untouched, never cleared — except that the goal sweep still clears an
-    unresolvable display name (a deliberate, known divergence).
+    Retention invariant: a valid UUID is cleared only when THIS instance
+    launched it (a launch-registry record exists) and its transcript file is
+    gone — a dead local session. It is never cleared for assignee mismatch or a
+    missing transcript alone, either of which may describe a peer machine's
+    session (the explicit session reset is a separate, sanctioned path). A
+    non-UUID display name is repaired to its resolved UUID when one is found
+    and otherwise left on disk untouched, never cleared — except that the goal
+    sweep still clears an unresolvable display name (a deliberate, known
+    divergence).
 
     Returns the number of session IDs cleared across all vaults.
     """
@@ -206,19 +212,31 @@ async def cleanup_stale_sessions(config: Config) -> int:
                         # which still clears an unresolved display name).
                         continue
                 else:
+                    session_file = project_dir / f"{session_id}.jsonl"
                     if task.assignee and task.assignee != config.current_user:
                         logger.info(
-                            "[Cleanup] Clearing session %s from task %s: "
-                            "assigned to %s, not current user %s",
+                            "[Cleanup] Retaining foreign-assignee session %s on task %s: "
+                            "assignee %s, current user %s",
                             session_id,
                             task.id,
                             task.assignee,
                             config.current_user,
                         )
+                        continue
+                    elif session_file.exists():
+                        continue
+                    elif launch_registry.state(vault.name, task.id) is not None:
+                        # This instance launched it and the transcript is gone:
+                        # a dead local session — fall through to the clear block.
+                        pass
                     else:
-                        session_file = project_dir / f"{session_id}.jsonl"
-                        if session_file.exists():
-                            continue
+                        logger.info(
+                            "[Cleanup] Retaining non-local session %s on task %s in vault %s",
+                            session_id,
+                            task.id,
+                            vault.name,
+                        )
+                        continue
 
                 try:
                     vault_cli_args = [
@@ -499,19 +517,31 @@ async def cleanup_stale_sessions(config: Config) -> int:
                             )
                             # fall through to clear block
                     else:
+                        session_file = project_dir / f"{session_id}.jsonl"
                         if goal.assignee and goal.assignee != config.current_user:
                             logger.info(
-                                "[Cleanup] Clearing session %s from goal %s: "
-                                "assigned to %s, not current user %s",
+                                "[Cleanup] Retaining foreign-assignee session %s on goal %s: "
+                                "assignee %s, current user %s",
                                 session_id,
                                 goal.id,
                                 goal.assignee,
                                 config.current_user,
                             )
+                            continue
+                        elif session_file.exists():
+                            continue
+                        elif launch_registry.state(vault.name, goal.id) is not None:
+                            # This instance launched it and the transcript is gone:
+                            # a dead local session — fall through to the clear block.
+                            pass
                         else:
-                            session_file = project_dir / f"{session_id}.jsonl"
-                            if session_file.exists():
-                                continue
+                            logger.info(
+                                "[Cleanup] Retaining non-local session %s on goal %s in vault %s",
+                                session_id,
+                                goal.id,
+                                vault.name,
+                            )
+                            continue
 
                     try:
                         clear_args = [
