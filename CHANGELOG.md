@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A session whose `-n <name>` is the final command-line argument now binds to its session id — the `cc-*` launcher scripts put `-n <task name>` last (after `--resume <uuid>`), and the ps-row name matcher's terminator required a flag after the name, so such a session never mapped and the board kept the task's display-name `claude_session_id`, unable to resolve it to a UUID or show Live. The matcher now also terminates at the end of the line (trailing whitespace tolerated), so launcher-started sessions resolve instead of keeping a display name forever; mid-argv `-n` shapes are unchanged, and a bare `-n` or a `-n` directly followed by a flag still produces no mapping.
+
 ## v0.63.4
 
 - fix: The background cleanup pass can no longer be frozen by a stuck `vault-cli task set` helper — the display-name repair now times out after 10s, kills and reaps the helper, logs a warning naming the task and vault, and leaves `claude_session_id` on disk untouched for the next sweep to retry — and two concurrent `PATCH /api/tasks/{id}/session` requests for the same task can no longer both slip past the UUID-overwrite guard: the read-check-write is serialised by a per-task lock, so exactly one write lands and the other is refused with HTTP 409 (a best-effort guard against vault-ui's own handlers, since the launched Claude session, obsidian-git and git-rest also write the field — see `docs/starting-marker-lifecycle.md`).
