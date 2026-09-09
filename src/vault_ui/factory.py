@@ -13,6 +13,7 @@ from vault_ui.api.models import Goal, Task
 from vault_ui.cleanup import derive_claude_project_dir, run_cleanup_loop
 from vault_ui.config import Config, VaultConfig, load_config
 from vault_ui.launch_registry import LaunchRegistry
+from vault_ui.session_lock_registry import SessionLockRegistry
 from vault_ui.status_cache import StatusCache
 from vault_ui.vault_cli_client import VaultCLIClient
 from vault_ui.vault_cli_watcher import VaultCLIWatcher
@@ -29,6 +30,7 @@ _watchers: dict[str, VaultCLIWatcher] = {}
 _watcher_tasks: list[asyncio.Task[None]] = []
 _status_cache: StatusCache | None = None
 _launch_registry: LaunchRegistry | None = None
+_session_lock_registry: SessionLockRegistry | None = None
 _cleanup_task: asyncio.Task[None] | None = None
 
 
@@ -80,6 +82,14 @@ def get_launch_registry() -> LaunchRegistry:
     if _launch_registry is None:
         _launch_registry = LaunchRegistry()
     return _launch_registry
+
+
+def get_session_lock_registry() -> SessionLockRegistry:
+    """Get or create SessionLockRegistry singleton."""
+    global _session_lock_registry
+    if _session_lock_registry is None:
+        _session_lock_registry = SessionLockRegistry()
+    return _session_lock_registry
 
 
 async def _try_resolve_task_session(

@@ -12,15 +12,22 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from vault_ui import factory as _factory_module
 from vault_ui.__main__ import create_app
 from vault_ui.api.models import Goal, Task
-from vault_ui.api.tasks import _build_resume_command, count_launching_sessions
+from vault_ui.api.tasks import (
+    UpdateSessionRequest,
+    _build_resume_command,
+    count_launching_sessions,
+    set_task_session,
+)
 from vault_ui.config import Config, VaultConfig
 from vault_ui.factory import get_launch_registry
 from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
+from vault_ui.session_lock_registry import SessionLockRegistry
 from vault_ui.vault_cli_client import VaultCLIClient
 
 
@@ -153,6 +160,35 @@ def _make_vault_client(tasks: list[Task] | None = None) -> MagicMock:
     return client
 
 
+def _make_mutable_vault_client(tasks: list[Task]) -> MagicMock:
+    """Mock VaultCLIClient whose show_task/set_field mutate the task list.
+
+    Unlike ``_make_vault_client`` (whose ``set_field`` records the call but does
+    not mutate), this one makes a written value visible to a subsequent
+    ``show_task`` — what the session-lock tests need to prove a second,
+    serialised caller sees the first caller's write.
+    """
+    client = MagicMock()
+
+    async def _show_task(task_id: str) -> Task:
+        for t in tasks:
+            if t.id == task_id:
+                return t
+        raise FileNotFoundError(f"Task not found: {task_id}")
+
+    async def _set_field(task_id: str, field: str, value: str) -> None:
+        for t in tasks:
+            if t.id == task_id:
+                setattr(t, field, value)
+                return
+        raise FileNotFoundError(f"Task not found: {task_id}")
+
+    client.show_task = AsyncMock(side_effect=_show_task)
+    client.set_field = AsyncMock(side_effect=_set_field)
+    client._tasks = tasks
+    return client
+
+
 @pytest.fixture
 def mock_vault_client() -> MagicMock:
     """Default mock VaultCLIClient with the standard sample task."""
@@ -180,16 +216,17 @@ def mock_vault_client_with_goals() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _reset_launch_registry() -> None:
-    """Reset the process-global launch registry singleton before each test.
+    """Reset the process-global launch/session-lock singletons before each test.
 
-    The registry is a module-global singleton in ``factory.py`` like
-    ``_status_cache``; without a reset, a FINISHED record left by one /run test
-    exercising the real (unpatched) singleton could leak into a later test.
-    Tests that patch ``vault_ui.api.tasks.get_launch_registry`` use their own
-    fresh instance and are unaffected, but the reset keeps the two worlds from
-    ever sharing state.
+    The registries are module-global singletons in ``factory.py`` like
+    ``_status_cache``; without a reset, a FINISHED record or a leftover lock
+    entry left by one test exercising the real (unpatched) singleton could leak
+    into a later test. Tests that patch ``vault_ui.api.tasks.get_launch_registry``
+    or ``get_session_lock_registry`` use their own fresh instances and are
+    unaffected, but the reset keeps the two worlds from ever sharing state.
     """
     _factory_module._launch_registry = None
+    _factory_module._session_lock_registry = None
 
 
 @pytest.fixture
@@ -2212,6 +2249,180 @@ def test_patch_session_vault_not_found(
     )
 
     assert response.status_code in (404, 422)
+
+
+# --- set_task_session concurrency (per-task SessionLockRegistry) ---
+
+
+def _session_vault_config() -> VaultConfig:
+    return VaultConfig(name="TestVault", vault_path="/vault", tasks_folder="Tasks")
+
+
+async def test_set_task_session_concurrent_same_task_single_write() -> None:
+    """Two concurrent PATCHes for the same task cannot both pass the guard.
+
+    Both start against an empty current value; the per-(vault, task_id) lock
+    serialises the read-check-write, so exactly one write lands (set_field
+    awaited once) and the other is refused with HTTP 409. The stored value is
+    one of the two, never interleaved.
+    """
+    uuid_a = "11111111-1111-1111-1111-111111111111"
+    uuid_b = "22222222-2222-2222-2222-222222222222"
+    registry = SessionLockRegistry()
+    tasks = [_make_task(task_id="Test Task", claude_session_id=None)]
+    client = _make_mutable_vault_client(tasks)
+
+    with (
+        patch("vault_ui.api.tasks.get_session_lock_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+        patch("vault_ui.api.tasks.get_vault_config", return_value=_session_vault_config()),
+        patch("vault_ui.api.tasks.is_uuid", return_value=True),
+    ):
+        results = await asyncio.gather(
+            set_task_session(
+                "TestVault", "Test Task", UpdateSessionRequest(claude_session_id=uuid_a)
+            ),
+            set_task_session(
+                "TestVault", "Test Task", UpdateSessionRequest(claude_session_id=uuid_b)
+            ),
+            return_exceptions=True,
+        )
+
+    successes = [r for r in results if isinstance(r, dict)]
+    conflicts = [r for r in results if isinstance(r, HTTPException) and r.status_code == 409]
+    assert len(successes) == 1, results
+    assert len(conflicts) == 1, results
+    assert successes[0]["claude_session_id"] in {uuid_a, uuid_b}
+    assert tasks[0].claude_session_id in {uuid_a, uuid_b}, (
+        "the stored value must be one of the two, never interleaved"
+    )
+    assert client.set_field.await_count == 1
+    assert registry.size() == 0, "lock entry must be evicted once no caller is waiting"
+
+
+async def test_set_task_session_different_tasks_not_serialised() -> None:
+    """Concurrent PATCHes for DIFFERENT tasks are not serialised against each other.
+
+    Task A's critical section holds A's lock while blocked in set_field; task B,
+    using a different per-task lock, must complete while A is still inside its
+    section. A single global lock (or a lock keyed by vault alone) would block B
+    until A finished, and this test would time out.
+    """
+    uuid_a = "11111111-1111-1111-1111-111111111111"
+    uuid_b = "22222222-2222-2222-2222-222222222222"
+    registry = SessionLockRegistry()
+
+    task_a = _make_task(task_id="Task A", claude_session_id=None)
+    task_b = _make_task(task_id="Task B", claude_session_id=None)
+
+    a_entered = asyncio.Event()
+    release_a = asyncio.Event()
+    client = MagicMock()
+
+    async def _show_task(task_id: str) -> Task:
+        return task_a if task_id == "Task A" else task_b
+
+    async def _set_field(task_id: str, field: str, value: str) -> None:
+        if task_id == "Task A":
+            a_entered.set()
+            await release_a.wait()
+        setattr(task_b if task_id == "Task B" else task_a, field, value)
+
+    client.show_task = AsyncMock(side_effect=_show_task)
+    client.set_field = AsyncMock(side_effect=_set_field)
+
+    with (
+        patch("vault_ui.api.tasks.get_session_lock_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+        patch("vault_ui.api.tasks.get_vault_config", return_value=_session_vault_config()),
+        patch("vault_ui.api.tasks.is_uuid", return_value=True),
+    ):
+        fut_a = asyncio.ensure_future(
+            set_task_session("TestVault", "Task A", UpdateSessionRequest(claude_session_id=uuid_a))
+        )
+        await a_entered.wait()  # A is inside its critical section, holding A's lock
+
+        fut_b = asyncio.ensure_future(
+            set_task_session("TestVault", "Task B", UpdateSessionRequest(claude_session_id=uuid_b))
+        )
+        done, _pending = await asyncio.wait([fut_b], timeout=1.0)
+
+        release_a.set()
+        results = await asyncio.gather(fut_a, fut_b, return_exceptions=True)
+
+    assert fut_b in done, "B must complete while A is still blocked (per-task lock)"
+    assert all(isinstance(r, dict) for r in results), results
+    assert task_a.claude_session_id == uuid_a
+    assert task_b.claude_session_id == uuid_b
+    assert registry.size() == 0
+
+
+async def test_set_task_session_lock_registry_bounded() -> None:
+    """The lock registry returns to its pre-call size once callers finish.
+
+    A sequence of set_task_session calls across several distinct task ids —
+    one success, one HTTP 409 conflict, and one error — each evicts its lock
+    entry on completion (success or error alike), so an idle registry holds
+    nothing and cannot grow without bound.
+    """
+    uuid_new = "11111111-1111-1111-1111-111111111111"
+    uuid_existing = "22222222-2222-2222-2222-222222222222"
+    uuid_conflict = "33333333-3333-3333-3333-333333333333"
+
+    registry = SessionLockRegistry()
+    baseline = registry.size()
+
+    task_ok = _make_task(task_id="Task OK", claude_session_id=None)
+    task_conflict = _make_task(task_id="Task Conflict", claude_session_id=uuid_existing)
+    task_err = _make_task(task_id="Task Err", claude_session_id=None)
+    tasks = [task_ok, task_conflict, task_err]
+
+    client = MagicMock()
+
+    async def _show_task(task_id: str) -> Task:
+        for t in tasks:
+            if t.id == task_id:
+                return t
+        raise FileNotFoundError(task_id)
+
+    async def _set_field(task_id: str, field: str, value: str) -> None:
+        if task_id == "Task Err":
+            raise RuntimeError("vault-cli set failed")
+        for t in tasks:
+            if t.id == task_id:
+                setattr(t, field, value)
+                return
+        raise FileNotFoundError(task_id)
+
+    client.show_task = AsyncMock(side_effect=_show_task)
+    client.set_field = AsyncMock(side_effect=_set_field)
+
+    with (
+        patch("vault_ui.api.tasks.get_session_lock_registry", return_value=registry),
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+        patch("vault_ui.api.tasks.get_vault_config", return_value=_session_vault_config()),
+        patch("vault_ui.api.tasks.is_uuid", return_value=True),
+    ):
+        results = await asyncio.gather(
+            set_task_session(
+                "TestVault", "Task OK", UpdateSessionRequest(claude_session_id=uuid_new)
+            ),
+            set_task_session(
+                "TestVault",
+                "Task Conflict",
+                UpdateSessionRequest(claude_session_id=uuid_conflict),
+            ),
+            set_task_session(
+                "TestVault", "Task Err", UpdateSessionRequest(claude_session_id=uuid_new)
+            ),
+            return_exceptions=True,
+        )
+
+    assert isinstance(results[0], dict), results
+    assert isinstance(results[1], HTTPException) and results[1].status_code == 409, results
+    assert isinstance(results[2], HTTPException) and results[2].status_code == 500, results
+    assert task_ok.claude_session_id == uuid_new
+    assert registry.size() == baseline, "all lock entries must be evicted after completion"
 
 
 def test_list_tasks_warns_on_status_phase_mismatch(

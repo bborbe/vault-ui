@@ -11,6 +11,7 @@ the session may simply not be running this minute.
 
 import asyncio
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +23,14 @@ from vault_ui.vault_cli_client import VaultCLIClient
 logger = logging.getLogger(__name__)
 
 _CLEANUP_INTERVAL_SECONDS = 300
+
+# How long the display-name repair may wait on a ``vault-cli task set`` helper
+# before giving up. A stuck helper must not freeze the whole cleanup pass: the
+# 5-minute sweep is what eventually re-runs the repair, so a single hung
+# subprocess would otherwise starve every other task, goal and marker in every
+# vault. 10 seconds matches the timeout the request path applies to this exact
+# command (api/tasks.py update_task_phase).
+_SET_FIELD_TIMEOUT_SECONDS = 10
 
 # How long a ``claude_session_started`` marker may sit without a
 # ``claude_session_id`` before the sweep treats it as orphaned and clears it,
@@ -132,7 +141,32 @@ async def cleanup_stale_sessions(config: Config) -> int:
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
                             )
-                            _stdout, stderr = await proc.communicate()
+                            try:
+                                _stdout, stderr = await asyncio.wait_for(
+                                    proc.communicate(),
+                                    timeout=_SET_FIELD_TIMEOUT_SECONDS,
+                                )
+                            except TimeoutError:
+                                # A stuck `vault-cli task set` must not freeze the
+                                # whole cleanup pass. Kill and reap the child so it
+                                # cannot linger as a zombie, leave claude_session_id
+                                # on disk untouched, and let the next sweep retry —
+                                # a timeout is not evidence the binding is wrong,
+                                # and clearing here would reintroduce the retention
+                                # defect this repair exists to fix.
+                                with suppress(ProcessLookupError):
+                                    proc.kill()
+                                await proc.wait()
+                                logger.warning(
+                                    "[Cleanup] Repair of session '%s' for task %s"
+                                    " in vault %s timed out after %ds; leaving"
+                                    " claude_session_id untouched",
+                                    session_id,
+                                    task.id,
+                                    vault.name,
+                                    _SET_FIELD_TIMEOUT_SECONDS,
+                                )
+                                continue
                             if proc.returncode != 0:
                                 logger.warning(
                                     "[Cleanup] Failed to set resolved session for task %s"

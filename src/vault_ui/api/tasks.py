@@ -35,6 +35,7 @@ from vault_ui.config import VaultConfig
 from vault_ui.factory import (
     get_config,
     get_launch_registry,
+    get_session_lock_registry,
     get_status_cache,
     get_vault_cli_client_for_vault,
     get_vault_config,
@@ -2224,6 +2225,18 @@ async def set_task_session(
     valid UUID, the write is refused with HTTP 409 naming both ids and pointing
     the caller at ``DELETE /api/tasks/{id}/session`` to release it first.
 
+    Concurrency: the read-check-write (show_task, guard, set_field) is one
+    critical section under a per-(vault, task_id) ``asyncio.Lock`` from the
+    SessionLockRegistry, so two concurrent PATCHes for the same task cannot both
+    read an empty value and both pass the overwrite guard — exactly one write
+    lands and the other is refused with HTTP 409. The lock serialises only
+    vault-ui's own handlers: the launched Claude session, obsidian-git and
+    git-rest also write this field (docs/starting-marker-lifecycle.md §
+    "Concurrent writers"), so the guard is best-effort, not atomic. Lock
+    acquisition can block indefinitely because the wrapped show_task/set_field
+    vault-cli calls are themselves unbounded; bounding those subprocess calls is
+    a separate concern from this guard.
+
     Returns:
         {"status": "success", "task_id": task_id, "claude_session_id": <stored_value>}
         where claude_session_id is the resolved UUID if resolution succeeded,
@@ -2248,18 +2261,26 @@ async def set_task_session(
             )
             stored_value = resolved if resolved is not None else request.claude_session_id
 
-        current_value = (await client.show_task(task_id)).claude_session_id
-        if current_value is not None and is_uuid(current_value) and current_value != stored_value:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Task {task_id} already holds session {current_value}; refusing to "
-                    f"overwrite with {stored_value}. Call DELETE /api/tasks/{task_id}/session "
-                    "to release it first."
-                ),
-            )
+        # Serialise the read-check-write for THIS task: a lock covering only the
+        # read fixes nothing, so the show_task, the guard, and the set_field all
+        # sit inside the same critical section.
+        async with get_session_lock_registry().session_lock(vault, task_id):
+            current_value = (await client.show_task(task_id)).claude_session_id
+            if (
+                current_value is not None
+                and is_uuid(current_value)
+                and current_value != stored_value
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} already holds session {current_value}; refusing to "
+                        f"overwrite with {stored_value}. Call DELETE /api/tasks/{task_id}/session "
+                        "to release it first."
+                    ),
+                )
 
-        await client.set_field(task_id, "claude_session_id", stored_value)
+            await client.set_field(task_id, "claude_session_id", stored_value)
         return {"status": "success", "task_id": task_id, "claude_session_id": stored_value}
     except HTTPException:
         raise
