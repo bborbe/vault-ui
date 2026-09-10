@@ -1159,7 +1159,7 @@ function sessionButtonHtml(kind, item) {
         // it opens the confirm dialog, which ends the running turn (SIGTERM via
         // the ps --resume match), then Resume works normally. In-flight work is
         // lost — that is the accepted trade-off, stated in the confirm dialog.
-        return `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${item.id}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
+        return `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
     } else if (hasSession) {
         if (item.session_state === 'indeterminate') {
             // Session id present but no transcript found — cannot prove it dead
@@ -1179,7 +1179,7 @@ function sessionButtonHtml(kind, item) {
         buttonClass = 'start-btn';
         buttonDisabled = false;
     }
-    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${item.id}')"${buttonDisabled ? ' disabled' : ''}${buttonTitle}>${buttonLabel}</button>`;
+    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${escapeJsAttr(item.id)}')"${buttonDisabled ? ' disabled' : ''}${buttonTitle}>${buttonLabel}</button>`;
 }
 
 // Shared card body: menu button + title block + footer skeleton. The kind-specific
@@ -1216,7 +1216,7 @@ function activityAgeHtml(activityDate) {
 }
 
 function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml) {
-    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + id + '\')">⋮</button>';
+    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + escapeJsAttr(id) + '\')">⋮</button>';
     return `
         ${menuButton}
         <div class="card-content">
@@ -1281,13 +1281,13 @@ function createTaskCard(task) {
     // Assignee badge (if present) - clickable to filter
     const isActiveFilter = currentAssignees.includes(task.assignee);
     const assigneeBadge = task.assignee
-        ? `<span class="assignee-badge clickable ${isActiveFilter ? 'active' : ''}" onclick="filterByAssignee('${escapeHtml(task.assignee)}')" title="${isActiveFilter ? 'Clear filter' : 'Filter by ' + escapeHtml(task.assignee)}">
+        ? `<span class="assignee-badge clickable ${isActiveFilter ? 'active' : ''}" onclick="filterByAssignee('${escapeJsAttr(task.assignee)}')" title="${isActiveFilter ? 'Clear filter' : 'Filter by ' + escapeHtml(task.assignee)}">
              <span class="assignee-icon">👤</span><span>${escapeHtml(task.assignee)}</span>
            </span>`
-        : `<a class="assign-to-me-link" onclick="assignToMe('${escapeHtml(task.id)}', '${escapeHtml(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
+        : `<a class="assign-to-me-link" onclick="assignToMe('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
 
     const startButton = sessionButtonHtml('task', task);
-    const flagButton = `<button class="flag-btn ${task.flag ? 'flagged' : ''}" onclick="toggleFlag('${escapeHtml(task.id)}', '${escapeHtml(task.vault)}', ${task.flag})" title="${task.flag ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${task.flag ? '🚩' : '⚑'}</button>`;
+    const flagButton = `<button class="flag-btn ${task.flag ? 'flagged' : ''}" onclick="toggleFlag('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}', ${task.flag})" title="${task.flag ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${task.flag ? '🚩' : '⚑'}</button>`;
     const footerLeft = `
         ${flagButton}
         ${holdBadge}
@@ -1349,13 +1349,13 @@ function createGoalCard(goal) {
         : '';
 
     const startButton = sessionButtonHtml('goal', goal);
-    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + goal.id + '\')">⋮</button>';
+    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + escapeJsAttr(goal.id) + '\')">⋮</button>';
     const footerLeft = `
         ${holdBadge}
         ${jiraBadge}
         ${goal.assignee
             ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
-            : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeHtml(goal.id)}', '${escapeHtml(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
+            : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeJsAttr(goal.id)}', '${escapeJsAttr(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
         ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
         ${activityAgeHtml(goal.activity_date)}
     `;
@@ -1720,6 +1720,24 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Escape a value for embedding in a single-quoted JS string literal that lives
+// inside a double-quoted HTML attribute (inline onclick). Two decoders run in
+// sequence — the HTML parser (attribute boundary, character references) then the
+// JS parser (string literal) — so the value must be escaped for BOTH: backslash
+// and apostrophe for JS, ampersand/double-quote/< / > for HTML. escapeHtml alone
+// only covers the HTML half: a title like "Machines'" decodes back to a raw
+// apostrophe before JS parses, terminating the string and producing a silent
+// SyntaxError — the click handler never runs (no modal, no toast).
+function escapeJsAttr(value) {
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 // Sort cards within a column by the active sort key (currentSort, driven by
