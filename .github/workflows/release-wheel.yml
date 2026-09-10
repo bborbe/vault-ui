@@ -1,0 +1,40 @@
+name: Build and attach wheel to release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # hatch-vcs derives the version from git tags — full history required.
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Attach wheel to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-run on an existing release: refresh the asset.
+            gh release upload "$TAG" dist/* --clobber
+          else
+            # First run on this tag: create the release with the wheel attached.
+            # A GitHub Release (not just a tag) is what makes the wheel
+            # downloadable by the Homebrew cask (bborbe/homebrew-tap).
+            gh release create "$TAG" dist/* --generate-notes
+          fi
