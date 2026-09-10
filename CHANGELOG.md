@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Task and goal card buttons (Resume, take-over, ⋮ menu, assignee filter, assign-to-me, flag) now escape titles/ids/vaults/assignees for the single-quoted-JS-string-inside-HTML-attribute context (`escapeJsAttr`). A title containing an apostrophe — e.g. "…Peer Machines' Session Bindings…" — previously terminated the inline onclick handler, producing a silent SyntaxError on click: the Resume button and card menu did nothing (no modal, no toast). `escapeHtml` alone was insufficient because it decodes `&#39;` back to `'` before the JS parser runs.
+
 ## v0.63.6
 
 - fix: A task or goal whose session runs on another machine no longer loses its `claude_session_id` to a peer's cleanup sweep — the sweep now clears a valid UUID only when THIS instance launched the session (a `LaunchRegistry` record exists for the item) AND its transcript file is gone, so a binding assigned to another user or one with no local transcript and no registry record (a peer's session) is retained instead of cleared and published by the vault autocommit, and the board stops offering "Start" for work already running elsewhere.

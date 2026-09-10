@@ -92,3 +92,36 @@ def test_card_onclicks_point_at_merged_functions() -> None:
     assert "runGoal('" not in APP_JS
     assert "showTaskMenu(event," not in APP_JS
     assert "showGoalMenu(event," not in APP_JS
+
+
+def test_onclick_js_string_args_escape_titles() -> None:
+    """Task/goal titles are embedded in single-quoted JS strings inside double-quoted
+    HTML attributes (inline onclick). A raw apostrophe in a title terminates the JS
+    string — silent SyntaxError on click, no modal, no toast (reproduced live on
+    "…Peer Machines' Session Bindings…"). Every onclick arg that can carry a title
+    (item.id / task.id / goal.id / vault / assignee) must go through escapeJsAttr —
+    escapeHtml alone is insufficient: it decodes &#39; back to ' before JS parses."""
+    assert "function escapeJsAttr(value)" in APP_JS
+    # Every inline-onclick JS-string argument is escapeJsAttr-wrapped.
+    assert APP_JS.count("escapeJsAttr(item.id)") == 2  # takeOverSession + runSession
+    assert APP_JS.count("escapeJsAttr(id)") == 1  # task showMenu (cardShellHtml)
+    assert APP_JS.count("escapeJsAttr(goal.id)") == 2  # goal showMenu + assignGoalToMe
+    for wrapped in (
+        "escapeJsAttr(task.id)",
+        "escapeJsAttr(task.vault)",
+        "escapeJsAttr(task.assignee)",
+        "escapeJsAttr(goal.id)",
+        "escapeJsAttr(goal.vault)",
+    ):
+        assert wrapped in APP_JS, wrapped
+    # No raw title interpolation left in an onclick JS-string slot.
+    for leaked in (
+        "runSession('${kind}', '${item.id}')",
+        "takeOverSession('${kind}', '${item.id}')",
+        "assignToMe('${escapeHtml(task.id)}'",
+        "toggleFlag('${escapeHtml(task.id)}'",
+        "filterByAssignee('${escapeHtml(task.assignee)}')",
+    ):
+        assert leaked not in APP_JS, leaked
+    # escapeHtml stays only for pure HTML-attribute (title=) contexts, not onclick args.
+    assert "Filter by ' + escapeHtml(task.assignee)" in APP_JS

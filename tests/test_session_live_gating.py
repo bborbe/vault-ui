@@ -33,6 +33,7 @@ LIVE_ID = "aaaaaaaa-0000-0000-0000-000000000001"
 QUIET_ID = "bbbbbbbb-0000-0000-0000-000000000002"
 UNKNOWN_ID = "cccccccc-0000-0000-0000-000000000003"
 STARTING_ID = "dddddddd-0000-0000-0000-000000000004"
+APOSTROPHE_ID = "eeeeeeee-0000-0000-0000-000000000005"
 
 TASKS = [
     Task(
@@ -127,6 +128,31 @@ TASKS = [
     # while the durable claude_session_started marker is still set and the
     # transcript is fresh (session_state=live). The marker must win — "Starting…",
     # never the take-over badge or a Resume.
+    # Title/id containing an apostrophe: the inline onclick embeds the id in a
+    # single-quoted JS string, so a raw apostrophe used to terminate the string —
+    # a silent SyntaxError that killed the Resume/⋮ buttons (no modal, no toast).
+    Task(
+        id="Machine's Session Task",
+        title="Machine's Session Task",
+        status="in_progress",
+        phase="execution",
+        project_path=None,
+        content="",
+        description=None,
+        modified_date=datetime.now(tz=UTC) - timedelta(hours=2),
+        defer_date=None,
+        planned_date=None,
+        due_date=None,
+        priority=2,
+        category=None,
+        recurring=None,
+        claude_session_id=APOSTROPHE_ID,
+        claude_session_started=None,
+        assignee="bborbe",
+        blocked_by=None,
+        completed_date=None,
+        goals=None,
+    ),
     Task(
         id="Starting Task",
         title="Starting Task",
@@ -245,6 +271,8 @@ def live_server(tmp_path, monkeypatch):
     projects_root = tmp_path / "claude-projects"
     _write_transcript(projects_root, LIVE_ID, timedelta(seconds=30))
     _write_transcript(projects_root, QUIET_ID, timedelta(hours=3))
+    # Apostrophe-titled task: quiet transcript → session_state 'resume' (enabled).
+    _write_transcript(projects_root, APOSTROPHE_ID, timedelta(hours=4))
     # The bug-state transcript: freshly written, so session_state classifies live.
     _write_transcript(projects_root, STARTING_ID, timedelta(seconds=30))
 
@@ -412,3 +440,39 @@ def test_goal_take_over_confirm_returns_resume_command(live_server, page):
     expect(session_modal).to_be_visible()
     expect(page.locator("#handoff-command")).to_contain_text(f"--resume {LIVE_ID}")
     expect(page.locator("#task-title")).to_have_text("Live Goal")
+
+
+def test_apostrophe_title_resume_renders_and_opens_modal(live_server, page):
+    """Bug lock: a title with an apostrophe must not break the inline onclick. The
+    Resume button renders enabled and clicking it opens the session modal with the
+    correct command — before the escapeJsAttr fix the handler was a SyntaxError and
+    the click did nothing (no modal, no toast)."""
+    page_errors = []
+    page.on("pageerror", lambda err: page_errors.append(str(err)))
+
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Machine's Session Task")
+    resume = card.locator(".resume-btn")
+    expect(resume).to_have_count(1)
+    expect(resume).not_to_be_disabled()
+
+    resume.click()
+    session_modal = page.locator("#session-modal")
+    expect(session_modal).to_be_visible()
+    expect(page.locator("#handoff-command")).to_contain_text(f"--resume {APOSTROPHE_ID}")
+    expect(page.locator("#task-title")).to_have_text("Machine's Session Task")
+    # No SyntaxError from the apostrophe-terminated inline handler.
+    assert page_errors == [], f"page errors on apostrophe-title Resume click: {page_errors}"
+
+
+def test_apostrophe_title_menu_button_opens(live_server, page):
+    """The ⋮ card menu shares the same inline-onclick embedding — an apostrophe in
+    the title must not break it either."""
+    page_errors = []
+    page.on("pageerror", lambda err: page_errors.append(str(err)))
+
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Machine's Session Task")
+    card.locator(".menu-btn").click()
+    expect(page.locator(".task-menu")).to_be_visible()
+    assert page_errors == [], f"page errors on apostrophe-title menu click: {page_errors}"
