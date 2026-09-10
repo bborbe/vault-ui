@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.63.7
 
 - fix: Task and goal card buttons (Resume, take-over, ⋮ menu, assignee filter, assign-to-me, flag) now escape titles/ids/vaults/assignees for the single-quoted-JS-string-inside-HTML-attribute context (`escapeJsAttr`). A title containing an apostrophe — e.g. "…Peer Machines' Session Bindings…" — previously terminated the inline onclick handler, producing a silent SyntaxError on click: the Resume button and card menu did nothing (no modal, no toast). `escapeHtml` alone was insufficient because it decodes `&#39;` back to `'` before the JS parser runs.
 
