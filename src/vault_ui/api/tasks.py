@@ -1434,7 +1434,6 @@ async def run_goal(
             command=command,
             working_dir=vault_config.vault_path,
             task_title=goal.title,
-            terminated=terminated,
         )
 
     except HTTPException:
@@ -1529,6 +1528,7 @@ async def take_over_goal(
             command=command,
             working_dir=vault_config.vault_path,
             task_title=goal.title,
+            terminated=terminated,
         )
     except HTTPException:
         raise
