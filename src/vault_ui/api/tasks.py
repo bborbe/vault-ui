@@ -67,13 +67,21 @@ _UNSET = object()
 # request instead of persisting until a server restart.
 _CACHE_TTL_SECONDS = 30.0
 
-# How long to let the SIGTERMed launcher's own frontmatter write land before
-# deciding whether the take-over's session-id bind survived it, and how many
-# times to re-bind when it did not. See ``_bind_session_id`` for why the write
-# order is not guaranteed. Worst case adds _BIND_ATTEMPTS * _BIND_SETTLE_SECONDS
-# (~1.2s) to a take-over; the common case returns after the first attempt.
-_BIND_ATTEMPTS = 3
-_BIND_SETTLE_SECONDS = 0.4
+# How long the take-over watches the session-id field for the SIGTERMed
+# launcher's compensating clear, and how often it looks. See ``_bind_session_id``
+# for why a single write loses: the clear lands ~1s after the SIGTERM (measured
+# live 2026-09-11 12:54), so any check that finishes sooner reads the field as
+# intact and returns before the clobber. Bounds the added latency to
+# _BIND_POLLS * _BIND_POLL_SECONDS (~3s); a take-over whose id is never clobbered
+# still pays the full window, because nothing distinguishes "the clear is still
+# coming" from "there is no clear".
+_BIND_POLLS = 10
+_BIND_POLL_SECONDS = 0.3
+
+# Consecutive intact reads, AFTER the clear has been seen, that end the watch
+# early — the clear happens once, so once it is observed and the re-write holds,
+# there is nothing left to wait for.
+_BIND_STABLE_READS = 2
 
 
 def _last_json_value(text: str) -> Any:
@@ -1270,18 +1278,34 @@ async def _bind_session_id(
     ``metrics_sessions: []``, so the card fell back to ``▶ Start`` and the session
     id survived only in the modal the operator had just closed.
 
-    So bind, let the launcher finish, then confirm the id is still there and bind
-    again if it is not. Exhaustion is logged at WARNING — never silent, and never
+    This is called whether or not the frontmatter already carried the id, because
+    the launcher clears it either way: the common case is a launch that has
+    already written its own id (``work-on`` persists it before spawning), so
+    "the ids match" is no reason to skip the watch — measured live 2026-09-11
+    12:54, a take-over whose ids matched returned in 0.099s having written
+    nothing, and the field was gone 1.0s later.
+
+    So watch the field for the whole window, re-writing it whenever it goes
+    missing, and stop early only once the clear has been seen AND the re-write
+    has held for ``_BIND_STABLE_READS`` reads. Never silent on failure, never
     failing the take-over: the modal has already handed over the resume command.
     """
-    for _ in range(_BIND_ATTEMPTS):
+    saw_clear = False
+    stable = 0
+    for _ in range(_BIND_POLLS):
         try:
-            if kind == "task":
-                await client.set_field(item_id, "claude_session_id", session_id)
-            else:
-                await client.set_goal_field(item_id, "claude_session_id", session_id)
-            await asyncio.sleep(_BIND_SETTLE_SECONDS)
             current = await _read_bound_session_id(client, item_id, kind)
+            if current == session_id:
+                stable += 1
+                if saw_clear and stable >= _BIND_STABLE_READS:
+                    return
+            else:
+                saw_clear = True
+                stable = 0
+                if kind == "task":
+                    await client.set_field(item_id, "claude_session_id", session_id)
+                else:
+                    await client.set_goal_field(item_id, "claude_session_id", session_id)
         except Exception as e:
             logger.warning(
                 "Failed to bind claude_session_id=%s for %s %s in vault %s: %s",
@@ -1292,16 +1316,16 @@ async def _bind_session_id(
                 e,
             )
             return
-        if current == session_id:
-            return
+        await asyncio.sleep(_BIND_POLL_SECONDS)
+    if not saw_clear:
+        return
     logger.warning(
-        "claude_session_id=%s did not stick on %s %s in vault %s after %d attempts — "
-        "the card falls back to Start; the resume command is still in the take-over modal",
+        "claude_session_id=%s did not stick on %s %s in vault %s — the card falls back to "
+        "Start; the resume command is still in the take-over modal",
         session_id,
         kind,
         item_id,
         vault,
-        _BIND_ATTEMPTS,
     )
 
 
@@ -1403,17 +1427,18 @@ async def take_over_task(
 
         if _starting_marker(vault, task_id, task.claude_session_started):
             resolved, terminated = terminate_launch_process(session_id or None, task.title)
-            if resolved and resolved != session_id:
-                # The launch pinned a uuid the frontmatter had not caught up with
-                # (or never carried). Bind it so the card resumes the session this
-                # endpoint just handed back, instead of a stale id — ordered after
-                # the killed launcher's own clear, which would otherwise win.
-                await _bind_session_id(client, vault, task_id, "task", resolved)
+            session_id = resolved or session_id
+            if session_id:
+                # Keep the id on the task so the card resumes the session this
+                # endpoint just handed back. Run unconditionally: the launcher this
+                # take-over just killed clears claude_session_id ~1s from now
+                # whether or not the frontmatter already carried it, so a matching
+                # id is no reason to skip the watch.
+                await _bind_session_id(client, vault, task_id, "task", session_id)
             await _clear_starting_marker(client, vault, task_id, "task")
             logger.info(
                 "take-over task %s launch session %s terminated=%s", task_id, resolved, terminated
             )
-            session_id = resolved or session_id
             if not session_id:
                 raise HTTPException(
                     status_code=400,
@@ -1620,17 +1645,17 @@ async def take_over_goal(
         # list does not emit it) — the status cache is the marker source.
         if _starting_marker(vault, goal_id, None):
             resolved, terminated = terminate_launch_process(session_id or None, goal.title)
-            if resolved and resolved != session_id:
-                # The launch pinned a uuid the frontmatter had not caught up with
-                # (or never carried). Bind it so the card resumes the session this
-                # endpoint just handed back, instead of a stale id — ordered after
-                # the killed launcher's own clear, which would otherwise win.
-                await _bind_session_id(client, vault, goal_id, "goal", resolved)
+            session_id = resolved or session_id
+            if session_id:
+                # Keep the id on the goal so the card resumes the session this
+                # endpoint just handed back — unconditionally, for the same reason
+                # as the task path: the killed launcher clears it ~1s from now
+                # whether or not the frontmatter already carried it.
+                await _bind_session_id(client, vault, goal_id, "goal", session_id)
             await _clear_starting_marker(client, vault, goal_id, "goal")
             logger.info(
                 "take-over goal %s launch session %s terminated=%s", goal_id, resolved, terminated
             )
-            session_id = resolved or session_id
             if not session_id:
                 raise HTTPException(
                     status_code=400,

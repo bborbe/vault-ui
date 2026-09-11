@@ -233,11 +233,12 @@ def _reset_launch_registry() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_bind_settle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Zero ``_BIND_SETTLE_SECONDS`` — the bind retry loop's wall-clock pacing is
-    not what these tests assert, and the real 0.4 s settle would add ~1.2 s to
-    every take-over test that exercises a non-sticking bind."""
-    monkeypatch.setattr("vault_ui.api.tasks._BIND_SETTLE_SECONDS", 0, raising=False)
+def _no_bind_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero ``_BIND_POLL_SECONDS`` — the bind watch's wall-clock pacing is not what
+    these tests assert, and the real 0.3 s poll would add ~3 s to every take-over
+    test. The poll count (``_BIND_POLLS``) is left alone: it is the bound these
+    tests do assert against."""
+    monkeypatch.setattr("vault_ui.api.tasks._BIND_POLL_SECONDS", 0, raising=False)
 
 
 @pytest.fixture
@@ -904,34 +905,50 @@ def test_take_over_starting_task_binds_launch_uuid_when_frontmatter_stale(
 def test_take_over_starting_task_rebinds_after_the_launcher_clears_it(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """The killed launcher's compensating clear can land after our bind.
+    """The killed launcher's compensating clear lands AFTER a single write.
 
     ``vault-cli work-on`` re-reads the task on the failed turn and deletes
     ``claude_session_id`` ("a failed turn must not leave a resumable-looking id on
-    disk", ``pkg/ops/workon.go``). Observed live 2026-09-11 12:30:46: the take-over
-    returned 200 with ``terminated=True``, yet the file kept no id and its
-    uncommitted diff was exactly ``metrics_sessions: []``, so the card fell back to
-    ``▶ Start`` and the session id survived only in the modal. One write is a coin
-    flip; the bind must verify and re-write.
+    disk", ``pkg/ops/workon.go``). Measured live 2026-09-11 12:54 on a launch whose
+    frontmatter already carried the id: the field was intact at t+0.5s, gone at
+    t+1.0s, and stayed gone — so the clear is independent of whether we wrote, and
+    a bind verified before ~1s reads the field as intact and returns too early.
     """
     _starting_task(mock_vault_client)
     task = next(t for t in mock_vault_client._tasks if t.id == "Starting Task")
-    writes: list[str] = []
+    # The launch had already persisted its own id — the common case, and the one
+    # the first cut of this fix skipped entirely because the ids "matched".
+    task.claude_session_id = LAUNCH_UUID
+    state = {"writes": 0, "cleared": False}
 
-    async def _set_then_launcher_clears(task_id: str, key: str, value: str) -> None:
-        writes.append(value)
-        # The launcher's clear lands right after our first write; the re-bind is
-        # the one that survives.
-        task.claude_session_id = "" if len(writes) == 1 else value
+    def _sigterm_then_launcher_clears(session_id: str, title: str) -> tuple[str, bool]:
+        # The SIGTERM is what triggers the launcher's clear. Firing it here keeps
+        # the test independent of how often the endpoint happens to read: whether
+        # or not it looks, the field is gone.
+        task.claude_session_id = ""
+        state["cleared"] = True
+        return (LAUNCH_UUID, True)
 
-    mock_vault_client.set_field.side_effect = _set_then_launcher_clears
+    async def _set_field(task_id: str, key: str, value: str) -> None:
+        state["writes"] += 1
+        task.claude_session_id = value
+        if state["writes"] == 1:
+            # ...and it can land after our write too, which is what defeats a
+            # bind that verifies once and returns.
+            task.claude_session_id = ""
 
-    with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)):
+    mock_vault_client.set_field.side_effect = _set_field
+
+    with patch(
+        "vault_ui.api.tasks.terminate_launch_process",
+        side_effect=_sigterm_then_launcher_clears,
+    ):
         response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
 
     assert response.status_code == 200
     assert response.json()["session_id"] == LAUNCH_UUID
-    assert len(writes) == 2, "the bind must be re-applied after the launcher's clear"
+    assert state["cleared"] is True, "the launcher's clear must have been simulated"
+    assert state["writes"] >= 2, "the id must be re-written after the launcher's clear"
     assert task.claude_session_id == LAUNCH_UUID
 
 
@@ -946,13 +963,20 @@ def test_take_over_starting_task_logs_when_the_bind_never_sticks(
     """
     _starting_task(mock_vault_client)
     task = next(t for t in mock_vault_client._tasks if t.id == "Starting Task")
-    writes: list[str] = []
+    state = {"writes": 0, "reads": 0}
 
-    async def _always_clobbered(task_id: str, key: str, value: str) -> None:
-        writes.append(value)
-        task.claude_session_id = ""
+    async def _show_task(task_id: str) -> Task:
+        state["reads"] += 1
+        if state["reads"] >= 3:
+            task.claude_session_id = ""  # every check finds it clobbered
+        return task
 
-    mock_vault_client.set_field.side_effect = _always_clobbered
+    async def _set_field(task_id: str, key: str, value: str) -> None:
+        state["writes"] += 1
+        task.claude_session_id = value
+
+    mock_vault_client.show_task.side_effect = _show_task
+    mock_vault_client.set_field.side_effect = _set_field
 
     with (
         patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)),
@@ -961,7 +985,7 @@ def test_take_over_starting_task_logs_when_the_bind_never_sticks(
         response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
 
     assert response.status_code == 200, "a lost bind must never fail the take-over"
-    assert len(writes) == 3, "the retry must be bounded"
+    assert state["writes"] > 1, "the watch must keep re-writing while the field is cleared"
     assert "did not stick" in caplog.text
     assert LAUNCH_UUID in caplog.text
 
