@@ -232,6 +232,14 @@ def _reset_launch_registry() -> None:
     _factory_module._session_lock_registry = None
 
 
+@pytest.fixture(autouse=True)
+def _no_bind_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero ``_BIND_SETTLE_SECONDS`` — the bind retry loop's wall-clock pacing is
+    not what these tests assert, and the real 0.4 s settle would add ~1.2 s to
+    every take-over test that exercises a non-sticking bind."""
+    monkeypatch.setattr("vault_ui.api.tasks._BIND_SETTLE_SECONDS", 0, raising=False)
+
+
 @pytest.fixture
 def test_client(
     tmp_vault: Path,
@@ -891,6 +899,71 @@ def test_take_over_starting_task_binds_launch_uuid_when_frontmatter_stale(
     data = response.json()
     assert data["session_id"] == LAUNCH_UUID
     assert LAUNCH_UUID in data["command"]
+
+
+def test_take_over_starting_task_rebinds_after_the_launcher_clears_it(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """The killed launcher's compensating clear can land after our bind.
+
+    ``vault-cli work-on`` re-reads the task on the failed turn and deletes
+    ``claude_session_id`` ("a failed turn must not leave a resumable-looking id on
+    disk", ``pkg/ops/workon.go``). Observed live 2026-09-11 12:30:46: the take-over
+    returned 200 with ``terminated=True``, yet the file kept no id and its
+    uncommitted diff was exactly ``metrics_sessions: []``, so the card fell back to
+    ``▶ Start`` and the session id survived only in the modal. One write is a coin
+    flip; the bind must verify and re-write.
+    """
+    _starting_task(mock_vault_client)
+    task = next(t for t in mock_vault_client._tasks if t.id == "Starting Task")
+    writes: list[str] = []
+
+    async def _set_then_launcher_clears(task_id: str, key: str, value: str) -> None:
+        writes.append(value)
+        # The launcher's clear lands right after our first write; the re-bind is
+        # the one that survives.
+        task.claude_session_id = "" if len(writes) == 1 else value
+
+    mock_vault_client.set_field.side_effect = _set_then_launcher_clears
+
+    with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)):
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == LAUNCH_UUID
+    assert len(writes) == 2, "the bind must be re-applied after the launcher's clear"
+    assert task.claude_session_id == LAUNCH_UUID
+
+
+def test_take_over_starting_task_logs_when_the_bind_never_sticks(
+    test_client: TestClient, mock_vault_client: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A bind that loses every race is bounded, logged, and never fails the take-over.
+
+    Log-only by decision: the card falling back to ``▶ Start`` is the
+    operator-visible signal and the resume command is already in the modal, so
+    there is no response field — but the loss must not be silent either.
+    """
+    _starting_task(mock_vault_client)
+    task = next(t for t in mock_vault_client._tasks if t.id == "Starting Task")
+    writes: list[str] = []
+
+    async def _always_clobbered(task_id: str, key: str, value: str) -> None:
+        writes.append(value)
+        task.claude_session_id = ""
+
+    mock_vault_client.set_field.side_effect = _always_clobbered
+
+    with (
+        patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)),
+        caplog.at_level(logging.WARNING, logger="vault_ui.api.tasks"),
+    ):
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    assert response.status_code == 200, "a lost bind must never fail the take-over"
+    assert len(writes) == 3, "the retry must be bounded"
+    assert "did not stick" in caplog.text
+    assert LAUNCH_UUID in caplog.text
 
 
 def test_take_over_starting_task_no_process_still_returns_resume_command(

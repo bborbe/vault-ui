@@ -67,6 +67,14 @@ _UNSET = object()
 # request instead of persisting until a server restart.
 _CACHE_TTL_SECONDS = 30.0
 
+# How long to let the SIGTERMed launcher's own frontmatter write land before
+# deciding whether the take-over's session-id bind survived it, and how many
+# times to re-bind when it did not. See ``_bind_session_id`` for why the write
+# order is not guaranteed. Worst case adds _BIND_ATTEMPTS * _BIND_SETTLE_SECONDS
+# (~1.2s) to a take-over; the common case returns after the first attempt.
+_BIND_ATTEMPTS = 3
+_BIND_SETTLE_SECONDS = 0.4
+
 
 def _last_json_value(text: str) -> Any:
     """Return the last top-level JSON value in ``vault-cli --output json`` stdout.
@@ -1239,6 +1247,64 @@ def _starting_marker(vault: str, item_id: str, file_marker: str | None) -> str |
     return get_status_cache().get_session_started(vault, item_id) or file_marker
 
 
+async def _read_bound_session_id(client: VaultCLIClient, item_id: str, kind: str) -> str:
+    """Re-read an item's ``claude_session_id`` — the verify half of ``_bind_session_id``."""
+    if kind == "task":
+        return (await client.show_task(item_id)).claude_session_id or ""
+    goals = await client.list_goals(show_all=True)
+    goal = next((g for g in goals if g.id == item_id), None)
+    return (goal.claude_session_id or "") if goal is not None else ""
+
+
+async def _bind_session_id(
+    client: VaultCLIClient, vault: str, item_id: str, kind: str, session_id: str
+) -> None:
+    """Bind ``session_id`` to the item so it survives the killed launcher's own write.
+
+    A take-over SIGTERMs the launch, which makes ``vault-cli work-on`` take its
+    failure path: a compensating clear that re-reads the task and deletes
+    ``claude_session_id`` plus this run's metrics entry ("a failed turn must not
+    leave a resumable-looking id on disk", ``pkg/ops/workon.go``). That write can
+    land AFTER ours — observed live 2026-09-11 12:30:46, where the take-over
+    returned 200 yet the file kept no id and its uncommitted diff was exactly
+    ``metrics_sessions: []``, so the card fell back to ``▶ Start`` and the session
+    id survived only in the modal the operator had just closed.
+
+    So bind, let the launcher finish, then confirm the id is still there and bind
+    again if it is not. Exhaustion is logged at WARNING — never silent, and never
+    failing the take-over: the modal has already handed over the resume command.
+    """
+    for _ in range(_BIND_ATTEMPTS):
+        try:
+            if kind == "task":
+                await client.set_field(item_id, "claude_session_id", session_id)
+            else:
+                await client.set_goal_field(item_id, "claude_session_id", session_id)
+            await asyncio.sleep(_BIND_SETTLE_SECONDS)
+            current = await _read_bound_session_id(client, item_id, kind)
+        except Exception as e:
+            logger.warning(
+                "Failed to bind claude_session_id=%s for %s %s in vault %s: %s",
+                session_id,
+                kind,
+                item_id,
+                vault,
+                e,
+            )
+            return
+        if current == session_id:
+            return
+    logger.warning(
+        "claude_session_id=%s did not stick on %s %s in vault %s after %d attempts — "
+        "the card falls back to Start; the resume command is still in the take-over modal",
+        session_id,
+        kind,
+        item_id,
+        vault,
+        _BIND_ATTEMPTS,
+    )
+
+
 async def _clear_starting_marker(
     client: VaultCLIClient, vault: str, item_id: str, kind: str
 ) -> None:
@@ -1340,17 +1406,9 @@ async def take_over_task(
             if resolved and resolved != session_id:
                 # The launch pinned a uuid the frontmatter had not caught up with
                 # (or never carried). Bind it so the card resumes the session this
-                # endpoint just handed back, instead of a stale id.
-                try:
-                    await client.set_field(task_id, "claude_session_id", resolved)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to bind claude_session_id=%s for task %s in vault %s: %s",
-                        resolved,
-                        task_id,
-                        vault,
-                        e,
-                    )
+                # endpoint just handed back, instead of a stale id — ordered after
+                # the killed launcher's own clear, which would otherwise win.
+                await _bind_session_id(client, vault, task_id, "task", resolved)
             await _clear_starting_marker(client, vault, task_id, "task")
             logger.info(
                 "take-over task %s launch session %s terminated=%s", task_id, resolved, terminated
@@ -1565,17 +1623,9 @@ async def take_over_goal(
             if resolved and resolved != session_id:
                 # The launch pinned a uuid the frontmatter had not caught up with
                 # (or never carried). Bind it so the card resumes the session this
-                # endpoint just handed back, instead of a stale id.
-                try:
-                    await client.set_goal_field(goal_id, "claude_session_id", resolved)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to bind claude_session_id=%s for goal %s in vault %s: %s",
-                        resolved,
-                        goal_id,
-                        vault,
-                        e,
-                    )
+                # endpoint just handed back, instead of a stale id — ordered after
+                # the killed launcher's own clear, which would otherwise win.
+                await _bind_session_id(client, vault, goal_id, "goal", resolved)
             await _clear_starting_marker(client, vault, goal_id, "goal")
             logger.info(
                 "take-over goal %s launch session %s terminated=%s", goal_id, resolved, terminated
