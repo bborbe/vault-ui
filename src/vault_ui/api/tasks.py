@@ -1224,16 +1224,16 @@ async def take_over_task(
     by the frontend confirm dialog before this endpoint is called.
 
     A card on ``⏳ Starting...`` is the same rescue with one extra step. Its
-    ``claude_session_started`` marker means a launch turn is in flight — since
+    ``claude_session_started`` marker means a launch turn is in flight, and since
     vault-cli v0.117.1 the headless branch blocks until that turn finishes
-    (bounded by its own 30m ``sessionTurnTimeout``), so a hung launch leaves the
+    (bounded by its own 30m ``sessionTurnTimeout``) — so a hung launch leaves the
     card inert for up to half an hour. Take-over resolves the launch process
-    (``terminate_launch_process``: the card's session id when a live process
-    pins it, else the ``-n <title>`` launch row), SIGTERMs it, clears the marker
-    so the card leaves "Starting…" at once instead of waiting for the 45-minute
-    TTL sweep, and hands back the resume command for the session it ended.
-    When the launch pinned a uuid the frontmatter had not caught up with, that
-    uuid is written back so the card and the resumed session agree.
+    (``terminate_launch_process``: the card's id when a live process pins it, else
+    the ``-n <title>`` launch row), SIGTERMs it, clears the marker so the card
+    leaves "Starting…" at once instead of waiting for the 45-minute TTL sweep, and
+    hands back the resume command for the session it ended. When the launch pinned
+    a uuid the frontmatter had not caught up with, that uuid is written back so
+    the card and the resumed session agree.
 
     Access model: ``vault`` is a route selector, not a privilege boundary —
     this service binds loopback (127.0.0.1) for its single operator, and every
@@ -1434,6 +1434,7 @@ async def run_goal(
             command=command,
             working_dir=vault_config.vault_path,
             task_title=goal.title,
+            terminated=terminated,
         )
 
     except HTTPException:
@@ -1528,7 +1529,6 @@ async def take_over_goal(
             command=command,
             working_dir=vault_config.vault_path,
             task_title=goal.title,
-            terminated=terminated,
         )
     except HTTPException:
         raise

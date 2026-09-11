@@ -746,9 +746,8 @@ h1 {
 }
 
 /* Starting card (launch turn in flight) — the badge itself is the take-over
-   affordance, mirroring the live badge: clicking it opens the confirm dialog
-   that ends the launch turn and hands back the resume command. Blue, not green:
-   the turn is in flight but the card is not a resumable session yet. */
+   affordance, mirroring the live badge. Blue, not green: the turn is in flight
+   but the card is not a resumable session yet. */
 .starting-badge {
     display: inline-flex;
     align-items: center;
@@ -769,10 +768,6 @@ h1 {
 .starting-badge:hover {
     background: #2563eb;        /* blue-600 */
     outline: 1px solid #bfdbfe; /* blue-200 */
-}
-
-.starting-badge:active {
-    background: #1d4ed8;        /* blue-700 */
 }
 
 .starting-badge:focus-visible {

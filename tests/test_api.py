@@ -854,9 +854,7 @@ def _starting_task(client: MagicMock, task_id: str = "Starting Task") -> None:
 def test_take_over_starting_task_terminates_launch_and_clears_marker(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """A Starting card's take-over ends the in-flight launch, clears the durable
-    marker (so the card leaves "Starting…" at once) and returns the resume
-    command for the launch's session."""
+    """Starting take-over ends the launch, clears the marker, returns the command."""
     _starting_task(mock_vault_client)
 
     with patch(
@@ -878,9 +876,7 @@ def test_take_over_starting_task_terminates_launch_and_clears_marker(
 def test_take_over_starting_task_binds_launch_uuid_when_frontmatter_stale(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """Observed live 2026-09-11: the launch pinned a uuid the frontmatter never
-    caught up with (an older session id sat on the card). The take-over resumes
-    the launch's uuid and writes it back, so card and session agree."""
+    """Launch uuid ≠ frontmatter uuid (live 2026-09-11) → resume it, write it back."""
     _starting_task(mock_vault_client)
 
     with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)):
@@ -897,9 +893,7 @@ def test_take_over_starting_task_binds_launch_uuid_when_frontmatter_stale(
 def test_take_over_starting_task_no_process_still_returns_resume_command(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """Nothing matched in ps (the launch already exited, a merge resurrected the
-    marker): terminated=False, the marker is still cleared, the resume command
-    for the file's session is returned."""
+    """No ps match (launch gone, marker resurrected) → terminated=False, still cleared."""
     _starting_task(mock_vault_client)
 
     with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, False)):
@@ -914,9 +908,7 @@ def test_take_over_starting_task_no_process_still_returns_resume_command(
 def test_take_over_ignores_a_finished_launchs_resurrected_marker(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """A marker the registry knows is FINISHED is suppressed on the board, so the
-    card reads as a live session — take-over must follow the card (terminate the
-    resumed session) and not clear a marker the file no longer legitimately has."""
+    """A FINISHED-registry marker is suppressed on the board → live path, no clear."""
     _starting_task(mock_vault_client)
     registry = get_launch_registry()  # real singleton, emptied by the autouse fixture
     registry.begin("TestVault", "Starting Task", "task")
@@ -934,8 +926,7 @@ def test_take_over_ignores_a_finished_launchs_resurrected_marker(
 def test_take_over_starting_task_without_session_clears_marker_then_400(
     test_client: TestClient, mock_vault_client: MagicMock
 ) -> None:
-    """Orphaned marker and no session id anywhere: the marker is cleared (the
-    card returns to Start) and the operator is told there is nothing to resume."""
+    """Orphaned marker, no id anywhere → marker cleared, then 400 (nothing to resume)."""
     mock_vault_client._tasks.append(
         _make_task(
             task_id="Orphan Task", status="in_progress", claude_session_started=STARTING_MARKER
@@ -950,67 +941,8 @@ def test_take_over_starting_task_without_session_clears_marker_then_400(
     assert "no Claude session to resume" in response.json()["detail"]
 
 
-def test_take_over_starting_goal_terminates_launch_and_clears_marker(
-    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
-) -> None:
-    """Goal cards carry the same Starting take-over; their marker lives in the
-    status cache — vault-cli's goal list emits no claude_session_started."""
-    mock_vault_client_with_goals._goals.append(
-        _make_goal(goal_id="Starting Goal", status="in_progress", claude_session_id=SESSION_UUID)
-    )
-    status_cache = _make_status_cache_mock({("TestVault", "Starting Goal"): STARTING_MARKER})
-
-    with (
-        patch("vault_ui.api.tasks.get_status_cache", return_value=status_cache),
-        patch(
-            "vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, True)
-        ) as term,
-    ):
-        response = test_client_with_goals.post(
-            "/api/goals/Starting%20Goal/take-over?vault=TestVault"
-        )
-
-    term.assert_called_once_with(SESSION_UUID, "Starting Goal")
-    mock_vault_client_with_goals.clear_goal_field.assert_awaited_with(
-        "Starting Goal", "claude_session_started"
-    )
-    assert response.status_code == 200
-    assert response.json()["session_id"] == SESSION_UUID
-    assert response.json()["terminated"] is True
-
-
-# --- config reload (↻ Refresh server half) ---
-
-
-def test_config_reload_returns_vault_and_watcher_names(test_client: TestClient) -> None:
-    """↻ Refresh re-reads the config and reconciles the watchers, then hands the
-    new vault set back so the selector can be rebuilt in the same round-trip."""
-    config = _count_config(["Personal", "Trading"])
-
-    with (
-        patch("vault_ui.api.tasks.reload_config", return_value=config) as reload_mock,
-        patch("vault_ui.api.tasks.watcher_vault_names", return_value=["Personal", "Trading"]),
-    ):
-        response = test_client.post("/api/config/reload")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "vaults": ["Personal", "Trading"],
-        "watchers": ["Personal", "Trading"],
-    }
-    reload_mock.assert_called_once()
-
-
-def test_config_reload_failure_returns_500(test_client: TestClient) -> None:
-    """A config that cannot be read fails loudly. The running board is untouched:
-    reload_config loads the new config before it tears anything down."""
-    with patch(
-        "vault_ui.api.tasks.reload_config", side_effect=RuntimeError("config.yaml not found")
-    ):
-        response = test_client.post("/api/config/reload")
-
-    assert response.status_code == 500
-    assert "config.yaml not found" in response.json()["detail"]
+# The goal-card half (and the ↻ Refresh config reload) land in the follow-up PR;
+# this PR carries the Starting-card take-over for tasks.
 
 
 async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureFixture) -> None:
@@ -5977,3 +5909,66 @@ def test_list_endpoints_spawn_zero_clears_on_finished_record(
     assert mock_vault_client.clear_field.await_count == 0
     assert mock_vault_client_with_goals.clear_field.await_count == 0
     assert mock_vault_client_with_goals.clear_goal_field.await_count == 0
+
+
+# --- config reload (↻ Refresh server half) ---
+
+
+def test_config_reload_returns_vault_and_watcher_names(test_client: TestClient) -> None:
+    """↻ Refresh re-reads the config and reconciles the watchers, then hands the
+    new vault set back so the selector can be rebuilt in the same round-trip."""
+    config = _count_config(["Personal", "Trading"])
+
+    with (
+        patch("vault_ui.api.tasks.reload_config", return_value=config) as reload_mock,
+        patch("vault_ui.api.tasks.watcher_vault_names", return_value=["Personal", "Trading"]),
+    ):
+        response = test_client.post("/api/config/reload")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "vaults": ["Personal", "Trading"],
+        "watchers": ["Personal", "Trading"],
+    }
+    reload_mock.assert_called_once()
+
+
+def test_config_reload_failure_returns_500(test_client: TestClient) -> None:
+    """A config that cannot be read fails loudly. The running board is untouched:
+    reload_config loads the new config before it tears anything down."""
+    with patch(
+        "vault_ui.api.tasks.reload_config", side_effect=RuntimeError("config.yaml not found")
+    ):
+        response = test_client.post("/api/config/reload")
+
+    assert response.status_code == 500
+    assert "config.yaml not found" in response.json()["detail"]
+
+
+def test_take_over_starting_goal_terminates_launch_and_clears_marker(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Goal cards carry the same Starting take-over; their marker lives in the
+    status cache — vault-cli's goal list emits no claude_session_started."""
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Starting Goal", status="in_progress", claude_session_id=SESSION_UUID)
+    )
+    status_cache = _make_status_cache_mock({("TestVault", "Starting Goal"): STARTING_MARKER})
+
+    with (
+        patch("vault_ui.api.tasks.get_status_cache", return_value=status_cache),
+        patch(
+            "vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, True)
+        ) as term,
+    ):
+        response = test_client_with_goals.post(
+            "/api/goals/Starting%20Goal/take-over?vault=TestVault"
+        )
+
+    term.assert_called_once_with(SESSION_UUID, "Starting Goal")
+    mock_vault_client_with_goals.clear_goal_field.assert_awaited_with(
+        "Starting Goal", "claude_session_started"
+    )
+    assert response.status_code == 200
+    assert response.json()["session_id"] == SESSION_UUID
+    assert response.json()["terminated"] is True

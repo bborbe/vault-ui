@@ -279,10 +279,9 @@ def terminate_resumed_session(session_id: str) -> bool:
 def _current_launch_maps() -> tuple[dict[str, int], dict[str, str]]:
     """Fresh (session id → PID, ``-n`` name → session id) maps from one ps scan.
 
-    Un-cached on purpose, like ``_current_live_processes``: take-over is a rare
-    user action and must resolve the process as it is right now. Both maps come
-    from a single scan, so one take-over never decides on two different process
-    tables.
+    Un-cached on purpose, like ``_current_live_processes``: take-over must resolve
+    the process as it is right now. Both maps come from one scan, so a take-over
+    never decides on two different process tables.
     """
     try:
         ps = subprocess.run(
@@ -303,12 +302,11 @@ def terminate_launch_process(session_id: str | None, item_name: str) -> tuple[st
     2026-09-11 — frontmatter ``769563ff…`` while the launch ran ``--session-id
     7e486b43…``). So resolve in two steps: the card's own id when a live process
     pins it, else the ``-n <item_name>`` launch row, which carries the name and
-    the uuid on one line and therefore cannot collide with a same-titled session.
+    the uuid on one line and cannot collide with a same-titled session.
 
-    Returns ``(resolved_session_id, terminated)`` — the session the operator
-    should resume (the terminated process's id when one was found, else the
-    caller's id, because nothing was running and the file's id is all there is)
-    and whether a process was actually signaled.
+    Returns ``(resolved_session_id, terminated)`` — the session to resume (the
+    terminated process's id when one was found, else the caller's id, since
+    nothing was running) and whether a process was actually signaled.
     """
     processes, names = _current_launch_maps()
     resolved = session_id if session_id in processes else names.get(item_name)

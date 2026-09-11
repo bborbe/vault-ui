@@ -1177,13 +1177,11 @@ function sessionButtonHtml(kind, item) {
     const isStarting = !!item.claude_session_started || startingSet.has(item.id);
     let buttonLabel, buttonClass, buttonDisabled, buttonTitle = '';
     if (isStarting) {
-        // Starting card — a launch turn is in flight, and the card is inert by
-        // design (a second writer on the transcript corrupts it). The badge is
-        // the take-over affordance, exactly as on a live card: confirm → the
-        // backend SIGTERMs the launch process, clears the marker, and hands back
-        // the resume command. Elapsed time plus the card's activity age are the
-        // honest progress signals — a launch's transcript goes quiet for minutes
-        // while one of its subagents works, so silence is not by itself a hang.
+        // Starting card — a launch turn is in flight. The badge is the take-over
+        // affordance, exactly as on a live card: confirm → the backend SIGTERMs
+        // the launch process, clears the marker, hands back the resume command.
+        // Elapsed time + activity age are the honest progress signals — a launch
+        // transcript goes quiet for minutes while one of its subagents works.
         const elapsed = startingElapsedLabel(item.claude_session_started);
         const age = formatActivityAge(item.activity_date);
         const ageNote = age ? ` Last activity ${age} ago.` : '';

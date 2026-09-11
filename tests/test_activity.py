@@ -601,9 +601,8 @@ def test_take_over_badge_wired_into_live_branch() -> None:
 
 # --- launch-process resolution (Starting-card take-over) ---
 
-# The live shape observed 2026-09-11: the frontmatter id (STALE_ID) belongs to an
-# older session while the in-flight launch pins a fresh uuid and carries the item
-# title in `-n` — so the launch cannot be found by the file's id alone.
+# Observed live 2026-09-11: the frontmatter id (STALE_ID) belonged to an older
+# session while the launch pinned a fresh uuid — resolvable only via `-n <title>`.
 LAUNCH_ID = "7e486b43-535c-4aac-8e7b-bcaae7b3ab89"
 STALE_ID = "769563ff-e2ab-40f8-a0db-4098e7d72756"
 
@@ -623,9 +622,9 @@ def test_terminate_launch_process_prefers_live_frontmatter_id() -> None:
     kill.assert_called_once_with(4242, signal.SIGTERM)
 
 
-def test_terminate_launch_process_falls_back_to_launch_name() -> None:
-    """Frontmatter id stale (no process) → the `-n <title>` launch row is the
-    process to end, and its uuid is what the operator must resume."""
+def test_terminate_launch_process_resolves_launch_by_name() -> None:
+    """A stale id (no process) or no id at all → the `-n <title>` launch row is
+    the process to end, and its uuid is what the operator must resume."""
     with (
         patch(
             "vault_ui.activity._current_launch_maps",
@@ -633,25 +632,11 @@ def test_terminate_launch_process_falls_back_to_launch_name() -> None:
         ),
         patch("vault_ui.activity.os.kill") as kill,
     ):
-        resolved, terminated = terminate_launch_process(STALE_ID, "Blocked-by dependencies")
+        assert terminate_launch_process(STALE_ID, "Blocked-by dependencies") == (LAUNCH_ID, True)
+        assert terminate_launch_process(None, "Blocked-by dependencies") == (LAUNCH_ID, True)
 
-    assert (resolved, terminated) == (LAUNCH_ID, True)
-    kill.assert_called_once_with(7748, signal.SIGTERM)
-
-
-def test_terminate_launch_process_no_session_id_uses_name() -> None:
-    """A launch that has not written an id yet is still resolvable by name."""
-    with (
-        patch(
-            "vault_ui.activity._current_launch_maps",
-            return_value=({LAUNCH_ID: 7748}, {"Blocked-by dependencies": LAUNCH_ID}),
-        ),
-        patch("vault_ui.activity.os.kill") as kill,
-    ):
-        resolved, terminated = terminate_launch_process(None, "Blocked-by dependencies")
-
-    assert (resolved, terminated) == (LAUNCH_ID, True)
-    kill.assert_called_once_with(7748, signal.SIGTERM)
+    assert kill.call_count == 2
+    kill.assert_called_with(7748, signal.SIGTERM)
 
 
 def test_terminate_launch_process_no_match_returns_caller_id() -> None:

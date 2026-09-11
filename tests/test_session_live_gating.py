@@ -361,29 +361,18 @@ def test_no_session_shows_start(live_server, page):
 
 
 def test_starting_task_with_id_and_marker_shows_starting_not_live(live_server, page):
-    """Bug lock: a card whose id landed mid-turn but whose launch turn is still
-    in flight (marker set + fresh transcript = session_state live) must render
-    'Starting…', NOT the live take-over badge — a reload during launch shows
-    Starting, and never a Resume."""
+    """Bug lock + affordance: a card whose id landed mid-turn but whose launch
+    turn is still in flight (marker set + fresh transcript = session_state live)
+    renders 'Starting…' — never the live badge or a Resume — and that badge is
+    the take-over affordance (role=button, no disabled button, no extra button)."""
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Starting Task")
-    # The marker gate wins: the card shows the Starting badge.
     badge = card.locator(".starting-badge")
     expect(badge).to_have_count(1)
     expect(badge).to_contain_text("Starting")
-    # Never the live badge nor a Resume on a booting session.
+    expect(badge).to_have_attribute("role", "button")
     expect(card.locator(".live-badge")).to_have_count(0)
     expect(card.locator(".resume-btn")).to_have_count(0)
-
-
-def test_starting_card_offers_take_over_affordance(live_server, page):
-    """The Starting card is not inert: the badge itself is the take-over
-    affordance (same discreet model as the live badge) — no disabled button."""
-    page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    card = page.locator(".task-card").filter(has_text="Starting Task")
-    badge = card.locator(".starting-badge")
-    expect(badge).to_have_count(1)
-    expect(badge).to_have_attribute("role", "button")
     expect(card.locator(".start-btn")).to_have_count(0)
     expect(card.locator(".take-over-btn")).to_have_count(0)
 
@@ -412,9 +401,7 @@ def test_starting_take_over_cancel_performs_no_action(live_server, page):
 
 
 def test_starting_take_over_confirm_returns_resume_command(live_server, page):
-    """Confirming a Starting take-over surfaces the resume command for the
-    launch's session, and the card leaves 'Starting…' (the mocked vault-cli
-    clears the marker, so the reloaded card renders its post-launch state)."""
+    """Confirm → resume command for the launch's session; the card leaves Starting."""
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Starting Task")
     card.locator(".starting-badge").click()
@@ -434,21 +421,8 @@ def test_starting_take_over_confirm_returns_resume_command(live_server, page):
     expect(card.locator(".starting-badge")).to_have_count(0)
 
 
-def test_refresh_button_reloads_config(live_server, page):
-    """↻ Refresh re-reads the server config (POST /api/config/reload) before it
-    reloads the view — the vault-registration path with no launchd restart."""
-    reload_requests = []
-
-    def _track(request):
-        if "/api/config/reload" in request.url:
-            reload_requests.append(request.method)
-
-    page.on("request", _track)
-    page.goto(f"{live_server}/?status=in_progress&view=tasks")
-    page.locator("#refresh-btn").click()
-
-    expect(page.locator(".toast")).to_contain_text("Config reloaded")
-    assert reload_requests == ["POST"]
+# The ↻ Refresh config-reload test lives in the follow-up PR (config reload +
+# WebSocket wiring) — this PR carries the Starting-card take-over only.
 
 
 def test_goal_card_gates_live_session_too(live_server, page):
@@ -570,3 +544,20 @@ def test_apostrophe_title_menu_button_opens(live_server, page):
     card.locator(".menu-btn").click()
     expect(page.locator(".task-menu")).to_be_visible()
     assert page_errors == [], f"page errors on apostrophe-title menu click: {page_errors}"
+
+
+def test_refresh_button_reloads_config(live_server, page):
+    """↻ Refresh re-reads the server config (POST /api/config/reload) before it
+    reloads the view — the vault-registration path with no launchd restart."""
+    reload_requests = []
+
+    def _track(request):
+        if "/api/config/reload" in request.url:
+            reload_requests.append(request.method)
+
+    page.on("request", _track)
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    page.locator("#refresh-btn").click()
+
+    expect(page.locator(".toast")).to_contain_text("Config reloaded")
+    assert reload_requests == ["POST"]
