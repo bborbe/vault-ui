@@ -1440,6 +1440,9 @@ function createGoalCard(goal) {
         ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
         ${activityAgeHtml(goal.activity_date)}
     `;
+    // Built once — the row wrapper and its content both need it, and calling the
+    // builder twice per card was a needless repeat (flagged in the #73 review).
+    const blockedBadge = blockedBadgeHtml('goal', goal);
     card.innerHTML = `
         ${menuButton}
         <div class="card-content">
@@ -1450,7 +1453,7 @@ function createGoalCard(goal) {
                 </a>
             </h3>
         </div>
-        ${blockedBadgeHtml('goal', goal) ? `<div class="card-blocked">${blockedBadgeHtml('goal', goal)}</div>` : ''}
+        ${blockedBadge ? `<div class="card-blocked">${blockedBadge}</div>` : ''}
         <div class="card-footer">
             <div class="card-footer-left">${footerLeft}</div>
             <div class="card-actions">${startButton}</div>
