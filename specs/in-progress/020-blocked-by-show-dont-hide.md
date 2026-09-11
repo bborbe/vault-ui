@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-09-11T07:46:11Z"
 generating: "2026-09-11T08:00:26Z"
 prompted: "2026-09-11T08:00:26Z"
+verifying: "2026-09-11T09:35:27Z"
 branch: dark-factory/blocked-by-show-dont-hide
 ---
 
