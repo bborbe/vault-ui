@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A take-over no longer answers the abandoned Start request with a 500 carrying vault-cli's raw `exit status 143`. v0.66.2's bind watch takes seconds and ran *before* `_clear_starting_marker` — the call that sets the taken-over flag the still-pending Start's handler checks. The launcher exits ~1s after the SIGTERM, so that handler found the flag unset and the neutral 409 regressed to a 500. The marker clear (and with it the flag) now runs first, then the watch. Caught by driving the take-over on the deployed board, which is the only place the pending Start and the take-over are both live.
+
 ## v0.66.2
 
 - feat: A task or goal whose `blocked_by` blocker is still open now stays visible on the board instead of silently disappearing, and the API reports which blockers are still open — `GET /api/tasks` and `GET /api/goals` derive a `blocked` flag and a `blockers` list naming the not-completed blockers (in `blocked_by` order) from the status cache, treating an unknown or unreadable blocker status as blocked; goals now parse `blocked_by` from frontmatter with the same normalization tasks already had.
