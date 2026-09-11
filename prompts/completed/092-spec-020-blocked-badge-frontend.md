@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [020-blocked-by-show-dont-hide]
+summary: Added a clickable blocked-by badge to blocked task and goal cards that names open blockers and navigates to (and marks) the blocker's own card, with static + Playwright integration tests and a CHANGELOG entry
+execution_id: vault-ui-blocked-by-exec-092-spec-020-blocked-badge-frontend
+dark-factory-version: dev
 created: "2026-09-11T07:52:44Z"
 queued: "2026-09-11T09:20:16Z"
+started: "2026-09-11T09:29:29Z"
+completed: "2026-09-11T09:35:27Z"
 ---
 
 # Show a "blocked by" badge on task and goal cards that links to the blocker

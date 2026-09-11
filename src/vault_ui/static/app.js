@@ -1270,6 +1270,43 @@ function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButton
     `;
 }
 
+// Shared "blocked by" badge for task and goal cards. Renders nothing when the
+// item is not blocked (no markup at all, so an unblocked card's HTML is
+// unchanged); otherwise a clickable pill naming the still-open blockers and
+// carrying the first blocker as the in-page navigation target. The visible
+// names go through escapeHtml (DOM text); the name interpolated into the
+// onclick goes through escapeJsAttr — it lives in a single-quoted JS string
+// inside a double-quoted HTML attribute, and escapeHtml alone would decode
+// &#39; back to a raw apostrophe before the JS parser runs (the v0.63.7 bug).
+function blockedBadgeHtml(kind, item) {
+    if (!item.blocked || !item.blockers || item.blockers.length === 0) return '';
+    const label = `blocked by ${item.blockers.join(', ')}`;
+    return `<span class="blocked-badge clickable" onclick="navigateToBlocker('${kind}', '${escapeJsAttr(item.blockers[0])}')" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+}
+
+// Jump to a blocker's own card on the same board, marking it as the navigation
+// target. Cards are resolved by comparing dataset attributes against the name
+// — never by building a CSS selector out of the name (a task name may contain
+// quotes, brackets and spaces). No URL, no fetch, no navigation away from the
+// board. When the blocker is not rendered right now (filtered off, deferred,
+// or in the other view), say so instead of failing silently.
+function navigateToBlocker(kind, name) {
+    document.querySelectorAll('.blocked-target').forEach(card => card.classList.remove('blocked-target'));
+    let target = null;
+    document.querySelectorAll('.task-card').forEach(card => {
+        const matches = kind === 'goal'
+            ? card.dataset.goalId === name
+            : card.dataset.taskId === name;
+        if (matches && !target) target = card;
+    });
+    if (target) {
+        target.classList.add('blocked-target');
+        target.scrollIntoView({ block: 'center' });
+    } else {
+        showToast(`Blocker not on the board: ${name}`, true);
+    }
+}
+
 function createTaskCard(task) {
     const card = document.createElement('div');
     card.className = 'task-card';
@@ -1327,6 +1364,7 @@ function createTaskCard(task) {
     const footerLeft = `
         ${flagButton}
         ${holdBadge}
+        ${blockedBadgeHtml('task', task)}
         ${jiraBadge}
         ${assigneeBadge}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
@@ -1388,6 +1426,7 @@ function createGoalCard(goal) {
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + escapeJsAttr(goal.id) + '\')">⋮</button>';
     const footerLeft = `
         ${holdBadge}
+        ${blockedBadgeHtml('goal', goal)}
         ${jiraBadge}
         ${goal.assignee
             ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`

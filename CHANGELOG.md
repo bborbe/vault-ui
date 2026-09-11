@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - feat: A task or goal whose `blocked_by` blocker is still open now stays visible on the board instead of silently disappearing, and the API reports which blockers are still open — `GET /api/tasks` and `GET /api/goals` derive a `blocked` flag and a `blockers` list naming the not-completed blockers (in `blocked_by` order) from the status cache, treating an unknown or unreadable blocker status as blocked; goals now parse `blocked_by` from frontmatter with the same normalization tasks already had.
+- feat(ui): Blocked task and goal cards now carry a clickable "blocked by X" badge naming their still-open blockers (rendered as escaped plain text), and clicking it scrolls to and marks the blocker's own card on the same board — with an error toast instead when the blocker is not shown by the current filters; unblocked cards are unchanged.
 
 ## v0.65.1
 
