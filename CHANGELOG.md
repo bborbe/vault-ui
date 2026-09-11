@@ -2,10 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## v0.66.2
+## Unreleased
 
 - feat: A task or goal whose `blocked_by` blocker is still open now stays visible on the board instead of silently disappearing, and the API reports which blockers are still open — `GET /api/tasks` and `GET /api/goals` derive a `blocked` flag and a `blockers` list naming the not-completed blockers (in `blocked_by` order) from the status cache, treating an unknown or unreadable blocker status as blocked; goals now parse `blocked_by` from frontmatter with the same normalization tasks already had.
 - feat(ui): Blocked task and goal cards now carry a clickable "blocked by X" badge naming their still-open blockers (rendered as escaped plain text), and clicking it scrolls to and marks the blocker's own card on the same board — with an error toast instead when the blocker is not shown by the current filters; unblocked cards are unchanged.
+
+## v0.66.2
+
 - fix: A take-over now keeps the session id for the whole window the killed launcher can clear it. v0.66.1 bound only when the ps-resolved uuid differed from the frontmatter, and verified once after a 0.4s settle — both wrong, and a driven take-over on the deployed board showed it: `work-on` persists the id *before* spawning, so the ids usually already match and no bind ran at all (that take-over returned in 0.099s having written nothing), while the launcher's compensating clear lands ~1s after the SIGTERM (measured live: the field was intact at t+0.5s and gone at t+1.0s), so a verify that finishes sooner reads the field as fine and returns before the clobber. The bind now runs unconditionally whenever a session id is known and watches the field for ~3s, re-writing it whenever it goes missing; exhaustion is logged at WARNING rather than failing the take-over.
 
 ## v0.66.1
