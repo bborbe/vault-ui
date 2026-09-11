@@ -1251,8 +1251,15 @@ function activityAgeHtml(activityDate) {
     return `<span class="activity-age" title="Last activity: ${escapeHtml(activityDate)}">${escapeHtml(age)}</span>`;
 }
 
-function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml) {
+function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml, blockedHtml) {
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + escapeJsAttr(id) + '\')">⋮</button>';
+    // The blocked badge gets its own row rather than a slot in card-footer-left.
+    // In the footer it competed with the action button for a fixed-width row:
+    // `.card-footer` is flex+nowrap and `.card-footer-left` had no min-width:0,
+    // so a long blocker name pinned the row at its max-content width and pushed
+    // ▶ Start past the card edge, where it was clipped (observed 2026-09-11 on a
+    // 298px card: badge 246px + actions 90px). Its own row gives it the full
+    // card width; the CSS keeps ellipsis as a backstop for multi-blocker labels.
     return `
         ${menuButton}
         <div class="card-content">
@@ -1263,6 +1270,7 @@ function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButton
                 </a>
             </h3>
         </div>
+        ${blockedHtml ? `<div class="card-blocked">${blockedHtml}</div>` : ''}
         <div class="card-footer">
             <div class="card-footer-left">${footerLeftHtml}</div>
             <div class="card-actions">${startButtonHtml}</div>
@@ -1364,13 +1372,12 @@ function createTaskCard(task) {
     const footerLeft = `
         ${flagButton}
         ${holdBadge}
-        ${blockedBadgeHtml('task', task)}
         ${jiraBadge}
         ${assigneeBadge}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
         ${activityAgeHtml(task.activity_date)}
     `;
-    card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, startButton);
+    card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, startButton, blockedBadgeHtml('task', task));
     return card;
 }
 
@@ -1426,7 +1433,6 @@ function createGoalCard(goal) {
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + escapeJsAttr(goal.id) + '\')">⋮</button>';
     const footerLeft = `
         ${holdBadge}
-        ${blockedBadgeHtml('goal', goal)}
         ${jiraBadge}
         ${goal.assignee
             ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
@@ -1444,6 +1450,7 @@ function createGoalCard(goal) {
                 </a>
             </h3>
         </div>
+        ${blockedBadgeHtml('goal', goal) ? `<div class="card-blocked">${blockedBadgeHtml('goal', goal)}</div>` : ''}
         <div class="card-footer">
             <div class="card-footer-left">${footerLeft}</div>
             <div class="card-actions">${startButton}</div>

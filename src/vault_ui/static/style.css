@@ -497,6 +497,16 @@ h1 {
     flex-wrap: wrap;
 }
 
+/* The "blocked by" badge row — its own line between the title and the footer, so
+   a long blocker name gets the full card width instead of competing with the
+   action button. In .card-footer-left it did: .card-footer is flex + nowrap and
+   .card-footer-left had no min-width:0, so a long name pinned the row at its
+   max-content width and pushed ▶ Start past the card edge, clipped. */
+.card-blocked {
+    display: flex;
+    padding-top: 0.25rem;
+}
+
 .cards.drag-over {
     background: rgba(96, 165, 250, 0.1);
     border: 2px dashed #60a5fa;
@@ -1094,7 +1104,12 @@ h1 {
     background: #b45309;        /* amber-700 */
     padding: 1px 7px;
     border-radius: 999px;
-    max-width: fit-content;
+    /* Sits in .card-blocked, its own full-width row. `nowrap` + ellipsis keeps
+       the pill on one line and truncates rather than overflowing the card when
+       the label names several blockers; the full text stays in the title. */
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
 }
