@@ -1382,6 +1382,13 @@ async def take_over_task(
         if _starting_marker(vault, task_id, task.claude_session_started):
             resolved, terminated = terminate_launch_process(session_id or None, task.title)
             session_id = resolved or session_id
+            # Clear the marker — and flag the take-over — BEFORE the bind watch.
+            # The flag is what turns the still-pending Start's exit-143 into the
+            # neutral 409, and the launcher exits ~1s after the SIGTERM, so a
+            # several-second watch in front of this call leaves the Start handler
+            # checking an unset flag and answering 500 with the raw vault-cli
+            # error (regressed live 2026-09-11 13:18).
+            await _clear_starting_marker(client, vault, task_id, "task")
             if session_id:
                 # Keep the id on the task so the card resumes the session this
                 # endpoint just handed back. Run unconditionally: the launcher this
@@ -1389,7 +1396,6 @@ async def take_over_task(
                 # whether or not the frontmatter already carried it, so a matching
                 # id is no reason to skip the watch.
                 await _bind_session_id(client, vault, task_id, "task", session_id)
-            await _clear_starting_marker(client, vault, task_id, "task")
             logger.info(
                 "take-over task %s launch session %s terminated=%s", task_id, resolved, terminated
             )
@@ -1600,13 +1606,14 @@ async def take_over_goal(
         if _starting_marker(vault, goal_id, None):
             resolved, terminated = terminate_launch_process(session_id or None, goal.title)
             session_id = resolved or session_id
+            # Flag the take-over before the bind watch — see the task path.
+            await _clear_starting_marker(client, vault, goal_id, "goal")
             if session_id:
                 # Keep the id on the goal so the card resumes the session this
                 # endpoint just handed back — unconditionally, for the same reason
                 # as the task path: the killed launcher clears it ~1s from now
                 # whether or not the frontmatter already carried it.
                 await _bind_session_id(client, vault, goal_id, "goal", session_id)
-            await _clear_starting_marker(client, vault, goal_id, "goal")
             logger.info(
                 "take-over goal %s launch session %s terminated=%s", goal_id, resolved, terminated
             )

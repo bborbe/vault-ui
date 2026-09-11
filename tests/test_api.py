@@ -949,6 +949,35 @@ def test_take_over_starting_task_rebinds_after_the_launcher_clears_it(
     assert task.claude_session_id == LAUNCH_UUID
 
 
+def test_take_over_flags_the_pending_start_before_the_bind_watch(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """The taken-over flag must be set BEFORE the multi-second bind watch.
+
+    That flag is what turns the still-pending Start's exit-143 into the neutral
+    409. The launcher exits ~1s after the SIGTERM, so a watch in front of the
+    clear leaves the Start handler checking an unset flag and answering 500 with
+    the raw vault-cli error — regressed live 2026-09-11 13:18, caught only by
+    driving the take-over on the deployed board.
+    """
+    from vault_ui.api import tasks as tasks_module
+
+    _starting_task(mock_vault_client)
+    flagged_at_bind: list[bool] = []
+
+    async def _spy_bind(client: Any, vault: str, item_id: str, kind: str, session_id: str) -> None:
+        flagged_at_bind.append(tasks_module.get_launch_registry().was_taken_over(vault, item_id))
+
+    with (
+        patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)),
+        patch("vault_ui.api.tasks._bind_session_id", side_effect=_spy_bind),
+    ):
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    assert response.status_code == 200
+    assert flagged_at_bind == [True], "the take-over must be flagged before the bind watch"
+
+
 def test_take_over_starting_task_logs_when_the_bind_never_sticks(
     test_client: TestClient, mock_vault_client: MagicMock, caplog: pytest.LogCaptureFixture
 ) -> None:
