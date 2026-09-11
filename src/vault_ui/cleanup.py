@@ -782,3 +782,101 @@ async def run_cleanup_loop(config: Config) -> None:
         except asyncio.CancelledError:
             logger.info("[Cleanup] Cleanup loop cancelled during sleep")
             raise
+
+
+# A marker younger than this is never reconciled: the launch it belongs to may
+# still be booting (vault-cli mints the uuid, writes the marker, then spawns
+# claude — the process appears a moment later).
+_ORPHAN_GRACE_SECONDS = 120
+
+
+async def reconcile_orphaned_markers(config: Config) -> int:
+    """Clear ``claude_session_started`` markers whose launch this host no longer has.
+
+    Runs once at startup. A restart kills the launches — they are this server's
+    subprocesses — and the coroutines that would have cleared their markers die
+    with it, so the cards sit on "Starting…" until the 45-minute TTL sweep. This
+    closes that window to seconds: a marker is cleared when the registry has no
+    record for the item (the registry is process-local and starts empty), the
+    marker is past the grace period, and no ``--session-id`` launch process for
+    the item exists on this host.
+
+    The trade-off is the shared-vault case: a marker written by a *peer machine*
+    also has no local launch process, so a peer's in-flight turn can be cleared
+    early here (the TTL sweep would clear it at 45 minutes anyway). Only the
+    display is affected — ``claude_session_id`` is untouched, so the peer's card
+    returns to "Starting…" on the next turn it starts and nothing is lost.
+
+    Returns the number of markers cleared.
+    """
+    from vault_ui.activity import item_has_live_launch
+
+    # Imported here, not at module scope: factory imports cleanup (same lazy
+    # import idiom as cleanup_stale_sessions).
+    from vault_ui.factory import get_launch_registry
+
+    registry = get_launch_registry()
+    cleared = 0
+    for vault in config.vaults:
+        try:
+            client = VaultCLIClient(vault.vault_cli_path, vault.name)
+            tasks = await client.list_tasks(show_all=True)
+        except Exception as e:
+            logger.warning(
+                "[Cleanup] Cannot list tasks in vault %s for orphan reconciliation: %s",
+                vault.name,
+                e,
+            )
+            continue
+
+        for task in tasks:
+            marker = task.claude_session_started
+            if not marker:
+                continue
+            if registry.state(vault.name, task.id) is not None:
+                continue  # this process knows the launch — leave it alone
+            age = _marker_age_seconds(marker)
+            if age is not None and age < _ORPHAN_GRACE_SECONDS:
+                continue
+            if item_has_live_launch(task.claude_session_id, task.title):
+                continue  # a launch for this item is running here
+
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    vault.vault_cli_path,
+                    "task",
+                    "clear",
+                    task.id,
+                    "claude_session_started",
+                    "--vault",
+                    vault.name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    logger.warning(
+                        "[Cleanup] Failed to clear orphaned marker for task %s in vault %s: %s",
+                        task.id,
+                        vault.name,
+                        stderr.decode().strip(),
+                    )
+                    continue
+            except Exception as e:
+                logger.warning(
+                    "[Cleanup] Exception clearing orphaned marker for task %s in vault %s: %s",
+                    task.id,
+                    vault.name,
+                    e,
+                )
+                continue
+
+            registry.finish(vault.name, task.id)
+            cleared += 1
+            logger.info(
+                "[Cleanup] Cleared orphaned claude_session_started marker for task %s"
+                " in vault %s (no launch process on this host)",
+                task.id,
+                vault.name,
+            )
+    return cleared

@@ -10,7 +10,11 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from vault_ui.api.models import Goal, Task
-from vault_ui.cleanup import derive_claude_project_dir, run_cleanup_loop
+from vault_ui.cleanup import (
+    derive_claude_project_dir,
+    reconcile_orphaned_markers,
+    run_cleanup_loop,
+)
 from vault_ui.config import Config, VaultConfig, load_config
 from vault_ui.launch_registry import LaunchRegistry
 from vault_ui.session_lock_registry import SessionLockRegistry
@@ -377,6 +381,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("[Lifespan] Starting task watchers...")
     start_task_watchers(app.state.vault_task_cache, app.state.vault_goal_cache)
+
+    # A restart kills the launches this server spawned, and the coroutines that
+    # would have cleared their "Starting…" markers die with it — so reconcile the
+    # ones whose launch process is provably gone before the board is served. The
+    # TTL sweep would get there in 45 minutes; this takes seconds.
+    logger.info("[Lifespan] Reconciling orphaned Starting markers...")
+    try:
+        orphaned = await reconcile_orphaned_markers(config)
+        if orphaned:
+            logger.info("[Lifespan] Cleared %d orphaned Starting marker(s)", orphaned)
+    except Exception as e:
+        logger.warning("[Lifespan] Orphan marker reconciliation failed: %s", e, exc_info=True)
 
     logger.info("[Lifespan] Starting cleanup loop...")
     _cleanup_task = asyncio.create_task(run_cleanup_loop(config))

@@ -8,11 +8,14 @@ from unittest.mock import patch
 
 from vault_ui.activity import (
     LIVE_WINDOW,
+    _parse_launch_names,
+    _parse_launch_processes,
     _parse_live_processes,
     _parse_live_session_ids,
     _parse_live_session_names,
     classify_session_state,
     compute_activity_date,
+    item_has_live_launch,
     terminate_launch_process,
     terminate_resumed_session,
     transcript_mtime,
@@ -697,3 +700,39 @@ def test_take_over_badge_styled() -> None:
     assert "cursor: pointer" in STYLE_CSS
     # keyboard-focusable (role=button, tabindex=0) → needs a visible focus ring
     assert ".live-badge:focus-visible" in STYLE_CSS
+
+
+def test_parse_launch_processes_ignores_interactive_resumes() -> None:
+    """Only `--session-id` rows are launches; a `--resume` row is a session
+    someone reopened, never a take-over target."""
+    ps = (
+        " 43177 bash cc-personal --resume 78912169-01b2-4601-a45d-c9ae0d258efb\n"
+        " 43205 claude --settings {} --print -n Some Task -p /vault-cli:work-on-task "
+        "--session-id a978980b-d1f7-4d1d-a970-1f9118916374\n"
+    )
+    assert _parse_launch_processes(ps) == {"a978980b-d1f7-4d1d-a970-1f9118916374": 43205}
+    assert _parse_launch_names(ps) == {"Some Task": "a978980b-d1f7-4d1d-a970-1f9118916374"}
+
+
+def test_terminate_launch_process_leaves_an_interactive_resume_alone() -> None:
+    """The card's id pinned by a `--resume` process is NOT a launch: nothing is
+    killed (the marker is still cleared by the caller, and the resume command
+    handed back)."""
+    with (
+        patch("vault_ui.activity._current_launch_maps", return_value=({}, {})),
+        patch("vault_ui.activity.os.kill") as kill,
+    ):
+        assert terminate_launch_process(SESSION_ID, "Some Task") == (SESSION_ID, False)
+
+    kill.assert_not_called()
+
+
+def test_item_has_live_launch_only_counts_launches() -> None:
+    """A live launch counts; an interactive resume pinning the same id does not."""
+    with patch(
+        "vault_ui.activity._current_launch_maps",
+        return_value=({LAUNCH_ID: 7748}, {"Blocked-by dependencies": LAUNCH_ID}),
+    ):
+        assert item_has_live_launch(LAUNCH_ID, "Blocked-by dependencies") is True
+        assert item_has_live_launch(LAUNCH_ID, "Other Task") is True  # same process
+        assert item_has_live_launch(STALE_ID, "Other Task") is False
