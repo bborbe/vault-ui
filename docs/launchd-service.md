@@ -110,12 +110,23 @@ alone leaves the live board on the old code, so reinstall after every pull:
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git pull
-uv tool install --force .
+uv tool install --force --no-cache .
 launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 ```
 
 After a static-file change the browser also needs a hard refresh: the `app.js`
 URL is version-pinned (`?v=…`), so an old tab keeps the cached copy.
+
+**`--no-cache` is load-bearing.** uv keys its build cache on the version string,
+which is derived from git, so `--force` alone can reinstall the *cached old
+wheel*: the command reports success, the installer line even names the pre-pull
+commit, and the served bundle keeps its old `?v=` token. Verify the install
+actually landed before believing the deploy:
+
+```bash
+grep -c refreshBoard ~/.local/share/uv/tools/vault-ui/lib/python*/site-packages/vault_ui/static/app.js
+curl -s http://127.0.0.1:8000/ | grep -o 'app.js?v=[^"]*'
+```
 
 ## 5. Log verbosity
 
