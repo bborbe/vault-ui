@@ -1479,6 +1479,20 @@ async function runSession(kind, id) {
             `/api/${base}/${encodeURIComponent(id)}/run?vault=${encodeURIComponent(item.vault)}`,
             { method: 'POST' }
         );
+        if (response.status === 409) {
+            // The launch was taken over from the wall while this Start was still
+            // pending: the take-over SIGTERMed it, so vault-cli exited non-zero.
+            // Not a failure — the resume command is already in the take-over modal.
+            if (kind === 'task') {
+                closeBtn.removeEventListener('click', closeHandler);
+                loadingModal.classList.add('hidden');
+            }
+            startingSet.delete(id);
+            item.claude_session_started = null;
+            showToast('Launch ended by take-over — resume from the session modal');
+            await loadCurrentView();
+            return;
+        }
         if (!response.ok) {
             throw new Error(await parseErrorResponse(response));
         }

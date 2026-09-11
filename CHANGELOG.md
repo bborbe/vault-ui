@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Taking over a Starting card no longer paints a red "vault-cli work-on failed … exit status 143" error across the board. The take-over SIGTERMs the launch while the original Start request is still pending, so vault-cli exits 143 — which is the take-over working, not a launch failure. The launch registry now flags a taken-over launch, and the launch endpoints answer that abandoned request with HTTP 409 "Launch ended by take-over from the wall — resume the session from the take-over modal"; the wall renders a 409 on the Start path as a neutral toast (no error styling) and reloads the card. Task and goal cards alike; the marker is still cleared, and the resume command still comes from the take-over modal.
+
 ## v0.65.0
 
 - feat: `↻ Refresh` now re-reads the server config (`~/.config/vault-ui/config.yaml` + `vault-cli config list`) and reconciles the per-vault watchers (`POST /api/config/reload`) before reloading the view, the vault selector and the assignee options — registering or removing a vault is a config edit plus this click, with no launchd restart. A config that fails to load raises before anything is torn down, so a broken edit leaves the running board untouched.

@@ -561,3 +561,27 @@ def test_refresh_button_reloads_config(live_server, page):
 
     expect(page.locator(".toast")).to_contain_text("Config reloaded")
     assert reload_requests == ["POST"]
+
+
+def test_start_taken_over_reports_neutrally(live_server, page):
+    """A Start request whose launch was taken over answers 409 — the take-over
+    modal carries the resume command, so the wall must report it neutrally, not
+    as the red "vault-cli work-on failed … exit status 143" error the operator
+    saw when the take-over killed the launch under a pending Start."""
+    page.route(
+        "**/run?*",
+        lambda route: route.fulfill(
+            status=409,
+            content_type="application/json",
+            body='{"detail": "Launch ended by take-over from the wall"}',
+        ),
+    )
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Human Task")
+    card.locator(".start-btn").click()
+
+    toast = page.locator(".toast")
+    expect(toast).to_contain_text("Launch ended by take-over")
+    assert "error" not in (toast.get_attribute("class") or "")
+    # The card is back to Start (the launch ended), not stuck on Starting…
+    expect(card.locator(".starting-badge")).to_have_count(0)
