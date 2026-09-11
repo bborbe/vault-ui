@@ -276,12 +276,58 @@ def terminate_resumed_session(session_id: str) -> bool:
     return _sigterm_pid(pid, session_id)
 
 
-def _current_launch_maps() -> tuple[dict[str, int], dict[str, str]]:
-    """Fresh (session id → PID, ``-n`` name → session id) maps from one ps scan.
+# A *launch* pins its session with ``--session-id``; an interactive resume uses
+# ``--resume``. Only the launch is a take-over target — see terminate_launch_process.
+_LAUNCH_ID_FLAG_RE = re.compile(r"--session-id\s+(" + _UUID_RE.pattern + ")")
 
-    Un-cached on purpose, like ``_current_live_processes``: take-over must resolve
-    the process as it is right now. Both maps come from one scan, so a take-over
-    never decides on two different process tables.
+
+def _parse_launch_processes(ps_output: str) -> dict[str, int]:
+    """Session id → PID for **launch** rows only (``--session-id``).
+
+    Same shape as ``_parse_live_processes`` but blind to ``--resume`` rows: an
+    interactive resume pinning a card's session id is a session someone is working
+    in, not the launch a Starting card is waiting on.
+    """
+    processes: dict[str, int] = {}
+    for line in ps_output.splitlines():
+        if "claude" not in line:
+            continue
+        m = _LAUNCH_ID_FLAG_RE.search(line)
+        if not m:
+            continue
+        fields = line.split(None, 1)
+        if not fields:
+            continue
+        try:
+            processes[m.group(1)] = int(fields[0])
+        except ValueError:
+            continue
+    return processes
+
+
+def _parse_launch_names(ps_output: str) -> dict[str, str]:
+    """``-n <name>`` → session id for **launch** rows only (``--session-id``)."""
+    by_name: dict[str, set[str]] = {}
+    for line in ps_output.splitlines():
+        if "claude" not in line:
+            continue
+        m = _LAUNCH_ID_FLAG_RE.search(line)
+        if not m:
+            continue
+        name_m = _SESSION_NAME_RE.search(line)
+        if not name_m:
+            continue
+        by_name.setdefault(name_m.group(1), set()).add(m.group(1))
+    return {name: next(iter(uuids)) for name, uuids in by_name.items() if len(uuids) == 1}
+
+
+def _current_launch_maps() -> tuple[dict[str, int], dict[str, str]]:
+    """Fresh (launch session id → PID, ``-n`` name → session id) maps from one scan.
+
+    Launch rows only (``--session-id``). Un-cached on purpose, like
+    ``_current_live_processes``: take-over must resolve the process as it is right
+    now. Both maps come from one scan, so a take-over never decides on two
+    different process tables.
     """
     try:
         ps = subprocess.run(
@@ -290,7 +336,7 @@ def _current_launch_maps() -> tuple[dict[str, int], dict[str, str]]:
     except OSError as e:
         logger.debug("[Activity] Cannot run ps: %s", e)
         return {}, {}
-    return _parse_live_processes(ps), _parse_live_session_names(ps)
+    return _parse_launch_processes(ps), _parse_launch_names(ps)
 
 
 def terminate_launch_process(session_id: str | None, item_name: str) -> tuple[str | None, bool]:
@@ -304,6 +350,12 @@ def terminate_launch_process(session_id: str | None, item_name: str) -> tuple[st
     pins it, else the ``-n <item_name>`` launch row, which carries the name and
     the uuid on one line and cannot collide with a same-titled session.
 
+    Only a **launch** process (``--session-id``) is ever signaled. An interactive
+    resume (``--resume``) that happens to pin the card's id — the shape a card
+    takes after its launch died and the operator reopened the session in a
+    terminal — is left alone: the take-over then has nothing to kill, clears the
+    marker, and hands back the resume command for the session already running.
+
     Returns ``(resolved_session_id, terminated)`` — the session to resume (the
     terminated process's id when one was found, else the caller's id, since
     nothing was running) and whether a process was actually signaled.
@@ -316,6 +368,20 @@ def terminate_launch_process(session_id: str | None, item_name: str) -> tuple[st
     if pid is None:
         return resolved, False
     return resolved, _sigterm_pid(pid, resolved)
+
+
+def item_has_live_launch(session_id: str | None, item_name: str) -> bool:
+    """True when a **launch** process (``--session-id``) for this item runs here.
+
+    One fresh scan; interactive resumes (``--resume``) never count — a session
+    someone reopened in a terminal is not a launch in flight. Used by the startup
+    reconciliation to tell an orphaned ``claude_session_started`` marker from a
+    turn that is genuinely still running.
+    """
+    launches, names = _current_launch_maps()
+    if session_id and session_id in launches:
+        return True
+    return item_name in names
 
 
 def classify_session_state(

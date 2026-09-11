@@ -2,13 +2,18 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from vault_ui.api.models import Goal, Task
-from vault_ui.cleanup import cleanup_stale_sessions, derive_claude_project_dir
+from vault_ui.cleanup import (
+    cleanup_stale_sessions,
+    derive_claude_project_dir,
+    reconcile_orphaned_markers,
+)
 from vault_ui.config import Config, VaultConfig
 from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 
@@ -1693,3 +1698,77 @@ async def test_registry_goal_reclear_exception_keeps_record_and_logs_warning(
     assert any("goal-1" in r.message and "testvault" in r.message for r in warnings), (
         "goal re-clear exception must be logged at WARNING with vault + id"
     )
+
+
+# --- startup reconciliation of orphaned Starting markers ---
+
+
+async def _run_reconcile(
+    config: Config, tasks: list[Task], live_launch: bool
+) -> tuple[int, AsyncMock]:
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    subprocess = AsyncMock(return_value=mock_proc)
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=LaunchRegistry()),
+        patch("vault_ui.activity.item_has_live_launch", return_value=live_launch),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", subprocess),
+    ):
+        cleared = await reconcile_orphaned_markers(config)
+    return cleared, subprocess
+
+
+@pytest.mark.asyncio
+async def test_reconcile_clears_marker_when_the_launch_process_is_gone() -> None:
+    """A post-restart orphan — marker set, no launch process, no registry record —
+    is cleared at startup, so the board recovers in seconds instead of waiting for
+    the 45-minute TTL sweep (observed 2026-09-11: a deploy killed two launches and
+    their cards sat on "Starting…")."""
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(task_id="orphan", claude_session_started="2026-09-11T09:06:46+00:00")]
+
+    cleared, subprocess = await _run_reconcile(config, tasks, live_launch=False)
+
+    assert cleared == 1
+    assert subprocess.call_args_list[0].args[1:6] == (
+        "task",
+        "clear",
+        "orphan",
+        "claude_session_started",
+        "--vault",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_the_marker_while_a_launch_runs() -> None:
+    """A launch process on this host means the turn is genuinely running."""
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(task_id="running", claude_session_started="2026-09-11T09:06:46+00:00")]
+
+    cleared, subprocess = await _run_reconcile(config, tasks, live_launch=True)
+
+    assert cleared == 0
+    assert subprocess.call_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_a_young_marker() -> None:
+    """Younger than the grace period: the launch may still be booting."""
+    config = _make_config(current_user="alice")
+    tasks = [
+        _make_task(
+            task_id="fresh",
+            claude_session_started=datetime.now(tz=UTC).isoformat(),
+        )
+    ]
+
+    cleared, subprocess = await _run_reconcile(config, tasks, live_launch=False)
+
+    assert cleared == 0
+    assert subprocess.call_args_list == []
