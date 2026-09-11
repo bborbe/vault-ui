@@ -28,6 +28,7 @@ from vault_ui.config import Config, VaultConfig
 from vault_ui.factory import get_launch_registry
 from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 from vault_ui.session_lock_registry import SessionLockRegistry
+from vault_ui.status_cache import StatusCache
 from vault_ui.vault_cli_client import VaultCLIClient
 
 
@@ -93,6 +94,7 @@ def _make_goal(
     completed_date: str | None = None,
     claude_session_id: str | None = None,
     assignee: str | None = None,
+    blocked_by: list[str] | None = None,
 ) -> Goal:
     return Goal(
         id=goal_id,
@@ -105,6 +107,7 @@ def _make_goal(
         obsidian_url=None,
         claude_session_id=claude_session_id,
         assignee=assignee,
+        blocked_by=blocked_by,
     )
 
 
@@ -4909,11 +4912,12 @@ def test_list_goals_vault_cli_runtime_error_returns_500(
 
 
 def test_list_tasks_response_unchanged(test_client: TestClient) -> None:
-    """/api/tasks response shape remains byte-identical to pre-spec (AC#3).
+    """/api/tasks response shape remains pre-spec-compatible (AC#3).
 
     This is the no-regression half: every pre-existing key on the first task
-    must still be present, and no NEW key was added by this prompt (GoalResponse
-    lives on a separate endpoint).
+    must still be present, and the derived blocked/blockers keys added by this
+    prompt are asserted as present (positive assertions, like prompt 071's goals
+    shape test).
     """
     response = test_client.get("/api/tasks?vault=TestVault")
     assert response.status_code == 200
@@ -4937,6 +4941,8 @@ def test_list_tasks_response_unchanged(test_client: TestClient) -> None:
         "claude_session_id",
         "assignee",
         "blocked_by",
+        "blocked",
+        "blockers",
         "upcoming",
         "recently_completed",
         "vault",
@@ -4945,6 +4951,285 @@ def test_list_tasks_response_unchanged(test_client: TestClient) -> None:
     assert expected_keys.issubset(set(task.keys())), (
         f"missing pre-existing keys: {expected_keys - set(task.keys())}"
     )
+
+
+# --- blocked-state computation matrix ---
+
+
+def _status_cache(
+    tmp_vault: Path, statuses: dict[str, str], folder: str = "24 Tasks"
+) -> StatusCache:
+    """Real StatusCache populated via load_vault from files under tmp_vault/<folder>.
+
+    Writes one ``<name>.md`` per entry with ``---\nstatus: <status>\n---``
+    frontmatter, then loads the vault through the production loader — the tests
+    traverse the same lookup path the API uses, not a hand-set dict.
+    """
+    folder_path = tmp_vault / folder
+    folder_path.mkdir(parents=True, exist_ok=True)
+    for name, status in statuses.items():
+        (folder_path / f"{name}.md").write_text(f"---\nstatus: {status}\n---\n")
+    cache = StatusCache()
+    cache.load_vault("TestVault", tmp_vault, folder)
+    return cache
+
+
+def test_list_tasks_uncompleted_blocker_keeps_task_visible(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """A task blocked by an uncompleted blocker stays on the board, flagged blocked.
+
+    The state transition this prompt exists for: previously the hide-filter
+    deleted the task; now it is present with the blocker named.
+    """
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Blocked Task", status="in_progress", blocked_by=["[[Open Blocker]]"])
+    )
+    cache = _status_cache(tmp_vault, {"Open Blocker": "in_progress"})
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Blocked Task")
+    assert task["blocked"] is True
+    assert task["blockers"] == ["Open Blocker"]
+    assert task["blocked_by"] == ["[[Open Blocker]]"]
+
+
+def test_list_tasks_all_blockers_completed_not_blocked(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """Every declared blocker completed → blocked False, empty blockers."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Unblocked Task", status="in_progress", blocked_by=["[[Done Blocker]]"])
+    )
+    cache = _status_cache(tmp_vault, {"Done Blocker": "completed"})
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Unblocked Task")
+    assert task["blocked"] is False
+    assert task["blockers"] == []
+
+
+def test_list_tasks_blocker_without_cache_entry_counts_as_blocked(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """A blocker with no cache entry (unknown/renamed/deleted) is treated as not completed."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Ghost Blocked", status="in_progress", blocked_by=["[[Ghost]]"])
+    )
+    cache = _status_cache(tmp_vault, {})  # no Ghost.md anywhere
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Ghost Blocked")
+    assert task["blocked"] is True
+    assert task["blockers"] == ["Ghost"]
+
+
+def test_list_tasks_no_blocked_by_not_blocked(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """A task with no blocked_by is never flagged blocked."""
+    mock_vault_client._tasks.append(_make_task(task_id="No Blockers", status="in_progress"))
+    cache = _status_cache(tmp_vault, {})
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "No Blockers")
+    assert task["blocked"] is False
+    assert task["blockers"] == []
+    assert task["blocked_by"] is None
+
+
+def test_list_tasks_blockers_only_not_completed_in_order(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """Blockers holds only the not-completed names, in blocked_by order."""
+    mock_vault_client._tasks.append(
+        _make_task(
+            task_id="Mixed Blocked",
+            status="in_progress",
+            blocked_by=[
+                "[[Done Blocker]]",
+                "[[Open Blocker A]]",
+                "[[Open Blocker B]]",
+            ],
+        )
+    )
+    cache = _status_cache(
+        tmp_vault,
+        {"Done Blocker": "completed", "Open Blocker A": "in_progress"},
+    )
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Mixed Blocked")
+    assert task["blocked"] is True
+    # Open Blocker B has no cache entry → not completed → included, after A.
+    assert task["blockers"] == ["Open Blocker A", "Open Blocker B"]
+
+
+def test_list_tasks_circular_blocked_by_terminates(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """Two tasks blocking each other come back blocked without recursing."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Circular A", status="in_progress", blocked_by=["[[Circular B]]"])
+    )
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Circular B", status="in_progress", blocked_by=["[[Circular A]]"])
+    )
+    cache = _status_cache(
+        tmp_vault,
+        {"Circular A": "in_progress", "Circular B": "in_progress"},
+    )
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    by_id = {t["id"]: t for t in response.json()}
+    assert by_id["Circular A"]["blocked"] is True
+    assert by_id["Circular A"]["blockers"] == ["Circular B"]
+    assert by_id["Circular B"]["blocked"] is True
+    assert by_id["Circular B"]["blockers"] == ["Circular A"]
+
+
+def test_list_tasks_unparseable_blocker_frontmatter_counts_as_blocked(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """A blocker file whose frontmatter cannot be parsed reads as not completed."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Broken Blocker Task", status="in_progress", blocked_by=["[[Broken]]"])
+    )
+    # Genuinely malformed frontmatter — yaml.safe_load raises, _extract_fields
+    # swallows it and returns None, so get_status reads None → blocked.
+    broken_file = tmp_vault / "24 Tasks" / "Broken.md"
+    broken_file.parent.mkdir(parents=True, exist_ok=True)
+    broken_file.write_text("---\nstatus: [unclosed\n---\n")
+    cache = StatusCache()
+    cache.load_vault("TestVault", tmp_vault, "24 Tasks")
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client.get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    task = next(t for t in response.json() if t["id"] == "Broken Blocker Task")
+    assert task["blocked"] is True
+    assert task["blockers"] == ["Broken"]
+
+
+def test_list_goals_blocked_state_matrix(
+    test_client_with_goals: TestClient,
+    mock_vault_client_with_goals: MagicMock,
+    tmp_vault: Path,
+) -> None:
+    """Goals surface blocked/blockers/blocked_by from the status cache."""
+    mock_vault_client_with_goals._goals.clear()
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Blocked Goal", status="in_progress", blocked_by=["[[Open Blocker]]"])
+    )
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Done Goal", status="in_progress", blocked_by=["[[Done Blocker]]"])
+    )
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Ghost Goal", status="in_progress", blocked_by=["[[Ghost]]"])
+    )
+    cache = _status_cache(
+        tmp_vault,
+        {"Open Blocker": "in_progress", "Done Blocker": "completed"},
+    )
+
+    with patch("vault_ui.api.tasks.get_status_cache", return_value=cache):
+        response = test_client_with_goals.get("/api/goals?vault=TestVault")
+
+    assert response.status_code == 200
+    by_id = {g["id"]: g for g in response.json()}
+    assert by_id["Blocked Goal"]["blocked"] is True
+    assert by_id["Blocked Goal"]["blockers"] == ["Open Blocker"]
+    assert by_id["Blocked Goal"]["blocked_by"] == ["[[Open Blocker]]"]
+    assert by_id["Done Goal"]["blocked"] is False
+    assert by_id["Done Goal"]["blockers"] == []
+    assert by_id["Done Goal"]["blocked_by"] == ["[[Done Blocker]]"]
+    assert by_id["Ghost Goal"]["blocked"] is True
+    assert by_id["Ghost Goal"]["blockers"] == ["Ghost"]
+    assert by_id["Ghost Goal"]["blocked_by"] == ["[[Ghost]]"]
+
+
+def test_list_tasks_warns_once_when_status_cache_empty(
+    tmp_vault: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An empty status cache + two blocked tasks logs exactly ONE status_cache_unavailable.
+
+    The operator needs to distinguish a cache outage from genuine blocking — but
+    one warning per refresh, never one per card.
+    """
+    from vault_ui.config import VaultConfig
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+    app = create_app()
+
+    client = _make_vault_client(
+        [
+            _make_task(task_id="Task A", status="in_progress", blocked_by=["[[Open Blocker]]"]),
+            _make_task(task_id="Task B", status="in_progress", blocked_by=["[[Open Blocker]]"]),
+        ]
+    )
+    # Real StatusCache, loaded through the real loader from the (empty) tasks
+    # folder → count() is 0, which is the outage condition.
+    cache = StatusCache()
+    cache.load_vault("TestVault", tmp_vault, "24 Tasks")
+
+    with (
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+        patch("vault_ui.api.tasks.get_status_cache", return_value=cache),
+        caplog.at_level(logging.WARNING, logger="vault_ui.api.tasks"),
+    ):
+        response = TestClient(app).get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    warnings = [r for r in caplog.records if "status_cache_unavailable" in r.getMessage()]
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+    assert "TestVault" in warnings[0].getMessage()
 
 
 # --- claude_session_started flag tests ---

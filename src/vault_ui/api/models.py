@@ -39,6 +39,10 @@ class Task:
         None  # From frontmatter: list of goal names with [[ ]] brackets stripped
     )
     flag: bool = False  # From frontmatter: true if the task is flagged (picked for today)
+    blocked: bool = False  # Derived: at least one declared blocker is not completed
+    blockers: list[str] | None = (
+        None  # Derived: names of the not-completed blockers, in blocked_by order
+    )
 
 
 @dataclass
@@ -56,6 +60,7 @@ class Goal:
     completed_date: str | None = None  # From frontmatter: ISO 8601 datetime
     obsidian_url: str | None = None  # obsidian://open?vault=...&file=... (built by API layer)
     modified_date: datetime | None = None  # File modification time
+    blocked_by: list[str] | None = None  # From frontmatter: List of blocking goal wikilinks
 
 
 class TaskResponse(BaseModel):
@@ -80,6 +85,8 @@ class TaskResponse(BaseModel):
     claude_session_started: str | None
     assignee: str | None
     blocked_by: list[str] | None
+    blocked: bool = False  # Derived: at least one declared blocker is not completed
+    blockers: list[str] = []  # Derived: names of the not-completed blockers, in blocked_by order
     upcoming: bool = False
     recently_completed: bool = False
     vault: str  # Vault name this task belongs to
@@ -114,6 +121,9 @@ class GoalResponse(BaseModel):
     # does, or "Start" again if the mint failed / the session was reset / cleanup.
     claude_session_started: str | None = None
     assignee: str | None = None
+    blocked_by: list[str] | None = None  # From frontmatter: List of blocking goal wikilinks
+    blocked: bool = False  # Derived: at least one declared blocker is not completed
+    blockers: list[str] = []  # Derived: names of the not-completed blockers, in blocked_by order
     upcoming: bool = False
     # Newer of the goal file mtime and the mtime of the claude_session_id
     # transcript — same signal the task cards use. See activity.py.

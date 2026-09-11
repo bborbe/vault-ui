@@ -1,7 +1,8 @@
 ---
-spec: ["020-blocked-by-show-dont-hide"]
-status: draft
+status: approved
+spec: [020-blocked-by-show-dont-hide]
 created: "2026-09-11T07:52:44Z"
+queued: "2026-09-11T09:20:16Z"
 ---
 
 # Show a "blocked by" badge on task and goal cards that links to the blocker

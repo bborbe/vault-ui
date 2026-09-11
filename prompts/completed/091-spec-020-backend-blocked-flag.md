@@ -1,7 +1,13 @@
 ---
-spec: ["020-blocked-by-show-dont-hide"]
-status: draft
+status: completed
+spec: [020-blocked-by-show-dont-hide]
+summary: Replaced the hide-filter with a derived blocked flag and blockers list on /api/tasks and /api/goals, added blocked_by parsing parity for goals, and surfaced the status-cache-unavailable outage warning once per refresh
+execution_id: vault-ui-blocked-by-exec-091-spec-020-backend-blocked-flag
+dark-factory-version: dev
 created: "2026-09-11T07:52:44Z"
+queued: "2026-09-11T09:20:16Z"
+started: "2026-09-11T09:20:53Z"
+completed: "2026-09-11T09:29:27Z"
 ---
 
 # Keep blocked tasks on the board and report which blockers are still open
