@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.66.2
 
 - fix: A take-over now keeps the session id for the whole window the killed launcher can clear it. v0.66.1 bound only when the ps-resolved uuid differed from the frontmatter, and verified once after a 0.4s settle — both wrong, and a driven take-over on the deployed board showed it: `work-on` persists the id *before* spawning, so the ids usually already match and no bind ran at all (that take-over returned in 0.099s having written nothing), while the launcher's compensating clear lands ~1s after the SIGTERM (measured live: the field was intact at t+0.5s and gone at t+1.0s), so a verify that finishes sooner reads the field as fine and returns before the clobber. The bind now runs unconditionally whenever a session id is known and watches the field for ~3s, re-writing it whenever it goes missing; exhaustion is logged at WARNING rather than failing the take-over.
 
