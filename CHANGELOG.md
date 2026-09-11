@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.65.2
 
 - fix: A restart no longer strands cards on `⏳ Starting...` for 45 minutes. Restarting the service kills the launches vault-ui spawned — they are its subprocesses — and the coroutines that would have cleared their `claude_session_started` markers die with it, so nothing flipped the cards back and they waited for the TTL sweep (observed live 2026-09-11: a deploy killed two in-flight launches). The server now reconciles those markers at startup: a marker is cleared when the registry has no record for the item, it is past a 2-minute grace period, and no `--session-id` launch process for the item exists on this host — a restart recovers the board in seconds. A marker written by a peer machine in a shared vault also has no local launch process and can be cleared early (the TTL sweep would clear it at 45 minutes); only the display is affected, `claude_session_id` is untouched.
 - fix: Taking over a Starting card can no longer end a session someone is working in. The take-over resolved its target from every live claude process, so a card whose session id was pinned by an *interactive* `--resume` — the shape a card takes after its launch died and the operator reopened the session in a terminal — would have SIGTERMed that session. Only a launch (`--session-id`) process is a take-over target now: when the pinned process is an interactive resume, take-over clears the marker and hands back the resume command without killing anything.
