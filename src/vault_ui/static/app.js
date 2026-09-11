@@ -1149,9 +1149,16 @@ function sessionButtonHtml(kind, item) {
     const isStarting = !!item.claude_session_started || startingSet.has(item.id);
     let buttonLabel, buttonClass, buttonDisabled, buttonTitle = '';
     if (isStarting) {
-        buttonLabel = `⏳ Starting...${startingElapsedLabel(item.claude_session_started)}`;
-        buttonClass = 'start-btn';
-        buttonDisabled = true;
+        // Starting card — a launch turn is in flight. The badge is the take-over
+        // affordance, exactly as on a live card: confirm → the backend SIGTERMs
+        // the launch process, clears the marker, hands back the resume command.
+        // Elapsed time + activity age are the honest progress signals — a launch
+        // transcript goes quiet for minutes while one of its subagents works.
+        const elapsed = startingElapsedLabel(item.claude_session_started);
+        const age = formatActivityAge(item.activity_date);
+        const ageNote = age ? ` Last activity ${age} ago.` : '';
+        const title = `Launch turn in flight${elapsed ? ` (${elapsed.trim()})` : ''} — click to take over and resume (ends the running launch turn; in-flight work is lost).${ageNote}`;
+        return `<span class="starting-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="${escapeHtml(title)}">⏳ Starting...${elapsed}</span>`;
     } else if (item.session_state === 'live') {
         // Live session — running now. A plain resume is flock-refused (vault-cli
         // path) or corrupting (launcher path), so offer take-over instead: the
@@ -1517,9 +1524,11 @@ function askTakeOver() {
     });
 }
 
-// Take over a live session: confirm, then POST to the backend which SIGTERMs the
-// matched `claude --resume <uuid>` process (releasing the flock) and returns the
-// resume command — shown in the session modal so the operator can resume.
+// Take over a live or starting session: confirm, then POST to the backend which
+// SIGTERMs the matched `claude --resume <uuid>` process (releasing the flock) —
+// or, while the launch marker is set, the in-flight launch process, clearing the
+// marker so the card leaves "Starting…" — and returns the resume command, shown
+// in the session modal so the operator can resume.
 async function takeOverSession(kind, id) {
     // Arg-injection guard (mirrors runSession).
     if (typeof id === 'string' && id.startsWith('-')) {
@@ -1550,10 +1559,19 @@ async function takeOverSession(kind, id) {
 
         const data = await response.json();
         showModal(data.session_id, data.command, data.working_dir, data.task_title);
+        // terminated=false is not a failure: nothing was running (a quiet
+        // session, or a launch whose process was already gone). Say which, so a
+        // Starting take-over that found no process does not read as a no-op.
+        showToast(data.terminated === false
+            ? 'No running process found — resume with the command below'
+            : 'Running process terminated — resume with the command below');
         await loadCurrentView();
     } catch (error) {
         console.error(`Failed to take over ${kind}:`, error);
         showToast(error.message, true);
+        // A starting take-over clears the marker before it can fail, so refresh
+        // the card rather than leaving the stale "Starting…" badge on screen.
+        await loadCurrentView();
     }
 }
 

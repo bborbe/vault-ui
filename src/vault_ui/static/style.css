@@ -745,6 +745,36 @@ h1 {
     outline-offset: 1px;
 }
 
+/* Starting card (launch turn in flight) — the badge itself is the take-over
+   affordance, mirroring the live badge. Blue, not green: the turn is in flight
+   but the card is not a resumable session yet. */
+.starting-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #bfdbfe;             /* blue-200 */
+    background: #1d4ed8;        /* blue-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.starting-badge:hover {
+    background: #2563eb;        /* blue-600 */
+    outline: 1px solid #bfdbfe; /* blue-200 */
+}
+
+.starting-badge:focus-visible {
+    outline: 2px solid #bfdbfe; /* blue-200 */
+    outline-offset: 1px;
+}
+
 /* Indeterminate session (id set, no transcript found) — cannot prove it dead,
    so Resume is disabled with an amber tint and an explanatory tooltip. */
 .resume-btn.indeterminate {

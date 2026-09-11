@@ -834,6 +834,117 @@ def test_take_over_goal_not_found_returns_404(test_client_with_goals: TestClient
     assert response.status_code == 404
 
 
+# --- take-over of a Starting card (launch turn in flight) ---
+
+LAUNCH_UUID = "7e486b43-535c-4aac-8e7b-bcaae7b3ab89"
+STARTING_MARKER = "2026-09-11T07:07:18+00:00"
+
+
+def _starting_task(client: MagicMock, task_id: str = "Starting Task") -> None:
+    client._tasks.append(
+        _make_task(
+            task_id=task_id,
+            status="in_progress",
+            claude_session_id=SESSION_UUID,
+            claude_session_started=STARTING_MARKER,
+        )
+    )
+
+
+def test_take_over_starting_task_terminates_launch_and_clears_marker(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Starting take-over ends the launch, clears the marker, returns the command."""
+    _starting_task(mock_vault_client)
+
+    with patch(
+        "vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, True)
+    ) as term:
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    term.assert_called_once_with(SESSION_UUID, "Starting Task")
+    mock_vault_client.clear_field.assert_awaited_with("Starting Task", "claude_session_started")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == SESSION_UUID
+    assert SESSION_UUID in data["command"]
+    assert data["terminated"] is True
+    # The file's id already matched the launch — nothing to rebind.
+    mock_vault_client.set_field.assert_not_awaited()
+
+
+def test_take_over_starting_task_binds_launch_uuid_when_frontmatter_stale(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Launch uuid ≠ frontmatter uuid (live 2026-09-11) → resume it, write it back."""
+    _starting_task(mock_vault_client)
+
+    with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(LAUNCH_UUID, True)):
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    mock_vault_client.set_field.assert_awaited_with(
+        "Starting Task", "claude_session_id", LAUNCH_UUID
+    )
+    data = response.json()
+    assert data["session_id"] == LAUNCH_UUID
+    assert LAUNCH_UUID in data["command"]
+
+
+def test_take_over_starting_task_no_process_still_returns_resume_command(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """No ps match (launch gone, marker resurrected) → terminated=False, still cleared."""
+    _starting_task(mock_vault_client)
+
+    with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, False)):
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    mock_vault_client.clear_field.assert_awaited_with("Starting Task", "claude_session_started")
+    assert response.status_code == 200
+    assert response.json()["terminated"] is False
+    assert response.json()["session_id"] == SESSION_UUID
+
+
+def test_take_over_ignores_a_finished_launchs_resurrected_marker(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """A FINISHED-registry marker is suppressed on the board → live path, no clear."""
+    _starting_task(mock_vault_client)
+    registry = get_launch_registry()  # real singleton, emptied by the autouse fixture
+    registry.begin("TestVault", "Starting Task", "task")
+    registry.finish("TestVault", "Starting Task")
+
+    with patch("vault_ui.api.tasks.terminate_resumed_session", return_value=True) as live_term:
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    live_term.assert_called_once_with(SESSION_UUID)
+    mock_vault_client.clear_field.assert_not_awaited()
+    assert response.status_code == 200
+    assert response.json()["terminated"] is True
+
+
+def test_take_over_starting_task_without_session_clears_marker_then_400(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """Orphaned marker, no id anywhere → marker cleared, then 400 (nothing to resume)."""
+    mock_vault_client._tasks.append(
+        _make_task(
+            task_id="Orphan Task", status="in_progress", claude_session_started=STARTING_MARKER
+        )
+    )
+
+    with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(None, False)):
+        response = test_client.post("/api/tasks/Orphan%20Task/take-over?vault=TestVault")
+
+    mock_vault_client.clear_field.assert_awaited_with("Orphan Task", "claude_session_started")
+    assert response.status_code == 400
+    assert "no Claude session to resume" in response.json()["detail"]
+
+
+# The goal-card half (and the ↻ Refresh config reload) land in the follow-up PR;
+# this PR carries the Starting-card take-over for tasks.
+
+
 async def test_start_vault_cli_session_streams_output(caplog: pytest.LogCaptureFixture) -> None:
     """Subprocess stdout is logged at DEBUG line-by-line as it arrives, not buffered at exit.
 

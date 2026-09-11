@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from vault_ui.activity import (
     classify_session_state,
     compute_activity_date,
+    terminate_launch_process,
     terminate_resumed_session,
 )
 from vault_ui.api.models import (
@@ -42,6 +43,7 @@ from vault_ui.factory import (
 )
 from vault_ui.launch_registry import FINISHED
 from vault_ui.session_resolver import is_uuid, resolve_session_id
+from vault_ui.vault_cli_client import VaultCLIClient
 
 if TYPE_CHECKING:
     from vault_ui.websocket.connection_manager import ConnectionManager
@@ -1156,12 +1158,58 @@ async def run_task(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _starting_marker(vault: str, item_id: str, file_marker: str | None) -> str | None:
+    """The launch marker the BOARD shows for this item, or None when it shows a session.
+
+    Mirrors the list endpoints' arbitration: a launch the registry knows is
+    FINISHED suppresses the marker even while the file or the status cache still
+    carries it, so take-over must act on the state the operator sees on the card
+    rather than on a marker a merge resurrected. With an IN_FLIGHT record — or no
+    record at all (post-restart) — the marker stands.
+
+    The status cache is the goal-side source (vault-cli's goal list emits no such
+    field); tasks carry it on the file as well, so both are consulted.
+    """
+    if get_launch_registry().state(vault, item_id) == FINISHED:
+        return None
+    return get_status_cache().get_session_started(vault, item_id) or file_marker
+
+
+async def _clear_starting_marker(
+    client: VaultCLIClient, vault: str, item_id: str, kind: str
+) -> None:
+    """Clear the durable ``claude_session_started`` marker after a take-over.
+
+    Take-over ends the launch turn, so the marker must not outlive it: left set,
+    the card stays inert until the 45-minute TTL sweep. The launch registry is
+    marked FINISHED first, so a marker resurrected afterwards by an obsidian-git
+    merge is suppressed by the list endpoints and re-cleared by the next sweep —
+    the same convergence a launch that returned on its own gets. A failed clear
+    is logged at WARNING, never swallowed and never failing the take-over: the
+    sweep converges the file within one pass.
+    """
+    get_launch_registry().finish(vault, item_id)
+    try:
+        if kind == "task":
+            await client.clear_field(item_id, "claude_session_started")
+        else:
+            await client.clear_goal_field(item_id, "claude_session_started")
+    except Exception as e:
+        logger.warning(
+            "Failed to clear claude_session_started for %s %s in vault %s: %s",
+            kind,
+            item_id,
+            vault,
+            e,
+        )
+
+
 @router.post("/tasks/{task_id}/take-over", response_model=SessionResponse)
 async def take_over_task(
     vault: str,
     task_id: str,
 ) -> SessionResponse:
-    """Take over a live session: terminate its process and return the resume command.
+    """Take over a live or starting session: terminate its process, return the resume command.
 
     A live card's ``● Live`` badge hides Resume by design — a plain resume of a
     live session is flock-refused (vault-cli path, ``ErrSessionBusy``) or would
@@ -1172,6 +1220,18 @@ async def take_over_task(
     resume command so the operator can take over the session. The running
     turn's in-flight state is lost — that is the accepted trade-off, surfaced
     by the frontend confirm dialog before this endpoint is called.
+
+    A card on ``⏳ Starting...`` is the same rescue with one extra step. Its
+    ``claude_session_started`` marker means a launch turn is in flight, and since
+    vault-cli v0.117.1 the headless branch blocks until that turn finishes
+    (bounded by its own 30m ``sessionTurnTimeout``) — so a hung launch leaves the
+    card inert for up to half an hour. Take-over resolves the launch process
+    (``terminate_launch_process``: the card's id when a live process pins it, else
+    the ``-n <title>`` launch row), SIGTERMs it, clears the marker so the card
+    leaves "Starting…" at once instead of waiting for the 45-minute TTL sweep, and
+    hands back the resume command for the session it ended. When the launch pinned
+    a uuid the frontmatter had not caught up with, that uuid is written back so
+    the card and the resumed session agree.
 
     Access model: ``vault`` is a route selector, not a privilege boundary —
     this service binds loopback (127.0.0.1) for its single operator, and every
@@ -1204,13 +1264,45 @@ async def take_over_task(
 
         task = await client.show_task(task_id)
         session_id = task.claude_session_id or ""
-        if not session_id:
-            raise HTTPException(
-                status_code=400, detail=f"Task has no Claude session to take over: {task_id}"
-            )
 
-        terminated = terminate_resumed_session(session_id)
-        logger.info("take-over task %s session %s terminated=%s", task_id, session_id, terminated)
+        if _starting_marker(vault, task_id, task.claude_session_started):
+            resolved, terminated = terminate_launch_process(session_id or None, task.title)
+            if resolved and resolved != session_id:
+                # The launch pinned a uuid the frontmatter had not caught up with
+                # (or never carried). Bind it so the card resumes the session this
+                # endpoint just handed back, instead of a stale id.
+                try:
+                    await client.set_field(task_id, "claude_session_id", resolved)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to bind claude_session_id=%s for task %s in vault %s: %s",
+                        resolved,
+                        task_id,
+                        vault,
+                        e,
+                    )
+            await _clear_starting_marker(client, vault, task_id, "task")
+            logger.info(
+                "take-over task %s launch session %s terminated=%s", task_id, resolved, terminated
+            )
+            session_id = resolved or session_id
+            if not session_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Task has no Claude session to resume: {task_id} "
+                        "(launch marker cleared — the card is back to Start)"
+                    ),
+                )
+        else:
+            if not session_id:
+                raise HTTPException(
+                    status_code=400, detail=f"Task has no Claude session to take over: {task_id}"
+                )
+            terminated = terminate_resumed_session(session_id)
+            logger.info(
+                "take-over task %s session %s terminated=%s", task_id, session_id, terminated
+            )
 
         command = _build_resume_command(vault_config, session_id, task_title=task.title)
 
@@ -1219,6 +1311,7 @@ async def take_over_task(
             command=command,
             working_dir=vault_config.vault_path,
             task_title=task.title,
+            terminated=terminated,
         )
     except HTTPException:
         raise

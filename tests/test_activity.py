@@ -13,6 +13,7 @@ from vault_ui.activity import (
     _parse_live_session_names,
     classify_session_state,
     compute_activity_date,
+    terminate_launch_process,
     terminate_resumed_session,
     transcript_mtime,
 )
@@ -486,7 +487,9 @@ def test_session_button_gates_on_session_state() -> None:
     it on 'indeterminate' — the two states SC1/SC4 require."""
     start = APP_JS.find("function sessionButtonHtml")
     assert start != -1, "sessionButtonHtml not found in app.js"
-    body = APP_JS[start : start + 2000]
+    # The window covers the whole function; the starting branch above the live one
+    # carries its own take-over wiring now, so the slice is longer than before.
+    body = APP_JS[start : start + 4000]
 
     assert "item.session_state === 'live'" in body
     assert 'class="live-badge"' in body
@@ -584,13 +587,92 @@ def test_take_over_badge_wired_into_live_branch() -> None:
     Resume — SC1/SC5 from the task."""
     start = APP_JS.find("function sessionButtonHtml")
     assert start != -1, "sessionButtonHtml not found in app.js"
-    body = APP_JS[start : start + 2200]
+    # The window covers the whole function: the starting branch above the live
+    # one carries its own take-over wiring now, so the slice is longer than the
+    # live-branch-only version this assertion was written against.
+    body = APP_JS[start : start + 4000]
 
     assert 'class="live-badge"' in body
     assert 'onclick="takeOverSession' in body
     assert "take-over-btn" not in body  # button removed — badge is the affordance
     # quiet (hasSession, not indeterminate) still gets the normal Resume button
     assert "buttonLabel = '▶ Resume'" in body
+
+
+# --- launch-process resolution (Starting-card take-over) ---
+
+# Observed live 2026-09-11: the frontmatter id (STALE_ID) belonged to an older
+# session while the launch pinned a fresh uuid — resolvable only via `-n <title>`.
+LAUNCH_ID = "7e486b43-535c-4aac-8e7b-bcaae7b3ab89"
+STALE_ID = "769563ff-e2ab-40f8-a0db-4098e7d72756"
+
+
+def test_terminate_launch_process_prefers_live_frontmatter_id() -> None:
+    """A live process pinning the card's own id is the launch to end."""
+    with (
+        patch(
+            "vault_ui.activity._current_launch_maps",
+            return_value=({SESSION_ID: 4242}, {"Some Task": LAUNCH_ID}),
+        ),
+        patch("vault_ui.activity.os.kill") as kill,
+    ):
+        resolved, terminated = terminate_launch_process(SESSION_ID, "Some Task")
+
+    assert (resolved, terminated) == (SESSION_ID, True)
+    kill.assert_called_once_with(4242, signal.SIGTERM)
+
+
+def test_terminate_launch_process_resolves_launch_by_name() -> None:
+    """A stale id (no process) or no id at all → the `-n <title>` launch row is
+    the process to end, and its uuid is what the operator must resume."""
+    with (
+        patch(
+            "vault_ui.activity._current_launch_maps",
+            return_value=({LAUNCH_ID: 7748}, {"Blocked-by dependencies": LAUNCH_ID}),
+        ),
+        patch("vault_ui.activity.os.kill") as kill,
+    ):
+        assert terminate_launch_process(STALE_ID, "Blocked-by dependencies") == (LAUNCH_ID, True)
+        assert terminate_launch_process(None, "Blocked-by dependencies") == (LAUNCH_ID, True)
+
+    assert kill.call_count == 2
+    kill.assert_called_with(7748, signal.SIGTERM)
+
+
+def test_terminate_launch_process_no_match_returns_caller_id() -> None:
+    """Nothing running (orphaned marker) → no kill, the file's id is all there is."""
+    with (
+        patch("vault_ui.activity._current_launch_maps", return_value=({}, {})),
+        patch("vault_ui.activity.os.kill") as kill,
+    ):
+        resolved, terminated = terminate_launch_process(SESSION_ID, "Some Task")
+
+    assert (resolved, terminated) == (SESSION_ID, False)
+    kill.assert_not_called()
+
+
+def test_starting_badge_wired_into_starting_branch() -> None:
+    """Static assertion: the Starting branch renders the take-over affordance on
+    the badge itself — the card is no longer an inert disabled button — and the
+    elapsed-time label is preserved."""
+    start = APP_JS.find("function sessionButtonHtml")
+    assert start != -1, "sessionButtonHtml not found in app.js"
+    body = APP_JS[start : start + 4000]
+    starting = body[: body.find("} else if (item.session_state === 'live')")]
+
+    assert 'class="starting-badge"' in starting
+    assert 'onclick="takeOverSession' in starting
+    assert 'role="button"' in starting
+    assert 'tabindex="0"' in starting
+    assert "startingElapsedLabel(item.claude_session_started)" in starting
+    # The inert disabled button is gone from this branch.
+    assert "buttonDisabled = true" not in starting
+
+
+def test_starting_badge_styled() -> None:
+    assert ".starting-badge" in STYLE_CSS
+    assert "cursor: pointer" in STYLE_CSS
+    assert ".starting-badge:focus-visible" in STYLE_CSS
 
 
 def test_take_over_modal_markup_present() -> None:

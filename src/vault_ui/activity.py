@@ -249,6 +249,19 @@ def _current_live_processes() -> dict[str, int]:
     return _parse_live_processes(ps)
 
 
+def _sigterm_pid(pid: int, session_id: str) -> bool:
+    """SIGTERM ``pid``, logging (never raising) on failure."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # Process died between the ps scan and the kill — nothing to terminate.
+        return False
+    except OSError as e:
+        logger.warning("[Activity] Cannot SIGTERM pid %s for session %s: %s", pid, session_id, e)
+        return False
+    return True
+
+
 def terminate_resumed_session(session_id: str) -> bool:
     """SIGTERM the live claude process for ``session_id``.
 
@@ -260,15 +273,49 @@ def terminate_resumed_session(session_id: str) -> bool:
     pid = _current_live_processes().get(session_id)
     if pid is None:
         return False
+    return _sigterm_pid(pid, session_id)
+
+
+def _current_launch_maps() -> tuple[dict[str, int], dict[str, str]]:
+    """Fresh (session id → PID, ``-n`` name → session id) maps from one ps scan.
+
+    Un-cached on purpose, like ``_current_live_processes``: take-over must resolve
+    the process as it is right now. Both maps come from one scan, so a take-over
+    never decides on two different process tables.
+    """
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        # Process died between the ps scan and the kill — nothing to terminate.
-        return False
+        ps = subprocess.run(
+            ["ps", "-axww", "-o", "pid=,args="], capture_output=True, text=True
+        ).stdout
     except OSError as e:
-        logger.warning("[Activity] Cannot SIGTERM pid %s for session %s: %s", pid, session_id, e)
-        return False
-    return True
+        logger.debug("[Activity] Cannot run ps: %s", e)
+        return {}, {}
+    return _parse_live_processes(ps), _parse_live_session_names(ps)
+
+
+def terminate_launch_process(session_id: str | None, item_name: str) -> tuple[str | None, bool]:
+    """SIGTERM the in-flight launch process of a Starting card.
+
+    A Starting card's frontmatter id is not a reliable pointer at its launch
+    process: the assistant writes the id mid-turn, and a relaunch pins a fresh
+    uuid that can differ from the value already in the file (observed live
+    2026-09-11 — frontmatter ``769563ff…`` while the launch ran ``--session-id
+    7e486b43…``). So resolve in two steps: the card's own id when a live process
+    pins it, else the ``-n <item_name>`` launch row, which carries the name and
+    the uuid on one line and cannot collide with a same-titled session.
+
+    Returns ``(resolved_session_id, terminated)`` — the session to resume (the
+    terminated process's id when one was found, else the caller's id, since
+    nothing was running) and whether a process was actually signaled.
+    """
+    processes, names = _current_launch_maps()
+    resolved = session_id if session_id in processes else names.get(item_name)
+    if resolved is None:
+        return session_id, False
+    pid = processes.get(resolved)
+    if pid is None:
+        return resolved, False
+    return resolved, _sigterm_pid(pid, resolved)
 
 
 def classify_session_state(
