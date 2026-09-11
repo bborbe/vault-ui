@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix(ui): The "blocked by" badge no longer pushes a card's ▶ Start button past the card edge. It rendered inside `.card-footer-left`, which shares a `flex` + `nowrap` row with `.card-actions` and had no `min-width: 0`, so a long blocker name pinned the row at its max-content width and the button was clipped (observed on a 298px card: badge 246px + actions 90px, button 22px outside the card). The badge now takes its own `.card-blocked` row between the title and the footer, so the full blocker name fits on a normal-width card and the action button stays inside; `max-width: 100%` with `nowrap` + ellipsis is the backstop for labels naming several blockers, with the full text kept in the `title`.
+
 ## v0.67.0
 
 - feat: A task or goal whose `blocked_by` blocker is still open now stays visible on the board instead of silently disappearing, and the API reports which blockers are still open — `GET /api/tasks` and `GET /api/goals` derive a `blocked` flag and a `blockers` list naming the not-completed blockers (in `blocked_by` order) from the status cache, treating an unknown or unreadable blocker status as blocked; goals now parse `blocked_by` from frontmatter with the same normalization tasks already had.
