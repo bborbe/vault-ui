@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.67.1
 
 - fix(ui): The "blocked by" badge no longer pushes a card's ▶ Start button past the card edge. It rendered inside `.card-footer-left`, which shares a `flex` + `nowrap` row with `.card-actions` and had no `min-width: 0`, so a long blocker name pinned the row at its max-content width and the button was clipped (observed on a 298px card: badge 246px + actions 90px, button 22px outside the card). The badge now takes its own `.card-blocked` row between the title and the footer, so the full blocker name fits on a normal-width card and the action button stays inside; `max-width: 100%` with `nowrap` + ellipsis is the backstop for labels naming several blockers, with the full text kept in the `title`.
 
