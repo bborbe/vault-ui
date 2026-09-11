@@ -421,6 +421,29 @@ def test_starting_take_over_confirm_returns_resume_command(live_server, page):
     expect(card.locator(".starting-badge")).to_have_count(0)
 
 
+def test_starting_take_over_clears_the_client_starting_flag(live_server, page):
+    """Operator path, reported live 2026-09-11: Start flags the card Starting
+    client-side (``startingTasks``), then the operator takes the card over. The
+    server marker is cleared but that client-side flag outlives it, so the badge
+    must be cleared from BOTH or the card stays on 'Starting…' and the take-over
+    reads as a no-op however many times it is clicked."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Starting Task")
+    expect(card.locator(".starting-badge")).to_have_count(1)
+
+    # Mirror a Start whose launch request is still pending: the client flags it.
+    page.evaluate("startingTasks.add('Starting Task'); loadCurrentView()")
+    expect(card.locator(".starting-badge")).to_have_count(1)
+
+    card.locator(".starting-badge").click()
+    page.locator("#takeover-confirm-btn").click()
+    expect(page.locator("#session-modal")).to_be_visible()
+    page.locator("#session-modal #close-btn").click()
+
+    expect(card.locator(".starting-badge")).to_have_count(0)
+    assert page.evaluate("startingTasks.has('Starting Task')") is False
+
+
 # The ↻ Refresh config-reload test lives in the follow-up PR (config reload +
 # WebSocket wiring) — this PR carries the Starting-card take-over only.
 

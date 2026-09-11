@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Taking over a Starting card no longer leaves the card on `⏳ Starting...`. The badge renders when *either* the server marker or the browser-side `startingTasks` / `startingGoals` set says starting, and only the Start path ever removed the id from that set — so a take-over cleared the marker server-side while the stale client flag put the badge straight back on the next render, making the click read as a no-op (observed live 2026-09-11: three take-overs returned 200 and cleared their markers, yet the cards stayed on Starting). `takeOverSession` now clears the client flag and the cached marker on both the success and the error path, whose "refresh so the stale badge does not stay" intent the same flag had been defeating.
+
 ## v0.65.2
 
 - fix: A restart no longer strands cards on `⏳ Starting...` for 45 minutes. Restarting the service kills the launches vault-ui spawned — they are its subprocesses — and the coroutines that would have cleared their `claude_session_started` markers die with it, so nothing flipped the cards back and they waited for the TTL sweep (observed live 2026-09-11: a deploy killed two in-flight launches). The server now reconciles those markers at startup: a marker is cleared when the registry has no record for the item, it is past a 2-minute grace period, and no `--session-id` launch process for the item exists on this host — a restart recovers the board in seconds. A marker written by a peer machine in a shared vault also has no local launch process and can be cleared early (the TTL sweep would clear it at 45 minutes); only the display is affected, `claude_session_id` is untouched.
