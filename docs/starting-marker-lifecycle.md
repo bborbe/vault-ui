@@ -63,9 +63,17 @@ writers that matter here:
   back to `▶ Start` and the id survives only in the modal the operator just
   closed — observed live 2026-09-11 12:30:46, where the take-over returned 200
   with `terminated=True` yet the file kept no id and its uncommitted diff was
-  exactly `metrics_sessions: []`. So `_bind_session_id` binds, waits
-  `_BIND_SETTLE_SECONDS` for the launcher to finish, re-reads, and re-binds if
-  the id was clobbered — `_BIND_ATTEMPTS` times, then logs a WARNING rather than
+  exactly `metrics_sessions: []`.
+
+  `_bind_session_id` therefore runs **unconditionally** — the launcher clears the
+  field whether or not the frontmatter already carried the id, so "the ids
+  match" is no reason to skip (a take-over whose ids matched returned in 0.099 s
+  having written nothing, and the field was gone a second later) — and it
+  watches the field for `_BIND_POLLS * _BIND_POLL_SECONDS` (~3 s), re-writing it
+  whenever it goes missing. The window is the point: the clear lands ~1 s after
+  the SIGTERM (measured live 2026-09-11 12:54 — intact at t+0.5 s, gone at
+  t+1.0 s, and it stays gone), so a bind verified sooner reads the field as
+  intact and returns before the clobber. Exhaustion logs a WARNING rather than
   failing the take-over (the resume command is already with the operator).
 - **cleanup sweep** — the 5-minute cleanup pass clears orphaned markers two
   ways: TTL-based clearing for markers with no registry record (the
