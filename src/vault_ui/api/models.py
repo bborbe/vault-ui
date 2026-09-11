@@ -134,6 +134,10 @@ class SessionResponse(BaseModel):
     success: bool | None = None  # Whether the command succeeded
     error: str | None = None  # Error message if command failed
     response: str | None = None  # Stdout from vault-cli fast path
+    # Take-over only: whether a running process was found and signaled. False
+    # means nothing was running (the session was already quiet, or a Starting
+    # card's launch was already gone) — the resume command is returned either way.
+    terminated: bool | None = None
 
 
 class AssigneesResponse(BaseModel):

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: A card stuck on `⏳ Starting...` can be taken over from the wall — the badge itself is the affordance (the same discreet model as the live `● Live` badge): click → confirm → the in-flight launch process is SIGTERMed, the `claude_session_started` marker is cleared (so the card leaves "Starting…" at once instead of waiting for the 45-minute TTL sweep), and the resume command for the ended session is shown. The launch is resolved from `ps`: the card's own session id when a live process pins it, else the `-n <title>` launch row — which is what catches a relaunch whose fresh uuid the frontmatter never caught up with (observed live 2026-09-11: frontmatter `769563ff…` vs launch `--session-id 7e486b43…`); that uuid is written back so the card and the resumed session agree. Take-over reports whether a process was actually found (`terminated`), and the badge tooltip carries the elapsed time plus the card's last-activity age, because a launch's transcript goes quiet for minutes while one of its subagents works. Task and goal cards share the flow; live and quiet cards stay unchanged.
+
 ## v0.63.7
 
 - fix: Task and goal card buttons (Resume, take-over, ⋮ menu, assignee filter, assign-to-me, flag) now escape titles/ids/vaults/assignees for the single-quoted-JS-string-inside-HTML-attribute context (`escapeJsAttr`). A title containing an apostrophe — e.g. "…Peer Machines' Session Bindings…" — previously terminated the inline onclick handler, producing a silent SyntaxError on click: the Resume button and card menu did nothing (no modal, no toast). `escapeHtml` alone was insufficient because it decodes `&#39;` back to `'` before the JS parser runs.
