@@ -103,7 +103,8 @@ def test_onclick_js_string_args_escape_titles() -> None:
     escapeHtml alone is insufficient: it decodes &#39; back to ' before JS parses."""
     assert "function escapeJsAttr(value)" in APP_JS
     # Every inline-onclick JS-string argument is escapeJsAttr-wrapped.
-    assert APP_JS.count("escapeJsAttr(item.id)") == 2  # takeOverSession + runSession
+    # live badge + starting badge + runSession
+    assert APP_JS.count("escapeJsAttr(item.id)") == 3
     assert APP_JS.count("escapeJsAttr(id)") == 1  # task showMenu (cardShellHtml)
     assert APP_JS.count("escapeJsAttr(goal.id)") == 2  # goal showMenu + assignGoalToMe
     for wrapped in (

@@ -82,7 +82,8 @@ Stop:
 launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
 
-Restart (stop + start, required after editing the plist or `config.yaml`):
+Restart (stop + start, required after editing the plist; a `config.yaml` vault
+change is picked up by `↻ Refresh` on the board instead):
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
@@ -101,16 +102,31 @@ A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and one `Start
 
 ## 4. Upgrade flow
 
-Code changes are picked up on restart (no install step — `uv run` resolves the local source):
+The plist runs the **uv-installed tool** (`~/.local/bin/vault-ui`, backed by
+`~/.local/share/uv/tools/vault-ui/`), not the repo checkout — Python imports and
+the served `app.js`/`style.css` come from that installed snapshot. A `git pull`
+alone leaves the live board on the old code, so reinstall after every pull:
 
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git pull
-launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
-launchctl load ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+uv tool install --force --no-cache .
+launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 ```
 
-If dependencies changed (`pyproject.toml` / `uv.lock`), `uv run` resyncs on next start automatically.
+After a static-file change the browser also needs a hard refresh: the `app.js`
+URL is version-pinned (`?v=…`), so an old tab keeps the cached copy.
+
+**`--no-cache` is load-bearing.** uv keys its build cache on the version string,
+which is derived from git, so `--force` alone can reinstall the *cached old
+wheel*: the command reports success, the installer line even names the pre-pull
+commit, and the served bundle keeps its old `?v=` token. Verify the install
+actually landed before believing the deploy:
+
+```bash
+grep -c refreshBoard ~/.local/share/uv/tools/vault-ui/lib/python*/site-packages/vault_ui/static/app.js
+curl -s http://127.0.0.1:8000/ | grep -o 'app.js?v=[^"]*'
+```
 
 ## 5. Log verbosity
 
@@ -164,7 +180,16 @@ Check `/tmp/vault-ui.log`. Common causes:
 
 ### Changed `config.yaml` but vaults didn't update
 
-launchd does not reread anything on its own — restart the service (see section 2).
+Click `↻ Refresh` on the board: it re-reads the config file and `vault-cli
+config list`, reconciles the per-vault watchers, and rebuilds the vault selector
+(`POST /api/config/reload`) — no restart needed. The `claude_script` and vault
+paths come from vault-cli, which is re-read per invocation, so those changes are
+picked up the same way.
+
+A restart (section 2) is still the fallback when the reload fails — e.g. a
+config that does not parse. The reload reads the new config before it tears
+anything down, so a broken edit leaves the running service untouched and the
+toast names the error.
 
 ### Port 8000 already in use
 

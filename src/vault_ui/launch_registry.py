@@ -30,15 +30,33 @@ class LaunchRegistry:
 
     def __init__(self) -> None:
         self._records: dict[tuple[str, str], tuple[str, str]] = {}
+        self._taken_over: set[tuple[str, str]] = set()
 
     def begin(self, vault: str, item_id: str, kind: str) -> None:
         """Record that a launch turn for ``(vault, item_id)`` is in flight.
 
         Overwrites any prior record for the key — a new launch supersedes an
         old one, so two racing ``run`` calls for the same id yield one record
-        and the last begin/finish wins (spec Failure Modes row 5).
+        and the last begin/finish wins (spec Failure Modes row 5). A fresh launch
+        also clears any take-over mark left by the previous one.
         """
         self._records[(vault, item_id)] = (IN_FLIGHT, kind)
+        self._taken_over.discard((vault, item_id))
+
+    def mark_taken_over(self, vault: str, item_id: str) -> None:
+        """Record that a take-over from the wall ended this launch turn.
+
+        The launch endpoint's ``run_task``/``run_goal`` call is still awaiting the
+        subprocess when the take-over SIGTERMs it, so it returns a non-zero exit
+        (143) and would otherwise answer the abandoned Start request with a 500
+        carrying vault-cli's raw exit status — reading as a launch failure when it
+        is the operator's take-over working. This flag lets that request say so.
+        """
+        self._taken_over.add((vault, item_id))
+
+    def was_taken_over(self, vault: str, item_id: str) -> bool:
+        """True when a take-over ended the launch whose request is still pending."""
+        return (vault, item_id) in self._taken_over
 
     def finish(self, vault: str, item_id: str) -> None:
         """Mark the launch for ``(vault, item_id)`` finished (turn has returned).

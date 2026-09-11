@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.65.1
+
+- fix: Taking over a Starting card no longer paints a red "vault-cli work-on failed … exit status 143" error across the board. The take-over SIGTERMs the launch while the original Start request is still pending, so vault-cli exits 143 — which is the take-over working, not a launch failure. The launch registry now flags a taken-over launch, and the launch endpoints answer that abandoned request with HTTP 409 "Launch ended by take-over from the wall — resume the session from the take-over modal"; the wall renders a 409 on the Start path as a neutral toast (no error styling) and reloads the card. Task and goal cards alike; the marker is still cleared, and the resume command still comes from the take-over modal.
+
+## v0.65.0
+
+- feat: `↻ Refresh` now re-reads the server config (`~/.config/vault-ui/config.yaml` + `vault-cli config list`) and reconciles the per-vault watchers (`POST /api/config/reload`) before reloading the view, the vault selector and the assignee options — registering or removing a vault is a config edit plus this click, with no launchd restart. A config that fails to load raises before anything is torn down, so a broken edit leaves the running board untouched.
+- fix: The WebSocket live-update channel now works under the uvicorn CLI entry point (`uvicorn vault_ui.__main__:app` — what `make watch` and the documented worktree-on-:8001 recipe run): the connection manager is wired in `create_app()` instead of only in `main()`, so those invocations no longer reject every `/ws` connection with "Connection manager not initialized" and silently fall back to the 60s poll.
+
+## v0.64.0
+
+- feat: A card stuck on `⏳ Starting...` can be taken over from the wall — the badge itself is the affordance (the same discreet model as the live `● Live` badge): click → confirm → the in-flight launch process is SIGTERMed, the `claude_session_started` marker is cleared (so the card leaves "Starting…" at once instead of waiting for the 45-minute TTL sweep), and the resume command for the ended session is shown. The launch is resolved from `ps`: the card's own session id when a live process pins it, else the `-n <title>` launch row — which is what catches a relaunch whose fresh uuid the frontmatter never caught up with (observed live 2026-09-11: frontmatter `769563ff…` vs launch `--session-id 7e486b43…`); that uuid is written back so the card and the resumed session agree. Take-over reports whether a process was actually found (`terminated`), and the badge tooltip carries the elapsed time plus the card's last-activity age, because a launch's transcript goes quiet for minutes while one of its subagents works. Task and goal cards share the flow; live and quiet cards stay unchanged.
+
 ## v0.63.7
 
 - fix: Task and goal card buttons (Resume, take-over, ⋮ menu, assignee filter, assign-to-me, flag) now escape titles/ids/vaults/assignees for the single-quoted-JS-string-inside-HTML-attribute context (`escapeJsAttr`). A title containing an apostrophe — e.g. "…Peer Machines' Session Bindings…" — previously terminated the inline onclick handler, producing a silent SyntaxError on click: the Resume button and card menu did nothing (no modal, no toast). `escapeHtml` alone was insufficient because it decodes `&#39;` back to `'` before the JS parser runs.
