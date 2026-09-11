@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.66.0
 
 - fix: Taking over a Starting card no longer leaves the card on `⏳ Starting...`. The badge renders when *either* the server marker or the browser-side `startingTasks` / `startingGoals` set says starting, and only the Start path ever removed the id from that set — so a take-over cleared the marker server-side while the stale client flag put the badge straight back on the next render, making the click read as a no-op (observed live 2026-09-11: three take-overs returned 200 and cleared their markers, yet the cards stayed on Starting). `takeOverSession` now clears the client flag and the cached marker on both the success and the error path, whose "refresh so the stale badge does not stay" intent the same flag had been defeating.
 
