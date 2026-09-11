@@ -1581,6 +1581,7 @@ async function takeOverSession(kind, id) {
 
     const base = kind === 'goal' ? 'goals' : 'tasks';
     const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const startingSet = kind === 'goal' ? startingGoals : startingTasks;
     const item = cache[id];
     if (!item) {
         showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
@@ -1608,12 +1609,23 @@ async function takeOverSession(kind, id) {
         showToast(data.terminated === false
             ? 'No running process found — resume with the command below'
             : 'Running process terminated — resume with the command below');
+        // sessionButtonHtml renders the Starting badge when EITHER the server
+        // marker or this client-side set says starting. runSession adds the id
+        // here on Start and clears it itself, but a take-over is the other way a
+        // launch ends — without this the stale entry keeps "⏳ Starting…" on the
+        // card after the server cleared the marker, and the take-over reads as a
+        // no-op however many times it is clicked.
+        startingSet.delete(id);
+        item.claude_session_started = null;
         await loadCurrentView();
     } catch (error) {
         console.error(`Failed to take over ${kind}:`, error);
         showToast(error.message, true);
         // A starting take-over clears the marker before it can fail, so refresh
-        // the card rather than leaving the stale "Starting…" badge on screen.
+        // the card rather than leaving the stale "Starting…" badge on screen —
+        // including the client-side flag, which outlives the marker on its own.
+        startingSet.delete(id);
+        item.claude_session_started = null;
         await loadCurrentView();
     }
 }
