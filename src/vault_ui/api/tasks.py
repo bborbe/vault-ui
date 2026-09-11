@@ -45,6 +45,7 @@ from vault_ui.factory import (
 )
 from vault_ui.launch_registry import FINISHED
 from vault_ui.session_resolver import is_uuid, resolve_session_id
+from vault_ui.status_cache import StatusCache
 from vault_ui.vault_cli_client import VaultCLIClient
 
 if TYPE_CHECKING:
@@ -558,6 +559,34 @@ def _flatten_assignee_filter(values: list[str] | None) -> list[str] | None:
     return flat  # empty strings are valid (match unassigned tasks)
 
 
+def _uncompleted_blockers(
+    cache: StatusCache,
+    vault_name: str,
+    blocked_by: list[str] | None,
+) -> list[str]:
+    """Return the declared blockers whose cached status is not ``"completed"``.
+
+    The board's blocked signal is derived, never stored: a task/goal is blocked
+    when at least one of its ``blocked_by`` wikilinks names work that is still
+    open. A blocker with **no** cached status (unknown, renamed, deleted, or an
+    unreadable file) is treated as not completed — it can never be verified as
+    done, so it must count as blocking (the semantic inversion of the old
+    hide-filter's ``None``-means-clear default). The bracket-stripped names come
+    back in ``blocked_by`` order. Status is read at one level only: a blocker's
+    own ``blocked_by`` is never consulted, so circular dependencies terminate
+    here.
+    """
+    if not blocked_by:
+        return []
+    uncompleted = []
+    for blocker_wikilink in blocked_by:
+        blocker_name = blocker_wikilink.strip("[]").strip()
+        blocker_status = cache.get_status(vault_name, blocker_name)
+        if blocker_status != "completed":
+            uncompleted.append(blocker_name)
+    return uncompleted
+
+
 async def _process_vault(
     vault_name: str,
     status_filter: list[str] | None,
@@ -671,29 +700,25 @@ async def _process_vault(
                 visible_tasks.append(t)
     tasks = visible_tasks
 
-    # Filter out blocked tasks (use cache for fast lookup)
+    # Derive the blocked state for every visible task — the board's dependency
+    # signal. Blocked work stays visible (nothing is dropped) and the derived
+    # flags are never written back to frontmatter. The same cache also serves
+    # the claude_session_started block below.
     cache = get_status_cache()
-    unblocked_tasks = []
-
     for task in tasks:
-        if not task.blocked_by:
-            unblocked_tasks.append(task)
-            continue
+        task.blockers = _uncompleted_blockers(cache, vault_config.name, task.blocked_by)
+        task.blocked = bool(task.blockers)
 
-        has_uncompleted_blocker = False
-        for blocker_wikilink in task.blocked_by:
-            blocker_name = blocker_wikilink.strip("[]").strip()
-            blocker_status = cache.get_status(vault_config.name, blocker_name)
-            if blocker_status is None:
-                continue
-            if blocker_status != "completed":
-                has_uncompleted_blocker = True
-                break
-
-        if not has_uncompleted_blocker:
-            unblocked_tasks.append(task)
-
-    tasks = unblocked_tasks
+    # An empty status cache plus at least one declared blocker means every
+    # blocker will read as not completed — blocked flags may reflect a cache
+    # outage rather than genuine dependency work. Emit exactly ONE warning per
+    # refresh (never one per task) so the operator can tell the two apart.
+    if cache.count(vault_config.name) == 0 and any(t.blocked_by for t in tasks):
+        logger.warning(
+            "status_cache_unavailable: status cache empty for vault %s; "
+            "all declared blockers will read as not completed",
+            vault_config.name,
+        )
 
     # Surface claude_session_started from the status cache — vault-cli's task list
     # does not emit this custom field, so the durable "Starting" flag reaches the UI
@@ -794,6 +819,7 @@ def _goal_to_response(
     vault_config: VaultConfig,
     claude_session_started: str | None = None,
     upcoming: bool = False,
+    blockers: list[str] | None = None,
 ) -> GoalResponse:
     """Convert Goal to GoalResponse.
 
@@ -838,6 +864,9 @@ def _goal_to_response(
         claude_session_id=goal.claude_session_id,
         claude_session_started=claude_session_started,
         assignee=goal.assignee,
+        blocked_by=goal.blocked_by,
+        blocked=bool(blockers),
+        blockers=blockers or [],
         upcoming=upcoming,
         activity_date=activity_date,
         session_state=session_state,
@@ -919,6 +948,22 @@ async def _process_goal_vault(
     # subject to the existing TTL sweep.
     cache = get_status_cache()
     registry = get_launch_registry()
+    goal_blockers = {
+        g.id: _uncompleted_blockers(cache, vault_config.name, g.blocked_by)
+        for g, _upcoming in visible_goals
+    }
+
+    # Empty status cache + at least one declared blocker means every blocker will
+    # read as not completed — blocked flags may reflect a cache outage rather than
+    # genuine dependency work. Emit exactly ONE warning per refresh (never one per
+    # goal) so the operator can tell the two apart.
+    if cache.count(vault_config.name) == 0 and any(g.blocked_by for g, _upcoming in visible_goals):
+        logger.warning(
+            "status_cache_unavailable: status cache empty for vault %s; "
+            "all declared blockers will read as not completed",
+            vault_config.name,
+        )
+
     return [
         _goal_to_response(
             g,
@@ -929,6 +974,7 @@ async def _process_goal_vault(
                 else cache.get_session_started(vault_config.name, g.id)
             ),
             upcoming=upcoming,
+            blockers=goal_blockers[g.id],
         )
         for g, upcoming in visible_goals
     ]
@@ -2633,6 +2679,8 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
         claude_session_started=task.claude_session_started,
         assignee=task.assignee,
         blocked_by=task.blocked_by,
+        blocked=task.blocked,
+        blockers=task.blockers or [],
         upcoming=task.upcoming,
         recently_completed=task.recently_completed,
         vault=vault_config.name,

@@ -330,6 +330,12 @@ class VaultCLIClient:
                 with suppress(ValueError):
                     priority = int(priority)
 
+        blocked_by: list[str] | None = data.get("blocked_by")
+        if isinstance(blocked_by, list):
+            blocked_by = [str(item) for item in blocked_by]
+        elif blocked_by is not None:
+            blocked_by = None
+
         return Goal(
             id=goal_id,
             title=str(data.get("title", goal_id)),
@@ -341,4 +347,5 @@ class VaultCLIClient:
             target_date=data.get("target_date"),
             completed_date=data.get("completed_date"),
             modified_date=modified_date,
+            blocked_by=blocked_by,
         )

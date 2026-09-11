@@ -298,6 +298,49 @@ async def test_parse_task_blocked_by_list() -> None:
     assert task.blocked_by == ["[[Task A]]", "[[Task B]]"]
 
 
+@pytest.mark.asyncio
+async def test_parse_goal_blocked_by_list() -> None:
+    """Test that blocked_by list is parsed correctly for goals (mirrors _parse_task)."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    goal_data = json.dumps(
+        {"name": "g", "title": "g", "status": "todo", "blocked_by": ["[[Goal A]]", "[[Goal B]]"]}
+    )
+    proc = _make_proc(0, b"[" + goal_data.encode() + b"]")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals(show_all=True)
+
+    assert goals[0].blocked_by == ["[[Goal A]]", "[[Goal B]]"]
+
+
+@pytest.mark.asyncio
+async def test_parse_goal_blocked_by_non_list_yields_none() -> None:
+    """A non-list blocked_by value becomes None (mirrors _parse_task)."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    goal_data = json.dumps(
+        {"name": "g", "title": "g", "status": "todo", "blocked_by": "[[Goal A]]"}
+    )
+    proc = _make_proc(0, b"[" + goal_data.encode() + b"]")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals(show_all=True)
+
+    assert goals[0].blocked_by is None
+
+
+@pytest.mark.asyncio
+async def test_parse_goal_blocked_by_absent_yields_none() -> None:
+    """An absent blocked_by field stays None (mirrors _parse_task)."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    goal_data = json.dumps({"name": "g", "title": "g", "status": "todo"})
+    proc = _make_proc(0, b"[" + goal_data.encode() + b"]")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        goals = await client.list_goals(show_all=True)
+
+    assert goals[0].blocked_by is None
+
+
 def _goal_json(**kwargs: object) -> bytes:
     goal = {
         "name": "Share AI Knowledge at Seibert",
