@@ -308,6 +308,9 @@ def live_server(tmp_path, monkeypatch):
         port=0,
     )
     monkeypatch.setattr("vault_ui.factory._config", test_config)
+    # The ↻ Refresh path re-reads the real config file + vault-cli by design;
+    # the hermetic test swaps in the same test config so nothing external runs.
+    monkeypatch.setattr("vault_ui.api.tasks.reload_config", lambda *_args: test_config)
 
     app = create_app()
     port = _free_port()
@@ -541,3 +544,20 @@ def test_apostrophe_title_menu_button_opens(live_server, page):
     card.locator(".menu-btn").click()
     expect(page.locator(".task-menu")).to_be_visible()
     assert page_errors == [], f"page errors on apostrophe-title menu click: {page_errors}"
+
+
+def test_refresh_button_reloads_config(live_server, page):
+    """↻ Refresh re-reads the server config (POST /api/config/reload) before it
+    reloads the view — the vault-registration path with no launchd restart."""
+    reload_requests = []
+
+    def _track(request):
+        if "/api/config/reload" in request.url:
+            reload_requests.append(request.method)
+
+    page.on("request", _track)
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    page.locator("#refresh-btn").click()
+
+    expect(page.locator(".toast")).to_contain_text("Config reloaded")
+    assert reload_requests == ["POST"]

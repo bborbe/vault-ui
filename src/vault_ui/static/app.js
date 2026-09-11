@@ -142,7 +142,7 @@ function setupEventListeners() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeAssigneeDropdown();
     });
-    document.getElementById('refresh-btn').addEventListener('click', loadCurrentView);
+    document.getElementById('refresh-btn').addEventListener('click', refreshBoard);
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
     setupUpcomingWindow();
@@ -1094,6 +1094,35 @@ async function loadCurrentView() {
         await loadGoals();
     } else {
         await loadTasks();
+    }
+}
+
+// ↻ Refresh: re-read the server's config (the vault-ui config file plus
+// `vault-cli config list`), reconcile the per-vault watchers, then reload the
+// view, the vault selector and the assignee options. Registering or removing a
+// vault is a config edit plus this click — no launchd restart.
+async function refreshBoard() {
+    const button = document.getElementById('refresh-btn');
+    button.disabled = true;
+    try {
+        const response = await fetch('/api/config/reload', { method: 'POST' });
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
+        }
+        const data = await response.json();
+        await loadVaults();
+        await loadCurrentView();
+        loadAssignees();
+        showToast(`Config reloaded — ${data.vaults.length} vaults`);
+    } catch (error) {
+        // A config that fails to parse leaves the server untouched; reload the
+        // view anyway so the board shows live data after a failed reload. The
+        // toast is the operator-facing surface (no console.* here: this file is
+        // browser-side static JS, but the node/* rule set scans src/**/*.js).
+        showToast(error.message, true);
+        await loadCurrentView();
+    } finally {
+        button.disabled = false;
     }
 }
 

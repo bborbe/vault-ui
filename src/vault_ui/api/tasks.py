@@ -40,6 +40,8 @@ from vault_ui.factory import (
     get_status_cache,
     get_vault_cli_client_for_vault,
     get_vault_config,
+    reload_config,
+    watcher_vault_names,
 )
 from vault_ui.launch_registry import FINISHED
 from vault_ui.session_resolver import is_uuid, resolve_session_id
@@ -1449,11 +1451,13 @@ async def take_over_goal(
     vault: str,
     goal_id: str,
 ) -> SessionResponse:
-    """Take over a live goal session: terminate its process and return the resume command.
+    """Take over a live or starting goal session: terminate its process, return the resume command.
 
-    Mirrors ``take_over_task`` for goals (live goal cards carry the same
-    ``● Live`` badge with Resume hidden). SIGTERM the matched ``claude --resume
-    <uuid>`` process, then return the normal resume command. Access model is
+    Mirrors ``take_over_task`` for goals (goal cards carry the same ``● Live``
+    badge and the same inert ``⏳ Starting...`` state). SIGTERM the matched
+    ``claude --resume <uuid>`` process — or, while the starting marker is set,
+    the in-flight launch process, clearing the marker so the card leaves
+    "Starting…" at once — then return the normal resume command. Access model is
     identical to ``take_over_task`` — loopback single-operator service, no
     per-endpoint auth by design.
 
@@ -1475,13 +1479,47 @@ async def take_over_goal(
             raise HTTPException(status_code=404, detail=f"Goal not found: {goal_id}")
 
         session_id = goal.claude_session_id or ""
-        if not session_id:
-            raise HTTPException(
-                status_code=400, detail=f"Goal has no Claude session to take over: {goal_id}"
-            )
 
-        terminated = terminate_resumed_session(session_id)
-        logger.info("take-over goal %s session %s terminated=%s", goal_id, session_id, terminated)
+        # Goals carry no claude_session_started on the model (vault-cli's goal
+        # list does not emit it) — the status cache is the marker source.
+        if _starting_marker(vault, goal_id, None):
+            resolved, terminated = terminate_launch_process(session_id or None, goal.title)
+            if resolved and resolved != session_id:
+                # The launch pinned a uuid the frontmatter had not caught up with
+                # (or never carried). Bind it so the card resumes the session this
+                # endpoint just handed back, instead of a stale id.
+                try:
+                    await client.set_goal_field(goal_id, "claude_session_id", resolved)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to bind claude_session_id=%s for goal %s in vault %s: %s",
+                        resolved,
+                        goal_id,
+                        vault,
+                        e,
+                    )
+            await _clear_starting_marker(client, vault, goal_id, "goal")
+            logger.info(
+                "take-over goal %s launch session %s terminated=%s", goal_id, resolved, terminated
+            )
+            session_id = resolved or session_id
+            if not session_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Goal has no Claude session to resume: {goal_id} "
+                        "(launch marker cleared — the card is back to Start)"
+                    ),
+                )
+        else:
+            if not session_id:
+                raise HTTPException(
+                    status_code=400, detail=f"Goal has no Claude session to take over: {goal_id}"
+                )
+            terminated = terminate_resumed_session(session_id)
+            logger.info(
+                "take-over goal %s session %s terminated=%s", goal_id, session_id, terminated
+            )
 
         command = _build_resume_command(vault_config, session_id, task_title=goal.title)
 
@@ -1490,6 +1528,7 @@ async def take_over_goal(
             command=command,
             working_dir=vault_config.vault_path,
             task_title=goal.title,
+            terminated=terminated,
         )
     except HTTPException:
         raise
@@ -2421,6 +2460,33 @@ async def reload_cache(vault: str | None = None) -> dict[str, list[str] | dict[s
         counts[vault_config.name] = count
 
     return {"reloaded": reloaded, "counts": counts}
+
+
+@router.post("/config/reload")
+async def reload_config_endpoint(request: Request) -> dict[str, list[str]]:
+    """Re-read the config and reconcile the watchers — the ↻ Refresh server half.
+
+    Registering or removing a vault becomes a config-file edit plus this call:
+    the vault-ui config file and ``vault-cli config list`` are read again, and the
+    per-vault watchers are restarted over the new vault set. A config that fails
+    to parse raises before anything is torn down, so a broken edit leaves the
+    running board exactly as it was.
+
+    Returns:
+        {"vaults": [...names...], "watchers": [...names...]}
+
+    Raises:
+        HTTPException: If config.yaml is unreadable or vault-cli is unavailable
+    """
+    try:
+        config = reload_config(
+            request.app.state.vault_task_cache,
+            request.app.state.vault_goal_cache,
+        )
+    except Exception as e:
+        logger.exception("Config reload failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {"vaults": [vault.name for vault in config.vaults], "watchers": watcher_vault_names()}
 
 
 def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:

@@ -60,3 +60,22 @@ def test_log_level_invalid_value_warns_and_falls_back(raw: str) -> None:
     assert warning is not None
     assert raw in warning
     assert "INFO" in warning
+
+
+def test_create_app_wires_the_connection_manager() -> None:
+    """create_app() wires the WebSocket/connection manager, not just main().
+
+    The uvicorn CLI entry point (`uvicorn vault_ui.__main__:app` — what `make
+    watch` and the worktree-on-:8001 recipe run) never executes main(), so
+    without this wiring /ws rejects every connection with "Connection manager not
+    initialized" and the board silently falls back to the 60s poll: no live
+    updates, no error the operator can see.
+    """
+    from vault_ui.api import tasks as tasks_module
+    from vault_ui.api import websocket as ws_module
+    from vault_ui.factory import create_app
+
+    create_app()
+
+    assert ws_module._connection_manager is not None
+    assert tasks_module._connection_manager is ws_module._connection_manager

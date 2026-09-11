@@ -5909,3 +5909,66 @@ def test_list_endpoints_spawn_zero_clears_on_finished_record(
     assert mock_vault_client.clear_field.await_count == 0
     assert mock_vault_client_with_goals.clear_field.await_count == 0
     assert mock_vault_client_with_goals.clear_goal_field.await_count == 0
+
+
+# --- config reload (↻ Refresh server half) ---
+
+
+def test_config_reload_returns_vault_and_watcher_names(test_client: TestClient) -> None:
+    """↻ Refresh re-reads the config and reconciles the watchers, then hands the
+    new vault set back so the selector can be rebuilt in the same round-trip."""
+    config = _count_config(["Personal", "Trading"])
+
+    with (
+        patch("vault_ui.api.tasks.reload_config", return_value=config) as reload_mock,
+        patch("vault_ui.api.tasks.watcher_vault_names", return_value=["Personal", "Trading"]),
+    ):
+        response = test_client.post("/api/config/reload")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "vaults": ["Personal", "Trading"],
+        "watchers": ["Personal", "Trading"],
+    }
+    reload_mock.assert_called_once()
+
+
+def test_config_reload_failure_returns_500(test_client: TestClient) -> None:
+    """A config that cannot be read fails loudly. The running board is untouched:
+    reload_config loads the new config before it tears anything down."""
+    with patch(
+        "vault_ui.api.tasks.reload_config", side_effect=RuntimeError("config.yaml not found")
+    ):
+        response = test_client.post("/api/config/reload")
+
+    assert response.status_code == 500
+    assert "config.yaml not found" in response.json()["detail"]
+
+
+def test_take_over_starting_goal_terminates_launch_and_clears_marker(
+    test_client_with_goals: TestClient, mock_vault_client_with_goals: MagicMock
+) -> None:
+    """Goal cards carry the same Starting take-over; their marker lives in the
+    status cache — vault-cli's goal list emits no claude_session_started."""
+    mock_vault_client_with_goals._goals.append(
+        _make_goal(goal_id="Starting Goal", status="in_progress", claude_session_id=SESSION_UUID)
+    )
+    status_cache = _make_status_cache_mock({("TestVault", "Starting Goal"): STARTING_MARKER})
+
+    with (
+        patch("vault_ui.api.tasks.get_status_cache", return_value=status_cache),
+        patch(
+            "vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, True)
+        ) as term,
+    ):
+        response = test_client_with_goals.post(
+            "/api/goals/Starting%20Goal/take-over?vault=TestVault"
+        )
+
+    term.assert_called_once_with(SESSION_UUID, "Starting Goal")
+    mock_vault_client_with_goals.clear_goal_field.assert_awaited_with(
+        "Starting Goal", "claude_session_started"
+    )
+    assert response.status_code == 200
+    assert response.json()["session_id"] == SESSION_UUID
+    assert response.json()["terminated"] is True
