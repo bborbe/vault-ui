@@ -15,6 +15,7 @@ import os
 import socket
 import threading
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -207,13 +208,24 @@ def _write_transcript(root: Path, session_id: str, age: timedelta) -> Path:
 
 
 def _client() -> MagicMock:
-    """Mock VaultCLIClient backed by the fixed task/goal lists above."""
+    """Mock VaultCLIClient backed by the fixed task/goal lists above.
+
+    The ``claude_session_started`` markers are mutable state, not constants: a
+    take-over clears one, and the reloaded card must then render its post-launch
+    state. That is the one frontmatter write the take-over flow is asserted on
+    end-to-end here — every other write stays a plain mock call.
+    """
     client = MagicMock()
+    markers: dict[str, str | None] = {task.id: task.claude_session_started for task in TASKS}
+
+    def _with_marker(task: Task) -> Task:
+        # Task is a dataclass, not a pydantic model — replace(), not model_copy().
+        return replace(task, claude_session_started=markers.get(task.id))
 
     async def _list_tasks(
         status_filter: list[str] | None = None, show_all: bool = False
     ) -> list[Task]:
-        return list(TASKS)
+        return [_with_marker(task) for task in TASKS]
 
     async def _list_goals(
         status_filter: list[str] | None = None, show_all: bool = False
@@ -223,13 +235,17 @@ def _client() -> MagicMock:
     async def _show_task(task_id: str) -> Task:
         for task in TASKS:
             if task.id == task_id:
-                return task
+                return _with_marker(task)
         raise FileNotFoundError(f"Task not found: {task_id}")
+
+    async def _clear_field(task_id: str, key: str) -> None:
+        if key == "claude_session_started":
+            markers[task_id] = None
 
     client.list_tasks = AsyncMock(side_effect=_list_tasks)
     client.list_goals = AsyncMock(side_effect=_list_goals)
     client.show_task = AsyncMock(side_effect=_show_task)
-    client.clear_field = AsyncMock()
+    client.clear_field = AsyncMock(side_effect=_clear_field)
     client.set_field = AsyncMock()
     client.clear_goal_field = AsyncMock()
     client.set_goal_field = AsyncMock()
@@ -292,6 +308,9 @@ def live_server(tmp_path, monkeypatch):
         port=0,
     )
     monkeypatch.setattr("vault_ui.factory._config", test_config)
+    # The ↻ Refresh path re-reads the real config file + vault-cli by design;
+    # the hermetic test swaps in the same test config so nothing external runs.
+    monkeypatch.setattr("vault_ui.api.tasks.reload_config", lambda *_args: test_config)
 
     app = create_app()
     port = _free_port()
@@ -344,17 +363,92 @@ def test_no_session_shows_start(live_server, page):
 def test_starting_task_with_id_and_marker_shows_starting_not_live(live_server, page):
     """Bug lock: a card whose id landed mid-turn but whose launch turn is still
     in flight (marker set + fresh transcript = session_state live) must render
-    'Starting…', NOT the take-over badge — a reload during launch shows Starting."""
+    'Starting…', NOT the live take-over badge — a reload during launch shows
+    Starting, and never a Resume."""
     page.goto(f"{live_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Starting Task")
-    # The marker gate wins: the button is the disabled "Starting..." start-btn.
-    start_btn = card.locator(".start-btn")
-    expect(start_btn).to_have_count(1)
-    expect(start_btn).to_be_disabled()
-    expect(start_btn).to_contain_text("Starting")
-    # Never the take-over badge nor a Resume on a booting session.
+    # The marker gate wins: the card shows the Starting badge.
+    badge = card.locator(".starting-badge")
+    expect(badge).to_have_count(1)
+    expect(badge).to_contain_text("Starting")
+    # Never the live badge nor a Resume on a booting session.
     expect(card.locator(".live-badge")).to_have_count(0)
     expect(card.locator(".resume-btn")).to_have_count(0)
+
+
+def test_starting_card_offers_take_over_affordance(live_server, page):
+    """The Starting card is not inert: the badge itself is the take-over
+    affordance (same discreet model as the live badge) — no disabled button."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Starting Task")
+    badge = card.locator(".starting-badge")
+    expect(badge).to_have_count(1)
+    expect(badge).to_have_attribute("role", "button")
+    expect(card.locator(".start-btn")).to_have_count(0)
+    expect(card.locator(".take-over-btn")).to_have_count(0)
+
+
+def test_starting_take_over_cancel_performs_no_action(live_server, page):
+    """The cancel path performs no action — no take-over request fires."""
+    take_over_requests = []
+
+    def _track(request):
+        if "/take-over" in request.url:
+            take_over_requests.append(request.url)
+
+    page.on("request", _track)
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Starting Task")
+    card.locator(".starting-badge").click()
+
+    confirm_modal = page.locator("#takeover-modal")
+    expect(confirm_modal).to_be_visible()
+
+    page.locator("#takeover-cancel-btn").click()
+    expect(confirm_modal).to_be_hidden()
+
+    expect(page.locator("#session-modal")).to_be_hidden()
+    assert take_over_requests == []
+
+
+def test_starting_take_over_confirm_returns_resume_command(live_server, page):
+    """Confirming a Starting take-over surfaces the resume command for the
+    launch's session, and the card leaves 'Starting…' (the mocked vault-cli
+    clears the marker, so the reloaded card renders its post-launch state)."""
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    card = page.locator(".task-card").filter(has_text="Starting Task")
+    card.locator(".starting-badge").click()
+
+    confirm_modal = page.locator("#takeover-modal")
+    expect(confirm_modal).to_be_visible()
+    page.locator("#takeover-confirm-btn").click()
+
+    session_modal = page.locator("#session-modal")
+    expect(session_modal).to_be_visible()
+    expect(page.locator("#handoff-command")).to_contain_text(f"--resume {STARTING_ID}")
+    expect(page.locator("#task-title")).to_have_text("Starting Task")
+
+    # The marker is gone, so the card no longer renders Starting… (its hermetic
+    # transcript is fresh, so it now classifies live — the point is the badge).
+    session_modal.locator("#close-btn").click()
+    expect(card.locator(".starting-badge")).to_have_count(0)
+
+
+def test_refresh_button_reloads_config(live_server, page):
+    """↻ Refresh re-reads the server config (POST /api/config/reload) before it
+    reloads the view — the vault-registration path with no launchd restart."""
+    reload_requests = []
+
+    def _track(request):
+        if "/api/config/reload" in request.url:
+            reload_requests.append(request.method)
+
+    page.on("request", _track)
+    page.goto(f"{live_server}/?status=in_progress&view=tasks")
+    page.locator("#refresh-btn").click()
+
+    expect(page.locator(".toast")).to_contain_text("Config reloaded")
+    assert reload_requests == ["POST"]
 
 
 def test_goal_card_gates_live_session_too(live_server, page):

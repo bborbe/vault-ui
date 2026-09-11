@@ -127,8 +127,9 @@ def test_handle_task_update_does_not_fetch_on_cross_view() -> None:
 
 
 def test_refresh_button_uses_load_current_view() -> None:
-    """The #refresh-btn click handler is wired to loadCurrentView, not
-    loadTasks (spec AC#1 (d))."""
+    """The #refresh-btn click handler is wired to refreshBoard, which re-reads the
+    server config and then reloads the CURRENT view — never a bare loadTasks that
+    would clobber the Goals view (spec AC#1 (d))."""
     setup_idx = APP_JS.find("function setupEventListeners")
     assert setup_idx != -1
     setup_body = APP_JS[setup_idx : APP_JS.find("function ", setup_idx + 1)]
@@ -145,7 +146,18 @@ def test_refresh_button_uses_load_current_view() -> None:
     assert "loadTasks" not in refresh_section.group(0), (
         "refresh-btn still wired to loadTasks — switch to loadCurrentView"
     )
-    assert "loadCurrentView" in refresh_section.group(0)
+    assert "refreshBoard" in refresh_section.group(0)
+
+    # refreshBoard is where the current-view reload lives now, together with the
+    # config re-read the ↻ button exists to trigger.
+    handler_idx = APP_JS.find("async function refreshBoard")
+    assert handler_idx != -1, "refreshBoard handler not found in app.js"
+    handler_body = APP_JS[handler_idx : APP_JS.find("\nfunction ", handler_idx + 1)]
+    assert "loadCurrentView" in handler_body
+    assert "loadTasks()" not in handler_body, (
+        "refreshBoard reloads tasks directly — the Goals view would be clobbered"
+    )
+    assert "/api/config/reload" in handler_body
 
 
 def test_start_polling_uses_load_current_view() -> None:

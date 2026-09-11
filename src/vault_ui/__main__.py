@@ -6,12 +6,9 @@ import sys
 
 import uvicorn
 
-from vault_ui.api.tasks import set_connection_manager as tasks_set_connection_manager
-from vault_ui.api.websocket import set_connection_manager
 from vault_ui.factory import (
     create_app,
     get_config,
-    get_connection_manager,
 )
 
 # Create app instance at module level for uvicorn --reload (make watch)
@@ -59,9 +56,8 @@ def main() -> int:
         logging.getLogger(__name__).warning(fallback_warning)
 
     try:
-        set_connection_manager(get_connection_manager())
-        tasks_set_connection_manager(get_connection_manager())
-
+        # The connection manager is wired by create_app() (the module-level `app`
+        # above), so both this entry point and the uvicorn CLI get live updates.
         config = get_config()
         uvicorn.run(
             app,

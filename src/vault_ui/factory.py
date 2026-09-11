@@ -316,6 +316,53 @@ def stop_task_watchers() -> None:
     _watcher_tasks.clear()
 
 
+def watcher_vault_names() -> list[str]:
+    """Vault names with a live watcher, sorted (diagnostic surface for reload)."""
+    return sorted(_watchers)
+
+
+def reload_config(
+    vault_task_cache: dict[str, tuple[float, float, list[Task]]],
+    vault_goal_cache: dict[str, tuple[float, float, list[Goal]]],
+) -> Config:
+    """Re-read config.yaml + vault-cli and reconcile the running watchers.
+
+    The server half of the board's ↻ Refresh button: ``load_config()`` reads the
+    vault-ui config file and ``vault-cli config list`` again, the module-level
+    config is swapped, every vault's status-cache entry is (re)loaded, and the
+    watchers are restarted over the new vault set — the same calls the lifespan
+    makes at startup, so a vault added or removed in the config file takes effect
+    without a launchd restart.
+
+    Order matters: the new config is loaded BEFORE anything is torn down, so a
+    config that fails to parse — or a vault-cli that fails to answer — leaves the
+    running server exactly as it was. The cleanup loop is restarted as well: it
+    captured the old ``Config`` object at startup and would otherwise keep
+    sweeping the previous vault set.
+    """
+    global _config, _cleanup_task
+
+    new_config = load_config()
+    _config = new_config
+
+    stop_task_watchers()
+    cache = get_status_cache()
+    for vault in new_config.vaults:
+        cache.load_vault(vault.name, Path(vault.vault_path), vault.tasks_folder)
+    start_task_watchers(vault_task_cache, vault_goal_cache)
+
+    if _cleanup_task is not None:
+        _cleanup_task.cancel()
+        _cleanup_task = asyncio.create_task(run_cleanup_loop(new_config))
+
+    logger.info(
+        "[Factory] Config reloaded: %d vaults, watchers=%s",
+        len(new_config.vaults),
+        watcher_vault_names(),
+    )
+    return new_config
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle - startup and shutdown."""
@@ -349,7 +396,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     """Create FastAPI application (composition root)."""
     from vault_ui.api.tasks import router as tasks_router
+    from vault_ui.api.tasks import set_connection_manager as tasks_set_connection_manager
     from vault_ui.api.websocket import router as ws_router
+    from vault_ui.api.websocket import set_connection_manager
+
+    # Wire the connection manager HERE, not in __main__.main(): the uvicorn CLI
+    # entry point (`uvicorn vault_ui.__main__:app` — what `make watch` and the
+    # worktree-on-:8001 recipe run) never executes main(), so without this the /ws
+    # endpoint rejects every connection with "Connection manager not initialized"
+    # and the board silently falls back to the 60s poll — no live updates.
+    connection_manager = get_connection_manager()
+    set_connection_manager(connection_manager)
+    tasks_set_connection_manager(connection_manager)
 
     app = FastAPI(
         title="Vault UI",

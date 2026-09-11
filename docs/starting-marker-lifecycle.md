@@ -38,6 +38,21 @@ writers that matter here:
 - **session reset** — `DELETE /api/tasks/{id}/session` and
   `DELETE /api/goals/{id}/session` clear the marker in lockstep with
   `claude_session_id`.
+- **take-over of a Starting card** — `POST /api/tasks/{id}/take-over` and
+  `POST /api/goals/{id}/take-over` end the in-flight launch turn (SIGTERM to the
+  process resolved from `ps` — the card's session id when a live process pins it,
+  else the `-n <title>` launch row) and then clear the marker themselves. The
+  launch endpoint's own clear runs when its subprocess returns, but that is not
+  enough for a take-over: the launch may be hung (vault-cli blocks until the turn
+  finishes, capped by its 30m `sessionTurnTimeout`), or the marker may be a
+  post-restart orphan whose `run_task` coroutine no longer exists. Clearing here
+  is what returns the card to `▶ Resume` immediately instead of leaving it inert
+  until the TTL sweep. The registry record is marked FINISHED first, so a marker
+  a later obsidian-git merge restores is suppressed by the list endpoints and
+  re-cleared by the next sweep — the same convergence a self-returning launch
+  gets. When the launch pinned a uuid the frontmatter had not caught up with,
+  take-over writes that uuid into `claude_session_id`, so the card and the
+  session the operator resumes agree.
 - **cleanup sweep** — the 5-minute cleanup pass clears orphaned markers two
   ways: TTL-based clearing for markers with no registry record (the
   post-restart orphan case), and registry-based re-clearing for markers the

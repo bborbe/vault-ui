@@ -1,5 +1,6 @@
 """Tests for config loading."""
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -7,7 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vault_ui.config import load_config, resolve_default_config_path
+from vault_ui import factory
+from vault_ui.config import Config, VaultConfig, load_config, resolve_default_config_path
+from vault_ui.factory import reload_config
 
 
 def _mock_run(vaults: list[dict] | None = None) -> MagicMock:
@@ -279,3 +282,101 @@ def test_resolve_default_config_path_real_defaults_sane(
     result = resolve_default_config_path()
     assert isinstance(result, Path)
     assert result == Path.home() / ".config" / "vault-ui" / "config.yaml"
+
+
+# --- reload_config (the ↻ Refresh server half) ---
+
+
+def _reload_test_config(*vault_names: str) -> Config:
+    return Config(
+        vaults=[
+            VaultConfig(name=name, vault_path=f"/vaults/{name}", tasks_folder="24 Tasks")
+            for name in vault_names
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+
+
+def test_reload_config_swaps_config_and_reconciles_watchers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reload_config re-reads the config, restarts the watchers over the new vault
+    set, and reloads each vault into the status cache — the path behind ↻ Refresh."""
+    new_config = _reload_test_config("Personal", "Trading")
+    task_cache: dict = {"stale": "entry"}
+    goal_cache: dict = {}
+    cache = MagicMock()
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr("vault_ui.factory._config", _reload_test_config("Before"))
+    monkeypatch.setattr("vault_ui.factory.load_config", lambda: new_config)
+    monkeypatch.setattr("vault_ui.factory.stop_task_watchers", lambda: calls.update(stopped=True))
+    monkeypatch.setattr(
+        "vault_ui.factory.start_task_watchers",
+        lambda tasks, goals: calls.update(started=(tasks, goals)),
+    )
+    monkeypatch.setattr("vault_ui.factory.get_status_cache", lambda: cache)
+
+    result = reload_config(task_cache, goal_cache)
+
+    assert result is new_config
+    assert factory._config is new_config  # the module-level swap every API read sees
+    assert calls["stopped"] is True
+    assert calls["started"] == (task_cache, goal_cache)
+    cache.load_vault.assert_any_call("Personal", Path("/vaults/Personal"), "24 Tasks")
+    cache.load_vault.assert_any_call("Trading", Path("/vaults/Trading"), "24 Tasks")
+
+
+def test_reload_config_broken_config_leaves_running_server_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config that fails to load raises BEFORE anything is torn down, so a bad
+    edit cannot take the running board's watchers with it."""
+    sentinel = _reload_test_config("Old")
+    monkeypatch.setattr("vault_ui.factory._config", sentinel)
+
+    def _boom() -> Config:
+        raise RuntimeError("config.yaml not found")
+
+    monkeypatch.setattr("vault_ui.factory.load_config", _boom)
+    stopped = MagicMock()
+    started = MagicMock()
+    monkeypatch.setattr("vault_ui.factory.stop_task_watchers", stopped)
+    monkeypatch.setattr("vault_ui.factory.start_task_watchers", started)
+
+    with pytest.raises(RuntimeError, match=r"config\.yaml not found"):
+        reload_config({}, {})
+
+    assert factory._config is sentinel
+    stopped.assert_not_called()
+    started.assert_not_called()
+
+
+async def test_reload_config_restarts_the_cleanup_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cleanup loop captured the old Config at startup — reload restarts it,
+    or the sweep would keep iterating the previous vault set."""
+    new_config = _reload_test_config("Personal")
+    loop_configs: list[Config] = []
+
+    async def _fake_loop(config: Config) -> None:
+        loop_configs.append(config)
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr("vault_ui.factory.load_config", lambda: new_config)
+    monkeypatch.setattr("vault_ui.factory.stop_task_watchers", lambda: None)
+    monkeypatch.setattr("vault_ui.factory.start_task_watchers", lambda tasks, goals: None)
+    monkeypatch.setattr("vault_ui.factory.get_status_cache", MagicMock)
+    monkeypatch.setattr("vault_ui.factory.run_cleanup_loop", _fake_loop)
+
+    old_task = asyncio.create_task(asyncio.sleep(3600))
+    monkeypatch.setattr("vault_ui.factory._cleanup_task", old_task)
+
+    reload_config({}, {})
+    await asyncio.sleep(0)  # let the cancelled task and the new one take a step
+
+    assert old_task.cancelled()
+    assert factory._cleanup_task is not old_task
+    assert loop_configs == [new_config]
