@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.66.1
 
 - fix: A take-over no longer loses the session id to the launcher it just killed. The take-over binds the ps-resolved uuid into `claude_session_id` so the card can resume it, but its own SIGTERM makes `vault-cli work-on` answer the failed turn with a compensating clear — re-read the task, delete `claude_session_id` plus that run's metrics entry, "a failed turn must not leave a resumable-looking id on disk" — and that write can land after ours. When it did, the card fell back to `▶ Start` and the id survived only in the modal the operator had just closed (observed live 2026-09-11 12:30:46: the take-over returned 200 with `terminated=True`, yet the file kept no id and its uncommitted diff was exactly `metrics_sessions: []`). The bind now waits for the launcher to settle, re-reads, and re-binds if the id was clobbered — bounded at 3 attempts, then logged at WARNING rather than failing the take-over.
 
