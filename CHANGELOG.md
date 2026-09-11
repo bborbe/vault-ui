@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A take-over no longer loses the session id to the launcher it just killed. The take-over binds the ps-resolved uuid into `claude_session_id` so the card can resume it, but its own SIGTERM makes `vault-cli work-on` answer the failed turn with a compensating clear — re-read the task, delete `claude_session_id` plus that run's metrics entry, "a failed turn must not leave a resumable-looking id on disk" — and that write can land after ours. When it did, the card fell back to `▶ Start` and the id survived only in the modal the operator had just closed (observed live 2026-09-11 12:30:46: the take-over returned 200 with `terminated=True`, yet the file kept no id and its uncommitted diff was exactly `metrics_sessions: []`). The bind now waits for the launcher to settle, re-reads, and re-binds if the id was clobbered — bounded at 3 attempts, then logged at WARNING rather than failing the take-over.
+
 ## v0.66.0
 
 - fix: Taking over a Starting card no longer leaves the card on `⏳ Starting...`. The badge renders when *either* the server marker or the browser-side `startingTasks` / `startingGoals` set says starting, and only the Start path ever removed the id from that set — so a take-over cleared the marker server-side while the stale client flag put the badge straight back on the next render, making the click read as a no-op (observed live 2026-09-11: three take-overs returned 200 and cleared their markers, yet the cards stayed on Starting). `takeOverSession` now clears the client flag and the cached marker on both the success and the error path, whose "refresh so the stale badge does not stay" intent the same flag had been defeating.
