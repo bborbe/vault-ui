@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.65.0
 
 - feat: `↻ Refresh` now re-reads the server config (`~/.config/vault-ui/config.yaml` + `vault-cli config list`) and reconciles the per-vault watchers (`POST /api/config/reload`) before reloading the view, the vault selector and the assignee options — registering or removing a vault is a config edit plus this click, with no launchd restart. A config that fails to load raises before anything is torn down, so a broken edit leaves the running board untouched.
 - fix: The WebSocket live-update channel now works under the uvicorn CLI entry point (`uvicorn vault_ui.__main__:app` — what `make watch` and the documented worktree-on-:8001 recipe run): the connection manager is wired in `create_app()` instead of only in `main()`, so those invocations no longer reject every `/ws` connection with "Connection manager not initialized" and silently fall back to the 60s poll.
