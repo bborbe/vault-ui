@@ -1116,8 +1116,9 @@ async function refreshBoard() {
         showToast(`Config reloaded — ${data.vaults.length} vaults`);
     } catch (error) {
         // A config that fails to parse leaves the server untouched; reload the
-        // view anyway so the board shows live data after a failed reload.
-        console.error('Config reload failed:', error);
+        // view anyway so the board shows live data after a failed reload. The
+        // toast is the operator-facing surface (no console.* here: this file is
+        // browser-side static JS, but the node/* rule set scans src/**/*.js).
         showToast(error.message, true);
         await loadCurrentView();
     } finally {
