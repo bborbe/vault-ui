@@ -108,3 +108,16 @@ def test_size_counts_across_vaults() -> None:
     registry.begin("vault-a", "two", "task")
     registry.begin("vault-b", "three", "goal")
     assert registry.size() == 3
+
+
+def test_mark_taken_over_and_begin_clears_it() -> None:
+    """A take-over marks the launch; a fresh begin supersedes the mark."""
+    registry = LaunchRegistry()
+    registry.begin("vault-a", "item", "task")
+    assert registry.was_taken_over("vault-a", "item") is False
+
+    registry.mark_taken_over("vault-a", "item")
+    assert registry.was_taken_over("vault-a", "item") is True
+
+    registry.begin("vault-a", "item", "task")
+    assert registry.was_taken_over("vault-a", "item") is False

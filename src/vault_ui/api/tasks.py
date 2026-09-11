@@ -1114,6 +1114,18 @@ async def run_task(
                         vault,
                         e,
                     )
+                if get_launch_registry().was_taken_over(vault, task_id):
+                    # The operator ended this launch from the wall: the SIGTERM makes
+                    # vault-cli exit 143, which is the take-over working, not a launch
+                    # failure. Answer the (abandoned) Start request with that instead
+                    # of vault-cli's raw exit status.
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Launch ended by take-over from the wall — "
+                            "resume the session from the take-over modal"
+                        ),
+                    ) from None
                 raise
         except Exception:
             # Any failure after begin (marker write or the launch itself) must still
@@ -1152,6 +1164,10 @@ async def run_task(
             task_title=task.title,
         )
 
+    except HTTPException:
+        # Pass through the take-over 409 (and any future status raised inside the
+        # try:) — without this guard the clause below re-wraps it into a 500.
+        raise
     except FileNotFoundError as e:
         logger.error(f"Task not found: {e}")
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1189,8 +1205,14 @@ async def _clear_starting_marker(
     the same convergence a launch that returned on its own gets. A failed clear
     is logged at WARNING, never swallowed and never failing the take-over: the
     sweep converges the file within one pass.
+
+    The record is also flagged as taken over, so the launch endpoint's still-pending
+    ``run_task``/``run_goal`` call — whose subprocess this take-over just SIGTERMed
+    — answers "ended by take-over" instead of vault-cli's raw exit-status failure.
     """
-    get_launch_registry().finish(vault, item_id)
+    registry = get_launch_registry()
+    registry.finish(vault, item_id)
+    registry.mark_taken_over(vault, item_id)
     try:
         if kind == "task":
             await client.clear_field(item_id, "claude_session_started")
@@ -1401,6 +1423,16 @@ async def run_goal(
                         vault,
                         e,
                     )
+                if get_launch_registry().was_taken_over(vault, goal_id):
+                    # Ended from the wall by a take-over (SIGTERM → vault-cli exit
+                    # 143), not a mint failure — say so on the abandoned Start request.
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Launch ended by take-over from the wall — "
+                            "resume the session from the take-over modal"
+                        ),
+                    ) from None
                 raise
         except Exception:
             # Any failure after begin (marker write or the mint itself) must still

@@ -5972,3 +5972,42 @@ def test_take_over_starting_goal_terminates_launch_and_clears_marker(
     assert response.status_code == 200
     assert response.json()["session_id"] == SESSION_UUID
     assert response.json()["terminated"] is True
+
+
+def test_run_task_returns_409_when_the_launch_was_taken_over(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """A take-over SIGTERMs the launch while its Start request is still pending, so
+    vault-cli exits non-zero (143) — that request answers 409 "ended by take-over"
+    instead of a raw 500 carrying the exit status, which reads as a launch failure."""
+
+    async def _fail_after_take_over(vault_config: object, task_id: str) -> str:
+        # Mirrors the real ordering: the take-over lands mid-launch, so the mark
+        # is set after run_task's begin() and before the subprocess returns.
+        get_launch_registry().mark_taken_over("TestVault", task_id)
+        raise RuntimeError("vault-cli work-on failed: exit status 143")
+
+    mock_vault_client.clear_field.reset_mock()
+
+    with patch("vault_ui.api.tasks.start_vault_cli_session", side_effect=_fail_after_take_over):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 409
+    assert "take-over" in response.json()["detail"]
+    # The marker is still cleared, so the card leaves "Starting…".
+    mock_vault_client.clear_field.assert_awaited_once_with("Test Task", "claude_session_started")
+
+
+def test_take_over_starting_task_marks_the_launch_taken_over(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """The take-over flags the registry, which is what lets the pending Start
+    request answer 409 instead of vault-cli's exit-status failure."""
+    _starting_task(mock_vault_client)
+
+    with patch("vault_ui.api.tasks.terminate_launch_process", return_value=(SESSION_UUID, True)):
+        response = test_client.post("/api/tasks/Starting%20Task/take-over?vault=TestVault")
+
+    assert response.status_code == 200
+    assert get_launch_registry().was_taken_over("TestVault", "Starting Task") is True
