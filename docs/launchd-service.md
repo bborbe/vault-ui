@@ -98,7 +98,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/   # expect 200
 tail -f /tmp/vault-ui.log
 ```
 
-A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and one `Started vault-cli watcher for vault: <name>` line per configured vault.
+A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and a single `Started vault-cli watcher for vaults: <name>, <name>, …` line naming every configured vault — one watcher process covers them all.
 
 ## 4. Upgrade flow
 
@@ -181,7 +181,7 @@ Check `/tmp/vault-ui.log`. Common causes:
 ### Changed `config.yaml` but vaults didn't update
 
 Click `↻ Refresh` on the board: it re-reads the config file and `vault-cli
-config list`, reconciles the per-vault watchers, and rebuilds the vault selector
+config list`, reconciles the single vault watcher, and rebuilds the vault selector
 (`POST /api/config/reload`) — no restart needed. The `claude_script` and vault
 paths come from vault-cli, which is re-read per invocation, so those changes are
 picked up the same way.

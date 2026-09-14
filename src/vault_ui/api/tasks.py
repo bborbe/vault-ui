@@ -2628,7 +2628,7 @@ async def reload_config_endpoint(request: Request) -> dict[str, list[str]]:
 
     Registering or removing a vault becomes a config-file edit plus this call:
     the vault-ui config file and ``vault-cli config list`` are read again, and the
-    per-vault watchers are restarted over the new vault set. A config that fails
+    single vault watcher is restarted over the new vault set. A config that fails
     to parse raises before anything is torn down, so a broken edit leaves the
     running board exactly as it was.
 

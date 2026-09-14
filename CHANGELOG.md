@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- refactor: Vault UI now runs a single `vault-cli watch` subprocess covering every configured vault (one comma-joined `--vault` value) instead of one subprocess per vault, so the watcher process count no longer scales with the number of displayed vaults. `VaultCLIWatcher` takes `vault_names: list[str]`, `start_task_watchers` builds one watcher and logs one `Started vault-cli watcher for vaults: …` line, and the watcher callback resolves each event's `vault` back to its `VaultConfig` via the new `factory.resolve_vault_for_event` (an event naming an unconfigured vault is logged at debug and ignored rather than raising). Cache invalidation, WebSocket payload shape and session resolution are unchanged.
+
 ## v0.67.2
 
 - fix(ui): Task and goal card footers no longer shred into four ragged rows. `.card-footer` was a single non-wrapping flex row, so a wide action (e.g. `⏳ Starting... 0:00`) claimed its intrinsic width first and squeezed `.card-footer-left` into a narrow column — the flag, Jira badge, assignee+priority and activity age each wrapped onto a row of their own while the action sat vertically centred against all four (observed on a 258px card: badges needed 245px, 238px available). Four changes: `.card-footer` now wraps with `.card-footer-left` on `flex: 1 1 auto` + `min-width: 0` and `.card-actions` on `margin-left: auto`, so the action drops to its own right-aligned row instead of squeezing the badges; the activity age moved into `.card-actions` so it wraps with the button rather than being orphaned as the smallest trailing badge; the Jira key moved out of the badge row onto its own `.card-jira` line above it, since at ~84px it was the single widest badge and the reason every Jira-backed card overflowed; and the width-critical row was tightened (flag padding `0.25rem`→`0.125rem`, priority chip `7px`→`6px`, actions gap `0.5rem`→`0.375rem`). Measured across 296 task cards and 292 goal cards at a 258px card width: single-row footers 90 → 220, and cards showing three or more footer rows 208 → 0.
