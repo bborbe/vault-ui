@@ -1251,7 +1251,19 @@ function activityAgeHtml(activityDate) {
     return `<span class="activity-age" title="Last activity: ${escapeHtml(activityDate)}">${escapeHtml(age)}</span>`;
 }
 
-function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml, blockedHtml) {
+// Title text plus the Obsidian arrow, with the arrow glued to the last word.
+// The arrow used to be a separate inline node after a whitespace-producing
+// newline in the template, so a title that filled its last line pushed a lone
+// "↗" onto a line of its own. Binding it to the final word means the two wrap
+// together or not at all.
+function titleWithIconHtml(title) {
+    const cut = title.lastIndexOf(' ');
+    const head = cut === -1 ? '' : title.slice(0, cut + 1);
+    const tail = cut === -1 ? title : title.slice(cut + 1);
+    return `${escapeHtml(head)}<span class="title-tail">${escapeHtml(tail)}<span class="obsidian-icon">↗</span></span>`;
+}
+
+function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml, blockedHtml, jiraHtml) {
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + escapeJsAttr(id) + '\')">⋮</button>';
     // The blocked badge gets its own row rather than a slot in card-footer-left.
     // In the footer it competed with the action button for a fixed-width row:
@@ -1264,13 +1276,11 @@ function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButton
         ${menuButton}
         <div class="card-content">
             <h3 class="task-title">
-                <a href="${obsidianUrl}" class="task-title-link" title="Open in Obsidian">
-                    ${escapeHtml(title)}
-                    <span class="obsidian-icon">↗</span>
-                </a>
+                <a href="${obsidianUrl}" class="task-title-link" title="Open in Obsidian">${titleWithIconHtml(title)}</a>
             </h3>
         </div>
         ${blockedHtml ? `<div class="card-blocked">${blockedHtml}</div>` : ''}
+        ${jiraHtml ? `<div class="card-jira">${jiraHtml}</div>` : ''}
         <div class="card-footer">
             <div class="card-footer-left">${footerLeftHtml}</div>
             <div class="card-actions">${startButtonHtml}</div>
@@ -1372,12 +1382,12 @@ function createTaskCard(task) {
     const footerLeft = `
         ${flagButton}
         ${holdBadge}
-        ${jiraBadge}
         ${assigneeBadge}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
-        ${activityAgeHtml(task.activity_date)}
     `;
-    card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, startButton, blockedBadgeHtml('task', task));
+    // Age rides with the action so it can't be orphaned on its own wrapped row.
+    const cardActions = `${activityAgeHtml(task.activity_date)}${startButton}`;
+    card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, cardActions, blockedBadgeHtml('task', task), jiraBadge);
     return card;
 }
 
@@ -1433,13 +1443,13 @@ function createGoalCard(goal) {
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + escapeJsAttr(goal.id) + '\')">⋮</button>';
     const footerLeft = `
         ${holdBadge}
-        ${jiraBadge}
         ${goal.assignee
             ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
             : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeJsAttr(goal.id)}', '${escapeJsAttr(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
         ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
-        ${activityAgeHtml(goal.activity_date)}
     `;
+    // Same grouping as the task card — see the comment there.
+    const cardActions = `${activityAgeHtml(goal.activity_date)}${startButton}`;
     // Built once — the row wrapper and its content both need it, and calling the
     // builder twice per card was a needless repeat (flagged in the #73 review).
     const blockedBadge = blockedBadgeHtml('goal', goal);
@@ -1447,16 +1457,14 @@ function createGoalCard(goal) {
         ${menuButton}
         <div class="card-content">
             <h3 class="task-title">
-                <a href="${goal.obsidian_url}" class="task-title-link" title="Open in Obsidian">
-                    ${escapeHtml(title)}
-                    <span class="obsidian-icon">↗</span>
-                </a>
+                <a href="${goal.obsidian_url}" class="task-title-link" title="Open in Obsidian">${titleWithIconHtml(title)}</a>
             </h3>
         </div>
         ${blockedBadge ? `<div class="card-blocked">${blockedBadge}</div>` : ''}
+        ${jiraBadge ? `<div class="card-jira">${jiraBadge}</div>` : ''}
         <div class="card-footer">
             <div class="card-footer-left">${footerLeft}</div>
-            <div class="card-actions">${startButton}</div>
+            <div class="card-actions">${cardActions}</div>
         </div>
     `;
     return card;
