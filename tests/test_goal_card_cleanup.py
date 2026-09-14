@@ -75,8 +75,23 @@ def test_goal_card_title_link_preserves_obsidian_url() -> None:
     # The title link pattern: <a href="${goal.obsidian_url}" class="task-title-link" ...>
     assert 'href="${goal.obsidian_url}"' in body
     assert "task-title-link" in body
-    # The escapeHtml wrapper is still applied to the title.
-    assert "escapeHtml(title)" in body
+    # The title is still escaped. It now goes through titleWithIconHtml(),
+    # which applies escapeHtml to both halves of the split it makes (see
+    # test_title_with_icon_helper_escapes_both_halves) rather than the title
+    # being escaped inline here.
+    assert "titleWithIconHtml(title)" in body or "escapeHtml(title)" in body
+
+
+def test_title_with_icon_helper_escapes_both_halves() -> None:
+    """titleWithIconHtml splits the title so the Obsidian arrow is glued to the
+    last word and can never be orphaned onto a line of its own. The split is
+    the risk: both halves MUST still be escaped, or the refactor would open an
+    XSS hole the previous inline `${escapeHtml(title)}` did not have."""
+    body = _slice_function(APP_JS, "titleWithIconHtml")
+    assert "escapeHtml(head)" in body
+    assert "escapeHtml(tail)" in body
+    # The nowrap wrapper is what actually prevents the orphaned arrow.
+    assert "title-tail" in body
 
 
 def test_load_goals_does_not_append_goal_param() -> None:
