@@ -14,28 +14,38 @@ _STOP_TIMEOUT_SECONDS = 5
 
 
 class VaultCLIWatcher:
-    """Watches a vault for file changes (tasks, goals, themes, objectives) via vault-cli watch."""
+    """Watches several vaults for file changes (tasks, goals, themes, objectives).
+
+    A single ``vault-cli watch`` subprocess covers every vault in ``vault_names``
+    (one comma-joined ``--vault`` value), so the number of watcher processes does
+    not scale with the number of configured vaults.
+    """
 
     def __init__(
         self,
         vault_cli_path: str,
-        vault_name: str,
+        vault_names: list[str],
         on_change: Callable[[str, str, str, str], None],
     ) -> None:
         """Initialize the watcher.
 
         Args:
             vault_cli_path: Path to vault-cli binary
-            vault_name: Vault name for --vault flag
+            vault_names: Vault names to watch, passed as one comma-joined --vault value
             on_change: Callback(event_type, item_id, vault_name, item_kind) called on each event.
                         item_kind is one of "task", "goal", "theme", "objective" (from the
                         vault-cli watch event "type" field, derived from the file's parent dir).
         """
         self._vault_cli_path = vault_cli_path
-        self._vault_name = vault_name
+        self._vault_names = list(vault_names)
         self._on_change = on_change
         self._process: asyncio.subprocess.Process | None = None
         self._stopped = False
+
+    @property
+    def _vaults_label(self) -> str:
+        """Comma-joined vault names, for log messages and the --vault flag value."""
+        return ",".join(self._vault_names)
 
     async def start(self) -> None:
         """Start the vault-cli task watch subprocess and read events until stopped."""
@@ -47,27 +57,27 @@ class VaultCLIWatcher:
                 break
             except Exception as e:
                 logger.error(
-                    "[VaultCLIWatcher] Unexpected error for vault %s: %s",
-                    self._vault_name,
+                    "[VaultCLIWatcher] Unexpected error for vaults %s: %s",
+                    self._vaults_label,
                     e,
                     exc_info=True,
                 )
             if not self._stopped:
                 logger.info(
-                    "[VaultCLIWatcher] Restarting watcher for vault %s in %ds",
-                    self._vault_name,
+                    "[VaultCLIWatcher] Restarting watcher for vaults %s in %ds",
+                    self._vaults_label,
                     _RESTART_DELAY_SECONDS,
                 )
                 await asyncio.sleep(_RESTART_DELAY_SECONDS)
 
     async def _run_subprocess(self) -> None:
-        """Run one instance of the vault-cli watch subprocess."""
-        logger.info("[VaultCLIWatcher] Starting vault-cli watch --vault %s", self._vault_name)
+        """Run one instance of the vault-cli watch subprocess for every vault."""
+        logger.info("[VaultCLIWatcher] Starting vault-cli watch --vault %s", self._vaults_label)
         self._process = await asyncio.create_subprocess_exec(
             self._vault_cli_path,
             "watch",
             "--vault",
-            self._vault_name,
+            self._vaults_label,
             "--types",
             "task,goal,theme,objective",
             stdout=asyncio.subprocess.PIPE,
@@ -94,9 +104,9 @@ class VaultCLIWatcher:
 
         if not self._stopped and self._process.returncode not in (0, -signal.SIGTERM):
             logger.error(
-                "[VaultCLIWatcher] vault-cli exited with code %d for vault %s",
+                "[VaultCLIWatcher] vault-cli exited with code %d for vaults %s",
                 self._process.returncode,
-                self._vault_name,
+                self._vaults_label,
             )
 
     def _handle_line(self, line: str) -> None:
@@ -105,7 +115,8 @@ class VaultCLIWatcher:
             event = json.loads(line)
             event_type = event.get("event", "")
             item_id = event.get("name", "")
-            vault = event.get("vault", self._vault_name)
+            # Fallback for an event without a "vault" key: the first watched vault.
+            vault = event.get("vault", self._vault_names[0] if self._vault_names else "")
             item_kind = event.get("type", "")
             if event_type and item_id:
                 logger.debug(
@@ -126,7 +137,7 @@ class VaultCLIWatcher:
         """
         self._stopped = True
         if self._process is not None and self._process.returncode is None:
-            logger.info("[VaultCLIWatcher] Terminating watcher for vault %s", self._vault_name)
+            logger.info("[VaultCLIWatcher] Terminating watcher for vaults %s", self._vaults_label)
             with contextlib.suppress(ProcessLookupError):
                 self._process.send_signal(signal.SIGTERM)
 
@@ -134,14 +145,14 @@ class VaultCLIWatcher:
         """Stop the subprocess cleanly."""
         self._stopped = True
         if self._process is not None and self._process.returncode is None:
-            logger.info("[VaultCLIWatcher] Stopping watcher for vault %s", self._vault_name)
+            logger.info("[VaultCLIWatcher] Stopping watcher for vaults %s", self._vaults_label)
             try:
                 self._process.send_signal(signal.SIGTERM)
                 await asyncio.wait_for(self._process.wait(), timeout=_STOP_TIMEOUT_SECONDS)
             except TimeoutError:
                 logger.warning(
-                    "[VaultCLIWatcher] Process did not exit in time, killing vault %s",
-                    self._vault_name,
+                    "[VaultCLIWatcher] Process did not exit in time, killing vaults %s",
+                    self._vaults_label,
                 )
                 self._process.kill()
                 await self._process.wait()

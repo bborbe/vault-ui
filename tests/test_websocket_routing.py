@@ -28,9 +28,9 @@ def _build_callback(
 ) -> Any:
     """Replicate the closure body from ``start_task_watchers``.
 
-    The factory callback is built per-vault with closures over ``cache``,
-    the two cache dicts, and the event loop. Tests below build their own
-    version so they can assert the exact behavior (kind-scoped cache
+    The factory builds one callback for the single multi-vault watcher, closing
+    over ``cache``, the two cache dicts, and the event loop. Tests below build
+    their own version so they can assert the exact behavior (kind-scoped cache
     invalidation + item_kind in the broadcast payload) without spinning
     up the full FastAPI lifespan.
     """

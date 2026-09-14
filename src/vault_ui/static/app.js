@@ -1098,7 +1098,7 @@ async function loadCurrentView() {
 }
 
 // ↻ Refresh: re-read the server's config (the vault-ui config file plus
-// `vault-cli config list`), reconcile the per-vault watchers, then reload the
+// `vault-cli config list`), reconcile the single vault watcher, then reload the
 // view, the vault selector and the assignee options. Registering or removing a
 // vault is a config edit plus this click — no launchd restart.
 async function refreshBoard() {

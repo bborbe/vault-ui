@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -28,9 +28,11 @@ logger = logging.getLogger(__name__)
 # Global config instance for dependency injection
 _config: Config | None = None
 
-# Global connection manager and watchers
+# Global connection manager and watcher. A single watcher covers every
+# configured vault (one vault-cli watch subprocess), so this is one reference,
+# not a per-vault dict.
 _connection_manager: ConnectionManager | None = None
-_watchers: dict[str, VaultCLIWatcher] = {}
+_watcher: VaultCLIWatcher | None = None
 _watcher_tasks: list[asyncio.Task[None]] = []
 _status_cache: StatusCache | None = None
 _launch_registry: LaunchRegistry | None = None
@@ -182,11 +184,35 @@ async def _try_resolve_goal_session(
         logger.debug("[Factory] Could not resolve session for goal %s: %s", goal_id, e)
 
 
+def resolve_vault_for_event(config: Config, vault_name: str) -> VaultConfig | None:
+    """Resolve the ``VaultConfig`` an event's ``vault`` field refers to.
+
+    The watcher covers every configured vault with one subprocess, so the vault
+    for an event is looked up per event rather than captured per watcher.
+
+    Matching is exact and case-sensitive: ``vault-cli`` canonicalises vault names
+    to lowercase while ``VaultConfig.name`` is the ``config.yaml`` key verbatim.
+    Today's keys are all lowercase, so exact matching works; a mixed-case key
+    would send every event for that vault into the unknown-vault path and
+    silently stop its live updates.
+
+    Returns:
+        The matching ``VaultConfig``, or ``None`` when the event names a vault
+        this instance does not display.
+    """
+    return config.get_vault(vault_name)
+
+
 def start_task_watchers(
     vault_task_cache: dict[str, tuple[float, float, list[Task]]],
     vault_goal_cache: dict[str, tuple[float, float, list[Goal]]],
 ) -> None:
-    """Start vault-cli watchers for all vaults.
+    """Start the single vault-cli watcher covering every configured vault.
+
+    One ``vault-cli watch`` subprocess covers all vaults (one comma-joined
+    ``--vault`` value), so the process count does not scale with the number of
+    vaults the board displays. Each event carries its own ``vault``, which the
+    callback resolves back to a ``VaultConfig`` via ``resolve_vault_for_event``.
 
     The vault_task_cache (from app.state) is invalidated per-vault on every
     watcher event so /api/tasks reflects in-place frontmatter edits (e.g.
@@ -196,7 +222,7 @@ def start_task_watchers(
 
     The vault_goal_cache follows the same invalidation pattern for /api/goals.
     """
-    global _watchers, _watcher_tasks
+    global _watcher, _watcher_tasks
     config = get_config()
     connection_manager = get_connection_manager()
     cache = get_status_cache()
@@ -208,121 +234,137 @@ def start_task_watchers(
         logger.error("[Factory] No running event loop found")
         return
 
-    for vault in config.vaults:
-        try:
-            # Wire callback to invalidate cache AND broadcast
-            def make_callback(vault_cfg: VaultConfig) -> Callable[[str, str, str, str], None]:
-                project_dir = derive_claude_project_dir(
-                    vault_cfg.vault_path, vault_cfg.session_project_dir
-                )
+    vault_names = [vault.name for vault in config.vaults]
+    if not vault_names:
+        logger.error("[Factory] No vaults configured; no watcher started")
+        return
 
-                def callback(event_type: str, item_id: str, vault_arg: str, item_kind: str) -> None:
-                    # Invalidate cache (unconditional — kind-agnostic; the cache stores
-                    # blocker statuses keyed by name, and any frontmatter change can
-                    # invalidate a downstream task that lists this item as a blocker)
-                    cache.invalidate(vault_arg, item_id)
-
-                    # Kind-scoped cache invalidation (spec 013 AC#9):
-                    # only the cache matching the event's kind is touched.
-                    # The other view's cache stays so the inactive view
-                    # does NOT re-fetch on every event.
-                    if item_kind == "task":
-                        # Invalidate the per-vault task list cache so the next /api/tasks
-                        # request observes the change. Directory mtime is unchanged on
-                        # in-place file writes (POSIX), so the directory-mtime cache key
-                        # alone cannot detect frontmatter edits — the watcher event is
-                        # the authoritative trigger.
-                        vault_task_cache.pop(vault_arg, None)
-                    elif item_kind == "goal":
-                        # Invalidate the per-vault goal list cache so the next
-                        # /api/goals request observes the change. Goals live under
-                        # any *Goals folder; the directory-mtime cache key alone
-                        # cannot detect frontmatter edits, so the watcher event is
-                        # the authoritative trigger.
-                        vault_goal_cache.pop(vault_arg, None)
-                    # theme / objective / empty kind: no cache to invalidate
-
-                    # Broadcast to UI clients. item_kind is added (spec 013 prompt 3)
-                    # so the frontend routes the event to the active view's cache
-                    # (loadTasks for "task", loadGoals for "goal") and avoids
-                    # re-fetching the inactive view. All pre-existing fields
-                    # (type, task_id, vault) are unchanged.
-                    message = {
-                        "type": event_type,
-                        "task_id": item_id,
-                        "vault": vault_arg,
-                        "item_kind": item_kind,
-                    }
-                    asyncio.run_coroutine_threadsafe(connection_manager.broadcast(message), loop)
-
-                    # Dispatch session resolution based on the file's kind
-                    if item_kind == "task":
-                        asyncio.run_coroutine_threadsafe(
-                            _try_resolve_task_session(
-                                vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
-                            ),
-                            loop,
-                        )
-                    elif item_kind == "goal":
-                        asyncio.run_coroutine_threadsafe(
-                            _try_resolve_goal_session(
-                                vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
-                            ),
-                            loop,
-                        )
-                    else:
-                        # theme, objective, empty string, or any future kind: no resolver
-                        # today. The 5-minute cleanup loop in cleanup.py is the backstop
-                        # for any kind that grows a session-resolution requirement later.
-                        logger.debug(
-                            "[Factory] No session resolver for item_kind=%r (item=%s, vault=%s)",
-                            item_kind,
-                            item_id,
-                            vault_arg,
-                        )
-
-                return callback
-
-            watcher = VaultCLIWatcher(
-                vault_cli_path=vault.vault_cli_path,
-                vault_name=vault.name,
-                on_change=make_callback(vault),
+    def on_change(event_type: str, item_id: str, vault_name: str, item_kind: str) -> None:
+        """Handle one watcher event: invalidate caches, broadcast, resolve session."""
+        # Resolve per event: the watcher covers every vault, so the config is
+        # looked up from the event's own "vault" field, never from a captured
+        # VaultConfig. An event for a vault this instance does not display is
+        # ignored here — raising would kill the read loop for every vault.
+        vault_cfg = resolve_vault_for_event(config, vault_name)
+        if vault_cfg is None:
+            logger.debug(
+                "[Factory] Ignoring event for unconfigured vault %r (item=%s)",
+                vault_name,
+                item_id,
             )
-            _watchers[vault.name] = watcher
+            return
 
-            # Schedule the async start() as a task on the running loop
-            task = loop.create_task(watcher.start())
-            _watcher_tasks.append(task)
-            logger.info(f"[Factory] Started vault-cli watcher for vault: {vault.name}")
+        project_dir = derive_claude_project_dir(vault_cfg.vault_path, vault_cfg.session_project_dir)
 
-        except Exception as e:
-            logger.error(
-                "[Factory] Failed to start watcher for vault %s: %s",
-                vault.name,
-                e,
-                exc_info=True,
+        # Invalidate cache (unconditional — kind-agnostic; the cache stores
+        # blocker statuses keyed by name, and any frontmatter change can
+        # invalidate a downstream task that lists this item as a blocker)
+        cache.invalidate(vault_name, item_id)
+
+        # Kind-scoped cache invalidation (spec 013 AC#9):
+        # only the cache matching the event's kind is touched.
+        # The other view's cache stays so the inactive view
+        # does NOT re-fetch on every event.
+        if item_kind == "task":
+            # Invalidate the per-vault task list cache so the next /api/tasks
+            # request observes the change. Directory mtime is unchanged on
+            # in-place file writes (POSIX), so the directory-mtime cache key
+            # alone cannot detect frontmatter edits — the watcher event is
+            # the authoritative trigger.
+            vault_task_cache.pop(vault_name, None)
+        elif item_kind == "goal":
+            # Invalidate the per-vault goal list cache so the next
+            # /api/goals request observes the change. Goals live under
+            # any *Goals folder; the directory-mtime cache key alone
+            # cannot detect frontmatter edits, so the watcher event is
+            # the authoritative trigger.
+            vault_goal_cache.pop(vault_name, None)
+        # theme / objective / empty kind: no cache to invalidate
+
+        # Broadcast to UI clients. item_kind is added (spec 013 prompt 3)
+        # so the frontend routes the event to the active view's cache
+        # (loadTasks for "task", loadGoals for "goal") and avoids
+        # re-fetching the inactive view. All pre-existing fields
+        # (type, task_id, vault) are unchanged.
+        message = {
+            "type": event_type,
+            "task_id": item_id,
+            "vault": vault_name,
+            "item_kind": item_kind,
+        }
+        asyncio.run_coroutine_threadsafe(connection_manager.broadcast(message), loop)
+
+        # Dispatch session resolution based on the file's kind. vault_cfg.name
+        # (never the display-only vault_name) is what VaultCLIClient forwards as
+        # --vault on every vault-cli call.
+        if item_kind == "task":
+            asyncio.run_coroutine_threadsafe(
+                _try_resolve_task_session(
+                    vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
+                ),
+                loop,
             )
+        elif item_kind == "goal":
+            asyncio.run_coroutine_threadsafe(
+                _try_resolve_goal_session(
+                    vault_cfg.vault_cli_path, vault_cfg.name, item_id, project_dir
+                ),
+                loop,
+            )
+        else:
+            # theme, objective, empty string, or any future kind: no resolver
+            # today. The 5-minute cleanup loop in cleanup.py is the backstop
+            # for any kind that grows a session-resolution requirement later.
+            logger.debug(
+                "[Factory] No session resolver for item_kind=%r (item=%s, vault=%s)",
+                item_kind,
+                item_id,
+                vault_name,
+            )
+
+    try:
+        watcher = VaultCLIWatcher(
+            vault_cli_path=config.vaults[0].vault_cli_path,
+            vault_names=vault_names,
+            on_change=on_change,
+        )
+        _watcher = watcher
+
+        # Schedule the async start() as a task on the running loop
+        _watcher_tasks.append(loop.create_task(watcher.start()))
+        logger.info("[Factory] Started vault-cli watcher for vaults: %s", ", ".join(vault_names))
+
+    except Exception as e:
+        logger.error(
+            "[Factory] Failed to start vault-cli watcher for vaults %s: %s",
+            ", ".join(vault_names),
+            e,
+            exc_info=True,
+        )
 
 
 def stop_task_watchers() -> None:
-    """Stop all running vault-cli watchers."""
-    global _watchers, _watcher_tasks
-    for vault_name, watcher in _watchers.items():
+    """Stop the running vault-cli watcher."""
+    global _watcher, _watcher_tasks
+    if _watcher is not None:
         try:
-            watcher.terminate()
-            logger.info(f"[Factory] Stopped watcher for vault: {vault_name}")
+            _watcher.terminate()
+            logger.info("[Factory] Stopped vault-cli watcher")
         except Exception as e:
-            logger.error(f"[Factory] Failed to stop watcher for {vault_name}: {e}", exc_info=True)
+            logger.error("[Factory] Failed to stop vault-cli watcher: %s", e, exc_info=True)
+        _watcher = None
     # Cancel the asyncio tasks (propagates CancelledError into start() loops)
     for task in _watcher_tasks:
         task.cancel()
-    _watchers.clear()
     _watcher_tasks.clear()
 
 
 def watcher_vault_names() -> list[str]:
-    """Vault names with a live watcher, sorted (diagnostic surface for reload)."""
-    return sorted(_watchers)
+    """Sorted vault names the watcher covers (diagnostic surface for reload).
+
+    Sourced from the configured vaults: one watcher covers all of them.
+    """
+    return sorted(vault.name for vault in get_config().vaults)
 
 
 def reload_config(
@@ -334,7 +376,7 @@ def reload_config(
     The server half of the board's ↻ Refresh button: ``load_config()`` reads the
     vault-ui config file and ``vault-cli config list`` again, the module-level
     config is swapped, every vault's status-cache entry is (re)loaded, and the
-    watchers are restarted over the new vault set — the same calls the lifespan
+    watcher is restarted over the new vault set — the same calls the lifespan
     makes at startup, so a vault added or removed in the config file takes effect
     without a launchd restart.
 
