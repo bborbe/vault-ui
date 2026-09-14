@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.67.3
 
 - refactor: Vault UI now runs a single `vault-cli watch` subprocess covering every configured vault (one comma-joined `--vault` value) instead of one subprocess per vault, so the watcher process count no longer scales with the number of displayed vaults. `VaultCLIWatcher` takes `vault_names: list[str]`, `start_task_watchers` builds one watcher and logs one `Started vault-cli watcher for vaults: …` line, and the watcher callback resolves each event's `vault` back to its `VaultConfig` via the new `factory.resolve_vault_for_event` (an event naming an unconfigured vault is logged at debug and ignored rather than raising). Cache invalidation, WebSocket payload shape and session resolution are unchanged.
 
