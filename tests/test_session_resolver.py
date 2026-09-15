@@ -16,7 +16,7 @@ def _no_live_processes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every resolve test is hermetic — the default live-process mapping never
     shells out to the real `ps` table. Tests that exercise the process-table
     path inject `live_session_names` explicitly."""
-    monkeypatch.setattr("vault_ui.activity._cached_live_session_names", lambda: {})
+    monkeypatch.setattr("vault_ui.activity.cached_live_session_names", lambda: {})
 
 
 # ---------------------------------------------------------------------------

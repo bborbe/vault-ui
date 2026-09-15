@@ -78,7 +78,51 @@ writers that matter here:
 - **cleanup sweep** — the 5-minute cleanup pass clears orphaned markers two
   ways: TTL-based clearing for markers with no registry record (the
   post-restart orphan case), and registry-based re-clearing for markers the
-  server knows are finished.
+  server knows are finished. The same pass also **writes** `claude_session_id`:
+  a task whose binding is EMPTY is re-bound from its title when exactly one
+  session is running right now under that title (see below).
+
+## Re-binding a wiped `claude_session_id`
+
+Every other cleanup branch operates on tasks that already have a session id, so
+an empty `claude_session_id` was invisible to the whole sweep. On a git-synced
+shared vault a peer's cleanup can delete the field and nothing puts it back —
+the board then offers `▶ Start` for work that is already running, inviting a
+duplicate session.
+
+The sweep therefore re-binds an empty field from the task title, under the same
+per-`(vault, task_id)` lock the API's `set_task_session` uses, and re-reads the
+task inside that lock so a binding that landed since the vault was listed is
+never overwritten.
+
+The safety property is the **live-process gate**: only a session running RIGHT
+NOW may re-bind an empty field. An empty binding is not always a loss —
+`DELETE /api/tasks/{id}/session` (the sanctioned release, `clear_task_session`
+in `api/tasks.py`) and `vault-cli work-on`'s failed-turn compensating clear both
+empty the field deliberately, and the released session's transcript keeps its
+custom title forever. A transcript-scan re-bind would resurrect exactly those
+releases and trap the operator behind the PATCH 409 ("already holds session …;
+call DELETE first") in a DELETE → sweep → re-bind → 409 loop. A running process
+cannot be resurrected from a stale file.
+
+- **exactly one live session under the title** — the field is re-bound to that
+  session's uuid.
+- **two or more live sessions under the title** — the title is treated as
+  unresolvable and nothing is written; the live map omits any name bound to two
+  different uuids, so the ambiguity never reaches the resolver.
+- **no live session under the title** — nothing is written at all.
+- **a non-empty binding** — never touched, so an existing session can never be
+  overwritten.
+- **a task owned by another user, or mid-launch (any launch-registry record),
+  or already `completed`/`aborted`** — skipped.
+
+The guarantee is narrower than "released stays released": `clear_task_session`
+only clears frontmatter, it does not signal the process — only take-over does.
+A session released while still alive, whose launch record was lost to a server
+restart, is still in `ps` and can be re-bound; kill or take over the session to
+release it for good. Locally-launched live sessions with an intact registry
+record are covered by the registry guard, and peer-machine sessions never appear
+in local `ps`.
 
 ## The launch registry
 
