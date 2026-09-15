@@ -297,7 +297,7 @@ async def _rebind_empty_session_ids(
                             proc.kill()
                         await proc.wait()
                         logger.warning(
-                            "[Cleanup] Re-bind of session '%s' for task %s in vault %s"
+                            "[Cleanup] Re-bind write of session '%s' for task %s in vault %s"
                             " timed out after %ds; leaving claude_session_id untouched",
                             resolved,
                             task.id,

@@ -2074,9 +2074,13 @@ async def test_rebind_lock_acquire_timeout_skips_the_task_and_continues(
     assert set_calls[0][2:5] == ("set", "next", "claude_session_id"), set_calls
     assert "acquire:stuck" in events and "acquire:next" in events, events
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("stuck" in r.message and "testvault" in r.message for r in warnings), [
-        r.message for r in warnings
-    ]
+    # Pinned to the acquisition clause's own lead phrase: naming the task and
+    # the vault alone is satisfied by the re-read and write timeouts too, so it
+    # would not catch an acquisition timeout reported under the wrong clause.
+    assert any(
+        "Lock acquisition" in r.message and "stuck" in r.message and "testvault" in r.message
+        for r in warnings
+    ), [r.message for r in warnings]
 
 
 @pytest.mark.asyncio
@@ -2375,9 +2379,13 @@ async def test_rebind_timeout_kills_helper_and_leaves_field_untouched(
     hanging_proc.kill.assert_called_once()
     hanging_proc.wait.assert_awaited_once()
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("stuck" in r.message and "timed out" in r.message for r in warnings), [
-        r.message for r in warnings
-    ]
+    # Pinned to the write clause's own lead phrase: the kill/wait assertions
+    # above are the real contract, and "stuck" + "timed out" alone is satisfied
+    # by the re-read and acquisition warnings as well.
+    assert any(
+        "Re-bind write" in r.message and "stuck" in r.message and "timed out" in r.message
+        for r in warnings
+    ), [r.message for r in warnings]
 
 
 @pytest.mark.asyncio
@@ -2483,9 +2491,13 @@ async def test_rebind_reread_timeout_logs_warning_and_writes_nothing(
 
     assert _task_set_calls(mock_subprocess) == []
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("slow-read" in r.message and "timed out" in r.message for r in warnings), [
-        r.message for r in warnings
-    ]
+    # Pinned to the re-read clause's own lead phrase: the lock-acquisition
+    # warning also names this task and says "timed out", so the two loose
+    # substrings alone would pass even if the timeout were misattributed.
+    assert any(
+        "Re-bind re-read" in r.message and "slow-read" in r.message and "timed out" in r.message
+        for r in warnings
+    ), [r.message for r in warnings]
 
 
 @pytest.mark.asyncio
