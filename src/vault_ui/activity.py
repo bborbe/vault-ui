@@ -202,8 +202,12 @@ def _cached_live_session_ids(ttl: float = _PS_CACHE_TTL_SECONDS) -> set[str]:
     return _parse_live_session_ids(_cached_ps_output(ttl))
 
 
-def _cached_live_session_names(ttl: float = _PS_CACHE_TTL_SECONDS) -> dict[str, str]:
-    """The live name → session-id map, cached for ``ttl`` seconds."""
+def cached_live_session_names(ttl: float = _PS_CACHE_TTL_SECONDS) -> dict[str, str]:
+    """The live name → session-id map, cached for ``ttl`` seconds.
+
+    Public, not underscore-private: the cleanup sweep and the session resolver
+    both import it, and a private symbol with foreign consumers misleads.
+    """
     return _parse_live_session_names(_cached_ps_output(ttl))
 
 

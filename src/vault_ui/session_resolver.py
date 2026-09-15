@@ -54,9 +54,9 @@ def resolve_session_id(
             resolution path shells out to ``ps``.
     """
     if live_session_names is None:
-        from vault_ui.activity import _cached_live_session_names
+        from vault_ui.activity import cached_live_session_names
 
-        live_session_names = _cached_live_session_names()
+        live_session_names = cached_live_session_names()
     if display_name in live_session_names:
         session_id = live_session_names[display_name]
         logger.info(
