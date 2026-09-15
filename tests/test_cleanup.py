@@ -18,16 +18,35 @@ from vault_ui.config import Config, VaultConfig
 from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 
 
+@pytest.fixture(autouse=True)
+def _no_live_sessions():
+    """Default every test in this module to "no claude process is running".
+
+    The cleanup re-bind pass consults the live process table for every unbound
+    task. Ten tests in this file build their own harness with ``session_id=None``
+    and patch neither ``vault_ui.cleanup.resolve_session_id`` nor the live map,
+    so without this fixture the new pass would shell out to ``ps`` for real and
+    make them machine-dependent. Tests that need a live title override this by
+    patching the same attribute (``vault_ui.activity._cached_live_session_names``
+    — cleanup imports it lazily inside the function body, so patching the source
+    module is what takes effect).
+    """
+    with patch("vault_ui.activity._cached_live_session_names", return_value={}):
+        yield
+
+
 def _make_task(
     session_id: str = "12345678-1234-1234-1234-123456789abc",
     assignee: str | None = None,
     task_id: str = "task-1",
     claude_session_started: str | None = None,
+    status: str = "in_progress",
+    title: str = "Test Task",
 ) -> Task:
     return Task(
         id=task_id,
-        title="Test Task",
-        status="in_progress",
+        title=title,
+        status=status,
         phase=None,
         project_path=None,
         content="",
@@ -75,6 +94,8 @@ async def _run_cleanup(
     tasks: list[Task],
     session_file_exists: bool,
     registry_known: bool = False,
+    live_names: dict[str, str] | None = None,
+    show_task_session_id: str | None = None,
 ) -> int:
     """Helper: run cleanup_stale_sessions with mocked VaultCLIClient and filesystem.
 
@@ -82,10 +103,18 @@ async def _run_cleanup(
     so the sweep treats its session as one THIS instance launched. The registry
     is patched via ``vault_ui.factory.get_launch_registry`` (cleanup imports it
     lazily inside the function body), never ``vault_ui.cleanup``.
+
+    ``live_names`` is the live name -> session-id map the re-bind pass gates on
+    (default: empty — no session running). ``show_task_session_id`` is what the
+    re-bind pass's under-lock re-read returns; the default is an EMPTY binding,
+    because an unconfigured ``AsyncMock`` auto-creates a truthy Mock for
+    ``claude_session_id`` and the re-read guard would then abandon every write,
+    making the "no write" assertions pass vacuously.
     """
     mock_client = AsyncMock()
     mock_client.list_tasks = AsyncMock(return_value=tasks)
     mock_client.list_goals = AsyncMock(return_value=[])
+    mock_client.show_task = AsyncMock(return_value=_make_task(session_id=show_task_session_id))
 
     registry = LaunchRegistry()
     if registry_known and tasks:
@@ -99,6 +128,10 @@ async def _run_cleanup(
         patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
         patch("vault_ui.factory.get_launch_registry", return_value=registry),
         patch("vault_ui.cleanup.Path.exists", return_value=session_file_exists),
+        patch(
+            "vault_ui.activity._cached_live_session_names",
+            return_value=live_names if live_names is not None else {},
+        ),
         patch(
             "vault_ui.cleanup.asyncio.create_subprocess_exec",
             return_value=mock_proc,
@@ -1772,3 +1805,467 @@ async def test_reconcile_keeps_a_young_marker() -> None:
 
     assert cleared == 0
     assert subprocess.call_args_list == []
+
+
+# --- re-bind pass: an empty claude_session_id restored from the task title ---
+#
+# A git-synced peer's cleanup can wipe claude_session_id and nothing puts it
+# back, so the board offers "Start" for work already running. The sweep now
+# re-binds an EMPTY field from the task title — but only when exactly one
+# session is running RIGHT NOW under that title. The live-process gate is the
+# whole safety property: a released binding (DELETE /api/tasks/{id}/session, or
+# vault-cli work-on's failed-turn compensating clear) leaves a transcript with
+# the same title forever, so a transcript-scan re-bind would resurrect it.
+
+_REBIND_UUID = "abcdef12-1234-1234-1234-abcdef123456"
+
+
+async def _run_rebind_cleanup(
+    config: Config,
+    tasks: list[Task],
+    live_names: dict[str, str] | None = None,
+    resolver: str | None = None,
+    registry: LaunchRegistry | None = None,
+    show_task_session_id: str | None = None,
+) -> tuple[int, AsyncMock, MagicMock]:
+    """Run the sweep for the re-bind pass: returns (cleared, subprocess, resolver).
+
+    ``resolver`` is what the patched ``vault_ui.cleanup.resolve_session_id``
+    returns; ``show_task_session_id`` is what the under-lock re-read yields.
+    """
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+    mock_client.show_task = AsyncMock(return_value=_make_task(session_id=show_task_session_id))
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+    resolver_mock = MagicMock(return_value=resolver)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=registry or LaunchRegistry()),
+        patch("vault_ui.cleanup.Path.exists", return_value=True),
+        patch(
+            "vault_ui.activity._cached_live_session_names",
+            return_value=live_names if live_names is not None else {},
+        ),
+        patch("vault_ui.cleanup.resolve_session_id", resolver_mock),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    return cleared, mock_subprocess, resolver_mock
+
+
+def _task_set_calls(subprocess: AsyncMock) -> list[tuple[object, ...]]:
+    """The ``vault-cli task set …`` argument tuples from a mocked subprocess."""
+    return [
+        c.args
+        for c in subprocess.call_args_list
+        if len(c.args) > 2 and c.args[1] == "task" and "set" in c.args
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rebind_unique_live_match_writes_the_resolved_uuid() -> None:
+    """One live session carries the title → the empty field is re-bound to its uuid."""
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="unbound")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0, "a re-bind is not a clear"
+    set_calls = _task_set_calls(subprocess)
+    assert len(set_calls) == 1, set_calls
+    assert set_calls[0][2:6] == ("set", "unbound", "claude_session_id", _REBIND_UUID)
+    assert set_calls[0][-2:] == ("--vault", "testvault")
+    # The resolver is asked about the TITLE, through the injected live map.
+    assert resolver.call_args.args[0] == "Test Task"
+    assert resolver.call_args.kwargs["live_session_names"] == {"Test Task": _REBIND_UUID}
+
+
+@pytest.mark.asyncio
+async def test_rebind_writes_nothing_when_no_live_session_carries_the_title() -> None:
+    """No live session under the title → nothing is written and nothing is resolved.
+
+    This is the released-binding case: DELETE /api/tasks/{id}/session and
+    vault-cli's failed-turn clear empty the field on purpose, and the released
+    session's transcript keeps the title forever. Only a RUNNING process may
+    re-bind, so the transcript is never consulted here.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="released")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Some Other Title": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert not resolver.called, "a title absent from the live map must never reach the resolver"
+
+
+@pytest.mark.asyncio
+async def test_rebind_defensive_resolver_none_writes_nothing() -> None:
+    """The resolver's ``None`` branch writes nothing.
+
+    Unreachable in production — the live-map gate guarantees the title IS in the
+    map and resolve_session_id returns the live uuid directly for a map hit.
+    This test exists only to lock the defensive branch.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="unbound")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=None,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert resolver.called, "the live-map gate should have let this title through"
+
+
+@pytest.mark.asyncio
+async def test_rebind_ambiguous_live_title_is_skipped_at_the_gate() -> None:
+    """Two live processes sharing a title → the live map omits it → no write.
+
+    ``_parse_live_session_names`` drops any name bound to two different uuids,
+    so the real ambiguity path is absence from the live map, never a resolver
+    ``None``. The title is treated as unresolvable and nothing is written.
+    """
+    from vault_ui.activity import _parse_live_session_names
+
+    ambiguous_ps = (
+        f"claude -n Test Task --session-id {_REBIND_UUID}\n"
+        "claude -n Test Task --session-id 12345678-1234-1234-1234-123456789abc\n"
+    )
+    live_names = _parse_live_session_names(ambiguous_ps)
+    assert live_names == {}, live_names
+
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="ambiguous")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names=live_names,
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert not resolver.called, "an ambiguous title must be skipped at the gate, not resolved"
+
+
+@pytest.mark.asyncio
+async def test_rebind_never_overwrites_an_existing_binding() -> None:
+    """A task that already holds a UUID is never re-bound (never-overwrite invariant)."""
+    config = _make_config(current_user="alice")
+    tasks = [
+        _make_task(
+            session_id="12345678-1234-1234-1234-123456789abc",
+            assignee="alice",
+            task_id="bound",
+        )
+    ]
+
+    cleared, subprocess, _resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == [], "an existing binding must never be overwritten"
+
+
+@pytest.mark.asyncio
+async def test_rebind_abandons_write_when_show_task_now_holds_a_uuid() -> None:
+    """The under-lock re-read wins: a binding that landed since the list is kept.
+
+    The task list is snapshotted at the top of the vault block and the repair
+    loop may block for seconds per task, so emptiness at selection time is not
+    emptiness at write time.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="raced")]
+
+    cleared, subprocess, _resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+        show_task_session_id="12345678-1234-1234-1234-123456789abc",
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+
+
+@pytest.mark.asyncio
+async def test_rebind_skips_foreign_assignee() -> None:
+    """A task owned by another user is never written to, even with an empty binding.
+
+    The locality gate's first rule is never write a field on a task owned by
+    another user — a write prohibition, not only a clear prohibition.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="bob", task_id="peer-owned")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert not resolver.called
+
+
+@pytest.mark.asyncio
+async def test_rebind_skips_task_with_launch_registry_record() -> None:
+    """A mid-flight launch owns its binding — the re-bind must not race it."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "launching", "task")
+
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="launching")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+        registry=registry,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert not resolver.called
+
+
+@pytest.mark.asyncio
+async def test_rebind_skips_finished_launch_registry_record() -> None:
+    """A FINISHED record is skipped too — ``state()`` is deliberately not narrowed."""
+    registry = LaunchRegistry()
+    registry.begin("testvault", "launching", "task")
+    registry.finish("testvault", "launching")
+
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="launching")]
+
+    cleared, subprocess, _resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+        registry=registry,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+
+
+@pytest.mark.asyncio
+async def test_rebind_skips_completed_task() -> None:
+    """A completed task with an empty binding is never re-bound.
+
+    The sweep lists with show_all=True, so the unbound complement is dominated
+    by finished work no one will resume — re-binding it is pure noise and cost.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="done", status="completed")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert not resolver.called
+
+
+@pytest.mark.asyncio
+async def test_rebind_skips_aborted_task() -> None:
+    """An aborted task with an empty binding is never re-bound."""
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="dropped", status="aborted")]
+
+    cleared, subprocess, _resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+
+
+@pytest.mark.asyncio
+async def test_rebind_skips_task_without_a_title() -> None:
+    """No title means nothing to resolve by."""
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="untitled", title="")]
+
+    cleared, subprocess, resolver = await _run_rebind_cleanup(
+        config,
+        tasks,
+        live_names={"Test Task": _REBIND_UUID},
+        resolver=_REBIND_UUID,
+    )
+
+    assert cleared == 0
+    assert _task_set_calls(subprocess) == []
+    assert not resolver.called
+
+
+@pytest.mark.asyncio
+async def test_rebind_show_task_failure_does_not_abort_the_vault_pass(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A task that vanished between the list and the re-read is logged, not fatal.
+
+    ``show_task`` raises FileNotFoundError; letting it escape would abort the
+    marker sweep, the re-clear pass and the goal pass for the whole vault.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="vanished")]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+    mock_client.show_task = AsyncMock(side_effect=FileNotFoundError("gone"))
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_subprocess = AsyncMock(return_value=mock_proc)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=LaunchRegistry()),
+        patch("vault_ui.cleanup.Path.exists", return_value=True),
+        patch(
+            "vault_ui.activity._cached_live_session_names",
+            return_value={"Test Task": _REBIND_UUID},
+        ),
+        patch("vault_ui.cleanup.resolve_session_id", return_value=_REBIND_UUID),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", mock_subprocess),
+        caplog.at_level(logging.WARNING, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    assert _task_set_calls(mock_subprocess) == []
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("vanished" in r.message for r in warnings), [r.message for r in warnings]
+
+
+@pytest.mark.asyncio
+async def test_rebind_timeout_kills_helper_and_leaves_field_untouched(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stuck `vault-cli task set` is killed and reaped; the field is left alone.
+
+    A hung re-bind must not freeze the whole cleanup pass, and a timeout is not
+    evidence the binding is wrong — the next sweep retries.
+    """
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="stuck")]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+    mock_client.show_task = AsyncMock(return_value=_make_task(session_id=None))
+
+    async def _hanging_communicate() -> tuple[bytes, bytes]:
+        await asyncio.Event().wait()  # never returns -> wait_for times out
+        return (b"", b"")
+
+    hanging_proc = MagicMock()
+    hanging_proc.communicate = _hanging_communicate
+    hanging_proc.kill = MagicMock()
+    hanging_proc.wait = AsyncMock(return_value=0)
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=LaunchRegistry()),
+        patch("vault_ui.cleanup.Path.exists", return_value=True),
+        patch(
+            "vault_ui.activity._cached_live_session_names",
+            return_value={"Test Task": _REBIND_UUID},
+        ),
+        patch("vault_ui.cleanup.resolve_session_id", return_value=_REBIND_UUID),
+        patch("vault_ui.cleanup._SET_FIELD_TIMEOUT_SECONDS", 0.01),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", return_value=hanging_proc),
+        caplog.at_level(logging.WARNING, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    hanging_proc.kill.assert_called_once()
+    hanging_proc.wait.assert_awaited_once()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("stuck" in r.message and "timed out" in r.message for r in warnings), [
+        r.message for r in warnings
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rebind_nonzero_returncode_logs_error_and_does_not_clear(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed `vault-cli task set` is logged at ERROR; nothing is cleared."""
+    config = _make_config(current_user="alice")
+    tasks = [_make_task(session_id=None, assignee="alice", task_id="unbound")]
+
+    mock_client = AsyncMock()
+    mock_client.list_tasks = AsyncMock(return_value=tasks)
+    mock_client.list_goals = AsyncMock(return_value=[])
+    mock_client.show_task = AsyncMock(return_value=_make_task(session_id=None))
+
+    failing_proc = AsyncMock()
+    failing_proc.returncode = 1
+    failing_proc.communicate = AsyncMock(return_value=(b"", b"task not found"))
+
+    with (
+        patch("vault_ui.cleanup.VaultCLIClient", return_value=mock_client),
+        patch("vault_ui.factory.get_launch_registry", return_value=LaunchRegistry()),
+        patch("vault_ui.cleanup.Path.exists", return_value=True),
+        patch(
+            "vault_ui.activity._cached_live_session_names",
+            return_value={"Test Task": _REBIND_UUID},
+        ),
+        patch("vault_ui.cleanup.resolve_session_id", return_value=_REBIND_UUID),
+        patch("vault_ui.cleanup.asyncio.create_subprocess_exec", return_value=failing_proc),
+        caplog.at_level(logging.ERROR, logger="vault_ui.cleanup"),
+    ):
+        cleared = await cleanup_stale_sessions(config)
+
+    assert cleared == 0
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("unbound" in r.message and "task not found" in r.message for r in errors), [
+        r.message for r in errors
+    ]

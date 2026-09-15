@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A task whose `claude_session_id` was wiped — e.g. by a peer's cleanup on a git-synced shared vault — is now re-bound from its title by the 5-minute cleanup sweep, so the board offers `▶ Resume` for work already in progress instead of `▶ Start`. The pass only fires when exactly one session is running right now under that title: an ambiguous title (two live sessions share it) or an absent one writes nothing, a non-empty binding is never overwritten, a task owned by another user or mid-launch is skipped, and a deliberately released binding is not resurrected because a released session is no longer running. The write re-reads the task under the same per-task lock the API's `set_task_session` uses, so a binding that landed since the sweep listed the vault is kept.
+
 ## v0.67.3
 
 - refactor: Vault UI now runs a single `vault-cli watch` subprocess covering every configured vault (one comma-joined `--vault` value) instead of one subprocess per vault, so the watcher process count no longer scales with the number of displayed vaults. `VaultCLIWatcher` takes `vault_names: list[str]`, `start_task_watchers` builds one watcher and logs one `Started vault-cli watcher for vaults: …` line, and the watcher callback resolves each event's `vault` back to its `VaultConfig` via the new `factory.resolve_vault_for_event` (an event naming an unconfigured vault is logged at debug and ignored rather than raising). Cache invalidation, WebSocket payload shape and session resolution are unchanged.

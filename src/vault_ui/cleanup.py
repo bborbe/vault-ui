@@ -10,6 +10,13 @@ machine and must be retained. A non-UUID display name may be repaired to its
 resolved UUID; an unresolvable display name is left on disk untouched — being
 unresolvable right now is not evidence the binding is wrong, the session may
 simply not be running this minute.
+
+An EMPTY ``claude_session_id`` may be re-bound from the task title when exactly
+one session is running right now under that title. An ambiguous match (two or
+more live sessions share the title) or an absent one writes nothing. A
+non-empty binding is still never overwritten, and a deliberately released
+binding is not resurrected — a released session is no longer running, so it is
+not in the live process table.
 """
 
 import asyncio
@@ -99,15 +106,31 @@ async def cleanup_stale_sessions(config: Config) -> int:
     sweep still clears an unresolvable display name (a deliberate, known
     divergence).
 
-    Returns the number of session IDs cleared across all vaults.
+    An EMPTY ``claude_session_id`` is re-bound from the task title when exactly
+    one session is running right now under that title (see the re-bind pass
+    below); an ambiguous or absent match writes nothing, a non-empty binding is
+    never overwritten, and a deliberately released binding is not resurrected
+    because a released session is no longer running.
+
+    Returns the number of session IDs cleared across all vaults. A re-bind is
+    not a clear and does not count toward this total.
     """
     cleared = 0
     # Imported here, not at module scope: factory imports cleanup, so a
     # top-level import closes a cycle (same lazy-import idiom as
     # get_status_cache below).
-    from vault_ui.factory import get_launch_registry
+    from vault_ui.activity import _cached_live_session_names
+    from vault_ui.factory import get_launch_registry, get_session_lock_registry
 
     launch_registry = get_launch_registry()
+
+    # The live name -> session-id map, computed ONCE per sweep: it is a cached
+    # ``ps`` scan, and the re-bind pass below asks it about every unbound task.
+    # ``_parse_live_session_names`` omits any name bound to two different live
+    # uuids, so an ambiguous title is simply absent from this map and is skipped
+    # by the live-map gate rather than reaching the resolver.
+    live_names = _cached_live_session_names()
+
     for vault in config.vaults:
         try:
             client = VaultCLIClient(vault.vault_cli_path, vault.name)
@@ -292,6 +315,170 @@ async def cleanup_stale_sessions(config: Config) -> int:
                         vault.name,
                         e,
                         exc_info=True,
+                    )
+
+            # Re-bind pass. Every branch above operates on ``tasks_with_session``,
+            # so a task with an EMPTY claude_session_id is invisible to the whole
+            # sweep. On a git-synced shared vault a peer's cleanup can delete the
+            # field and nothing ever puts it back — the board then offers "Start"
+            # for work that is already running, inviting a duplicate session.
+            #
+            # The live-process gate below is the whole safety property. An empty
+            # binding is not always a loss: DELETE /api/tasks/{id}/session (the
+            # sanctioned release — ``clear_task_session`` in api/tasks.py) and
+            # vault-cli work-on's failed-turn compensating clear
+            # (docs/starting-marker-lifecycle.md § "Set and clear paths") both
+            # empty the field DELIBERATELY, and the released session's transcript
+            # keeps its custom title forever. A transcript-scan re-bind would
+            # resurrect exactly those releases and then trap the operator behind
+            # the PATCH 409 ("already holds session …; call DELETE first") in a
+            # DELETE -> sweep -> re-bind -> 409 loop. A running process cannot be
+            # resurrected from a stale file, so the live map is the honest
+            # evidence of "work already running".
+            for task in [t for t in tasks if not t.claude_session_id]:
+                # The locality gate's first rule is never write a field on a
+                # task owned by another user — a write prohibition, not only a
+                # clear prohibition — so the re-bind honours it too.
+                if task.assignee and task.assignee != config.current_user:
+                    logger.info(
+                        "[Cleanup] Retaining unbound task %s in vault %s: assignee %s,"
+                        " current user %s",
+                        task.id,
+                        vault.name,
+                        task.assignee,
+                        config.current_user,
+                    )
+                    continue
+                # A launch this instance started is mid-flight; its own launch
+                # path owns the binding and the re-bind must not race it. state()
+                # returns FINISHED as well as IN_FLIGHT — skipping both is
+                # deliberate and matches the marker-TTL loop.
+                if launch_registry.state(vault.name, task.id) is not None:
+                    continue
+                if not task.title:
+                    continue
+                # The sweep lists with show_all=True (vault-cli task list --all),
+                # so the unbound complement is dominated by finished work no one
+                # will resume; re-binding it is pure noise and pure cost.
+                if task.status in {"completed", "aborted"}:
+                    continue
+                # Only a session running RIGHT NOW may re-bind an empty field.
+                if task.title not in live_names:
+                    logger.debug(
+                        "[Cleanup] Not re-binding task %s in vault %s: no live session"
+                        " carries title '%s'",
+                        task.id,
+                        vault.name,
+                        task.title,
+                    )
+                    continue
+
+                try:
+                    resolved = resolve_session_id(
+                        task.title, project_dir, live_session_names=live_names
+                    )
+                    if resolved is None:
+                        # Defensive only: the live-map gate above guarantees the
+                        # title IS in the map, and resolve_session_id returns the
+                        # live uuid directly for a map hit, so this branch is
+                        # unreachable in production. Kept anyway — it is the seam
+                        # the tests patch at vault_ui.cleanup.resolve_session_id.
+                        logger.info(
+                            "[Cleanup] Not re-binding task %s in vault %s: no unambiguous"
+                            " session currently carries title '%s'",
+                            task.id,
+                            vault.name,
+                            task.title,
+                        )
+                        continue
+
+                    # The write joins the API's own per-task critical section
+                    # (set_task_session in api/tasks.py).
+                    async with get_session_lock_registry().session_lock(vault.name, task.id):
+                        # The task list was snapshotted at the top of this vault
+                        # block and the repair loop above may have blocked for
+                        # seconds per task, so emptiness at selection time is not
+                        # emptiness at write time (set_task_session guards the
+                        # identical race this way). The re-read is bounded: it is
+                        # awaited while holding the lock, which blocks the API's
+                        # own PATCH/DELETE for this task.
+                        current = await asyncio.wait_for(
+                            client.show_task(task.id),
+                            timeout=_SET_FIELD_TIMEOUT_SECONDS,
+                        )
+                        if current.claude_session_id:
+                            logger.info(
+                                "[Cleanup] Not re-binding task %s in vault %s: it now holds"
+                                " session %s",
+                                task.id,
+                                vault.name,
+                                current.claude_session_id,
+                            )
+                            continue
+
+                        set_args = [
+                            vault.vault_cli_path,
+                            "task",
+                            "set",
+                            task.id,
+                            "claude_session_id",
+                            resolved,
+                            "--vault",
+                            vault.name,
+                        ]
+                        proc = await asyncio.create_subprocess_exec(
+                            *set_args,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        try:
+                            _stdout, stderr = await asyncio.wait_for(
+                                proc.communicate(),
+                                timeout=_SET_FIELD_TIMEOUT_SECONDS,
+                            )
+                        except TimeoutError:
+                            # A stuck helper must not freeze the whole cleanup
+                            # pass: kill and reap the child so it cannot linger
+                            # as a zombie, leave claude_session_id on disk
+                            # untouched, and let the next sweep retry.
+                            with suppress(ProcessLookupError):
+                                proc.kill()
+                            await proc.wait()
+                            logger.warning(
+                                "[Cleanup] Re-bind of session '%s' for task %s in vault %s"
+                                " timed out after %ds; leaving claude_session_id untouched",
+                                resolved,
+                                task.id,
+                                vault.name,
+                                _SET_FIELD_TIMEOUT_SECONDS,
+                            )
+                            continue
+                        if proc.returncode != 0:
+                            logger.error(
+                                "[Cleanup] Failed to re-bind session for task %s in vault %s: %s",
+                                task.id,
+                                vault.name,
+                                stderr.decode().strip(),
+                            )
+                        else:
+                            logger.info(
+                                "[Cleanup] Re-bound session '%s' to task %s (title '%s')"
+                                " in vault %s",
+                                resolved,
+                                task.id,
+                                task.title,
+                                vault.name,
+                            )
+                except Exception as e:
+                    # show_task raises FileNotFoundError for a task that vanished
+                    # between the list and the re-read; letting that escape would
+                    # abort the marker sweep, the re-clear pass and the goal pass
+                    # for this whole vault.
+                    logger.warning(
+                        "[Cleanup] Exception re-binding session for task %s in vault %s: %s",
+                        task.id,
+                        vault.name,
+                        e,
                     )
 
             # Stale "Starting…" markers. Originally this sweep only handled tasks
