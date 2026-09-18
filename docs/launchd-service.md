@@ -125,9 +125,26 @@ commit, and the served bundle keeps its old `?v=` token. Verify the install
 actually landed before believing the deploy:
 
 ```bash
+uv tool list | grep vault-ui
 grep -c refreshBoard ~/.local/share/uv/tools/vault-ui/lib/python*/site-packages/vault_ui/static/app.js
 curl -s http://127.0.0.1:8000/ | grep -o 'app.js?v=[^"]*'
 ```
+
+**The version line is the only check that works for every release.** The other
+two detect *static-asset* changes only, and both read as unchanged when a release
+touches no static file — which is most releases:
+
+- `grep -c refreshBoard` counts a marker string that predates this release, so a
+  non-zero count says the file exists, not that the *new* code is installed.
+- The served `?v=` token is derived from the last static-asset change, so a
+  Python-only release leaves it byte-identical. An unchanged token here is a
+  **false negative**, not evidence the install failed.
+
+Observed 2026-09-18: the `vaults:`-block release (v0.67.6) touched only Python,
+the token stayed at `2026-09-14-card-footer-jira-row` before and after, and the
+install had in fact landed correctly (`uv tool list` → `0.67.5` → `0.67.6`). Treat
+an unchanged token as "no static delta to report", and confirm the deploy from
+the version line instead.
 
 ## 5. Log verbosity
 
