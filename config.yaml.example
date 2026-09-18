@@ -8,7 +8,9 @@ port: 8000
 # Cap on simultaneous Start-button launches in flight ("Starting…" cards); excess Starts are refused with HTTP 429. Open sessions do not count toward the cap.
 max_concurrent_sessions: 20
 vaults:
-  # List vaults vault-ui should manage.
+  # Optional. Omit this whole block (or leave it empty) to serve every vault-cli
+  # vault that has a tasks folder. List vaults here only to *restrict* the board
+  # to a subset — a vault-cli vault not named here stays off the board.
   # claude_script is inherited automatically from vault-cli's registry — no need to repeat it here.
   # vault_name overrides the Obsidian URL name (optional, defaults to name.title()).
   personal:

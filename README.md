@@ -113,6 +113,16 @@ vault-ui looks for config in this order:
 - `claude_script` - Script to run Claude sessions (default: `claude`)
 - `vault_cli_path` - Path to vault-cli binary (default: `vault-cli`)
 
+**The `vaults:` block is optional.** An absent or empty block serves every
+vault-cli vault that has a tasks folder, so vault-ui needs no second copy of
+vault-cli's vault list to keep in sync. A vault-cli vault with no `tasks_dir`,
+or whose tasks folder is missing on disk, is skipped with a warning naming the
+vault rather than stopping startup.
+
+An explicit non-empty `vaults:` block still filters — a vault-cli vault not
+named there stays off the board — and still overrides `vault_name` for the
+vaults it names.
+
 ## Task Format
 
 Tasks must have frontmatter with:

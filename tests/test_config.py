@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import subprocess
 from contextlib import suppress
 from pathlib import Path
@@ -39,16 +40,23 @@ def _make_side_effect(vaults: list[dict] | None = None, current_user: str = "tes
     return side_effect
 
 
+def _cli_vault(tmp_path: Path, name: str) -> dict:
+    """Return a healthy vault-cli entry backed by a real vault directory.
+
+    load_config skips a vault whose tasks folder does not exist on disk, so a
+    synthetic path like ``/personal`` would silently drop the vault. Create the
+    vault directory and its tasks folder under ``tmp_path`` instead; callers
+    that need a broken vault mutate the returned dict.
+    """
+    vault_dir = tmp_path / name
+    (vault_dir / "24 Tasks").mkdir(parents=True, exist_ok=True)
+    return {"name": name, "path": str(vault_dir), "tasks_dir": "24 Tasks"}
+
+
 def test_load_config_reads_vaults(tmp_path: Path) -> None:
     """load_config parses vaults from YAML config dict format."""
-    cli_vaults = [
-        {
-            "name": "personal",
-            "path": "/some/path/Personal",
-            "tasks_dir": "24 Tasks",
-            "claude_script": "claude-personal.sh",
-        }
-    ]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
+    cli_vaults[0]["claude_script"] = "claude-personal.sh"
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal:\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -56,7 +64,7 @@ def test_load_config_reads_vaults(tmp_path: Path) -> None:
     assert len(config.vaults) == 1
     vault = config.vaults[0]
     assert vault.name == "personal"
-    assert vault.vault_path == "/some/path/Personal"
+    assert vault.vault_path == str(tmp_path / "personal")
     assert vault.vault_name == "Personal"
     assert vault.tasks_folder == "24 Tasks"
     assert vault.claude_script == "claude-personal.sh"
@@ -64,7 +72,7 @@ def test_load_config_reads_vaults(tmp_path: Path) -> None:
 
 def test_load_config_claude_script_fallback(tmp_path: Path) -> None:
     """load_config falls back to 'claude' when claude_script is absent from CLI output."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal:\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -74,9 +82,8 @@ def test_load_config_claude_script_fallback(tmp_path: Path) -> None:
 
 def test_load_config_claude_script_empty_string_fallback(tmp_path: Path) -> None:
     """load_config falls back to 'claude' when claude_script is empty string in CLI output."""
-    cli_vaults = [
-        {"name": "personal", "path": "/personal", "tasks_dir": "Tasks", "claude_script": ""}
-    ]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
+    cli_vaults[0]["claude_script"] = ""
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal:\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -86,10 +93,7 @@ def test_load_config_claude_script_empty_string_fallback(tmp_path: Path) -> None
 
 def test_load_config_multiple_vaults(tmp_path: Path) -> None:
     """load_config parses multiple vaults."""
-    cli_vaults = [
-        {"name": "personal", "path": "/personal", "tasks_dir": "Tasks"},
-        {"name": "work", "path": "/work", "tasks_dir": "Tasks"},
-    ]
+    cli_vaults = [_cli_vault(tmp_path, "personal"), _cli_vault(tmp_path, "work")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n  work: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -101,7 +105,7 @@ def test_load_config_multiple_vaults(tmp_path: Path) -> None:
 
 def test_load_config_defaults(tmp_path: Path) -> None:
     """load_config uses defaults for optional host/port fields."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -112,7 +116,7 @@ def test_load_config_defaults(tmp_path: Path) -> None:
 
 def test_load_config_optional_overrides(tmp_path: Path) -> None:
     """load_config respects optional host/port overrides."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\nhost: 0.0.0.0\nport: 9000\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -123,7 +127,7 @@ def test_load_config_optional_overrides(tmp_path: Path) -> None:
 
 def test_load_config_max_concurrent_sessions_default(tmp_path: Path) -> None:
     """load_config defaults max_concurrent_sessions to 20 when the key is absent."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -133,7 +137,7 @@ def test_load_config_max_concurrent_sessions_default(tmp_path: Path) -> None:
 
 def test_load_config_max_concurrent_sessions_override(tmp_path: Path) -> None:
     """load_config reads max_concurrent_sessions from YAML."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\nmax_concurrent_sessions: 5\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -143,7 +147,7 @@ def test_load_config_max_concurrent_sessions_override(tmp_path: Path) -> None:
 
 def test_load_config_max_concurrent_sessions_coerces_string(tmp_path: Path) -> None:
     """A string YAML value is coerced to int — the gate compares count >= cap as ints."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text('vaults:\n  personal: {}\nmax_concurrent_sessions: "5"\n')
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -160,7 +164,7 @@ def test_load_config_missing_file_raises(tmp_path: Path) -> None:
 
 def test_load_config_current_user(tmp_path: Path) -> None:
     """load_config populates current_user from vault-cli."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults, current_user="alice")):
@@ -170,14 +174,8 @@ def test_load_config_current_user(tmp_path: Path) -> None:
 
 def test_load_config_session_project_dir(tmp_path: Path) -> None:
     """load_config populates session_project_dir from vault-cli JSON when present."""
-    cli_vaults = [
-        {
-            "name": "personal",
-            "path": "/personal",
-            "tasks_dir": "Tasks",
-            "session_project_dir": "/home/me/.claude/projects/-personal",
-        }
-    ]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
+    cli_vaults[0]["session_project_dir"] = "/home/me/.claude/projects/-personal"
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -187,7 +185,7 @@ def test_load_config_session_project_dir(tmp_path: Path) -> None:
 
 def test_load_config_session_project_dir_absent(tmp_path: Path) -> None:
     """load_config defaults session_project_dir to empty string when absent from CLI output."""
-    cli_vaults = [{"name": "personal", "path": "/personal", "tasks_dir": "Tasks"}]
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
@@ -197,18 +195,160 @@ def test_load_config_session_project_dir_absent(tmp_path: Path) -> None:
 
 def test_get_vault_returns_correct_vault(tmp_path: Path) -> None:
     """Config.get_vault finds vault by name."""
-    cli_vaults = [
-        {"name": "personal", "path": "/personal", "tasks_dir": "Tasks"},
-        {"name": "work", "path": "/work", "tasks_dir": "Tasks"},
-    ]
+    cli_vaults = [_cli_vault(tmp_path, "personal"), _cli_vault(tmp_path, "work")]
     config_file = tmp_path / "config.yaml"
     config_file.write_text("vaults:\n  personal: {}\n  work: {}\n")
     with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
         config = load_config(config_file)
     assert config.get_vault("personal") is not None
-    assert config.get_vault("personal").vault_path == "/personal"
+    assert config.get_vault("personal").vault_path == str(tmp_path / "personal")
     assert config.get_vault("work") is not None
     assert config.get_vault("missing") is None
+
+
+# --- the `vaults:` block is optional (absent/empty => every vault-cli vault) ---
+
+
+def test_load_config_absent_vaults_block_serves_every_cli_vault(tmp_path: Path) -> None:
+    """An absent `vaults:` block serves every vault-cli vault that has a tasks
+    folder instead of raising. Regression test: today this hits the
+    `if not vaults` RuntimeError because the overrides loop never runs."""
+    cli_vaults = [_cli_vault(tmp_path, name) for name in ("personal", "work", "family")]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: 127.0.0.1\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert [v.name for v in config.vaults] == ["personal", "work", "family"]
+
+
+def test_load_config_empty_vaults_block_serves_every_cli_vault(tmp_path: Path) -> None:
+    """An empty `vaults:` block means the same as an absent one. Regression test:
+    today `vault_overrides` is falsy but the overrides loop is still the only
+    loop, so this raises the same RuntimeError as the absent case."""
+    cli_vaults = [_cli_vault(tmp_path, name) for name in ("personal", "work")]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults: {}\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert [v.name for v in config.vaults] == ["personal", "work"]
+
+
+def test_load_config_explicit_block_skips_taskless_vault(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The 2026-09-18 shape: an explicit block naming a task-less vault next to a
+    healthy one. Regression test: today `cli_vault["tasks_dir"]` raises
+    `KeyError: 'tasks_dir'` and takes startup down."""
+    healthy = _cli_vault(tmp_path, "personal")
+    taskless = {"name": "trading", "path": str(tmp_path / "trading")}
+    (tmp_path / "trading").mkdir()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults:\n  personal:\n  trading:\n")
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("subprocess.run", side_effect=_make_side_effect([healthy, taskless])),
+    ):
+        config = load_config(config_file)
+    assert [v.name for v in config.vaults] == ["personal"]
+    assert "trading" in caplog.text
+
+
+def test_load_config_skips_vault_whose_tasks_folder_is_missing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A `tasks_dir` that is set but has no folder on disk is skipped with a
+    warning naming the vault; the remaining vaults still load. Regression test:
+    today the vault loads with a dangling tasks folder."""
+    healthy = _cli_vault(tmp_path, "personal")
+    ghost = {"name": "ghost", "path": str(tmp_path / "ghost"), "tasks_dir": "24 Tasks"}
+    (tmp_path / "ghost").mkdir()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: 127.0.0.1\n")
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("subprocess.run", side_effect=_make_side_effect([healthy, ghost])),
+    ):
+        config = load_config(config_file)
+    assert [v.name for v in config.vaults] == ["personal"]
+    assert "ghost" in caplog.text
+
+
+def test_load_config_skips_vault_without_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A vault-cli entry with no `path` is skipped, not crashed on. Regression
+    test: the fallback runs for every vault-cli vault, so a direct
+    `cli_vault["path"]` index would raise `KeyError: 'path'` here."""
+    healthy = _cli_vault(tmp_path, "personal")
+    pathless = {"name": "nopath", "tasks_dir": "24 Tasks"}
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: 127.0.0.1\n")
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("subprocess.run", side_effect=_make_side_effect([healthy, pathless])),
+    ):
+        config = load_config(config_file)
+    assert [v.name for v in config.vaults] == ["personal"]
+    assert "nopath" in caplog.text
+
+
+def test_load_config_raises_when_every_vault_is_skipped(tmp_path: Path) -> None:
+    """The `if not vaults` guard stays for the misconfiguration it was written
+    for: nothing survived the merge. Regression test: today this raises
+    `KeyError: 'tasks_dir'` before reaching the guard."""
+    cli_vaults = [{"name": "trading", "path": str(tmp_path / "trading")}]
+    (tmp_path / "trading").mkdir()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults:\n  trading:\n")
+    with (
+        patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)),
+        pytest.raises(RuntimeError, match="No vaults configured"),
+    ):
+        load_config(config_file)
+
+
+def test_load_config_explicit_block_still_filters(tmp_path: Path) -> None:
+    """Preserved behaviour: a 2-entry block against 3 vault-cli vaults loads
+    exactly those 2 — the block's remaining legitimate purpose."""
+    cli_vaults = [_cli_vault(tmp_path, name) for name in ("personal", "work", "family")]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults:\n  personal:\n  work:\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert [v.name for v in config.vaults] == ["personal", "work"]
+
+
+def test_load_config_vault_name_override_wins(tmp_path: Path) -> None:
+    """Preserved behaviour: an explicit block's `vault_name` override beats the
+    title-cased key default."""
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vaults:\n  personal:\n    vault_name: My Vault\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert config.vaults[0].vault_name == "My Vault"
+
+
+def test_load_config_fallback_matches_explicit_block(tmp_path: Path) -> None:
+    """Two-path parity: the same vault reached through an absent block and through
+    an explicit block naming it with no overrides yields an equal VaultConfig —
+    including the non-default `vault_cli_path`, which a defaulting fallback would
+    silently revert to "vault-cli". Regression test: the absent-block half raises
+    today, and the two constructions are separate code paths."""
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
+
+    absent_file = tmp_path / "absent.yaml"
+    absent_file.write_text("vault_cli_path: /opt/vault-cli\nhost: 127.0.0.1\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        from_fallback = load_config(absent_file)
+
+    explicit_file = tmp_path / "explicit.yaml"
+    explicit_file.write_text("vault_cli_path: /opt/vault-cli\nvaults:\n  personal:\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        from_explicit = load_config(explicit_file)
+
+    assert from_fallback.vaults == from_explicit.vaults
+    assert from_fallback.vaults[0].vault_cli_path == "/opt/vault-cli"
 
 
 def test_resolve_default_config_path_xdg_exists(tmp_path: Path) -> None:

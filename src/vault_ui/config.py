@@ -112,6 +112,47 @@ def discover_vaults_from_cli(vault_cli_path: str) -> list[dict[str, str]]:
     return vaults
 
 
+def _build_vault_config(
+    name: str,
+    cli_vault: dict[str, str],
+    vault_name: str,
+    vault_cli_path: str,
+) -> VaultConfig | None:
+    """Build a VaultConfig from a vault-cli entry, or None if the vault is unusable.
+
+    A vault-ui vault needs a path and a tasks folder that exists on disk. A
+    vault-cli entry missing either — or whose tasks folder is absent on disk —
+    is skipped with a warning naming the vault, so one unusable vault cannot
+    take the whole board down. Both the explicit-overrides path and the
+    serve-every-vault fallback go through here, so the two cannot drift.
+    """
+    vault_path = cli_vault.get("path")
+    if not vault_path:
+        logger.warning("Vault '%s' has no path in vault-cli output, skipping", name)
+        return None
+
+    tasks_folder = cli_vault.get("tasks_dir")
+    if not tasks_folder:
+        logger.warning("Vault '%s' has no tasks_dir in vault-cli output, skipping", name)
+        return None
+
+    if not (Path(vault_path) / tasks_folder).is_dir():
+        logger.warning(
+            "Vault '%s' tasks folder '%s' not found on disk, skipping", name, tasks_folder
+        )
+        return None
+
+    return VaultConfig(
+        name=name,
+        vault_path=vault_path,
+        tasks_folder=tasks_folder,
+        vault_name=vault_name,
+        claude_script=cli_vault.get("claude_script") or "claude",
+        vault_cli_path=vault_cli_path,
+        session_project_dir=cli_vault.get("session_project_dir") or "",
+    )
+
+
 def load_config(config_path: Path | None = None) -> Config:
     """Load configuration from config.yaml. Exits with error if not found."""
     if config_path is None:
@@ -140,33 +181,46 @@ def load_config(config_path: Path | None = None) -> Config:
     vault_overrides = data.get("vaults", {}) or {}
 
     vaults = []
-    for vault_key, overrides in vault_overrides.items():
-        overrides = overrides or {}
-        cli_vault = cli_vault_by_name.get(vault_key.lower())
-        if cli_vault is None:
-            logger.warning("Vault '%s' not found in vault-cli output, skipping", vault_key)
-            continue
+    if vault_overrides:
+        # An explicit non-empty block keeps its role: it filters (a vault-cli
+        # vault not named here stays off the board) and it overrides the
+        # display name.
+        for vault_key, overrides in vault_overrides.items():
+            overrides = overrides or {}
+            cli_vault = cli_vault_by_name.get(vault_key.lower())
+            if cli_vault is None:
+                logger.warning("Vault '%s' not found in vault-cli output, skipping", vault_key)
+                continue
 
-        vault_name = overrides.get("vault_name") or ""
-        if not vault_name:
-            vault_name = vault_key.title()
-
-        vaults.append(
-            VaultConfig(
+            vault_config = _build_vault_config(
                 name=vault_key,
-                vault_path=cli_vault["path"],
-                tasks_folder=cli_vault["tasks_dir"],
-                vault_name=vault_name,
-                claude_script=cli_vault.get("claude_script") or "claude",
+                cli_vault=cli_vault,
+                vault_name=overrides.get("vault_name") or vault_key.title(),
                 vault_cli_path=vault_cli_path,
-                session_project_dir=cli_vault.get("session_project_dir") or "",
             )
-        )
+            if vault_config is not None:
+                vaults.append(vault_config)
+    else:
+        # No `vaults:` block (absent or empty) means "every vault-cli vault that
+        # has a tasks folder", so vault-ui needs no hand-maintained second copy
+        # of vault-cli's vault list.
+        for cli_vault in cli_vaults:
+            vault_config = _build_vault_config(
+                name=cli_vault["name"],
+                cli_vault=cli_vault,
+                vault_name=cli_vault["name"].title(),
+                vault_cli_path=vault_cli_path,
+            )
+            if vault_config is not None:
+                vaults.append(vault_config)
 
     if not vaults:
         raise RuntimeError(
             "No vaults configured after merging with vault-cli output. "
-            "Check config.yaml vaults section and that vault-cli is available."
+            "Every candidate was skipped: a vault-cli vault needs a tasks_dir "
+            "whose folder exists on disk, and an explicit config.yaml vaults "
+            "section must name vaults vault-cli knows. Check that vault-cli is "
+            "available and returns vaults with a tasks_dir."
         )
 
     return Config(
