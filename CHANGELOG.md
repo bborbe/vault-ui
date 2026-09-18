@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.67.5
 
 - fix: Renaming a vault in vault-cli no longer takes the whole board down until someone restarts vault-ui. A vault that vault-cli no longer knows is now skipped with a `Vault '%s' not found in vault-cli output, skipping` warning on `/api/tasks`, `/api/goals` and `/api/assignees` — each renders the surviving vaults instead of returning HTTP 500 — while every other vault-cli failure (timeout, disk error, non-JSON output) still fails loudly, because the new `vault_cli_client.VaultNotFoundError` is raised only when vault-cli's stderr carries the `vault not found` marker. The vault list is also re-read automatically every 30 seconds by a new `factory.run_config_reload_loop`, so a rename is picked up without a restart; the loop calls `load_config()` off the event loop via `asyncio.to_thread`, survives a `load_config()` that raises, and calls `reload_config()` only when the vault set actually changed so the `vault-cli watch` subprocess is not churned (and live updates not dropped) on every tick. `↻ Refresh` and `POST /api/config/reload` are unchanged.
 
