@@ -12,6 +12,23 @@ from vault_ui.api.models import Goal, Task
 
 logger = logging.getLogger(__name__)
 
+# vault-cli's marker for a vault name it does not know. Observed stderr:
+# ``Error: get vaults: vault not found: <name>``. Matched on this marker alone —
+# every other non-zero exit (timeout, disk error, non-JSON output) must keep
+# raising a plain RuntimeError so a genuine vault-cli failure still fails loudly.
+_VAULT_NOT_FOUND_MARKER = "vault not found"
+
+
+class VaultNotFoundError(RuntimeError):
+    """vault-cli reports the configured vault name is unknown.
+
+    A distinguishable subclass of ``RuntimeError`` so the per-vault fan-out
+    endpoints can skip a stale vault — one renamed in vault-cli while this
+    server kept running — and still serve the surviving vaults, instead of
+    turning the whole board into an HTTP 500. Callers that only care about
+    "vault-cli failed" keep catching ``RuntimeError`` unchanged.
+    """
+
 
 def _loads_or_raise(
     stdout: bytes,
@@ -110,7 +127,10 @@ class VaultCLIClient:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(f"vault-cli task list failed: {stderr.decode().strip()}")
+            stderr_text = stderr.decode().strip()
+            if _VAULT_NOT_FOUND_MARKER in stderr_text:
+                raise VaultNotFoundError(f"vault-cli task list failed: {stderr_text}")
+            raise RuntimeError(f"vault-cli task list failed: {stderr_text}")
 
         data: list[dict[str, Any]] | None = _loads_or_raise(
             stdout, command=args, returncode=proc.returncode, stderr=stderr
@@ -201,7 +221,10 @@ class VaultCLIClient:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(f"vault-cli goal list failed: {stderr.decode().strip()}")
+            stderr_text = stderr.decode().strip()
+            if _VAULT_NOT_FOUND_MARKER in stderr_text:
+                raise VaultNotFoundError(f"vault-cli goal list failed: {stderr_text}")
+            raise RuntimeError(f"vault-cli goal list failed: {stderr_text}")
 
         data: list[dict[str, Any]] | None = _loads_or_raise(
             stdout, command=args, returncode=proc.returncode, stderr=stderr

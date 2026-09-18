@@ -3,6 +3,7 @@
 import asyncio
 import json
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -380,3 +381,83 @@ async def test_reload_config_restarts_the_cleanup_loop(
     assert old_task.cancelled()
     assert factory._cleanup_task is not old_task
     assert loop_configs == [new_config]
+
+
+# --- run_config_reload_loop (the periodic trigger behind the vault-set re-read) ---
+
+
+async def _drive_reload_loop(ticks: int) -> None:
+    """Run ``run_config_reload_loop`` for exactly ``ticks`` iterations, then cancel it.
+
+    The real loop sleeps ``_CONFIG_RELOAD_INTERVAL_SECONDS`` (30s) between ticks,
+    so the pacing is replaced for the duration of the test: the fake sleep lets
+    the tick complete, then raises ``CancelledError`` on the last requested tick
+    — the loop's own cancellation contract, not a timing race.
+    """
+    task = asyncio.create_task(factory.run_config_reload_loop({}, {}))
+    real_sleep = asyncio.sleep
+    remaining = ticks
+
+    async def _fake_sleep(_seconds: float) -> None:
+        nonlocal remaining
+        remaining -= 1
+        if remaining <= 0:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    with patch("vault_ui.factory.asyncio.sleep", _fake_sleep), suppress(asyncio.CancelledError):
+        await task
+
+
+async def test_config_reload_loop_reloads_when_the_vault_set_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vault renamed in vault-cli makes the next tick call reload_config, which
+    swaps the vault set and restarts the watcher without a server restart."""
+    monkeypatch.setattr("vault_ui.factory._config", _reload_test_config("Personal"))
+    monkeypatch.setattr(
+        "vault_ui.factory.load_config", lambda: _reload_test_config("Personal", "Trading")
+    )
+    reloads = MagicMock()
+    monkeypatch.setattr("vault_ui.factory.reload_config", reloads)
+
+    await _drive_reload_loop(1)
+
+    reloads.assert_called_once_with({}, {})
+
+
+async def test_config_reload_loop_skips_reload_when_the_vault_set_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unchanged vault set must not call reload_config: it unconditionally stops
+    and restarts the ``vault-cli watch`` subprocess, which would drop live updates."""
+    monkeypatch.setattr("vault_ui.factory._config", _reload_test_config("Personal"))
+    monkeypatch.setattr("vault_ui.factory.load_config", lambda: _reload_test_config("Personal"))
+    reloads = MagicMock()
+    monkeypatch.setattr("vault_ui.factory.reload_config", reloads)
+
+    await _drive_reload_loop(2)
+
+    reloads.assert_not_called()
+
+
+async def test_config_reload_loop_survives_a_failing_load_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With every configured key stale, load_config() raises RuntimeError; the loop
+    logs it and keeps ticking instead of dying — exactly the state recovery matters in."""
+    monkeypatch.setattr("vault_ui.factory._config", _reload_test_config("Personal"))
+    calls = {"n": 0}
+
+    def _boom() -> Config:
+        calls["n"] += 1
+        raise RuntimeError("No vaults configured after merging with vault-cli output")
+
+    monkeypatch.setattr("vault_ui.factory.load_config", _boom)
+    reloads = MagicMock()
+    monkeypatch.setattr("vault_ui.factory.reload_config", reloads)
+
+    await _drive_reload_loop(2)
+
+    assert calls["n"] == 2  # survived the first failure and ticked again
+    reloads.assert_not_called()
