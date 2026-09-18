@@ -83,7 +83,8 @@ launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
 
 Restart (stop + start, required after editing the plist; a `config.yaml` vault
-change is picked up by `↻ Refresh` on the board instead):
+change is picked up by `↻ Refresh` on the board, or automatically within 30
+seconds, instead):
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
@@ -185,6 +186,14 @@ config list`, reconciles the single vault watcher, and rebuilds the vault select
 (`POST /api/config/reload`) — no restart needed. The `claude_script` and vault
 paths come from vault-cli, which is re-read per invocation, so those changes are
 picked up the same way.
+
+`↻ Refresh` is no longer the only trigger: the vault set is also re-read
+automatically every 30 seconds, so a vault added, removed or renamed in
+`config.yaml`/vault-cli shows up on its own within that window. The automatic
+reload only restarts the watcher when the vault set actually changed, so live
+updates keep flowing on every other tick. A vault name vault-cli no longer knows
+is skipped with a warning in the log — the board, the assignee dropdown and the
+goals view render the remaining vaults instead of returning HTTP 500.
 
 A restart (section 2) is still the fallback when the reload fails — e.g. a
 config that does not parse. The reload reads the new config before it tears

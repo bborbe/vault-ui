@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from vault_ui.vault_cli_client import VaultCLIClient
+from vault_ui.vault_cli_client import VaultCLIClient, VaultNotFoundError
 
 
 def _make_proc(returncode: int, stdout: bytes, stderr: bytes = b"") -> AsyncMock:
@@ -126,15 +126,67 @@ async def test_list_tasks_show_all() -> None:
 
 @pytest.mark.asyncio
 async def test_list_tasks_failure_raises() -> None:
-    """Test list_tasks raises RuntimeError when vault-cli fails."""
+    """Test list_tasks raises VaultNotFoundError when vault-cli reports the vault is unknown.
+
+    Tightened from a bare ``RuntimeError`` assertion: ``VaultNotFoundError`` is a
+    ``RuntimeError`` subclass, so the old assertion could not tell the two apart
+    and a wrong marker string would have shipped green.
+    """
     client = VaultCLIClient("vault-cli", "TestVault")
-    proc = _make_proc(1, b"", b"vault not found")
+    proc = _make_proc(1, b"", b"Error: get vaults: vault not found: TestVault")
 
     with (
         patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
-        pytest.raises(RuntimeError, match="vault-cli task list failed"),
+        pytest.raises(VaultNotFoundError, match="vault-cli task list failed"),
     ):
         await client.list_tasks()
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_other_failure_is_not_vault_not_found() -> None:
+    """A non-zero exit without the 'vault not found' marker stays a plain RuntimeError.
+
+    Requirement 1's marker matching: a timeout or any other vault-cli failure must
+    keep failing loudly (HTTP 500), never be degraded as a stale vault.
+    """
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"timeout")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError, match="vault-cli task list failed") as exc_info,
+    ):
+        await client.list_tasks()
+
+    assert not isinstance(exc_info.value, VaultNotFoundError)
+
+
+@pytest.mark.asyncio
+async def test_list_goals_vault_not_found_raises_vault_not_found_error() -> None:
+    """list_goals raises VaultNotFoundError when vault-cli reports the vault is unknown."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"Error: get vaults: vault not found: TestVault")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(VaultNotFoundError, match="vault-cli goal list failed"),
+    ):
+        await client.list_goals()
+
+
+@pytest.mark.asyncio
+async def test_list_goals_other_failure_is_not_vault_not_found() -> None:
+    """A non-zero exit without the 'vault not found' marker stays a plain RuntimeError."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"timeout")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError, match="vault-cli goal list failed") as exc_info,
+    ):
+        await client.list_goals()
+
+    assert not isinstance(exc_info.value, VaultNotFoundError)
 
 
 @pytest.mark.asyncio

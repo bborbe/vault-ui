@@ -38,6 +38,12 @@ _status_cache: StatusCache | None = None
 _launch_registry: LaunchRegistry | None = None
 _session_lock_registry: SessionLockRegistry | None = None
 _cleanup_task: asyncio.Task[None] | None = None
+_config_reload_task: asyncio.Task[None] | None = None
+
+# How often the running server re-reads the vault list (config.yaml + `vault-cli
+# config list`). A vault renamed in vault-cli is picked up within this window
+# without a restart; the requirement is <= 60 seconds.
+_CONFIG_RELOAD_INTERVAL_SECONDS = 30
 
 
 def get_config() -> Config:
@@ -409,10 +415,68 @@ def reload_config(
     return new_config
 
 
+async def run_config_reload_loop(
+    vault_task_cache: dict[str, tuple[float, float, list[Task]]],
+    vault_goal_cache: dict[str, tuple[float, float, list[Goal]]],
+) -> None:
+    """Re-read the vault list every ``_CONFIG_RELOAD_INTERVAL_SECONDS``.
+
+    The automatic half of the board's ↻ Refresh button: ``reload_config()``
+    already re-reads config.yaml and ``vault-cli config list``, swaps the vault
+    set and restarts the watcher — this loop is only the periodic trigger, so a
+    vault renamed in vault-cli is picked up without a restart.
+
+    Two properties matter:
+
+    - ``load_config()`` is synchronous and makes two blocking
+      ``subprocess.run(..., timeout=10)`` calls, so it runs via
+      ``asyncio.to_thread`` — inline it would stall every in-flight request for
+      up to ~20s on every tick. (The manual ``/api/config/reload`` endpoint
+      calls it inline; a one-off click is a different problem from a recurring
+      stall.)
+    - The loop never dies. With every configured key stale, ``load_config()``
+      raises ``RuntimeError("No vaults configured ...")`` — an unguarded loop
+      would die on the first such tick and never recover, exactly when recovery
+      matters most.
+
+    ``reload_config`` is called only when the vault set actually changed: it
+    unconditionally stops and restarts the ``vault-cli watch`` subprocess, and
+    doing that every tick would churn the watcher and drop live-update events.
+    A changed tick therefore reads the config twice — once here for the
+    comparison, once inside ``reload_config``. That is accepted: a changed vault
+    set is rare, and leaving ``reload_config``'s signature untouched keeps the
+    manual ↻ Refresh path identical.
+    """
+    logger.info("[Factory] Starting config reload loop")
+    while True:
+        try:
+            new_config = await asyncio.to_thread(load_config)
+        except asyncio.CancelledError:
+            logger.info("[Factory] Config reload loop cancelled")
+            raise
+        except Exception as e:
+            logger.warning("[Factory] Config reload failed: %s", e, exc_info=True)
+        else:
+            new_names = [vault.name for vault in new_config.vaults]
+            current_names = [vault.name for vault in get_config().vaults]
+            if new_names != current_names:
+                logger.info(
+                    "[Factory] Vault set changed (%s -> %s), reloading",
+                    current_names,
+                    new_names,
+                )
+                reload_config(vault_task_cache, vault_goal_cache)
+        try:
+            await asyncio.sleep(_CONFIG_RELOAD_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            logger.info("[Factory] Config reload loop cancelled during sleep")
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle - startup and shutdown."""
-    global _cleanup_task
+    global _cleanup_task, _config_reload_task
     # Populate status cache before starting watchers
     logger.info("[Lifespan] Loading status cache...")
     cache = get_status_cache()
@@ -439,6 +503,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("[Lifespan] Starting cleanup loop...")
     _cleanup_task = asyncio.create_task(run_cleanup_loop(config))
 
+    # Distinct task from the cleanup loop: reload_config() cancels and recreates
+    # _cleanup_task, so sharing the name would make the reload loop cancel itself.
+    logger.info("[Lifespan] Starting config reload loop...")
+    _config_reload_task = asyncio.create_task(
+        run_config_reload_loop(app.state.vault_task_cache, app.state.vault_goal_cache)
+    )
+
     try:
         yield
     finally:
@@ -449,6 +520,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await _cleanup_task
+        if _config_reload_task is not None:
+            logger.info("[Lifespan] Stopping config reload loop...")
+            _config_reload_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _config_reload_task
 
 
 def create_app() -> FastAPI:

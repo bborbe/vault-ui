@@ -46,7 +46,7 @@ from vault_ui.factory import (
 from vault_ui.launch_registry import FINISHED
 from vault_ui.session_resolver import is_uuid, resolve_session_id
 from vault_ui.status_cache import StatusCache
-from vault_ui.vault_cli_client import VaultCLIClient
+from vault_ui.vault_cli_client import VaultCLIClient, VaultNotFoundError
 
 if TYPE_CHECKING:
     from vault_ui.websocket.connection_manager import ConnectionManager
@@ -514,11 +514,25 @@ async def list_assignees(
                 has_unassigned = True
         return named, has_unassigned
 
-    results = await asyncio.gather(*[_fetch_assignees_for_vault(v) for v in vault_names])
+    results = await asyncio.gather(
+        *[_fetch_assignees_for_vault(v) for v in vault_names],
+        return_exceptions=True,
+    )
 
     named: set[str] = set()
     has_unassigned = False
-    for r_named, r_unassigned in results:
+    for vault_name, result in zip(vault_names, results, strict=True):
+        # Order matters: an exception instance is not iterable, so this skip must
+        # come BEFORE the unpacking below or a stale vault would raise TypeError
+        # instead of degrading. VaultNotFoundError is a RuntimeError subclass, so
+        # it must be tested first for the genuine-failure re-raise to stay loud.
+        if isinstance(result, VaultNotFoundError):
+            logger.warning("Vault '%s' not found in vault-cli output, skipping", vault_name)
+            continue
+        if isinstance(result, RuntimeError):
+            raise result  # vault-cli failure -> propagates -> HTTP 500
+        assert isinstance(result, tuple), f"unexpected gather result type: {type(result)}"
+        r_named, r_unassigned = result
         named.update(r_named)
         has_unassigned = has_unassigned or r_unassigned
 
@@ -803,7 +817,13 @@ async def list_tasks(
     )
 
     all_tasks: list[TaskResponse] = []
-    for result in results:
+    for vault_name, result in zip(vault_names, results, strict=True):
+        # A vault renamed in vault-cli while this server kept running: skip it and
+        # serve the surviving vaults instead of failing the whole board. Must be
+        # tested before the RuntimeError branch — it is a RuntimeError subclass.
+        if isinstance(result, VaultNotFoundError):
+            logger.warning("Vault '%s' not found in vault-cli output, skipping", vault_name)
+            continue
         if isinstance(result, ValueError):
             continue  # unknown vault, skip (matches existing except ValueError: continue)
         if isinstance(result, RuntimeError):
@@ -1028,7 +1048,12 @@ async def list_goals(
     )
 
     all_goals: list[GoalResponse] = []
-    for result in results:
+    for vault_name, result in zip(vault_names, results, strict=True):
+        # Same degrade path as list_tasks: a stale vault is skipped with a warning
+        # so the goals view renders the surviving vaults instead of a blank page.
+        if isinstance(result, VaultNotFoundError):
+            logger.warning("Vault '%s' not found in vault-cli output, skipping", vault_name)
+            continue
         if isinstance(result, ValueError):
             continue  # unknown vault, skip (matches list_tasks behavior)
         if isinstance(result, RuntimeError):

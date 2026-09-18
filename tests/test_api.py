@@ -29,7 +29,7 @@ from vault_ui.factory import get_launch_registry
 from vault_ui.launch_registry import FINISHED, IN_FLIGHT, LaunchRegistry
 from vault_ui.session_lock_registry import SessionLockRegistry
 from vault_ui.status_cache import StatusCache
-from vault_ui.vault_cli_client import VaultCLIClient
+from vault_ui.vault_cli_client import VaultCLIClient, VaultNotFoundError
 
 
 def _make_task(
@@ -6422,3 +6422,147 @@ def test_take_over_starting_task_marks_the_launch_taken_over(
 
     assert response.status_code == 200
     assert get_launch_registry().was_taken_over("TestVault", "Starting Task") is True
+
+
+# --- stale vault name: renamed in vault-cli while the server kept running ---
+
+
+def _stale_vault_config(tmp_path: Path) -> Config:
+    """Two-vault config for the stale-vault degrade tests: one healthy, one stale."""
+    return Config(
+        vaults=[
+            VaultConfig(
+                name="Healthy",
+                vault_path=str(tmp_path / "healthy"),
+                vault_name="Healthy",
+                tasks_folder="24 Tasks",
+            ),
+            VaultConfig(
+                name="Renamed",
+                vault_path=str(tmp_path / "renamed"),
+                vault_name="Renamed",
+                tasks_folder="24 Tasks",
+            ),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+
+
+def _stale_vault_client() -> MagicMock:
+    """A mock whose vault-cli no longer knows the vault name (renamed in vault-cli)."""
+    client = _make_vault_client([])
+    error = VaultNotFoundError(
+        "vault-cli task list failed: Error: get vaults: vault not found: Renamed"
+    )
+    client.list_tasks = AsyncMock(side_effect=error)
+    client.list_goals = AsyncMock(side_effect=error)
+    return client
+
+
+def test_list_tasks_skips_stale_vault_and_returns_200(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vault-cli rename degrades: the board serves the surviving vaults' tasks
+    instead of turning every request into an HTTP 500."""
+    monkeypatch.setattr("vault_ui.factory._config", _stale_vault_config(tmp_path))
+
+    healthy = _make_vault_client([_make_task(task_id="Healthy Task", status="in_progress")])
+    clients = {"Healthy": healthy, "Renamed": _stale_vault_client()}
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 200
+    assert [t["id"] for t in response.json()] == ["Healthy Task"]
+
+
+def test_list_tasks_plain_runtime_error_still_returns_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The degrade path keys on the exception TYPE, never on its message: a genuine
+    vault-cli failure that merely mentions the marker still fails loudly."""
+    monkeypatch.setattr("vault_ui.factory._config", _stale_vault_config(tmp_path))
+
+    healthy = _make_vault_client([_make_task(task_id="Healthy Task", status="in_progress")])
+    broken = _make_vault_client([])
+    broken.list_tasks = AsyncMock(
+        side_effect=RuntimeError("vault-cli task list failed: vault not found: Renamed")
+    )
+    clients = {"Healthy": healthy, "Renamed": broken}
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/tasks")
+
+    assert response.status_code == 500
+
+
+def test_list_goals_skips_stale_vault_and_logs_the_skipped_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The goals view degrades like the task board, and the skipped vault is named
+    in a warning so the degraded state is diagnosable from the log alone."""
+    monkeypatch.setattr("vault_ui.factory._config", _stale_vault_config(tmp_path))
+
+    healthy = _make_vault_client([])
+    healthy.list_goals = AsyncMock(
+        return_value=[_make_goal(goal_id="Healthy Goal", status="in_progress")]
+    )
+    clients = {"Healthy": healthy, "Renamed": _stale_vault_client()}
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch(
+            "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+            side_effect=lambda vault_name: clients[vault_name],
+        ),
+        caplog.at_level(logging.WARNING, logger="vault_ui.api.tasks"),
+    ):
+        response = http_client.get("/api/goals")
+
+    assert response.status_code == 200
+    assert [g["id"] for g in response.json()] == ["Healthy Goal"]
+    assert any(
+        record.getMessage() == "Vault 'Renamed' not found in vault-cli output, skipping"
+        for record in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+def test_list_assignees_skips_stale_vault(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The assignee dropdown survives a stale vault too: the surviving vaults'
+    assignees are returned instead of a 500 (or a TypeError from unpacking the
+    exception object)."""
+    monkeypatch.setattr("vault_ui.factory._config", _stale_vault_config(tmp_path))
+
+    healthy = _make_vault_client(
+        [_make_task(task_id="Healthy Task", status="in_progress", assignee="alice")]
+    )
+    clients = {"Healthy": healthy, "Renamed": _stale_vault_client()}
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/assignees")
+
+    assert response.status_code == 200
+    assert response.json() == {"named": ["alice"], "has_unassigned": False}
