@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.67.6
 
 - fix: The `vaults:` block in config.yaml is now optional. An absent or empty block serves every vault-cli vault that has a tasks folder — meaning `tasks_dir` is set *and* that folder exists on disk — so vault-ui no longer needs a hand-maintained second copy of vault-cli's vault list, which is what took the board down on 2026-09-18 when vault-cli's config was cleaned up and vault-ui's stale copy still named the removed vaults (`KeyError: 'tasks_dir'` at startup, crash-looping the launchd service). A vault-cli entry with no `tasks_dir`, no `path`, or whose tasks folder is missing on disk is now skipped with a warning naming the vault instead of raising, on the explicit path as well as the fallback, so a block naming a task-less vault degrades rather than crashes. An explicit non-empty block keeps its role unchanged: it still filters (a vault-cli vault not named there stays off the board) and still overrides `vault_name`, and a vault it names that vault-cli does not know is still skipped with the existing warning. The "No vaults configured after merging with vault-cli output" startup failure is preserved for the misconfiguration it was written for — nothing survived the merge — with a message that now names the two real skip reasons. Note that removing the block *widens* the board: vaults that were never listed (e.g. `boss`, `starcitzen`) now appear, and the resulting vault list follows vault-cli's order rather than the block's YAML order.
 
