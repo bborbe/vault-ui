@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The board's `app.js` cachebust token is bumped, so the session chip and "Live session" filter added in v0.71.0 actually reach a browser that had the board open across the deploy. That release changed `app.js` but left the token byte-identical, and the token is what the browser keys its cache on — so a normal reload kept serving the pre-change script and only a hard refresh picked the change up.
+
 ## v0.71.0
 
 - feat: A task or goal whose Claude session is alive but idle now renders `● Live` instead of `quiet`. Liveness was derived from transcript recency (a five-minute window) plus a `--resume`/`--session-id` process scan, so a worker that had not written its transcript in five minutes and had not been launched with a resume flag looked identical to an orphan whose session had exited — measured against the deployed board on 2026-09-30, of 147 open tasks carrying a `claude_session_id` only 14 were present in `~/.claude/sessions/` and just 6 rendered live. The harness's own session registry is now merged in as a third, authoritative signal: a session the registry lists is running, so it reads live even when its transcript has gone stale, and even when no transcript exists on this host at all (previously `indeterminate`). The four states, the `● Live` badge and every other endpoint are unchanged — this adds a signal to `session_state`, never a field beside it. `GET /api/tasks` also gains a `session_live` query parameter that restricts the list to live rows, composing with the existing `vault`/`status`/`phase`/`assignee`/`goal` filters.
