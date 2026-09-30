@@ -22,6 +22,11 @@ class VaultConfig:
     claude_script: str = "claude"  # Script to run Claude sessions (default: "claude")
     vault_cli_path: str = "vault-cli"  # Path to vault-cli binary
     session_project_dir: str = ""  # Override Claude project dir for session file lookup
+    # Folder holding topic files (e.g. "23 Topics"), from vault-cli's optional
+    # `topics_dir`. Optional by design: most vaults have none, and a vault
+    # without one still serves its tasks and goals — the topics view is simply
+    # empty for it. None means "this vault has no topics folder".
+    topics_folder: str | None = None
 
 
 @dataclass
@@ -125,6 +130,10 @@ def _build_vault_config(
     is skipped with a warning naming the vault, so one unusable vault cannot
     take the whole board down. Both the explicit-overrides path and the
     serve-every-vault fallback go through here, so the two cannot drift.
+
+    ``topics_dir`` is deliberately NOT part of that gate: it is optional in
+    vault-cli (most vaults have none) and a vault without it still serves its
+    tasks and goals, contributing an empty topic list instead.
     """
     vault_path = cli_vault.get("path")
     if not vault_path:
@@ -150,6 +159,7 @@ def _build_vault_config(
         claude_script=cli_vault.get("claude_script") or "claude",
         vault_cli_path=vault_cli_path,
         session_project_dir=cli_vault.get("session_project_dir") or "",
+        topics_folder=cli_vault.get("topics_dir") or None,
     )
 
 

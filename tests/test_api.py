@@ -17,10 +17,12 @@ from fastapi.testclient import TestClient
 
 from vault_ui import factory as _factory_module
 from vault_ui.__main__ import create_app
-from vault_ui.api.models import Goal, Task
+from vault_ui.api.models import Goal, Task, Topic, TopicDetail
 from vault_ui.api.tasks import (
     UpdateSessionRequest,
     _build_resume_command,
+    _parse_topic_entries,
+    _topic_url,
     count_launching_sessions,
     set_task_session,
 )
@@ -6566,3 +6568,397 @@ def test_list_assignees_skips_stale_vault(tmp_path: Path, monkeypatch: pytest.Mo
 
     assert response.status_code == 200
     assert response.json() == {"named": ["alice"], "has_unassigned": False}
+
+
+# --- topics ---
+
+
+# A trimmed stand-in for a real topic page (the real ones run 300 KB+): frontmatter,
+# a `## Goals` section holding a goal entry, a task entry, an alias-carrying entry,
+# a bullet with no leading wikilink, and a later `## ` heading that ends the section.
+_TRIMMED_TOPIC_BODY = """---
+status: in_progress
+category: work
+---
+
+# Manager Layer
+
+Prose that mentions [[Not An Entry In Prose]].
+
+## Goals
+- [[Some Goal]] — the container goal
+- [[Some Task]]
+- a bullet with no wikilink at all
+- [[Ghost Entry|an alias]]
+
+## Notes
+- [[Not An Entry]]
+"""
+
+# A page with no `## Goals` section at all: no tracked work, and no error either.
+_TOPIC_BODY_WITHOUT_GOALS = """---
+status: completed
+---
+
+# Empty Topic
+
+## Notes
+- [[Not An Entry]]
+"""
+
+
+def _make_topic(
+    topic_id: str = "Manager Layer",
+    status: str = "in_progress",
+    vault: str = "TestVault",
+) -> Topic:
+    return Topic(id=topic_id, title=topic_id, status=status, vault=vault)
+
+
+def _make_topic_client(
+    topics: list[Topic],
+    details: dict[str, TopicDetail],
+    goals: list[Goal] | None = None,
+    tasks: list[Task] | None = None,
+) -> MagicMock:
+    """Create a mock VaultCLIClient that serves topics, topic details, goals and tasks."""
+    client = _make_vault_client(tasks)
+    goal_list: list[Goal] = list(goals) if goals is not None else []
+
+    async def _list_topics() -> list[Topic]:
+        return list(topics)
+
+    async def _show_topic(topic_id: str) -> TopicDetail:
+        if topic_id not in details:
+            raise FileNotFoundError(f"Topic not found: {topic_id}")
+        return details[topic_id]
+
+    async def _list_goals(
+        status_filter: list[str] | None = None, show_all: bool = False
+    ) -> list[Goal]:
+        result = list(goal_list)
+        if status_filter is not None:
+            result = [g for g in result if g.status in status_filter]
+        return result
+
+    client.list_topics = AsyncMock(side_effect=_list_topics)
+    client.show_topic = AsyncMock(side_effect=_show_topic)
+    client.list_goals = AsyncMock(side_effect=_list_goals)
+    client._topics = topics
+    return client
+
+
+@pytest.fixture
+def test_client_with_topics(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test client for a vault with a topics folder and a topic-capable mock."""
+    (tmp_vault / "23 Topics").mkdir(parents=True, exist_ok=True)
+
+    topics = [
+        _make_topic("Manager Layer", status="in_progress"),
+        _make_topic("Work Approval", status="completed"),
+    ]
+    details = {
+        "Manager Layer": TopicDetail(
+            id="Manager Layer",
+            title="Manager Layer",
+            status="in_progress",
+            vault="TestVault",
+            content=_TRIMMED_TOPIC_BODY,
+        ),
+        "Empty Topic": TopicDetail(
+            id="Empty Topic",
+            title="Empty Topic",
+            status="completed",
+            vault="TestVault",
+            content=_TOPIC_BODY_WITHOUT_GOALS,
+        ),
+    }
+    client = _make_topic_client(
+        topics,
+        details,
+        goals=[_make_goal(goal_id="Some Goal", status="in_progress")],
+        tasks=[_make_task(task_id="Some Task", status="in_progress")],
+    )
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+                topics_folder="23 Topics",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+
+    app = create_app()
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        yield TestClient(app)
+
+
+def test_parse_topic_entries_reads_the_goals_section() -> None:
+    """Only leading wikilinks of top-level bullets inside `## Goals` are entries;
+    the alias is stripped, a bullet without a wikilink contributes nothing, and
+    the section ends at the next `## ` heading."""
+    assert _parse_topic_entries(_TRIMMED_TOPIC_BODY) == ["Some Goal", "Some Task", "Ghost Entry"]
+
+
+def test_parse_topic_entries_without_goals_section_is_empty() -> None:
+    """No `## Goals` section means no entries — not an exception."""
+    assert _parse_topic_entries(_TOPIC_BODY_WITHOUT_GOALS) == []
+
+
+def test_list_topics_without_topics_folder_returns_empty(test_client: TestClient) -> None:
+    """A vault with no `topics_folder` contributes an empty list and no error."""
+    response = test_client.get("/api/topics?vault=TestVault")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_topics_returns_topic_response_key_set(test_client_with_topics: TestClient) -> None:
+    """Topics are serialized with exactly the TopicResponse keys, completed included."""
+    response = test_client_with_topics.get("/api/topics?vault=TestVault")
+
+    assert response.status_code == 200
+    topics = response.json()
+    assert [t["id"] for t in topics] == ["Manager Layer", "Work Approval"]
+    assert set(topics[0]) == {"id", "title", "status", "vault", "obsidian_url"}
+    assert [t["status"] for t in topics] == ["in_progress", "completed"]
+
+
+def test_show_topic_classifies_entries(
+    test_client_with_topics: TestClient,
+) -> None:
+    """An entry resolving to a goal lands in `goals`, to a task in `tasks`, an
+    unknown name in `unresolved`; a bullet with no wikilink lands nowhere."""
+    response = test_client_with_topics.get("/api/topics/Manager%20Layer?vault=TestVault")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {
+        "id",
+        "title",
+        "status",
+        "vault",
+        "obsidian_url",
+        "goals",
+        "tasks",
+        "unresolved",
+    }
+    assert body["id"] == "Manager Layer"
+    assert body["status"] == "in_progress"
+    assert body["vault"] == "TestVault"
+    assert body["goals"] == ["Some Goal"]
+    assert body["tasks"] == ["Some Task"]
+    assert body["unresolved"] == ["Ghost Entry"]
+
+
+def test_show_topic_without_goals_section_returns_empty_lists(
+    test_client_with_topics: TestClient,
+) -> None:
+    """A topic with no tracked work returns empty lists rather than an error."""
+    response = test_client_with_topics.get("/api/topics/Empty%20Topic?vault=TestVault")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["goals"] == []
+    assert body["tasks"] == []
+    assert body["unresolved"] == []
+
+
+def test_show_topic_unknown_vault_returns_404(test_client_with_topics: TestClient) -> None:
+    """An unknown vault is a 404, never a bare 500."""
+    response = test_client_with_topics.get("/api/topics/Manager%20Layer?vault=NoSuchVault")
+
+    assert response.status_code == 404
+
+
+def test_show_topic_unknown_topic_returns_404(test_client_with_topics: TestClient) -> None:
+    """A topic id `topic show` cannot resolve is a 404, never a bare 500."""
+    response = test_client_with_topics.get("/api/topics/No%20Such%20Topic?vault=TestVault")
+
+    assert response.status_code == 404
+
+
+def test_show_topic_requires_vault(test_client_with_topics: TestClient) -> None:
+    """`vault` is required — a topic name is not unique across vaults."""
+    response = test_client_with_topics.get("/api/topics/Manager%20Layer")
+
+    assert response.status_code == 422
+
+
+def _topic_vault_config(tmp_path: Path) -> Config:
+    """Two-vault config for the topic degrade tests, both with a topics folder."""
+    return Config(
+        vaults=[
+            VaultConfig(
+                name="Healthy",
+                vault_path=str(tmp_path / "healthy"),
+                vault_name="Healthy",
+                tasks_folder="24 Tasks",
+                topics_folder="23 Topics",
+            ),
+            VaultConfig(
+                name="Renamed",
+                vault_path=str(tmp_path / "renamed"),
+                vault_name="Renamed",
+                tasks_folder="24 Tasks",
+                topics_folder="23 Topics",
+            ),
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+
+
+def test_list_topics_skips_stale_vault_and_returns_200(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A vault-cli rename degrades the topics view like the board: the surviving
+    vaults' topics are served, and the skipped vault is named in a warning."""
+    monkeypatch.setattr("vault_ui.factory._config", _topic_vault_config(tmp_path))
+
+    healthy = _make_topic_client([_make_topic("Healthy Topic")], {})
+    stale = _make_topic_client([], {})
+    stale.list_topics = AsyncMock(side_effect=VaultNotFoundError("vault not found: Renamed"))
+    clients = {"Healthy": healthy, "Renamed": stale}
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch(
+            "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+            side_effect=lambda vault_name: clients[vault_name],
+        ),
+        caplog.at_level(logging.WARNING, logger="vault_ui.api.tasks"),
+    ):
+        response = http_client.get("/api/topics")
+
+    assert response.status_code == 200
+    assert [t["id"] for t in response.json()] == ["Healthy Topic"]
+    assert any(
+        record.getMessage() == "Vault 'Renamed' not found in vault-cli output, skipping"
+        for record in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+def test_list_topics_plain_runtime_error_still_returns_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine vault-cli failure is not swallowed by the degrade path."""
+    monkeypatch.setattr("vault_ui.factory._config", _topic_vault_config(tmp_path))
+
+    broken = _make_topic_client([], {})
+    broken.list_topics = AsyncMock(
+        side_effect=RuntimeError("vault-cli topic list failed: disk on fire")
+    )
+    clients = {"Healthy": broken, "Renamed": broken}
+
+    app = create_app()
+    http_client = TestClient(app, raise_server_exceptions=False)
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        side_effect=lambda vault_name: clients[vault_name],
+    ):
+        response = http_client.get("/api/topics")
+
+    assert response.status_code == 500
+
+
+def test_list_topics_unknown_vault_in_filter_is_skipped(
+    test_client_with_topics: TestClient,
+) -> None:
+    """A `vault` filter naming a vault the config does not know is skipped."""
+    response = test_client_with_topics.get("/api/topics?vault=NoSuchVault")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_topic_url_with_topics_folder() -> None:
+    """The URL points at the topic page inside the vault's configured folder."""
+    cfg = VaultConfig(
+        name="V",
+        vault_path="/v",
+        tasks_folder="24 Tasks",
+        vault_name="V",
+        topics_folder="23 Topics",
+    )
+    assert _topic_url(cfg, "Foo") == "obsidian://open?vault=V&file=23%20Topics/Foo.md"
+
+
+def test_topic_url_without_topics_folder() -> None:
+    """A vault with no topics folder still yields a usable URL — the detail route
+    is not gated on `topics_folder`, only the list route is."""
+    cfg = VaultConfig(name="V", vault_path="/v", tasks_folder="24 Tasks", vault_name="V")
+    assert _topic_url(cfg, "Foo") == "obsidian://open?vault=V&file=Foo.md"
+
+
+def _topic_test_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: MagicMock
+) -> TestClient:
+    """A TestClient for a topics-capable TestVault wired to `client`."""
+    (tmp_path / "24 Tasks").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "23 Topics").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "vault_ui.factory._config",
+        Config(
+            vaults=[
+                VaultConfig(
+                    name="TestVault",
+                    vault_path=str(tmp_path),
+                    vault_name="TestVault",
+                    tasks_folder="24 Tasks",
+                    topics_folder="23 Topics",
+                )
+            ],
+            host="127.0.0.1",
+            port=8000,
+        ),
+    )
+    return TestClient(create_app(), raise_server_exceptions=False)
+
+
+def test_show_topic_vault_not_found_returns_404(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vault vault-cli no longer knows is a 404 on the detail route, not a 500."""
+    client = _make_topic_client([], {})
+    client.show_topic = AsyncMock(side_effect=VaultNotFoundError("vault not found: TestVault"))
+    http_client = _topic_test_app(tmp_path, monkeypatch, client)
+
+    with patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client):
+        response = http_client.get("/api/topics/Manager%20Layer?vault=TestVault")
+
+    assert response.status_code == 404
+
+
+def test_show_topic_vault_cli_failure_returns_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine vault-cli failure is not laundered into a 404."""
+    client = _make_topic_client([], {})
+    client.show_topic = AsyncMock(side_effect=RuntimeError("vault-cli topic show failed: boom"))
+    http_client = _topic_test_app(tmp_path, monkeypatch, client)
+
+    with patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client):
+        response = http_client.get("/api/topics/Manager%20Layer?vault=TestVault")
+
+    assert response.status_code == 500

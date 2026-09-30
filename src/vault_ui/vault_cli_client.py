@@ -8,7 +8,7 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-from vault_ui.api.models import Goal, Task
+from vault_ui.api.models import Goal, Task, Topic, TopicDetail
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +243,73 @@ class VaultCLIClient:
         )
         return [self._parse_goal(item) for item in data] if data else []
 
+    async def list_topics(self) -> list[Topic]:
+        """Call vault-cli topic list --all --output json, parse into Topic objects.
+
+        ``--all`` is unconditional and deliberately not exposed as a flag: the
+        bare ``topic list`` filters to ``in_progress`` and would silently hide
+        every completed topic, which is never what the board wants.
+        """
+        args = [
+            self._vault_cli_path,
+            "topic",
+            "list",
+            "--vault",
+            self._vault_name,
+            "--output",
+            "json",
+        ]
+        args.append("--all")
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            stderr_text = stderr.decode().strip()
+            if _VAULT_NOT_FOUND_MARKER in stderr_text:
+                raise VaultNotFoundError(f"vault-cli topic list failed: {stderr_text}")
+            raise RuntimeError(f"vault-cli topic list failed: {stderr_text}")
+
+        data: list[dict[str, Any]] | None = _loads_or_raise(
+            stdout, command=args, returncode=proc.returncode, stderr=stderr
+        )
+        return [self._parse_topic(item) for item in data] if data else []
+
+    async def show_topic(self, topic_id: str) -> TopicDetail:
+        """Call vault-cli topic show <topic_id> --output json, parse into TopicDetail.
+
+        ``topic show`` is the detail command; ``topic get`` is not (it reads a
+        single frontmatter field and takes a second argument). A topic id the
+        vault does not know raises ``FileNotFoundError``, which the API maps to
+        a 404 rather than a bare 500.
+        """
+        args = [
+            self._vault_cli_path,
+            "topic",
+            "show",
+            topic_id,
+            "--vault",
+            self._vault_name,
+            "--output",
+            "json",
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise FileNotFoundError(f"Topic not found: {topic_id}")
+
+        data: dict[str, Any] = _loads_or_raise(
+            stdout, command=args, returncode=proc.returncode, stderr=stderr, expect_object=True
+        )
+        return self._parse_topic_detail(data)
+
     async def set_goal_field(self, goal_id: str, key: str, value: str) -> None:
         """Call vault-cli goal set <goal_id> <key> <value>."""
         proc = await asyncio.create_subprocess_exec(
@@ -338,6 +405,40 @@ class VaultCLIClient:
             blocked_by=blocked_by,
             goals=goals,
             flag=bool(data.get("flag", False)),
+        )
+
+    def _parse_topic(self, data: dict[str, Any]) -> Topic:
+        """Parse vault-cli JSON topic object into Topic dataclass.
+
+        vault-cli emits ``name``/``status``/``vault``/``category``/
+        ``modified_date`` for a topic and **no** ``title``, so the title falls
+        back to the name (the same shape ``_parse_goal`` uses).
+        """
+        topic_id = str(data.get("name", data.get("id", "")))
+        return Topic(
+            id=topic_id,
+            title=str(data.get("title", topic_id)),
+            status=str(data.get("status", "unknown")),
+            vault=str(data.get("vault") or self._vault_name),
+        )
+
+    def _parse_topic_detail(self, data: dict[str, Any]) -> TopicDetail:
+        """Parse a vault-cli ``topic show`` payload into a TopicDetail.
+
+        The payload carries no top-level ``status`` — it lives in the
+        ``fields`` map, which mirrors the topic page's frontmatter. The status
+        is read from there and never derived or defaulted to a workflow value.
+        """
+        topic_id = str(data.get("name", data.get("id", "")))
+        raw_fields = data.get("fields")
+        fields: dict[str, Any] = raw_fields if isinstance(raw_fields, dict) else {}
+        status = str(fields.get("status") or "unknown")
+        return TopicDetail(
+            id=topic_id,
+            title=str(data.get("title", topic_id)),
+            status=status,
+            vault=str(data.get("vault") or self._vault_name),
+            content=str(data.get("content", "")),
         )
 
     def _parse_goal(self, data: dict[str, Any]) -> Goal:
