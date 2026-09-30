@@ -224,7 +224,11 @@ async def test_show_task_not_found_raises_file_not_found() -> None:
 
 @pytest.mark.asyncio
 async def test_set_field_success() -> None:
-    """Test set_field calls vault-cli task set with correct args."""
+    """Test set_field calls vault-cli task set with correct args.
+
+    Pins the exact argv so the no-``by`` case is byte-identical to the
+    pre-``--by`` form, not merely ``--by``-free.
+    """
     client = VaultCLIClient("vault-cli", "TestVault")
     proc = _make_proc(0, b"")
 
@@ -232,10 +236,48 @@ async def test_set_field_success() -> None:
         await client.set_field("task-1", "phase", "in_progress")
 
     args = mock_exec.call_args[0]
-    assert "set" in args
-    assert "task-1" in args
-    assert "phase" in args
-    assert "in_progress" in args
+    assert args == (
+        "vault-cli",
+        "task",
+        "set",
+        "task-1",
+        "phase",
+        "in_progress",
+        "--vault",
+        "TestVault",
+    )
+
+
+@pytest.mark.asyncio
+async def test_set_field_with_by_places_flag_after_value_and_before_vault() -> None:
+    """``by`` appends ``--by <actor>`` immediately after the value, before ``--vault``.
+
+    Asserts the index relationship rather than membership: the position is the
+    contract (vault-cli parses ``--by`` as a flag of the ``flag`` key write), and
+    membership alone would pass for any other placement.
+    """
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)) as mock_exec:
+        await client.set_field("task-1", "flag", "true", by="operator")
+
+    args = mock_exec.call_args[0]
+    assert args == (
+        "vault-cli",
+        "task",
+        "set",
+        "task-1",
+        "flag",
+        "true",
+        "--by",
+        "operator",
+        "--vault",
+        "TestVault",
+    )
+    assert args.index("--by") == args.index("true") + 1
+    assert args.index("operator") == args.index("--by") + 1
+    assert args.index("--vault") == args.index("operator") + 1
 
 
 @pytest.mark.asyncio

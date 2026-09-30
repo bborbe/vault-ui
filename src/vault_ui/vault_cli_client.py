@@ -165,17 +165,29 @@ class VaultCLIClient:
         )
         return self._parse_task(data)
 
-    async def set_field(self, task_id: str, key: str, value: str) -> None:
-        """Call vault-cli task set <task_id> <key> <value>."""
-        proc = await asyncio.create_subprocess_exec(
+    async def set_field(self, task_id: str, key: str, value: str, *, by: str | None = None) -> None:
+        """Call vault-cli task set <task_id> <key> <value>.
+
+        ``by`` declares the writer vault-cli records on the field — for the
+        ``flag`` key that is ``flag_set_by``, the durable record distinguishing an
+        operator-set flag from an unattributed write. vault-cli accepts ``--by``
+        for the ``flag`` key only and rejects it for any other, so callers pass it
+        on that path alone. ``None`` (the default) leaves the argv byte-identical
+        to the pre-``--by`` form, so every existing caller is unaffected.
+        """
+        args = [
             self._vault_cli_path,
             "task",
             "set",
             task_id,
             key,
             value,
-            "--vault",
-            self._vault_name,
+        ]
+        if by is not None:
+            args += ["--by", by]
+        args += ["--vault", self._vault_name]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
