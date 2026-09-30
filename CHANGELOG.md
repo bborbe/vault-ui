@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A card whose launch turn is in flight no longer shows a session chip beside its `⏳ Starting…` badge. A session that started seconds ago has no transcript yet, so it classified `indeterminate` — leaving the card asserting both that it was starting and that its liveness could not be determined. The chip now defers to the Starting badge on exactly the condition the button helper uses, so the two cannot disagree.
+- fix: The session chip no longer renders for `none`. That state is the default — the absence of a session rather than a finding about one — and it is the majority of the board, so the chip was appearing on most cards to say nothing. The chip now covers only `quiet` (a session id is set but nothing is running, i.e. an orphan) and `indeterminate`: the two states the board cannot otherwise show.
+
 ## v0.71.1
 
 - fix: The board's `app.js` cachebust token is bumped, so the session chip and "Live session" filter added in v0.71.0 actually reach a browser that had the board open across the deploy. That release changed `app.js` but left the token byte-identical, and the token is what the browser keys its cache on — so a normal reload kept serving the pre-change script and only a hard refresh picked the change up.

@@ -1560,7 +1560,21 @@ function sessionChipHtml(item) {
     // chip's job is the states the board otherwise cannot show at all: `quiet`
     // (session id set, nothing running — the orphan case), `indeterminate`, and
     // `none`. So it defers to the badge on `live` and covers the rest.
-    if (state === 'live') return '';
+    // The action area already owns two states with their own badges: `⏳ Starting…`
+    // (a launch turn in flight) and `● Live`. Rendering the chip for those too puts
+    // two indicators on one card — and during a launch the two actively contradict,
+    // because a session that started seconds ago has no transcript yet and so
+    // classifies `indeterminate` while the badge says it is starting. Same
+    // condition the button helper uses, so the two can never disagree.
+    const isStarting = !!item.claude_session_started
+        || startingTasks.has(item.id)
+        || startingGoals.has(item.id);
+    // `live` and the in-flight launch are the badge's to show. `none` is the
+    // default state — the absence of a session, not a finding about one — and it
+    // is the majority of the board, so rendering it would put a chip on most
+    // cards to say nothing. What is left is what the operator cannot otherwise
+    // see: `quiet` (an orphan) and `indeterminate`.
+    if (state === 'live' || state === 'none' || isStarting) return '';
     return `<span class="session-chip session-${escapeHtml(state)}" title="${escapeHtml(SESSION_STATE_TITLES[state] || '')}">${escapeHtml(state)}</span>`;
 }
 
