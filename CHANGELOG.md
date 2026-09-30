@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.69.1
 
 - fix: Opening a topic now shows that topic's own status in the detail view, not only the work it tracks. The Topics card carried the status, but the modal — where the operator lands after clicking through — did not, so the one screen dedicated to a single topic was the one screen that omitted its status. Rendered from the topic's own frontmatter, the same value the card uses; a topic declaring no status renders no badge rather than an empty pill. Found by driving the deployed build with Playwright, which the hermetic suite structurally cannot do: it mocks `vault-cli` and asserts against a fixture, so it proves the view renders given data but never what the live board actually shows.
 
