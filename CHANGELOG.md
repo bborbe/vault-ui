@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.70.0
 
 - fix: A topic card's **title** now opens the topic in Obsidian, and a footer button opens the tracked-work detail — the same two affordances a task or goal card carries. Shipped the other way round first: the title opened the detail and the 📝 icon opened Obsidian, the reverse of the board's established pattern (a task card's title in `cardShellHtml` and a goal card's title both carry the Obsidian URL). Operator-reported in review, on a topic in a different vault, after the view had already been deployed.
 
