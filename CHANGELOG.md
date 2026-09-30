@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The session chip is removed, and the `app.js` cachebust token bumped with it. The chip duplicated what the card's action area already says — `● Live`, `⏳ Starting…`, `▶ Resume` and `▶ Start` encode the same four states — and the one state it alone conveyed (`indeterminate`, 2 cards) did not justify a chip on the rest. `quiet` was the weakest case: it appeared on roughly half the board and does not mean "orphan", since a task whose session ended because the work finished is `quiet` too, so it could not be scanned for. The liveness work this series was for is unaffected — the `● Live` badge now correctly marks a session the registry lists, which is what the board was missing.
+
 ## v0.71.3
 
 - fix: The `app.js` cachebust token is bumped again, because v0.71.2 changed `app.js` and left it byte-identical to v0.71.1 — so the chip fixes would not have reached a browser that had the board open across the previous deploy, exactly as happened with v0.71.0. This is the second occurrence; nothing in the repo currently enforces the bump, so it stays a thing a human has to remember.

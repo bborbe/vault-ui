@@ -1540,44 +1540,6 @@ function navigateToBlocker(kind, name) {
     }
 }
 
-// Session-state chip — the merged liveness signal (session registry ∪ transcript
-// recency ∪ process scan), rendered on EVERY card including `none`, so the field
-// reads as a column rather than a badge that only appears when a session happens
-// to be running. `live` is the value the registry rescues: an alive-but-idle
-// worker whose transcript has gone stale, which used to render `quiet`.
-// The titles map is module-level because a board render walks every card.
-const SESSION_STATE_TITLES = {
-    live: 'A Claude session for this task is running',
-    quiet: 'Session id is set, but nothing is running — Resume is safe',
-    indeterminate: 'Session id is set, but no transcript was found — cannot prove it dead',
-    none: 'No Claude session is bound to this task',
-};
-
-function sessionChipHtml(item) {
-    const state = item.session_state || 'none';
-    // `live` is already carried by the ● Live badge in the card's action area —
-    // rendering the chip too puts two live indicators on the same card. The
-    // chip's job is the states the board otherwise cannot show at all: `quiet`
-    // (session id set, nothing running — the orphan case), `indeterminate`, and
-    // `none`. So it defers to the badge on `live` and covers the rest.
-    // The action area already owns two states with their own badges: `⏳ Starting…`
-    // (a launch turn in flight) and `● Live`. Rendering the chip for those too puts
-    // two indicators on one card — and during a launch the two actively contradict,
-    // because a session that started seconds ago has no transcript yet and so
-    // classifies `indeterminate` while the badge says it is starting. Same
-    // condition the button helper uses, so the two can never disagree.
-    const isStarting = !!item.claude_session_started
-        || startingTasks.has(item.id)
-        || startingGoals.has(item.id);
-    // `live` and the in-flight launch are the badge's to show. `none` is the
-    // default state — the absence of a session, not a finding about one — and it
-    // is the majority of the board, so rendering it would put a chip on most
-    // cards to say nothing. What is left is what the operator cannot otherwise
-    // see: `quiet` (an orphan) and `indeterminate`.
-    if (state === 'live' || state === 'none' || isStarting) return '';
-    return `<span class="session-chip session-${escapeHtml(state)}" title="${escapeHtml(SESSION_STATE_TITLES[state] || '')}">${escapeHtml(state)}</span>`;
-}
-
 function createTaskCard(task) {
     const card = document.createElement('div');
     card.className = 'task-card';
@@ -1632,13 +1594,10 @@ function createTaskCard(task) {
 
     const startButton = sessionButtonHtml('task', task);
     const flagButton = `<button class="flag-btn ${task.flag ? 'flagged' : ''}" onclick="toggleFlag('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}', ${task.flag})" title="${task.flag ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${task.flag ? '🚩' : '⚑'}</button>`;
-    const sessionChip = sessionChipHtml(task);
-
     const footerLeft = `
         ${flagButton}
         ${holdBadge}
         ${assigneeBadge}
-        ${sessionChip}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
     `;
     // Age rides with the action so it can't be orphaned on its own wrapped row.
