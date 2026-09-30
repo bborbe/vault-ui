@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The `app.js` cachebust token is bumped again, because v0.71.2 changed `app.js` and left it byte-identical to v0.71.1 — so the chip fixes would not have reached a browser that had the board open across the previous deploy, exactly as happened with v0.71.0. This is the second occurrence; nothing in the repo currently enforces the bump, so it stays a thing a human has to remember.
+
 ## v0.71.2
 
 - fix: A card whose launch turn is in flight no longer shows a session chip beside its `⏳ Starting…` badge. A session that started seconds ago has no transcript yet, so it classified `indeterminate` — leaving the card asserting both that it was starting and that its liveness could not be determined. The chip now defers to the Starting badge on exactly the condition the button helper uses, so the two cannot disagree.
