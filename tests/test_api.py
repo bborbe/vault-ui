@@ -2,6 +2,7 @@
 
 import asyncio
 import itertools
+import json
 import logging
 import os
 import shlex
@@ -380,6 +381,149 @@ def test_list_tasks_default_filter_includes_hold(
     assert "hold" in statuses
     assert "in_progress" in statuses
     assert "aborted" not in statuses
+
+
+def _session_live_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tasks: list[Task],
+    registry_session_ids: set[str],
+) -> MagicMock:
+    """Build a mocked client whose tasks classify against a tmp session registry.
+
+    Both Claude roots are pinned at tmp dirs so nothing reaches the real
+    ``~/.claude/``: ``_claude_sessions_root`` carries the registry entries and
+    ``_claude_projects_root`` is empty, so a task's state is decided purely by
+    whether its id is in ``registry_session_ids``.
+    """
+    client = _make_vault_client(tasks)
+
+    registry_root = tmp_path / "claude-sessions"
+    registry_root.mkdir(parents=True, exist_ok=True)
+    for index, session_id in enumerate(sorted(registry_session_ids)):
+        (registry_root / f"{40000 + index}.json").write_text(
+            json.dumps(
+                {
+                    "pid": 40000 + index,
+                    "sessionId": session_id,
+                    "cwd": str(tmp_path),
+                    "status": "idle",
+                    "name": "some task",
+                    "startedAt": "2026-09-30T10:00:00.000Z",
+                }
+            )
+        )
+
+    projects_root = tmp_path / "claude-projects"
+    projects_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("vault_ui.activity._claude_sessions_root", lambda: registry_root)
+    monkeypatch.setattr("vault_ui.activity._claude_projects_root", lambda: projects_root)
+    return client
+
+
+def test_list_tasks_session_live_filters_to_live_rows(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``?session_live=true`` narrows the list; omitting it changes nothing."""
+    live_id = "11111111-1111-4111-8111-111111111111"
+    idle_id = "22222222-2222-4222-8222-222222222222"
+    client = _session_live_client(
+        tmp_vault,
+        monkeypatch,
+        [
+            _make_task(task_id="Live Task", status="in_progress", claude_session_id=live_id),
+            _make_task(task_id="Idle Task", status="in_progress", claude_session_id=idle_id),
+        ],
+        registry_session_ids={live_id},
+    )
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+    app = create_app()
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        unfiltered = TestClient(app).get("/api/tasks?vault=TestVault")
+        filtered = TestClient(app).get("/api/tasks?vault=TestVault&session_live=true")
+
+    assert unfiltered.status_code == 200
+    assert filtered.status_code == 200
+
+    all_tasks = unfiltered.json()
+    live_tasks = filtered.json()
+
+    # Unchanged from today: both rows, the registered one live and the other not.
+    assert {t["id"]: t["session_state"] for t in all_tasks} == {
+        "Live Task": "live",
+        "Idle Task": "indeterminate",
+    }
+    # The parameter narrows rather than replaces: only the live row survives.
+    assert [t["id"] for t in live_tasks] == ["Live Task"]
+
+    # The new parameter adds no field to TaskResponse — every serialized row
+    # carries the same key set in both responses.
+    unfiltered_keys = {frozenset(t) for t in all_tasks}
+    assert len(unfiltered_keys) == 1
+    assert unfiltered_keys == {frozenset(t) for t in live_tasks}
+
+
+def test_list_tasks_session_live_false_is_unchanged(
+    tmp_vault: Path,
+    sample_task_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``session_live=false`` behaves exactly like omitting it."""
+    live_id = "11111111-1111-4111-8111-111111111111"
+    idle_id = "22222222-2222-4222-8222-222222222222"
+    client = _session_live_client(
+        tmp_vault,
+        monkeypatch,
+        [
+            _make_task(task_id="Live Task", status="in_progress", claude_session_id=live_id),
+            _make_task(task_id="Idle Task", status="in_progress", claude_session_id=idle_id),
+        ],
+        registry_session_ids={live_id},
+    )
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+    app = create_app()
+
+    with patch(
+        "vault_ui.api.tasks.get_vault_cli_client_for_vault",
+        return_value=client,
+    ):
+        response = TestClient(app).get("/api/tasks?vault=TestVault&session_live=false")
+
+    assert response.status_code == 200
+    assert {t["id"] for t in response.json()} == {"Live Task", "Idle Task"}
 
 
 def test_run_task_endpoint_success(

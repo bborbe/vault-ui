@@ -11,6 +11,7 @@ file mtime, and a session whose transcript is not on this machine — one that
 ran in the cloud or a container — does the same.
 """
 
+import json
 import logging
 import os
 import re
@@ -56,6 +57,60 @@ _ps_cache: tuple[float, str] | None = None
 
 def _claude_projects_root() -> Path:
     return Path.home() / ".claude" / "projects"
+
+
+def _claude_sessions_root() -> Path:
+    """The harness's own session registry — one ``<pid>.json`` per running session.
+
+    Anchored on ``Path.home()`` so a test can point it at a tmp directory, the
+    same seam ``_claude_projects_root`` provides for the transcript root. This
+    is the on-disk registry the Claude Code harness maintains; it is unrelated
+    to ``launch_registry`` / ``session_lock_registry``, which are in-memory and
+    process-local.
+    """
+    return Path.home() / ".claude" / "sessions"
+
+
+def read_registry_session_ids(root: Path | None = None) -> set[str]:
+    """The ``sessionId`` of every entry in the Claude session registry.
+
+    The harness writes one ``<pid>.json`` per live Claude Code session while it
+    runs, so the file's presence is the harness's own record that a session is
+    alive — the signal transcript recency cannot give, because an open-but-idle
+    session stops writing its transcript while its process stays up.
+
+    Never raises: a missing or unreadable directory, an unreadable file, and a
+    file whose contents are not valid JSON each contribute nothing, and a file
+    whose JSON parses but carries no ``sessionId`` is skipped. Only the ids that
+    were readable are returned.
+
+    Deliberately uncached — the caller reads it once per request, and a cache
+    would keep a registry-live session rendering live after its process exits.
+
+    Args:
+        root: Registry directory. Defaults to ``_claude_sessions_root()``; the
+            parameter exists so tests can point it at a tmp directory.
+    """
+    if root is None:
+        root = _claude_sessions_root()
+
+    ids: set[str] = set()
+    try:
+        paths = list(root.glob("*.json"))
+    except OSError as e:
+        logger.debug("[Activity] Cannot read session registry %s: %s", root, e)
+        return ids
+
+    for path in paths:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.debug("[Activity] Cannot read session registry entry %s: %s", path, e)
+            continue
+        session_id = data.get("sessionId") if isinstance(data, dict) else None
+        if session_id:
+            ids.add(session_id)
+    return ids
 
 
 def _mtime_or_none(path: Path) -> datetime | None:
@@ -394,36 +449,47 @@ def classify_session_state(
     projects_root: Path | None = None,
     now: datetime | None = None,
     resume_session_ids: set[str] | None = None,
+    registry_session_ids: set[str] | None = None,
 ) -> str | None:
     """Classify the Claude session a task/goal card refers to.
 
     Returns one of:
 
     - ``None`` — no ``claude_session_id``; a human task, nothing to classify.
-    - ``"live"`` — the transcript was written within ``LIVE_WINDOW``, OR the
-      transcript is stale but a ``claude --resume <uuid>`` or
-      ``claude --session-id <uuid>`` process for this session is alive on this
-      host. Either way a session is running right now and the wall must not
-      offer Resume.
-    - ``"quiet"`` — a transcript exists, is older than ``LIVE_WINDOW``, and no
-      live ``--resume``/``--session-id`` process matches; the session ended and
+    - ``"live"`` — the harness's session registry lists this session, OR the
+      transcript was written within ``LIVE_WINDOW``, OR the transcript is stale
+      but a ``claude --resume <uuid>`` or ``claude --session-id <uuid>`` process
+      for this session is alive on this host. Any one of the three means a
+      session is running right now and the wall must not offer Resume.
+    - ``"quiet"`` — none of the three signals fires: no registry entry, a
+      transcript exists and is older than ``LIVE_WINDOW``, and no live
+      ``--resume``/``--session-id`` process matches; the session ended and
       Resume is safe (vault-cli's flock releases on process death).
     - ``"indeterminate"`` — a session id is set but no transcript can be found;
       the session cannot be proven dead (manual terminal ``/resume`` in another
       cwd, a cloud/container session, an entity-name session the resolver can't
       match). Do not offer a Resume we cannot honor.
 
-    Liveness is transcript-recency plus a ``--resume``/``--session-id`` process
-    cross-check. The task file mtime alone is never a liveness signal — it moves
-    when a human edits the file and says nothing about whether a Claude session
-    runs. The ``ps`` cross-check closes the open-but-idle gap: a session
-    launched via ``cc-personal --resume <id>`` or a headless
-    ``--session-id <uuid>`` launch keeps its process alive while its transcript
-    stops being written, so recency alone would wrongly read it as quiet and
-    the wall would offer a corrupting Resume.
+    Liveness is the session registry, plus transcript recency, plus a
+    ``--resume``/``--session-id`` process cross-check. The task file mtime alone
+    is never a liveness signal — it moves when a human edits the file and says
+    nothing about whether a Claude session runs. The registry is authoritative
+    and is checked first: the harness itself knows the session is running, so an
+    alive-but-idle worker — no transcript write for five minutes and no resume
+    flag on its command line — reads live rather than quiet, and a session whose
+    transcript is not on this host reads live rather than indeterminate. The
+    ``ps`` cross-check covers the remaining gap: a session launched via
+    ``cc-personal --resume <id>`` or a headless ``--session-id <uuid>`` launch
+    keeps its process alive while its transcript stops being written, so recency
+    alone would wrongly read it as quiet and the wall would offer a corrupting
+    Resume.
     """
     if not session_id:
         return None
+    if registry_session_ids is None:
+        registry_session_ids = read_registry_session_ids()
+    if session_id in registry_session_ids:
+        return "live"
     mtime = transcript_mtime(session_id, project_dir, projects_root)
     if mtime is None:
         return "indeterminate"

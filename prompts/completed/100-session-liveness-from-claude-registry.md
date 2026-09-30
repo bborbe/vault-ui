@@ -1,6 +1,12 @@
 ---
-status: draft
+status: completed
+summary: Merged the Claude session registry (~/.claude/sessions/) into session_state as an authoritative third liveness signal, threaded once per request through both response builders, and added a session_live filter to GET /api/tasks.
+execution_id: vault-ui-session-live-exec-100-session-liveness-from-claude-registry
+dark-factory-version: v0.196.0
 created: "2026-09-30T20:50:00Z"
+queued: "2026-09-30T19:12:44Z"
+started: "2026-09-30T19:13:01Z"
+completed: "2026-09-30T19:18:03Z"
 ---
 
 # Mark a Session Live From the Claude Registry, Not Only From Transcript Recency

@@ -1,10 +1,13 @@
 """Activity-age resolution: newer of task file mtime and session transcript mtime."""
 
+import json
 import os
 import signal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from vault_ui.activity import (
     LIVE_WINDOW,
@@ -16,6 +19,7 @@ from vault_ui.activity import (
     classify_session_state,
     compute_activity_date,
     item_has_live_launch,
+    read_registry_session_ids,
     terminate_launch_process,
     terminate_resumed_session,
     transcript_mtime,
@@ -62,6 +66,31 @@ def _write_transcript(directory: Path, session_id: str, age: timedelta) -> Path:
     path.write_text('{"type":"mode"}\n')
     when = (datetime.now(tz=UTC) - age).timestamp()
     os.utime(path, (when, when))
+    return path
+
+
+def _write_registry_entry(directory: Path, session_id: str, pid: int = 12345) -> Path:
+    """Write one ``<pid>.json`` session-registry entry, as the harness writes it.
+
+    The payload carries the fields the harness actually records (``pid``,
+    ``sessionId``, ``cwd``, ``status``, ``name``, ``startedAt``) rather than a
+    bare ``{"sessionId": ...}`` stub, so an upstream rename of the ``sessionId``
+    key fails a test instead of silently degrading every row to ``quiet``.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{pid}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "sessionId": session_id,
+                "cwd": "/Users/someone/Documents/vault",
+                "status": "idle",
+                "name": "some task",
+                "startedAt": "2026-09-30T10:00:00.000Z",
+            }
+        )
+    )
     return path
 
 
@@ -274,6 +303,162 @@ def test_classify_indeterminate_when_no_transcript(tmp_path: Path) -> None:
     assert (
         classify_session_state(SESSION_ID, projects_root / "-vault", projects_root)
         == "indeterminate"
+    )
+
+
+# --- session registry (~/.claude/sessions) ---
+
+
+def test_read_registry_returns_session_ids(tmp_path: Path) -> None:
+    registry_root = tmp_path / "sessions"
+    _write_registry_entry(registry_root, SESSION_ID, pid=64387)
+    _write_registry_entry(registry_root, "0bc9bb57-7034-49b5-b73c-70fe0682e953", pid=64388)
+
+    assert read_registry_session_ids(registry_root) == {
+        SESSION_ID,
+        "0bc9bb57-7034-49b5-b73c-70fe0682e953",
+    }
+
+
+def test_read_registry_missing_directory_is_empty(tmp_path: Path) -> None:
+    """A host with no registry directory degrades to no ids, never an exception."""
+    assert read_registry_session_ids(tmp_path / "nope") == set()
+
+
+def test_read_registry_unreadable_directory_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PermissionError on the directory read is swallowed, not raised.
+
+    Patched rather than chmod'd: the pinned container runs as uid 0, for whom
+    ``chmod 000`` does not raise, so a chmod-based test would skip here and
+    leave this branch covered by nothing.
+    """
+    registry_root = tmp_path / "sessions"
+    registry_root.mkdir()
+
+    def _denied(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "glob", _denied)
+
+    assert read_registry_session_ids(registry_root) == set()
+
+
+def test_read_registry_skips_malformed_and_sessionless_entries(tmp_path: Path) -> None:
+    """A malformed file contributes nothing; the valid entry still comes back."""
+    registry_root = tmp_path / "sessions"
+    registry_root.mkdir()
+    (registry_root / "999.json").write_text("{ this is not json")
+    (registry_root / "1000.json").write_text(json.dumps({"pid": 1000, "cwd": "/tmp"}))
+    _write_registry_entry(registry_root, SESSION_ID, pid=12345)
+
+    assert read_registry_session_ids(registry_root) == {SESSION_ID}
+
+
+def test_read_registry_unreadable_file_contributes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry_root = tmp_path / "sessions"
+    unreadable = _write_registry_entry(registry_root, "unreadable-session", pid=1)
+    _write_registry_entry(registry_root, SESSION_ID, pid=2)
+
+    original_read_text = Path.read_text
+
+    def _read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == unreadable:
+            raise PermissionError("denied")
+        return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+
+    assert read_registry_session_ids(registry_root) == {SESSION_ID}
+
+
+def test_classify_registry_live_beats_stale_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression this change fixes: an alive-but-idle worker.
+
+    Stale transcript and no ``--resume``/``--session-id`` process would read
+    ``quiet`` under the transcript/ps model alone — the harness registry is the
+    only signal that says the session is still running.
+    """
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    _write_transcript(project_dir, SESSION_ID, timedelta(hours=3))
+    registry_root = tmp_path / "sessions"
+    _write_registry_entry(registry_root, SESSION_ID)
+    monkeypatch.setattr("vault_ui.activity._claude_sessions_root", lambda: registry_root)
+
+    assert (
+        classify_session_state(SESSION_ID, project_dir, projects_root, resume_session_ids=set())
+        == "live"
+    )
+
+
+def test_classify_registry_live_without_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The registry check runs BEFORE the transcript lookup, so a registry-live
+    session with no transcript on this host reads live, not indeterminate."""
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    registry_root = tmp_path / "sessions"
+    _write_registry_entry(registry_root, SESSION_ID)
+    monkeypatch.setattr("vault_ui.activity._claude_sessions_root", lambda: registry_root)
+
+    assert classify_session_state(SESSION_ID, projects_root / "-vault", projects_root) == "live"
+
+
+def test_classify_registry_absent_keeps_stale_transcript_quiet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The merge must not make everything live — an unregistered session with a
+    stale transcript and no process is still quiet."""
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    _write_transcript(project_dir, SESSION_ID, timedelta(hours=3))
+    registry_root = tmp_path / "sessions"
+    _write_registry_entry(registry_root, "some-other-session", pid=777)
+    monkeypatch.setattr("vault_ui.activity._claude_sessions_root", lambda: registry_root)
+
+    assert (
+        classify_session_state(SESSION_ID, project_dir, projects_root, resume_session_ids=set())
+        == "quiet"
+    )
+
+
+def test_classify_empty_session_id_is_none_despite_registry(tmp_path: Path) -> None:
+    """A human task is None regardless of what the registry holds."""
+    registry_root = tmp_path / "sessions"
+    _write_registry_entry(registry_root, SESSION_ID)
+    registry = read_registry_session_ids(registry_root)
+    assert registry == {SESSION_ID}
+
+    assert classify_session_state(None, tmp_path, tmp_path, registry_session_ids=registry) is None
+    assert classify_session_state("", tmp_path, tmp_path, registry_session_ids=registry) is None
+
+
+def test_classify_missing_registry_matches_transcript_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No registry directory → classification equals the transcript/ps model."""
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "-vault"
+    stale_id = SESSION_ID
+    fresh_id = "0bc9bb57-7034-49b5-b73c-70fe0682e953"
+    _write_transcript(project_dir, stale_id, timedelta(hours=3))
+    _write_transcript(project_dir, fresh_id, timedelta(seconds=30))
+    monkeypatch.setattr("vault_ui.activity._claude_sessions_root", lambda: tmp_path / "nope")
+
+    assert (
+        classify_session_state(stale_id, project_dir, projects_root, resume_session_ids=set())
+        == "quiet"
+    )
+    assert (
+        classify_session_state(fresh_id, project_dir, projects_root, resume_session_ids=set())
+        == "live"
     )
 
 

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from vault_ui.activity import (
     classify_session_state,
     compute_activity_date,
+    read_registry_session_ids,
     terminate_launch_process,
     terminate_resumed_session,
 )
@@ -654,6 +655,7 @@ async def _process_vault(
     cutoff: datetime,
     lookback: datetime,
     vault_task_cache: dict[str, tuple[float, float, list[Task]]],
+    registry_session_ids: set[str],
 ) -> list[TaskResponse]:
     client = get_vault_cli_client_for_vault(vault_name)
     vault_config = get_vault_config(vault_name)
@@ -773,7 +775,7 @@ async def _process_vault(
             )
 
     # Convert to response models
-    return [_task_to_response(task, vault_config) for task in tasks]
+    return [_task_to_response(task, vault_config, registry_session_ids) for task in tasks]
 
 
 @router.get("/tasks", response_model=list[TaskResponse])
@@ -785,6 +787,7 @@ async def list_tasks(
     assignee: Annotated[list[str] | None, Query()] = None,
     goal: Annotated[list[str] | None, Query()] = None,
     upcoming_hours: Annotated[int, Query(ge=0, le=168)] = 8,
+    session_live: Annotated[bool, Query()] = False,
 ) -> list[TaskResponse]:
     """List tasks from Obsidian vault(s).
 
@@ -793,6 +796,8 @@ async def list_tasks(
         status: Comma-separated list of statuses to filter (e.g. "in_progress,todo")
         phase: Comma-separated list of phases to filter (e.g. "planning,implementation")
         assignee: Filter by assignee name
+        session_live: When true, keep only tasks whose ``session_state`` is
+            ``"live"`` — a session the board can prove is running right now.
 
     Returns:
         List of tasks matching the filter
@@ -818,6 +823,11 @@ async def list_tasks(
     vault_task_cache: dict[str, tuple[float, float, list[Task]]] = (
         request.app.state.vault_task_cache
     )
+    # Read the harness's session registry ONCE per request, not per card — the
+    # board lists hundreds of cards and each would otherwise re-read every
+    # registry file. Uncached by design: a worker that exits must flip to quiet
+    # on the next request without a server restart.
+    registry_session_ids = read_registry_session_ids()
     results = await asyncio.gather(
         *[
             _process_vault(
@@ -830,6 +840,7 @@ async def list_tasks(
                 cutoff,
                 lookback,
                 vault_task_cache,
+                registry_session_ids,
             )
             for vault_name in vault_names
         ],
@@ -851,12 +862,18 @@ async def list_tasks(
         assert isinstance(result, list), f"unexpected gather result type: {type(result)}"
         all_tasks.extend(result)
 
+    # Applied over the assembled list, so it composes with the vault/status/
+    # phase/assignee/goal filters rather than replacing them.
+    if session_live:
+        all_tasks = [t for t in all_tasks if t.session_state == "live"]
+
     return all_tasks
 
 
 def _goal_to_response(
     goal: Goal,
     vault_config: VaultConfig,
+    registry_session_ids: set[str],
     claude_session_started: str | None = None,
     upcoming: bool = False,
     blockers: list[str] | None = None,
@@ -867,6 +884,10 @@ def _goal_to_response(
     894): ``obsidian://open?vault=<quote(vault_name)>&file=<quote(goals_path)>``.
     The goals folder name is discovered from the vault's parent directory
     using the same suffix match the cache uses (``*Goals``).
+
+    ``registry_session_ids`` is required, not defaulted: the caller reads the
+    registry once per request, and a per-card default would re-read every
+    registry file for every card on the board.
     """
     # Goal files live under a *Goals folder in the vault root.
     # Use the configured tasks_folder's parent (the vault root) and the
@@ -889,6 +910,7 @@ def _goal_to_response(
     session_state = classify_session_state(
         goal.claude_session_id,
         derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
+        registry_session_ids=registry_session_ids,
     )
 
     return GoalResponse(
@@ -920,6 +942,7 @@ async def _process_goal_vault(
     vault_goal_cache: dict[str, tuple[float, float, list[Goal]]],
     now: datetime,
     cutoff: datetime,
+    registry_session_ids: set[str],
 ) -> list[GoalResponse]:
     """Fetch and filter goals for one vault (parallel to _process_vault).
 
@@ -1008,6 +1031,7 @@ async def _process_goal_vault(
         _goal_to_response(
             g,
             vault_config,
+            registry_session_ids,
             claude_session_started=(
                 None
                 if registry.state(vault_config.name, g.id) == FINISHED
@@ -1052,6 +1076,8 @@ async def list_goals(
     vault_goal_cache: dict[str, tuple[float, float, list[Goal]]] = (
         request.app.state.vault_goal_cache
     )
+    # Read once per request, same as list_tasks — never per card.
+    registry_session_ids = read_registry_session_ids()
     results = await asyncio.gather(
         *[
             _process_goal_vault(
@@ -1061,6 +1087,7 @@ async def list_goals(
                 vault_goal_cache,
                 now,
                 cutoff,
+                registry_session_ids,
             )
             for vault_name in vault_names
         ],
@@ -2899,8 +2926,15 @@ async def reload_config_endpoint(request: Request) -> dict[str, list[str]]:
     return {"vaults": [vault.name for vault in config.vaults], "watchers": watcher_vault_names()}
 
 
-def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
-    """Convert Task to TaskResponse."""
+def _task_to_response(
+    task: Task, vault_config: VaultConfig, registry_session_ids: set[str]
+) -> TaskResponse:
+    """Convert Task to TaskResponse.
+
+    ``registry_session_ids`` is required, not defaulted: the caller reads the
+    session registry once per request, and a per-card default would re-read
+    every registry file for every card on the board.
+    """
     # Build Obsidian URL
     # Format: obsidian://open?vault=VaultName&file=Path/To/File.md
     file_path = f"{vault_config.tasks_folder}/{task.id}.md"
@@ -2914,6 +2948,7 @@ def _task_to_response(task: Task, vault_config: VaultConfig) -> TaskResponse:
     session_state = classify_session_state(
         task.claude_session_id,
         derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
+        registry_session_ids=registry_session_ids,
     )
 
     return TaskResponse(
