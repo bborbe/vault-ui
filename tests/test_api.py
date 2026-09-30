@@ -1690,7 +1690,7 @@ def test_update_task_flag_sets_field(
     )
     assert response.status_code == 200
     assert response.json() == {"status": "success", "task_id": "Test Task", "flag": True}
-    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "flag", "true")
+    mock_vault_client.set_field.assert_awaited_once_with("Test Task", "flag", "true", by="operator")
 
 
 def test_update_task_flag_clears_field(

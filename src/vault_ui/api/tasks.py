@@ -2027,6 +2027,11 @@ async def update_task_flag(
     never reach frontmatter from here. On success the change is broadcast so
     open boards re-render with the flagged card sorted to the top.
 
+    The set path declares ``by="operator"``: this toggle is the operator's own
+    surface, and ``--by operator`` is what records the flag as the operator's
+    (``flag_set_by: operator``) rather than as unattributed. Clearing needs no
+    actor — ``vault-cli task clear`` takes no ``--by``.
+
     Args:
         vault: Vault name
         task_id: Task ID (filename without .md)
@@ -2046,7 +2051,7 @@ async def update_task_flag(
     try:
         client = get_vault_cli_client_for_vault(vault)
         if request.flag:
-            await client.set_field(task_id, "flag", "true")
+            await client.set_field(task_id, "flag", "true", by="operator")
         else:
             await client.clear_field(task_id, "flag")
     except FileNotFoundError as e:

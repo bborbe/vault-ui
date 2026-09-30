@@ -26,6 +26,7 @@ Full system map: [recurring-task-creator/docs/system-map.md](https://github.com/
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` command)
+- `vault-cli >= 0.156.0` on `PATH` (the flag toggle passes `--by operator`; older versions reject it with `unknown flag: --by`)
 - An Obsidian vault with tasks in frontmatter format
 
 ## Installation
