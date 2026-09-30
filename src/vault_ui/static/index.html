@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vault UI</title>
-    <link rel="stylesheet" href="style.css?v=2026-09-14-card-footer-jira-row">
+    <link rel="stylesheet" href="style.css?v=2026-09-30-topics-view">
 </head>
 <body>
     <div class="app">
@@ -13,6 +13,7 @@
             <div class="view-toggle" data-testid="view-toggle" role="tablist" aria-label="View">
                 <button type="button" class="view-toggle-btn" data-view="tasks" aria-selected="true">Tasks</button>
                 <button type="button" class="view-toggle-btn" data-view="goals" aria-selected="false">Goals</button>
+                <button type="button" class="view-toggle-btn" data-view="topics" aria-selected="false">Topics</button>
             </div>
             <div class="header-controls">
                 <div class="vault-selector" id="vault-selector">
@@ -141,6 +142,17 @@
         </div>
     </div>
 
-    <script src="app.js?v=2026-09-14-card-footer-jira-row"></script>
+    <!-- Topic Detail Modal -->
+    <div id="topic-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="topic-modal-title">Topic</h2>
+            <div id="topic-modal-body"></div>
+            <div class="modal-buttons">
+                <button id="topic-modal-close-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=2026-09-30-topics-view"></script>
 </body>
 </html>
