@@ -63,6 +63,27 @@ class Goal:
     blocked_by: list[str] | None = None  # From frontmatter: List of blocking goal wikilinks
 
 
+@dataclass
+class Topic:
+    """Topic from Obsidian vault, as emitted by ``vault-cli topic list``."""
+
+    id: str  # Filename without .md
+    title: str  # vault-cli emits no title for topics; falls back to the name
+    status: str  # From the topic's own frontmatter
+    vault: str  # Vault name this topic belongs to
+
+
+@dataclass
+class TopicDetail:
+    """Topic detail from ``vault-cli topic show``."""
+
+    id: str  # Filename without .md
+    title: str  # vault-cli emits no title for topics; falls back to the name
+    status: str  # From the topic's own frontmatter
+    vault: str  # Vault name this topic belongs to
+    content: str  # Full markdown body, including the ``## Goals`` section
+
+
 class TaskResponse(BaseModel):
     """API response model for tasks."""
 
@@ -131,6 +152,38 @@ class GoalResponse(BaseModel):
     # Live/quiet/indeterminate classification of the claude session, from
     # transcript recency (see activity.py). None when no session id.
     session_state: str | None = None
+
+
+class TopicResponse(BaseModel):
+    """API response model for topics."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    title: str
+    status: str
+    vault: str  # Vault name this topic belongs to
+    obsidian_url: str
+
+
+class TopicDetailResponse(BaseModel):
+    """API response model for a single topic and the work it tracks.
+
+    ``goals``/``tasks``/``unresolved`` hold the ``## Goals`` section's entry
+    names, classified against the vault's unfiltered goals and tasks — see
+    ``tasks.show_topic``.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    title: str
+    status: str
+    vault: str  # Vault name this topic belongs to
+    obsidian_url: str
+    goals: list[str]
+    tasks: list[str]
+    unresolved: list[str]
 
 
 class SessionResponse(BaseModel):

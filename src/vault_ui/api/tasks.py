@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 import time
 from contextlib import suppress
@@ -30,6 +31,9 @@ from vault_ui.api.models import (
     SessionResponse,
     Task,
     TaskResponse,
+    Topic,
+    TopicDetailResponse,
+    TopicResponse,
 )
 from vault_ui.cleanup import derive_claude_project_dir
 from vault_ui.config import VaultConfig
@@ -601,6 +605,45 @@ def _uncompleted_blockers(
     return uncompleted
 
 
+async def _load_unfiltered_tasks(
+    vault_name: str,
+    client: VaultCLIClient,
+    vault_config: VaultConfig,
+    vault_task_cache: dict[str, tuple[float, float, list[Task]]],
+) -> list[Task]:
+    """Return one vault's full, unfiltered task list, via the per-vault mtime cache.
+
+    Shared by ``_process_vault`` (which then filters the result) and the topic
+    detail endpoint (which resolves ``## Goals`` entries against the same task
+    set), so a task name can never resolve differently between the two.
+    """
+    tasks_dir = Path(vault_config.vault_path) / vault_config.tasks_folder
+
+    # Probe mtime (cache miss if directory absent — no exception escapes)
+    try:
+        current_mtime = os.stat(tasks_dir).st_mtime
+    except OSError:
+        current_mtime = None
+
+    # Concurrent misses on the same vault can both write; outcome is idempotent
+    # (same key, same value) so the race is benign.
+    cached = vault_task_cache.get(vault_name)
+    if (
+        current_mtime is not None
+        and cached is not None
+        and cached[0] == current_mtime
+        and time.time() - cached[1] < _CACHE_TTL_SECONDS
+    ):
+        return list(cached[2])  # cache hit — no subprocess
+
+    # Fetch the full unfiltered list (show_all=True passes --all to vault-cli).
+    # Filtering happens in the caller so the cache stays single-slot per vault.
+    raw_tasks = await client.list_tasks(show_all=True)
+    if current_mtime is not None:
+        vault_task_cache[vault_name] = (current_mtime, time.time(), list(raw_tasks))
+    return raw_tasks
+
+
 async def _process_vault(
     vault_name: str,
     status_filter: list[str] | None,
@@ -622,30 +665,7 @@ async def _process_vault(
         else ["todo", "next", "in_progress", "hold", "completed"]
     )
 
-    tasks_dir = Path(vault_config.vault_path) / vault_config.tasks_folder
-
-    # Probe mtime (cache miss if directory absent — no exception escapes)
-    try:
-        current_mtime = os.stat(tasks_dir).st_mtime
-    except OSError:
-        current_mtime = None
-
-    # Concurrent misses on the same vault can both write; outcome is idempotent
-    # (same key, same value) so the race is benign.
-    cached = vault_task_cache.get(vault_name)
-    if (
-        current_mtime is not None
-        and cached is not None
-        and cached[0] == current_mtime
-        and time.time() - cached[1] < _CACHE_TTL_SECONDS
-    ):
-        raw_tasks = list(cached[2])  # cache hit — no subprocess
-    else:
-        # Fetch the full unfiltered list (show_all=True passes --all to vault-cli).
-        # Status filtering happens in Python below so the cache stays single-slot per vault.
-        raw_tasks = await client.list_tasks(show_all=True)
-        if current_mtime is not None:
-            vault_task_cache[vault_name] = (current_mtime, time.time(), list(raw_tasks))
+    raw_tasks = await _load_unfiltered_tasks(vault_name, client, vault_config, vault_task_cache)
 
     # Apply the status filter in Python over the unfiltered cached list
     tasks = [t for t in raw_tasks if t.status in effective_status_filter]
@@ -1062,6 +1082,206 @@ async def list_goals(
         all_goals.extend(result)
 
     return all_goals
+
+
+# The heading whose bullets carry a topic's tracked work. It is named "Goals"
+# but holds the topic's whole set — measured 2026-09-30 on private-personal, the
+# 12 topic pages hold 178 entries of which only 28 resolve to a goal and 150 to
+# a task — so the entries are classified, never assumed to be goals.
+_TOPIC_SECTION_HEADING = "## Goals"
+
+# The leading wikilink of a bullet, alias stripped: "[[Foo|Bar]] rest" -> "Foo".
+_BULLET_WIKILINK_RE = re.compile(r"^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+
+
+def _parse_topic_entries(content: str) -> list[str]:
+    """Return the entry names of a topic page's ``## Goals`` section.
+
+    An entry is the leading ``[[wikilink]]`` of a top-level ``- `` bullet
+    (indented sub-bullets are not entries), with any ``|alias`` stripped. The
+    section runs until the next ``## `` heading. A bullet with no leading
+    wikilink — 14 of the 192 top-level bullets on private-personal's topic
+    pages — contributes no entry and is not counted as unresolved.
+
+    Returns:
+        Entry names in page order; empty when there is no ``## Goals`` section.
+    """
+    entries: list[str] = []
+    in_section = False
+    for line in content.splitlines():
+        if line.startswith("## "):
+            if in_section:
+                break  # section ends at the next top-level heading
+            in_section = line.strip() == _TOPIC_SECTION_HEADING
+            continue
+        if not in_section or not line.startswith("- "):
+            continue
+        match = _BULLET_WIKILINK_RE.match(line[2:].strip())
+        if match:
+            entries.append(match.group(1).strip())
+    return entries
+
+
+def _classify_topic_entries(
+    content: str,
+    goal_names: set[str],
+    task_names: set[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Split a topic's entries into (goals, tasks, unresolved), by name."""
+    goals: list[str] = []
+    tasks: list[str] = []
+    unresolved: list[str] = []
+    for name in _parse_topic_entries(content):
+        if name in goal_names:
+            goals.append(name)
+        elif name in task_names:
+            tasks.append(name)
+        else:
+            unresolved.append(name)
+    return goals, tasks, unresolved
+
+
+def _topic_url(vault_config: VaultConfig, topic_id: str) -> str:
+    """Build the ``obsidian://`` URL for a topic page.
+
+    Same shape as ``_goal_to_response``: the topics folder comes from the
+    vault's configured ``topics_dir`` (vault-cli's ``config list``), never from
+    a ``*Topics`` hierarchy suffix — ``HIERARCHY_SUFFIXES`` has no ``Topics``
+    entry and adding one would change goal and task discovery.
+    """
+    folder = vault_config.topics_folder
+    file_path = f"{folder}/{topic_id}.md" if folder else f"{topic_id}.md"
+    return f"obsidian://open?vault={quote(vault_config.vault_name)}&file={quote(file_path)}"
+
+
+def _topic_to_response(topic: Topic, vault_config: VaultConfig) -> TopicResponse:
+    """Convert a Topic into its API response."""
+    return TopicResponse(
+        id=topic.id,
+        title=topic.title,
+        status=topic.status,
+        vault=vault_config.name,
+        obsidian_url=_topic_url(vault_config, topic.id),
+    )
+
+
+async def _process_topic_vault(vault_name: str) -> list[TopicResponse]:
+    """Fetch one vault's topics (parallel to ``_process_goal_vault``).
+
+    No cache: ``vault-cli watch`` emits only ``task``/``goal``/``theme``/
+    ``objective`` kinds, so no watcher event could ever invalidate a topic
+    cache, and one ``vault-cli topic list --all`` over ~12 files is cheap
+    enough to run per request.
+
+    A vault with no configured ``topics_folder`` contributes an empty list and
+    no error — 12 of 14 vaults have no ``topics_dir`` at all.
+    """
+    vault_config = get_vault_config(vault_name)
+    if vault_config.topics_folder is None:
+        return []
+    client = get_vault_cli_client_for_vault(vault_name)
+    topics = await client.list_topics()
+    return [_topic_to_response(topic, vault_config) for topic in topics]
+
+
+@router.get("/topics", response_model=list[TopicResponse])
+async def list_topics(
+    vault: Annotated[list[str] | None, Query()] = None,
+) -> list[TopicResponse]:
+    """List topics from Obsidian vault(s).
+
+    Accepts the same ``vault`` query parameter as ``GET /api/goals`` and
+    returns every topic — including completed ones, since ``list_topics``
+    always passes ``--all``. A vault with no topics folder contributes nothing.
+
+    Returns:
+        List of topics, in the same vault-major order as ``list_tasks``.
+    """
+    config = get_config()
+    vault_filter = _flatten_filter(vault)
+    vault_names = [v.name for v in config.vaults] if vault_filter is None else vault_filter
+
+    results = await asyncio.gather(
+        *[_process_topic_vault(vault_name) for vault_name in vault_names],
+        return_exceptions=True,
+    )
+
+    all_topics: list[TopicResponse] = []
+    for vault_name, result in zip(vault_names, results, strict=True):
+        # Same degrade path as list_tasks/list_goals: a stale vault is skipped
+        # with a warning so the board renders the surviving vaults.
+        if isinstance(result, VaultNotFoundError):
+            logger.warning("Vault '%s' not found in vault-cli output, skipping", vault_name)
+            continue
+        if isinstance(result, ValueError):
+            continue  # unknown vault, skip (matches list_goals behavior)
+        if isinstance(result, RuntimeError):
+            raise result  # vault-cli failure -> propagates -> HTTP 500
+        assert isinstance(result, list), f"unexpected gather result type: {type(result)}"
+        all_topics.extend(result)
+
+    return all_topics
+
+
+@router.get("/topics/{topic_id}", response_model=TopicDetailResponse)
+async def show_topic(
+    request: Request,
+    vault: str,
+    topic_id: str,
+) -> TopicDetailResponse:
+    """Return one topic and the work it tracks.
+
+    ``vault`` is required and cannot be inferred from ``topic_id``: a topic name
+    is a filename inside a per-vault ``23 Topics/`` folder, so the same name can
+    exist in more than one vault.
+
+    The tracked work is parsed from the ``content`` field ``topic show`` already
+    returns — never read from disk, and never derived from the tasks' ``goals:``
+    frontmatter, which both floods (a goal named by 111 tasks whose page
+    declares 15 entries) and empties (topic-direct tasks carry ``goals: []``).
+
+    Raises:
+        HTTPException: 404 when the vault is unknown or the topic id cannot be
+            resolved; 500 for any other vault-cli failure.
+    """
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        vault_config = get_vault_config(vault)
+        topic = await client.show_topic(topic_id)
+
+        # Resolve against the UNFILTERED goal set: _process_goal_vault applies
+        # the status/assignee filters and a defer_date cutoff, so resolving
+        # against its output would misclassify a deferred goal entry as
+        # unresolved.
+        goals = await client.list_goals(show_all=True)
+        goal_names = {g.id for g in goals}
+        tasks = await _load_unfiltered_tasks(
+            vault, client, vault_config, request.app.state.vault_task_cache
+        )
+        task_names = {t.id for t in tasks}
+
+        goal_entries, task_entries, unresolved_entries = _classify_topic_entries(
+            topic.content, goal_names, task_names
+        )
+
+        return TopicDetailResponse(
+            id=topic.id,
+            title=topic.title,
+            status=topic.status,
+            vault=vault_config.name,
+            obsidian_url=_topic_url(vault_config, topic.id),
+            goals=goal_entries,
+            tasks=task_entries,
+            unresolved=unresolved_entries,
+        )
+    except HTTPException:
+        raise
+    except (FileNotFoundError, VaultNotFoundError, ValueError) as e:
+        logger.warning("Topic not found: vault=%s topic=%s: %s", vault, topic_id, e)
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Error reading topic: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def count_launching_sessions() -> int:

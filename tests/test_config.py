@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vault_ui import factory
-from vault_ui.config import Config, VaultConfig, load_config, resolve_default_config_path
+from vault_ui.config import (
+    Config,
+    VaultConfig,
+    _build_vault_config,
+    load_config,
+    resolve_default_config_path,
+)
 from vault_ui.factory import reload_config
 
 
@@ -290,6 +296,49 @@ def test_load_config_skips_vault_without_path(
         config = load_config(config_file)
     assert [v.name for v in config.vaults] == ["personal"]
     assert "nopath" in caplog.text
+
+
+def test_build_vault_config_without_topics_dir_keeps_the_vault(tmp_path: Path) -> None:
+    """`topics_dir` is optional and never gates the vault: an entry without one
+    is still returned, with `topics_folder is None`. 12 of 14 vaults have no
+    `topics_dir`, so gating on it would empty the board."""
+    vault_dir = tmp_path / "personal"
+    (vault_dir / "24 Tasks").mkdir(parents=True)
+    cli_vault = {"name": "personal", "path": str(vault_dir), "tasks_dir": "24 Tasks"}
+
+    config = _build_vault_config("personal", cli_vault, "Personal", "vault-cli")
+
+    assert config is not None
+    assert config.topics_folder is None
+
+
+def test_build_vault_config_topics_dir_survives_a_missing_folder(tmp_path: Path) -> None:
+    """Unlike `tasks_dir`, a `topics_dir` whose folder is absent on disk is kept —
+    it is a display path, not a gate."""
+    vault_dir = tmp_path / "personal"
+    (vault_dir / "24 Tasks").mkdir(parents=True)
+    cli_vault = {
+        "name": "personal",
+        "path": str(vault_dir),
+        "tasks_dir": "24 Tasks",
+        "topics_dir": "23 Topics",
+    }
+
+    config = _build_vault_config("personal", cli_vault, "Personal", "vault-cli")
+
+    assert config is not None
+    assert config.topics_folder == "23 Topics"
+
+
+def test_load_config_reads_topics_dir(tmp_path: Path) -> None:
+    """`topics_dir` from vault-cli's config list lands on the VaultConfig."""
+    cli_vaults = [_cli_vault(tmp_path, "personal")]
+    cli_vaults[0]["topics_dir"] = "23 Topics"
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("host: 127.0.0.1\n")
+    with patch("subprocess.run", side_effect=_make_side_effect(cli_vaults)):
+        config = load_config(config_file)
+    assert config.vaults[0].topics_folder == "23 Topics"
 
 
 def test_load_config_raises_when_every_vault_is_skipped(tmp_path: Path) -> None:

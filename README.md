@@ -66,6 +66,68 @@ Toggle sits above the columns:
 
 The active view is encoded in the URL as `?view=tasks` or `?view=goals` and survives reload.
 
+## API
+
+The HTTP API is served under `/api`. Two topic endpoints exist alongside the
+task and goal endpoints:
+
+### `GET /api/topics`
+
+Lists a vault's topics.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `vault` | no | Vault name; repeatable, or comma-separated. Omit for every configured vault. |
+
+Every topic is returned, completed ones included — the endpoint always passes
+`--all` to `vault-cli topic list`, whose bare form filters to `in_progress`.
+Each topic carries the status read from that topic's own file, and a vault with
+no topics folder contributes an empty list rather than an error.
+
+```json
+[
+  {
+    "id": "Manager Layer",
+    "title": "Manager Layer",
+    "status": "in_progress",
+    "vault": "personal",
+    "obsidian_url": "obsidian://open?vault=personal&file=23%20Topics/Manager%20Layer.md"
+  }
+]
+```
+
+### `GET /api/topics/{topic_id}`
+
+Returns one topic plus the work it tracks.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `vault` | **yes** | Vault name. A topic name is a filename inside a per-vault `23 Topics/` folder, so it is not unique across vaults and cannot be inferred from the id. |
+
+The response carries the topic's own fields plus three lists classifying the
+entries of the page's `## Goals` section — which holds the topic's whole tracked
+set, not just goals. An entry is the leading `[[wikilink]]` of a top-level `- `
+bullet (alias stripped); a bullet with no leading wikilink contributes nothing.
+Each entry is resolved against the vault's goals and tasks: a name found among
+goals lands in `goals`, among tasks in `tasks`, and an unknown name in
+`unresolved`. A topic with no tracked work returns empty lists.
+
+```json
+{
+  "id": "Manager Layer",
+  "title": "Manager Layer",
+  "status": "in_progress",
+  "vault": "personal",
+  "obsidian_url": "obsidian://open?vault=personal&file=23%20Topics/Manager%20Layer.md",
+  "goals": ["Manager Layer Rollout"],
+  "tasks": ["Wire the topic endpoint"],
+  "unresolved": ["Renamed Task"]
+}
+```
+
+An unknown `vault` and a topic id that `vault-cli topic show` cannot resolve
+both return HTTP 404.
+
 ## Group columns by phase or status
 
 The kanban header has a `groupBy` selector that switches the columns between two dimensions:
@@ -119,6 +181,11 @@ vault-cli vault that has a tasks folder, so vault-ui needs no second copy of
 vault-cli's vault list to keep in sync. A vault-cli vault with no `tasks_dir`,
 or whose tasks folder is missing on disk, is skipped with a warning naming the
 vault rather than stopping startup.
+
+vault-cli's optional per-vault `topics_dir` (e.g. `"23 Topics"`) is picked up as
+`topics_folder`. It is **not** part of that skip gate — most vaults have none,
+and a vault without one still serves its tasks and goals, contributing an empty
+topic list to `GET /api/topics`.
 
 An explicit non-empty `vaults:` block still filters — a vault-cli vault not
 named there stays off the board — and still overrides `vault_name` for the
