@@ -1555,6 +1555,12 @@ const SESSION_STATE_TITLES = {
 
 function sessionChipHtml(item) {
     const state = item.session_state || 'none';
+    // `live` is already carried by the ● Live badge in the card's action area —
+    // rendering the chip too puts two live indicators on the same card. The
+    // chip's job is the states the board otherwise cannot show at all: `quiet`
+    // (session id set, nothing running — the orphan case), `indeterminate`, and
+    // `none`. So it defers to the badge on `live` and covers the rest.
+    if (state === 'live') return '';
     return `<span class="session-chip session-${escapeHtml(state)}" title="${escapeHtml(SESSION_STATE_TITLES[state] || '')}">${escapeHtml(state)}</span>`;
 }
 
