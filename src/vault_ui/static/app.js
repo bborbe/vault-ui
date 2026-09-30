@@ -5,6 +5,7 @@ let currentAssignees = [];
 let currentStatuses = ['in_progress', 'hold', 'completed']; // default — overridden by ?status= URL param; hold shown by default so parked/blocked work isn't forgotten
 let currentGoals = []; // goal filter from URL — empty means no filter
 let upcomingHours = 8; // 0 = hide all deferred tasks; persists in localStorage
+let currentLiveOnly = false; // "live session" filter — sent as the server-side session_live param, synced to ?session_live=
 // Distinct assignees across the selected vaults — sourced from /api/assignees,
 // refreshed on startup and on every vault-selector change. Read by computeAssigneeOptions.
 let availableAssignees = { named: [], hasUnassigned: false };
@@ -90,6 +91,11 @@ function parseURLParams() {
     // Parse goal parameter(s) — supports repeated form (?goal=A&goal=B)
     currentGoals = params.getAll('goal');
 
+    // Parse the "live session" filter — a single boolean. Unlike the filters
+    // above this one is applied server-side (?session_live=true), so the rows
+    // the board renders are exactly the rows the API selected.
+    currentLiveOnly = params.get('session_live') === 'true';
+
     // Parse view parameter — single string, not a list. Must precede the
     // status-default block below so the kind-aware default knows which view it's on.
     const viewParam = params.get('view');
@@ -158,6 +164,7 @@ function setupEventListeners() {
     document.getElementById('close-btn').addEventListener('click', closeModal);
     document.getElementById('topic-modal-close-btn').addEventListener('click', closeTopicModal);
     setupUpcomingWindow();
+    setupLiveFilter();
     setupSortControl();
     setupModalBackdropClose();
     setupDragAndDrop();
@@ -193,6 +200,21 @@ function setupUpcomingWindow() {
             localStorage.setItem('upcomingHours', String(next));
             loadCurrentView();
         }
+    });
+}
+
+// "Live session" filter — a toolbar checkbox, passed to the API as the
+// server-side `?session_live=true` param alongside `status` and `assignee`, so
+// the board re-fetches and the rendered rows are exactly the rows the API
+// selected rather than a second, client-side derivation of them.
+function setupLiveFilter() {
+    const box = document.getElementById('live-session-filter');
+    if (!box) return;
+    box.checked = currentLiveOnly;
+    box.addEventListener('change', () => {
+        currentLiveOnly = box.checked;
+        updateURL();
+        loadCurrentView();
     });
 }
 
@@ -811,6 +833,11 @@ function updateURL() {
     // Add goal parameter(s) — emit one repeated param per value
     currentGoals.forEach(g => params.append('goal', g));
 
+    // Persist the live-session filter so a reload lands in the same view
+    if (currentLiveOnly) {
+        params.set('session_live', 'true');
+    }
+
     // Add view parameter — always emit explicitly (so reload lands in the same view)
     params.set('view', currentView);
 
@@ -924,6 +951,12 @@ async function loadTasks() {
 
         // Upcoming-window cutoff (hours ahead) — 0 hides all deferred tasks
         params.set('upcoming_hours', String(upcomingHours));
+
+        // Live-session filter — server-side, so the board's row count and the
+        // API's count come from the same query rather than two derivations.
+        if (currentLiveOnly) {
+            params.set('session_live', 'true');
+        }
 
         // Fetch tasks
         const response = await fetch(`/api/tasks?${params.toString()}`);
@@ -1507,6 +1540,30 @@ function navigateToBlocker(kind, name) {
     }
 }
 
+// Session-state chip — the merged liveness signal (session registry ∪ transcript
+// recency ∪ process scan), rendered on EVERY card including `none`, so the field
+// reads as a column rather than a badge that only appears when a session happens
+// to be running. `live` is the value the registry rescues: an alive-but-idle
+// worker whose transcript has gone stale, which used to render `quiet`.
+// The titles map is module-level because a board render walks every card.
+const SESSION_STATE_TITLES = {
+    live: 'A Claude session for this task is running',
+    quiet: 'Session id is set, but nothing is running — Resume is safe',
+    indeterminate: 'Session id is set, but no transcript was found — cannot prove it dead',
+    none: 'No Claude session is bound to this task',
+};
+
+function sessionChipHtml(item) {
+    const state = item.session_state || 'none';
+    // `live` is already carried by the ● Live badge in the card's action area —
+    // rendering the chip too puts two live indicators on the same card. The
+    // chip's job is the states the board otherwise cannot show at all: `quiet`
+    // (session id set, nothing running — the orphan case), `indeterminate`, and
+    // `none`. So it defers to the badge on `live` and covers the rest.
+    if (state === 'live') return '';
+    return `<span class="session-chip session-${escapeHtml(state)}" title="${escapeHtml(SESSION_STATE_TITLES[state] || '')}">${escapeHtml(state)}</span>`;
+}
+
 function createTaskCard(task) {
     const card = document.createElement('div');
     card.className = 'task-card';
@@ -1561,10 +1618,13 @@ function createTaskCard(task) {
 
     const startButton = sessionButtonHtml('task', task);
     const flagButton = `<button class="flag-btn ${task.flag ? 'flagged' : ''}" onclick="toggleFlag('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}', ${task.flag})" title="${task.flag ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${task.flag ? '🚩' : '⚑'}</button>`;
+    const sessionChip = sessionChipHtml(task);
+
     const footerLeft = `
         ${flagButton}
         ${holdBadge}
         ${assigneeBadge}
+        ${sessionChip}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
     `;
     // Age rides with the action so it can't be orphaned on its own wrapped row.

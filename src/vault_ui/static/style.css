@@ -1397,3 +1397,64 @@ h1 {
     font-size: 0.85rem;
     margin: 0.3rem 0;
 }
+
+/* Session-state chip — one per task card, showing the merged liveness signal
+   (session registry ∪ transcript recency ∪ process scan). Rendered for every
+   card, `none` included, so the field reads as a column rather than a badge
+   that only appears when something happens to be running. */
+.session-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.02em;
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: #cbd5e1;             /* slate-300 */
+    background: #334155;        /* slate-700 */
+}
+
+/* live — a session is running. This is the value the registry rescues: an
+   alive-but-idle worker whose transcript has gone stale. */
+.session-chip.session-live {
+    color: #bbf7d0;             /* green-200 */
+    background: #166534;        /* green-800 */
+}
+
+/* indeterminate — session id set, no transcript found; cannot prove it dead */
+.session-chip.session-indeterminate {
+    color: #fde68a;             /* amber-200 */
+    background: #92400e;        /* amber-800 */
+}
+
+/* none — no session bound to this task */
+.session-chip.session-none {
+    color: #94a3b8;             /* slate-400 */
+    background: transparent;
+    border: 1px solid #475569;  /* slate-600 */
+}
+
+/* "Live session" toolbar filter — matches the sibling selects */
+#live-session-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    user-select: none;
+}
+
+#live-session-label:hover {
+    background: #4a4a4a;
+}
+
+#live-session-label input {
+    cursor: pointer;
+    margin: 0;
+}

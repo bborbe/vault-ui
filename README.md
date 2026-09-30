@@ -68,8 +68,29 @@ The active view is encoded in the URL as `?view=tasks` or `?view=goals` and surv
 
 ## API
 
-The HTTP API is served under `/api`. Two topic endpoints exist alongside the
-task and goal endpoints:
+The HTTP API is served under `/api`. The task endpoint is documented below; the
+goal endpoints exist alongside it, and two topic endpoints serve the vault
+hierarchy.
+
+### `GET /api/tasks`
+
+Lists tasks from one or more vaults.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `vault` | no | Vault name; repeatable, or comma-separated. Omit for every configured vault. |
+| `status` | no | Comma-separated statuses to keep (e.g. `in_progress,todo`). Defaults to every status except `aborted`. |
+| `phase` | no | Comma-separated phases to keep (e.g. `planning,execution`). A task with no phase counts as `todo`. |
+| `assignee` | no | Comma-separated assignee names to keep. An empty value matches unassigned tasks. |
+| `goal` | no | Comma-separated goal names; keeps tasks declaring any of them. |
+| `upcoming_hours` | no | Width of the "upcoming" window for deferred tasks, 0–168 hours (default 8). `0` hides deferred tasks entirely. |
+| `session_live` | no | `true` keeps only tasks whose `session_state` is `live` — a Claude session the board can prove is running right now. Default `false`. |
+
+Each task carries `session_state`: `live` when the harness's session registry
+lists the session or its transcript was written within the last five minutes or
+a matching `claude` process is alive; `indeterminate` when a session id is set
+but no transcript can be found; `quiet` when a transcript exists but is stale
+and no process matches; and `null` for a task with no `claude_session_id`.
 
 ### `GET /api/topics`
 
