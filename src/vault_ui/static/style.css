@@ -1321,6 +1321,34 @@ h1 {
     overflow-y: auto;
 }
 
+/* The topic's own status beside its name. The card carries it too, but the
+   detail view is where the operator lands after clicking through, and the
+   status is the first thing they want about the topic. */
+.topic-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.topic-modal-header h2 {
+    margin: 0;
+}
+
+.topic-modal-header .status-badge {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    border: 1px solid #374151;
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+    white-space: nowrap;
+}
+
+/* `.hidden` is scoped per-component in this sheet, not a global utility. */
+.topic-modal-header .status-badge.hidden {
+    display: none;
+}
+
 #topic-modal h3 {
     margin: 1rem 0 0.4rem;
     font-size: 0.95rem;
