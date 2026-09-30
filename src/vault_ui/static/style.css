@@ -1315,6 +1315,23 @@ h1 {
     padding: 0.05rem 0.5rem;
 }
 
+/* Opens the tracked-work detail. The title carries the Obsidian link, exactly
+   as it does on a task or goal card, so the two affordances stay parallel —
+   this button is the topic card's only addition to that shared pair. */
+.topic-detail-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.topic-detail-btn:hover {
+    opacity: 1;
+}
+
 #topic-modal .modal-content {
     max-width: 640px;
     max-height: 80vh;
