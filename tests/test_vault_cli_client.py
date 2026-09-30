@@ -164,12 +164,55 @@ async def test_show_topic_without_fields_falls_back_to_unknown() -> None:
 
 
 async def test_show_topic_not_found_raises_file_not_found() -> None:
-    """An unresolvable topic id raises FileNotFoundError (mapped to a 404)."""
+    """An unresolvable topic id raises FileNotFoundError (mapped to a 404).
+
+    The stderr is the real shape vault-cli emits for an unknown topic —
+    ``Error: find topic: find topic file in <dir>: <id>: file not found``
+    (observed 2026-09-30 against v0.156.0). A synthetic "topic not found"
+    would pass against a classifier that matches nothing real.
+    """
     client = VaultCLIClient("vault-cli", "TestVault")
-    proc = _make_proc(1, b"", b"topic not found")
+    proc = _make_proc(
+        1,
+        b"",
+        b"Error: find topic: find topic file in /vault/23 Topics: No Such Topic: file not found",
+    )
 
     with (
         patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
         pytest.raises(FileNotFoundError),
     ):
         await client.show_topic("No Such Topic")
+
+
+async def test_show_topic_unknown_vault_raises_vault_not_found() -> None:
+    """An unknown vault raises VaultNotFoundError, not FileNotFoundError.
+
+    The two are different 404s, but only this one is skippable by the per-vault
+    fan-out — collapsing them would make a stale vault name indistinguishable
+    from a genuinely missing topic.
+    """
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"Error: get vaults: vault not found: no-such-vault")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(VaultNotFoundError),
+    ):
+        await client.show_topic("Manager Layer")
+
+
+async def test_show_topic_other_failure_raises_runtime_error() -> None:
+    """Any other non-zero exit stays a RuntimeError, so the route's documented
+    500 is reachable rather than being laundered into a "Topic not found" 404."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(1, b"", b"Error: unexpected internal failure")
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError) as excinfo,
+    ):
+        await client.show_topic("Manager Layer")
+
+    assert not isinstance(excinfo.value, FileNotFoundError)
+    assert not isinstance(excinfo.value, VaultNotFoundError)

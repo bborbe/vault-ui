@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 # raising a plain RuntimeError so a genuine vault-cli failure still fails loudly.
 _VAULT_NOT_FOUND_MARKER = "vault not found"
 
+# vault-cli's marker for a topic id it cannot resolve. Observed stderr:
+# ``Error: find topic: find topic file in <dir>: <id>: file not found``.
+# Distinct from _VAULT_NOT_FOUND_MARKER so ``show_topic`` can map an unknown
+# topic to a 404 while still letting a genuine vault-cli failure raise.
+_TOPIC_NOT_FOUND_MARKER = "file not found"
+
 
 class VaultNotFoundError(RuntimeError):
     """vault-cli reports the configured vault name is unknown.
@@ -282,9 +288,12 @@ class VaultCLIClient:
         """Call vault-cli topic show <topic_id> --output json, parse into TopicDetail.
 
         ``topic show`` is the detail command; ``topic get`` is not (it reads a
-        single frontmatter field and takes a second argument). A topic id the
-        vault does not know raises ``FileNotFoundError``, which the API maps to
-        a 404 rather than a bare 500.
+        single frontmatter field and takes a second argument). An unknown vault
+        raises ``VaultNotFoundError`` and a topic id the vault does not know
+        raises ``FileNotFoundError`` — both map to a 404. Any other non-zero
+        exit raises ``RuntimeError``, so a genuine vault-cli failure surfaces as
+        a 500 instead of being reported as "Topic not found". Mirrors
+        ``list_topics``.
         """
         args = [
             self._vault_cli_path,
@@ -303,7 +312,12 @@ class VaultCLIClient:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise FileNotFoundError(f"Topic not found: {topic_id}")
+            stderr_text = stderr.decode().strip()
+            if _VAULT_NOT_FOUND_MARKER in stderr_text:
+                raise VaultNotFoundError(f"vault-cli topic show failed: {stderr_text}")
+            if _TOPIC_NOT_FOUND_MARKER in stderr_text:
+                raise FileNotFoundError(f"Topic not found: {topic_id}")
+            raise RuntimeError(f"vault-cli topic show failed: {stderr_text}")
 
         data: dict[str, Any] = _loads_or_raise(
             stdout, command=args, returncode=proc.returncode, stderr=stderr, expect_object=True
