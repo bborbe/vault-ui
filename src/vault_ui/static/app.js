@@ -1569,7 +1569,12 @@ function sessionChipHtml(item) {
     const isStarting = !!item.claude_session_started
         || startingTasks.has(item.id)
         || startingGoals.has(item.id);
-    if (state === 'live' || isStarting) return '';
+    // `live` and the in-flight launch are the badge's to show. `none` is the
+    // default state — the absence of a session, not a finding about one — and it
+    // is the majority of the board, so rendering it would put a chip on most
+    // cards to say nothing. What is left is what the operator cannot otherwise
+    // see: `quiet` (an orphan) and `indeterminate`.
+    if (state === 'live' || state === 'none' || isStarting) return '';
     return `<span class="session-chip session-${escapeHtml(state)}" title="${escapeHtml(SESSION_STATE_TITLES[state] || '')}">${escapeHtml(state)}</span>`;
 }
 
