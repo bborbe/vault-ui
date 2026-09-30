@@ -11,7 +11,12 @@ let availableAssignees = { named: [], hasUnassigned: false };
 const ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
 let tasksCache = {}; // Map of task ID -> task data
 let goalsCache = {}; // Map of goal ID -> goal data (mirrors tasksCache)
-let currentView = 'tasks'; // 'tasks' | 'goals' — synced to ?view= URL param, default 'tasks'
+// Topic id -> topic data. Keyed by `<vault>\u0000<id>` because a topic name is a
+// filename inside a per-vault `23 Topics/` folder and is NOT unique across
+// vaults — the same collision the detail endpoint's required `vault` param exists
+// to prevent.
+let topicsCache = {};
+let currentView = 'tasks'; // 'tasks' | 'goals' | 'topics' — synced to ?view= URL param, default 'tasks'
 let currentSort = 'default'; // 'default' | 'priority' | 'modified' — column sort key, synced to ?sort= URL param
 let currentGroupBy = 'phase'; // 'phase' | 'status' — derived from currentView (tasks→phase, goals→status); not user-selectable
 let ws = null; // WebSocket connection
@@ -88,7 +93,7 @@ function parseURLParams() {
     // Parse view parameter — single string, not a list. Must precede the
     // status-default block below so the kind-aware default knows which view it's on.
     const viewParam = params.get('view');
-    if (viewParam === 'goals' || viewParam === 'tasks') {
+    if (viewParam === 'goals' || viewParam === 'tasks' || viewParam === 'topics') {
         currentView = viewParam;
     } else {
         currentView = 'tasks';
@@ -107,6 +112,12 @@ function parseURLParams() {
         currentStatuses = statusParams;
     } else if (currentView === 'goals') {
         currentStatuses = ['backlog', 'next', 'in_progress', 'hold', 'completed'];
+    } else if (currentView === 'topics') {
+        // Topics carry a `status:` too, and the vault's enum is the same one —
+        // only in_progress and completed are in use today, but defaulting to the
+        // full span means a topic carrying any other value still gets a column
+        // instead of being fetched and then silently dropped for want of one.
+        currentStatuses = ['backlog', 'next', 'in_progress', 'hold', 'completed'];
     }
     // else: keep the module-level default ['in_progress', 'hold', 'completed'] for Tasks view.
 
@@ -123,7 +134,7 @@ function parseURLParams() {
     // The groupBy UI selector + URL param were removed (the cross-axis combinations
     // weren't useful: tasks-by-status duplicates the status filter dropdown; goals-by-phase
     // is meaningless since goals have no phase).
-    currentGroupBy = currentView === 'goals' ? 'status' : 'phase';
+    currentGroupBy = currentView === 'tasks' ? 'phase' : 'status';
 }
 
 function setupEventListeners() {
@@ -145,6 +156,7 @@ function setupEventListeners() {
     document.getElementById('refresh-btn').addEventListener('click', refreshBoard);
     document.getElementById('copy-btn').addEventListener('click', copyCommand);
     document.getElementById('close-btn').addEventListener('click', closeModal);
+    document.getElementById('topic-modal-close-btn').addEventListener('click', closeTopicModal);
     setupUpcomingWindow();
     setupSortControl();
     setupModalBackdropClose();
@@ -196,6 +208,8 @@ function setupSortControl() {
         updateURL();
         if (currentView === 'goals') {
             renderGoals();
+        } else if (currentView === 'topics') {
+            renderTopics();
         } else {
             renderTasks();
         }
@@ -1085,6 +1099,163 @@ function renderGoals() {
     });
 }
 
+// Topics are the containers every manager loop is scoped to. They carry a
+// `status:` of their own, in the same enum tasks and goals use, so the board
+// groups them into status columns exactly as the Goals view does.
+async function loadTopics() {
+    try {
+        const params = new URLSearchParams();
+        if (currentVault === null) {
+            // No vault param = all vaults
+        } else if (Array.isArray(currentVault)) {
+            currentVault.forEach(v => params.append('vault', v));
+        } else {
+            params.set('vault', currentVault);
+        }
+
+        // Deliberately no `status` param: the endpoint returns every topic (it
+        // always passes `--all` to vault-cli, because the bare `topic list`
+        // filters to in_progress and would hide every completed one). The status
+        // filter is applied below, client-side, over that full set.
+        const response = await fetch(`/api/topics?${params.toString()}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const topics = await response.json();
+        topicsCache = {};
+        topics.forEach(topic => {
+            topicsCache[`${topic.vault}\u0000${topic.id}`] = topic;
+        });
+
+        renderTopics();
+    } catch (error) {
+        console.error('Failed to load topics:', error);
+        showToast(error.message, true);
+    }
+}
+
+// Render the topics board from the topics cache. Topics have no phase, so they
+// always land in status columns; the status filter is applied here because the
+// endpoint returns the full set by design (see loadTopics).
+function renderTopics() {
+    const topics = Object.values(topicsCache)
+        .filter(t => currentStatuses.includes(t.status || 'in_progress'));
+
+    ['in_progress', 'next', 'backlog', 'completed', 'hold', 'aborted'].forEach(id => {
+        const container = document.getElementById(`cards-${id}`);
+        if (container) container.innerHTML = '';
+    });
+
+    topics.sort((a, b) => (a.title || a.id).localeCompare(b.title || b.id));
+
+    topics.forEach(topic => {
+        const container = document.getElementById(`cards-${topic.status || 'in_progress'}`);
+        if (container) container.appendChild(createTopicCard(topic));
+    });
+}
+
+// A topic card: the topic's own status (never a placeholder), an Obsidian link,
+// and a title that opens the tracked-work detail.
+function createTopicCard(topic) {
+    const card = document.createElement('div');
+    card.className = 'task-card topic-card';
+    card.dataset.topicId = topic.id;
+    card.dataset.vault = topic.vault;
+
+    const title = topic.title || topic.id;
+    card.innerHTML = `
+        <div class="card-header">
+            <div class="card-title">
+                <a href="#" class="task-title-link topic-title-link">${escapeHtml(title)}</a>
+            </div>
+        </div>
+        <div class="card-footer">
+            <span class="status-badge">${escapeHtml(topic.status || '')}</span>
+            <a class="obsidian-link" href="${escapeHtml(topic.obsidian_url)}" title="Open in Obsidian">📝</a>
+        </div>`;
+
+    card.querySelector('.topic-title-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        openTopicDetail(topic);
+    });
+    return card;
+}
+
+// Fetch and show a topic's tracked work. Entries are resolved server-side into
+// goals / tasks / unresolved; here each is a link into the view that already
+// renders that kind, so a topic is a way IN to the existing board rather than a
+// second copy of it.
+async function openTopicDetail(topic) {
+    const modal = document.getElementById('topic-modal');
+    if (!modal) return;
+    const titleEl = document.getElementById('topic-modal-title');
+    const bodyEl = document.getElementById('topic-modal-body');
+    titleEl.textContent = topic.title || topic.id;
+    bodyEl.innerHTML = '<p class="topic-empty">Loading…</p>';
+    modal.classList.remove('hidden');
+
+    try {
+        const response = await fetch(
+            `/api/topics/${encodeURIComponent(topic.id)}?vault=${encodeURIComponent(topic.vault)}`
+        );
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const detail = await response.json();
+        bodyEl.innerHTML = '';
+
+        // `view` null → render the names as plain text (an unresolved name has no
+        // board to link into).
+        const section = (label, names, view, emptyText) => {
+            const h = document.createElement('h3');
+            h.textContent = `${label} (${names.length})`;
+            bodyEl.appendChild(h);
+            if (names.length === 0) {
+                const p = document.createElement('p');
+                p.className = 'topic-empty';
+                p.textContent = emptyText;
+                bodyEl.appendChild(p);
+                return;
+            }
+            const ul = document.createElement('ul');
+            ul.className = 'topic-entries';
+            names.forEach(name => {
+                const li = document.createElement('li');
+                if (view === null) {
+                    li.textContent = name;
+                } else {
+                    const a = document.createElement('a');
+                    a.href = `?view=${view}`;
+                    a.textContent = name;
+                    a.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        closeTopicModal();
+                        setView(view);
+                    });
+                    li.appendChild(a);
+                }
+                ul.appendChild(li);
+            });
+            bodyEl.appendChild(ul);
+        };
+
+        section('Goals', detail.goals || [], 'goals', 'No goal entries.');
+        section('Tasks', detail.tasks || [], 'tasks', 'No task entries.');
+        if ((detail.unresolved || []).length > 0) {
+            section('Unresolved', detail.unresolved, null, '');
+        }
+    } catch (error) {
+        console.error('Failed to load topic detail:', error);
+        bodyEl.innerHTML = `<p class="topic-empty">Failed to load: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+function closeTopicModal() {
+    const modal = document.getElementById('topic-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
 async function loadCurrentView() {
     // Single in-flight fetch for the active view only.
     // On initial load with ?view=goals, this is the ONLY fetch issued —
@@ -1092,6 +1263,8 @@ async function loadCurrentView() {
     // performance.getEntriesByType('resource') must not contain /api/tasks.)
     if (currentView === 'goals') {
         await loadGoals();
+    } else if (currentView === 'topics') {
+        await loadTopics();
     } else {
         await loadTasks();
     }
@@ -2495,17 +2668,17 @@ function removeGoalCard(goalId) {
 }
 
 function setView(newView) {
-    if (newView !== 'tasks' && newView !== 'goals') return;
+    if (newView !== 'tasks' && newView !== 'goals' && newView !== 'topics') return;
     currentView = newView;
-    // Grouping follows the view: tasks→phase, goals→status. No user override.
-    currentGroupBy = newView === 'goals' ? 'status' : 'phase';
+    // Grouping follows the view: tasks→phase, goals/topics→status. No user override.
+    currentGroupBy = newView === 'tasks' ? 'phase' : 'status';
     // Reset the status filter to the kind-aware default when toggling views so
-    // that switching from Tasks (in_progress + completed) to Goals doesn't leave
-    // BACKLOG / NEXT columns empty (and vice versa). The operator can still
+    // that switching from Tasks (in_progress + completed) to Goals/Topics doesn't
+    // leave BACKLOG / NEXT columns empty (and vice versa). The operator can still
     // narrow afterwards via the status dropdown.
-    currentStatuses = newView === 'goals'
-        ? ['backlog', 'next', 'in_progress', 'hold', 'completed']
-        : ['in_progress', 'hold', 'completed'];
+    currentStatuses = newView === 'tasks'
+        ? ['in_progress', 'hold', 'completed']
+        : ['backlog', 'next', 'in_progress', 'hold', 'completed'];
     updateStatusLabel();
     renderStatusDropdown();
     updateViewToggle();

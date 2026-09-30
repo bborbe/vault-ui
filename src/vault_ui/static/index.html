@@ -13,6 +13,7 @@
             <div class="view-toggle" data-testid="view-toggle" role="tablist" aria-label="View">
                 <button type="button" class="view-toggle-btn" data-view="tasks" aria-selected="true">Tasks</button>
                 <button type="button" class="view-toggle-btn" data-view="goals" aria-selected="false">Goals</button>
+                <button type="button" class="view-toggle-btn" data-view="topics" aria-selected="false">Topics</button>
             </div>
             <div class="header-controls">
                 <div class="vault-selector" id="vault-selector">
@@ -137,6 +138,17 @@
             <div class="modal-buttons">
                 <button id="takeover-cancel-btn">Cancel</button>
                 <button id="takeover-confirm-btn">End &amp; Resume</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Topic Detail Modal -->
+    <div id="topic-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="topic-modal-title">Topic</h2>
+            <div id="topic-modal-body"></div>
+            <div class="modal-buttons">
+                <button id="topic-modal-close-btn">Close</button>
             </div>
         </div>
     </div>

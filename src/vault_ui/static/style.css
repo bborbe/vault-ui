@@ -1305,3 +1305,50 @@ h1 {
         display: none;
     }
 }
+
+/* Topics view — a topic card, and the modal showing the work it tracks. */
+.topic-card .status-badge {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    border: 1px solid #374151;
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+}
+
+#topic-modal .modal-content {
+    max-width: 640px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+#topic-modal h3 {
+    margin: 1rem 0 0.4rem;
+    font-size: 0.95rem;
+    color: #d1d5db;
+}
+
+.topic-entries {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.topic-entries li {
+    padding: 0.2rem 0;
+    font-size: 0.9rem;
+}
+
+.topic-entries a {
+    color: #60a5fa;
+    text-decoration: none;
+}
+
+.topic-entries a:hover {
+    text-decoration: underline;
+}
+
+.topic-empty {
+    color: #6b7280;
+    font-size: 0.85rem;
+    margin: 0.3rem 0;
+}
