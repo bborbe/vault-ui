@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.68.0
 
 - feat: A flag set from the board now records the operator as its writer. The flag toggle's `PATCH /tasks/{id}/flag` set path passes `--by operator` to `vault-cli task set`, so the flag carries `flag_set_by: operator` instead of reading as an unattributed write; clearing the flag is unchanged (`task clear` takes no `--by`), as is every other `set_field` caller. Requires vault-cli >= 0.156.0 — below that floor the toggle returns HTTP 500 on `unknown flag: --by`.
 
