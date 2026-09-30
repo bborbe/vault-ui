@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.71.3
 
 - fix: The `app.js` cachebust token is bumped again, because v0.71.2 changed `app.js` and left it byte-identical to v0.71.1 — so the chip fixes would not have reached a browser that had the board open across the previous deploy, exactly as happened with v0.71.0. This is the second occurrence; nothing in the repo currently enforces the bump, so it stays a thing a human has to remember.
 
