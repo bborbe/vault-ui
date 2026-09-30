@@ -247,6 +247,26 @@ def test_opening_a_topic_lists_its_goals_and_tasks(live_server, page):
     expect(modal).not_to_contain_text("Should Not Appear")
 
 
+def test_opening_a_topic_shows_its_own_status(live_server, page):
+    """SC4: the detail view carries the topic's own status, not only its work.
+
+    The card renders the status too, but the modal is where the operator lands
+    after clicking through — so it must not be the one screen about a single
+    topic that omits that topic's status. Both topics are asserted: a constant
+    would satisfy only one of the two.
+    """
+    page.goto(f"{live_server}/?view=topics&vault=TestVault")
+
+    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-title-link').click()
+    expect(page.locator("#topic-modal-status")).to_be_visible()
+    expect(page.locator("#topic-modal-status")).to_have_text("in_progress")
+    page.locator("#topic-modal-close-btn").click()
+
+    page.locator('.topic-card[data-topic-id="Notification System"] .topic-title-link').click()
+    expect(page.locator("#topic-modal-status")).to_be_visible()
+    expect(page.locator("#topic-modal-status")).to_have_text("completed")
+
+
 def test_topic_entry_links_into_the_existing_goals_view(live_server, page):
     """SC2: each entry links to the existing goal/task view."""
     page.goto(f"{live_server}/?view=topics&vault=TestVault")

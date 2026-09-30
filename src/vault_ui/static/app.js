@@ -1191,7 +1191,14 @@ async function openTopicDetail(topic) {
     if (!modal) return;
     const titleEl = document.getElementById('topic-modal-title');
     const bodyEl = document.getElementById('topic-modal-body');
+    const statusEl = document.getElementById('topic-modal-status');
     titleEl.textContent = topic.title || topic.id;
+    // The topic's own frontmatter status — the same value the card renders,
+    // never a placeholder. Hidden rather than blank when it declares none.
+    if (statusEl) {
+        statusEl.textContent = topic.status || '';
+        statusEl.classList.toggle('hidden', !topic.status);
+    }
     bodyEl.innerHTML = '<p class="topic-empty">Loading…</p>';
     modal.classList.remove('hidden');
 
