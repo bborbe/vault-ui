@@ -1155,8 +1155,11 @@ function renderTopics() {
     });
 }
 
-// A topic card: the topic's own status (never a placeholder), an Obsidian link,
-// and a title that opens the tracked-work detail.
+// A topic card: the topic's own status (never a placeholder), and the SAME two
+// affordances a task or goal card carries — the title opens the page in
+// Obsidian, a footer button opens the tracked-work detail. Shipped the other
+// way round at first (title → detail, icon → Obsidian), the reverse of the
+// board's established pattern, and the operator caught it in review.
 function createTopicCard(topic) {
     const card = document.createElement('div');
     card.className = 'task-card topic-card';
@@ -1167,16 +1170,15 @@ function createTopicCard(topic) {
     card.innerHTML = `
         <div class="card-header">
             <div class="card-title">
-                <a href="#" class="task-title-link topic-title-link">${escapeHtml(title)}</a>
+                <a href="${escapeHtml(topic.obsidian_url)}" class="task-title-link topic-title-link" title="Open in Obsidian">${escapeHtml(title)}</a>
             </div>
         </div>
         <div class="card-footer">
             <span class="status-badge">${escapeHtml(topic.status || '')}</span>
-            <a class="obsidian-link" href="${escapeHtml(topic.obsidian_url)}" title="Open in Obsidian">📝</a>
+            <button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>
         </div>`;
 
-    card.querySelector('.topic-title-link').addEventListener('click', (e) => {
-        e.preventDefault();
+    card.querySelector('.topic-detail-btn').addEventListener('click', () => {
         openTopicDetail(topic);
     });
     return card;

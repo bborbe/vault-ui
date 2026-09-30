@@ -234,7 +234,7 @@ def test_opening_a_topic_lists_its_goals_and_tasks(live_server, page):
     name (unresolved) — the parser must not fold either into the goal list.
     """
     page.goto(f"{live_server}/?view=topics&vault=TestVault")
-    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-title-link').click()
+    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-detail-btn').click()
 
     modal = page.locator("#topic-modal")
     expect(modal).to_be_visible()
@@ -257,12 +257,12 @@ def test_opening_a_topic_shows_its_own_status(live_server, page):
     """
     page.goto(f"{live_server}/?view=topics&vault=TestVault")
 
-    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-title-link').click()
+    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-detail-btn').click()
     expect(page.locator("#topic-modal-status")).to_be_visible()
     expect(page.locator("#topic-modal-status")).to_have_text("in_progress")
     page.locator("#topic-modal-close-btn").click()
 
-    page.locator('.topic-card[data-topic-id="Notification System"] .topic-title-link').click()
+    page.locator('.topic-card[data-topic-id="Notification System"] .topic-detail-btn').click()
     expect(page.locator("#topic-modal-status")).to_be_visible()
     expect(page.locator("#topic-modal-status")).to_have_text("completed")
 
@@ -270,12 +270,32 @@ def test_opening_a_topic_shows_its_own_status(live_server, page):
 def test_topic_entry_links_into_the_existing_goals_view(live_server, page):
     """SC2: each entry links to the existing goal/task view."""
     page.goto(f"{live_server}/?view=topics&vault=TestVault")
-    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-title-link').click()
+    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-detail-btn').click()
     page.locator('#topic-modal a[href="?view=goals"]').click()
     expect(page.locator('.view-toggle-btn[data-view="goals"]')).to_have_class(
         re.compile(r"\bactive\b")
     )
     expect(page.locator("#topic-modal")).to_be_hidden()
+
+
+def test_topic_title_opens_obsidian_and_the_button_opens_the_detail(live_server, page):
+    """The topic card uses the same two affordances as the task and goal cards.
+
+    The title carries the Obsidian URL; the footer button opens the detail.
+    Shipped the other way round first, which the operator caught in review: the
+    board's pattern is title → page, and nothing else on a card opens a modal.
+    The title's href is asserted rather than clicked — following an
+    ``obsidian://`` URL is not something a headless browser can do.
+    """
+    page.goto(f"{live_server}/?view=topics&vault=TestVault")
+
+    title = page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-title-link')
+    expect(title).to_have_attribute("title", "Open in Obsidian")
+    assert title.get_attribute("href").startswith("obsidian://")
+    expect(page.locator("#topic-modal")).to_be_hidden()
+
+    page.locator('.topic-card[data-topic-id="Manager Layer"] .topic-detail-btn').click()
+    expect(page.locator("#topic-modal")).to_be_visible()
 
 
 def test_vault_without_topics_folder_renders_empty(live_server_no_topics, page):
