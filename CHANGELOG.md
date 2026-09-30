@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.71.1
 
 - fix: The board's `app.js` cachebust token is bumped, so the session chip and "Live session" filter added in v0.71.0 actually reach a browser that had the board open across the deploy. That release changed `app.js` but left the token byte-identical, and the token is what the browser keys its cache on — so a normal reload kept serving the pre-change script and only a hard refresh picked the change up.
 
