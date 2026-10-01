@@ -784,6 +784,35 @@ h1 {
     outline-offset: 1px;
 }
 
+/* Jump control — a sibling of the live badge on a card whose session resolves to
+   a WezTerm pane (jump_pane set). The badge states a fact and ends the session
+   when clicked; this offers the non-destructive move to that pane, so it is
+   drawn lighter than the badge and never changes the badge's own box. */
+.jump-btn {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    color: #bbf7d0;             /* green-200 */
+    background: transparent;
+    border: 1px solid #15803d;  /* green-700 */
+    padding: 0 6px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.jump-btn:hover {
+    background: #15803d;        /* green-700 */
+}
+
+.jump-btn:focus-visible {
+    outline: 2px solid #bbf7d0; /* green-200 */
+    outline-offset: 1px;
+}
+
 /* Starting card (launch turn in flight) — the badge itself is the take-over
    affordance, mirroring the live badge. Blue, not green: the turn is in flight
    but the card is not a resumable session yet. */

@@ -1410,7 +1410,15 @@ function sessionButtonHtml(kind, item) {
         // it opens the confirm dialog, which ends the running turn (SIGTERM via
         // the ps --resume match), then Resume works normally. In-flight work is
         // lost — that is the accepted trade-off, stated in the confirm dialog.
-        return `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
+        const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
+        // Jump control — a sibling of the badge, never a second handler on it: the
+        // badge's click ENDS the session, so navigation must not ride on it. Gated
+        // on jump_pane (models.py TaskResponse), the server-resolved pane: absent →
+        // no control at all, never a dead one. Route: POST /tasks/{id}/jump.
+        if (!item.jump_pane) {
+            return liveBadge;
+        }
+        return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}')" title="Jump to this session's terminal pane">↗</span>`;
     } else if (hasSession) {
         if (item.session_state === 'indeterminate') {
             // Session id present but no transcript found — cannot prove it dead
@@ -1899,6 +1907,47 @@ async function takeOverSession(kind, id) {
         startingSet.delete(id);
         item.claude_session_started = null;
         await loadCurrentView();
+    }
+}
+
+// Jump to the terminal pane a live session runs in: POST to the board-local
+// route, which reads the shared jump credential on the server (it is never
+// published in the served page) and activates the pane. Mirrors takeOverSession's
+// guard + cache lookup, but is NOT destructive — the badge stays the take-over
+// affordance; this only moves the operator's focus.
+async function jumpToPane(kind, id) {
+    // Arg-injection guard (mirrors takeOverSession).
+    if (typeof id === 'string' && id.startsWith('-')) {
+        showToast('Invalid id', true);
+        return;
+    }
+
+    const base = kind === 'goal' ? 'goals' : 'tasks';
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const item = cache[id];
+    if (!item) {
+        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `/api/${base}/${encodeURIComponent(id)}/jump?vault=${encodeURIComponent(item.vault)}`,
+            { method: 'POST' }
+        );
+        if (!response.ok) {
+            // Transient failure is not evidence the pane is gone: the payload
+            // said it resolves, so leave the control in place.
+            showToast(await parseErrorResponse(response), true);
+            return;
+        }
+        // 2xx (204, no body): the pane was activated server-side and the
+        // operator's focus has already moved. Do NOT read the body, navigate,
+        // reload or re-render — a reload would scroll the board and undo the
+        // point of the feature.
+    } catch (error) {
+        console.error(`Failed to jump to ${kind} pane:`, error);
+        showToast(error.message, true);
     }
 }
 
