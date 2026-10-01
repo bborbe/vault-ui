@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.74.0
 
 - feat: A live task card now carries a `↗` jump control beside its `● Live` badge, so the operator can move from the board to the running session in one click. The control is deliberately a separate element rather than a second action on the badge: the badge's click takes the session over and ends the running turn, so folding navigation into it would make a click meant to jump kill the session. It renders if and only if the payload carries a `jump_pane`, so a live card whose session resolves to no reachable pane shows no control at all rather than a dead one; the pane id itself is never written into the DOM, since the client does not need it and the server owns it. Clicking it POSTs to the jump route and does not navigate, reload or re-render — the operator's focus has already moved and the board must stay exactly where it was. Both `app.js` and `style.css` cachebust tokens are bumped with it.
 
