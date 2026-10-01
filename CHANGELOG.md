@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.74.1
 
 - fix: The `↗` jump control now renders on live task cards on the deployed board. The launchd service runs with a fixed, minimal `PATH` that does not include the WezTerm application bundle, so the pane-resolution helper could not list panes and every live task resolved to no pane — the board showed no jump control anywhere, while the identical code run from a terminal resolved a pane for every live task. The helper is now spawned with an environment whose `PATH` begins at the WezTerm bundle, so the board carries its own dependency resolution rather than depending on the service's `PATH`.
 
