@@ -67,6 +67,7 @@ Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
 - launchd does **not** expand `~` — use absolute paths everywhere.
 - `uv run --directory <repo>` is required when relying on the legacy repo-root config path. If using the XDG config location (`~/.config/vault-ui/config.yaml`), a bare `vault-ui` invocation from a `uv tool install` works because vault-ui checks `~/.config/vault-ui/config.yaml` regardless of working directory.
 - The `PATH` env var must include the directory holding `vault-cli`, otherwise the watchers fail with `[Errno 2] No such file or directory: 'vault-cli'`.
+- WezTerm does **not** need to be on the `PATH`. The board resolves the `wezterm` executable itself, from its macOS application bundle (`/Applications/WezTerm.app/Contents/MacOS`), when it launches the pane-resolution helper behind the card's `↗` jump control. Adding that bundle to the plist changes nothing; only `vault-cli` has to be reachable via `PATH`.
 
 Load and start:
 

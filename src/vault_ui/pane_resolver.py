@@ -43,6 +43,11 @@ _JUMP_TIMEOUT_SECONDS = 5.0
 
 _JUMP_SERVER_URL = "http://127.0.0.1:1337/jump"
 
+# The one known location of the ``wezterm`` executable on macOS. The launchd
+# service runs with a fixed, minimal PATH that does not include it, so the pane
+# resolver must carry the directory itself rather than rely on inheritance.
+_WEZTERM_BUNDLE_DIR = Path("/Applications/WezTerm.app/Contents/MacOS")
+
 
 def _jump_token_path() -> Path:
     """Path of the shared fleet-jump credential.
@@ -74,6 +79,46 @@ def _who_needs_me_path() -> Path:
         / "scripts"
         / "who-needs-me.py"
     )
+
+
+def _wezterm_bin_dir() -> Path | None:
+    """Directory holding the ``wezterm`` executable, or ``None`` when absent.
+
+    Only the one known macOS bundle location is checked — no PATH scan, no
+    ``which``, no filesystem globbing — and the directory is returned only when
+    ``wezterm`` actually exists inside it.
+
+    A function, not a module constant, for the same test seam ``_jump_token_path``
+    and ``_who_needs_me_path`` provide.
+    """
+    if (_WEZTERM_BUNDLE_DIR / "wezterm").exists():
+        return _WEZTERM_BUNDLE_DIR
+    return None
+
+
+def _subprocess_env() -> dict[str, str]:
+    """A copy of ``os.environ`` with the WezTerm bundle prepended to ``PATH``.
+
+    The launchd service runs with a fixed, minimal ``PATH`` that does not
+    include the WezTerm application bundle, so the pane-resolution helper cannot
+    find ``wezterm`` and every live card silently loses its jump target. Handing
+    the helper an environment whose ``PATH`` starts with the bundle restores it.
+
+    ``os.environ`` is never mutated: this process serves every other request, and
+    a mutated ``PATH`` would leak into the whole service. When the bundle is not
+    present the unchanged copy is returned, so a machine without WezTerm behaves
+    exactly as it does today.
+    """
+    env = dict(os.environ)
+    bin_dir = _wezterm_bin_dir()
+    if bin_dir is None:
+        logger.debug(
+            "[PaneResolver] wezterm not found in %s; pane resolution may fail",
+            _WEZTERM_BUNDLE_DIR,
+        )
+        return env
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    return env
 
 
 def read_jump_token(path: Path | None = None) -> str | None:
@@ -112,7 +157,9 @@ async def resolve_pane_id(session_id: str) -> str | None:
     prefix the script accepts.
 
     ``sys.executable`` is argv[0] and the script path argv[1], so the script's
-    own shebang and import path are never relied on.
+    own shebang and import path are never relied on. The helper is spawned with
+    ``_subprocess_env()`` so it can find ``wezterm`` under the service's minimal
+    PATH — see that function.
 
     Returns ``None`` for every failure — no session id, a script that cannot be
     executed, a non-zero exit (which is how the script reports "no pane"), an
@@ -130,6 +177,7 @@ async def resolve_pane_id(session_id: str) -> str | None:
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_subprocess_env(),
         )
     except OSError as e:
         logger.debug("[PaneResolver] Cannot run %s: %s", script, e)

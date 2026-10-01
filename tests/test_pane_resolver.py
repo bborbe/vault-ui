@@ -7,6 +7,7 @@ fleet-jump server.
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ import pytest
 from vault_ui import pane_resolver
 from vault_ui.pane_resolver import (
     _jump_token_path,
+    _subprocess_env,
+    _wezterm_bin_dir,
     _who_needs_me_path,
     perform_jump,
     read_jump_token,
@@ -98,6 +101,67 @@ def test_who_needs_me_path_falls_back_to_marketplace(
     )
 
 
+def test_wezterm_bin_dir_returns_bundle_when_binary_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The directory is returned only when ``wezterm`` exists inside it."""
+    (tmp_path / "wezterm").write_text("")
+    monkeypatch.setattr("vault_ui.pane_resolver._WEZTERM_BUNDLE_DIR", tmp_path)
+    assert _wezterm_bin_dir() == tmp_path
+
+
+def test_wezterm_bin_dir_returns_none_when_binary_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty bundle directory — or a machine without WezTerm — is ``None``."""
+    monkeypatch.setattr("vault_ui.pane_resolver._WEZTERM_BUNDLE_DIR", tmp_path)
+    assert _wezterm_bin_dir() is None
+
+
+# ---------------------------------------------------------------------------
+# _subprocess_env
+# ---------------------------------------------------------------------------
+
+
+def test_subprocess_env_prepends_bundle_and_preserves_rest_of_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    env = _subprocess_env()
+
+    assert env["PATH"] == f"{tmp_path}{os.pathsep}/usr/bin:/bin"
+    assert env["PATH"].split(os.pathsep)[1:] == ["/usr/bin", "/bin"]
+
+
+def test_subprocess_env_is_unchanged_when_bundle_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: None)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    env = _subprocess_env()
+
+    assert env == dict(os.environ)
+    assert env["PATH"] == os.environ["PATH"]
+
+
+def test_subprocess_env_never_mutates_os_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both outcomes leave the process environment untouched."""
+    monkeypatch.setenv("PATH", "/sentinel/bin")
+
+    monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: tmp_path)
+    _subprocess_env()
+    assert os.environ["PATH"] == "/sentinel/bin"
+
+    monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: None)
+    _subprocess_env()
+    assert os.environ["PATH"] == "/sentinel/bin"
+
+
 # ---------------------------------------------------------------------------
 # resolve_pane_id
 # ---------------------------------------------------------------------------
@@ -123,12 +187,23 @@ class _FakeProc:
         return self.returncode or 0
 
 
-def _patch_subprocess(monkeypatch: pytest.MonkeyPatch, proc: _FakeProc) -> list[list[str]]:
-    """Replace ``create_subprocess_exec`` and record every argv it is handed."""
+def _patch_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    proc: _FakeProc,
+    kwargs_record: list[dict[str, Any]] | None = None,
+) -> list[list[str]]:
+    """Replace ``create_subprocess_exec`` and record every argv it is handed.
+
+    Pass ``kwargs_record`` to also capture the keyword arguments (notably
+    ``env``) each spawn is given. The return value stays argv-only so the
+    existing exact-argv assertion is unaffected.
+    """
     recorded: list[list[str]] = []
 
-    async def _fake(*argv: str, **_kwargs: Any) -> _FakeProc:
+    async def _fake(*argv: str, **kwargs: Any) -> _FakeProc:
         recorded.append(list(argv))
+        if kwargs_record is not None:
+            kwargs_record.append(kwargs)
         return proc
 
     monkeypatch.setattr("vault_ui.pane_resolver.asyncio.create_subprocess_exec", _fake)
@@ -218,6 +293,42 @@ async def test_resolve_pane_id_argv_is_exact(monkeypatch: pytest.MonkeyPatch) ->
     await resolve_pane_id(session_id)
 
     assert recorded == [[sys.executable, str(script), "--pane-for", "e0930886"]]
+
+
+async def test_resolve_pane_id_spawn_env_prepends_wezterm_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spawned helper's PATH starts at the WezTerm bundle.
+
+    Captured from the spawn's kwargs, not from ``_subprocess_env`` directly: a
+    correct helper whose result never reaches ``create_subprocess_exec`` is
+    exactly the silent regression this guards against.
+    """
+    (tmp_path / "wezterm").write_text("")
+    monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    kwargs_record: list[dict[str, Any]] = []
+    _patch_subprocess(monkeypatch, _FakeProc(stdout=b"7\n"), kwargs_record)
+
+    await resolve_pane_id("e0930886-0843-4ca9-adfa-58819443c032")
+
+    assert len(kwargs_record) == 1
+    assert kwargs_record[0]["env"]["PATH"] == f"{tmp_path}{os.pathsep}/usr/bin:/bin"
+    assert os.environ["PATH"] == "/usr/bin:/bin"
+
+
+async def test_resolve_pane_id_spawn_env_unchanged_without_wezterm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no bundle present the helper inherits the environment verbatim."""
+    monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: None)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    kwargs_record: list[dict[str, Any]] = []
+    _patch_subprocess(monkeypatch, _FakeProc(stdout=b"7\n"), kwargs_record)
+
+    await resolve_pane_id("e0930886-0843-4ca9-adfa-58819443c032")
+
+    assert kwargs_record[0]["env"] == dict(os.environ)
 
 
 # ---------------------------------------------------------------------------
