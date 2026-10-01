@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: A live task can now hand the operator straight to the session it belongs to. The board already said a session was running but gave no way to reach it, because reaching it needs the fleet-jump credential and that credential cannot be published in the served page. The jump is therefore proxied by the server, which reads the credential and never returns it: `POST /api/tasks/{task_id}/jump` activates the session's WezTerm pane and answers `204` with no body, and every task response now carries a derived `jump_pane` for live sessions so a card whose session resolves to no pane offers no control rather than a dead link. The pane is resolved fresh on each request, never cached, because a pane id is recycled across tab moves and WezTerm restarts. The route accepts only same-origin requests, so a page the operator merely visits cannot POST to it and move their focus.
+
 ## v0.72.0
 
 - fix: The session chip is removed, and the `app.js` cachebust token bumped with it. The chip duplicated what the card's action area already says — `● Live`, `⏳ Starting…`, `▶ Resume` and `▶ Start` encode the same four states — and the one state it alone conveyed (`indeterminate`, 2 cards) did not justify a chip on the rest. `quiet` was the weakest case: it appeared on roughly half the board and does not mean "orphan", since a task whose session ended because the work finished is `quiet` too, so it could not be scanned for. The liveness work this series was for is unaffected — the `● Live` badge now correctly marks a session the registry lists, which is what the board was missing.

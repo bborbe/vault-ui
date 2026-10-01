@@ -7106,3 +7106,302 @@ def test_show_topic_vault_cli_failure_returns_500(
         response = http_client.get("/api/topics/Manager%20Layer?vault=TestVault")
 
     assert response.status_code == 500
+
+
+# --- jump endpoint ---
+
+JUMP_SESSION_UUID = "e0930886-0843-4ca9-adfa-58819443c032"
+
+
+def _jump_patches(pane_id: str | None = "42", token: str | None = "tok") -> tuple[Any, Any, Any]:
+    """(resolve_pane_id, read_jump_token, perform_jump) patches for the jump route."""
+    return (
+        patch("vault_ui.api.tasks.resolve_pane_id", new=AsyncMock(return_value=pane_id)),
+        patch("vault_ui.api.tasks.read_jump_token", return_value=token),
+        patch("vault_ui.api.tasks.perform_jump", new=AsyncMock()),
+    )
+
+
+def test_jump_to_task_live_session_with_pane_returns_204(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """The happy path: pane resolves, credential reads, jump server accepts."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, jump = _jump_patches()
+
+    with resolve as resolver, token as reader, jump as performer:
+        response = test_client.post("/api/tasks/Live%20Task/jump?vault=TestVault")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    resolver.assert_awaited_once_with(JUMP_SESSION_UUID)
+    reader.assert_called_once_with()
+    performer.assert_awaited_once_with("42", "tok")
+
+
+def test_jump_to_task_without_session_returns_409(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    mock_vault_client._tasks.append(_make_task(task_id="No Session", status="in_progress"))
+    resolve, token, jump = _jump_patches()
+
+    with resolve as resolver, token, jump:
+        response = test_client.post("/api/tasks/No%20Session/jump?vault=TestVault")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "no session to jump to"
+    resolver.assert_not_awaited()
+
+
+def test_jump_to_task_not_found_returns_404(test_client: TestClient) -> None:
+    resolve, token, jump = _jump_patches()
+
+    with resolve, token, jump:
+        response = test_client.post("/api/tasks/NonExistent/jump?vault=TestVault")
+
+    assert response.status_code == 404
+
+
+def test_jump_to_task_unresolvable_pane_returns_409(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """No pane for the session — refused, and the reason names no credential path."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, jump = _jump_patches(pane_id=None)
+
+    with resolve, token as reader, jump as performer:
+        response = test_client.post("/api/tasks/Live%20Task/jump?vault=TestVault")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail == "no pane resolves for this session"
+    assert "jump-token" not in detail
+    assert "secrets" not in detail
+    reader.assert_not_called()
+    performer.assert_not_awaited()
+
+
+def test_jump_to_task_unreadable_token_returns_503(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, jump = _jump_patches(token=None)
+
+    with resolve, token, jump as performer:
+        response = test_client.post("/api/tasks/Live%20Task/jump?vault=TestVault")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "jump credential unreadable"
+    performer.assert_not_awaited()
+
+
+def test_jump_to_task_jump_server_failure_returns_502(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, _ = _jump_patches()
+
+    with (
+        resolve,
+        token,
+        patch("vault_ui.api.tasks.perform_jump", new=AsyncMock(side_effect=OSError("refused"))),
+    ):
+        response = test_client.post("/api/tasks/Live%20Task/jump?vault=TestVault")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "jump server unreachable"
+
+
+def test_jump_to_task_foreign_origin_returns_403_without_resolving(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """The origin gate runs first — the resolver is never reached.
+
+    Asserting the 403 alone would only prove the gate exists; asserting the
+    resolver was never called proves it runs before any vault or task lookup, so
+    a cross-origin probe cannot use the endpoint's status codes or timing to
+    enumerate task ids.
+    """
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, jump = _jump_patches()
+
+    with resolve as resolver, token as reader, jump:
+        response = test_client.post(
+            "/api/tasks/Live%20Task/jump?vault=TestVault",
+            headers={"Origin": "http://evil.example"},
+        )
+
+    assert response.status_code == 403
+    resolver.assert_not_awaited()
+    reader.assert_not_called()
+    mock_vault_client.show_task.assert_not_awaited()
+
+
+def test_jump_to_task_same_origin_accepted(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """An Origin matching the request's own Host passes the gate."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, jump = _jump_patches()
+
+    with resolve, token, jump:
+        response = test_client.post(
+            "/api/tasks/Live%20Task/jump?vault=TestVault",
+            headers={"Origin": "http://testserver"},
+        )
+
+    assert response.status_code == 204
+
+
+def test_jump_to_task_referer_origin_is_checked(
+    test_client: TestClient, mock_vault_client: MagicMock
+) -> None:
+    """With no Origin, the Referer's scheme-and-host is what is compared."""
+    mock_vault_client._tasks.append(
+        _make_task(task_id="Live Task", status="in_progress", claude_session_id=JUMP_SESSION_UUID)
+    )
+    resolve, token, jump = _jump_patches()
+
+    with resolve as resolver, token, jump:
+        rejected = test_client.post(
+            "/api/tasks/Live%20Task/jump?vault=TestVault",
+            headers={"Referer": "http://evil.example/board"},
+        )
+
+    assert rejected.status_code == 403
+    resolver.assert_not_awaited()
+
+    with resolve, token, jump:
+        accepted = test_client.post(
+            "/api/tasks/Live%20Task/jump?vault=TestVault",
+            headers={"Referer": "http://testserver/board"},
+        )
+
+    assert accepted.status_code == 204
+
+
+# --- jump_pane on the list endpoint ---
+
+
+def test_list_tasks_jump_pane_resolves_only_live_tasks(
+    tmp_vault: Path, sample_task_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """jump_pane is set for a resolvable live session and null for everything else.
+
+    The resolver call count is the load-bearing assertion: a per-card
+    implementation would still produce the same values while spawning one
+    subprocess per live card, so only the count catches it.
+    """
+    live_resolvable = "11111111-1111-4111-8111-111111111111"
+    live_unresolvable = "22222222-2222-4222-8222-222222222222"
+    quiet_id = "33333333-3333-4333-8333-333333333333"
+    # A stale transcript is what makes the third card genuinely "quiet" rather
+    # than "indeterminate": the session has ended and nothing is running.
+    stale = tmp_vault / "claude-projects" / "some-project" / f"{quiet_id}.jsonl"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("{}\n")
+    os.utime(stale, (0, 0))
+    client = _session_live_client(
+        tmp_vault,
+        monkeypatch,
+        [
+            _make_task(
+                task_id="Live Resolvable",
+                status="in_progress",
+                claude_session_id=live_resolvable,
+            ),
+            _make_task(
+                task_id="Live Unresolvable",
+                status="in_progress",
+                claude_session_id=live_unresolvable,
+            ),
+            _make_task(task_id="Quiet Task", status="in_progress", claude_session_id=quiet_id),
+            _make_task(task_id="No Session", status="in_progress"),
+        ],
+        registry_session_ids={live_resolvable, live_unresolvable},
+    )
+
+    test_config = Config(
+        vaults=[
+            VaultConfig(
+                name="TestVault",
+                vault_path=str(tmp_vault),
+                vault_name="TestVault",
+                tasks_folder="24 Tasks",
+            )
+        ],
+        host="127.0.0.1",
+        port=8000,
+    )
+    monkeypatch.setattr("vault_ui.factory._config", test_config)
+    app = create_app()
+
+    async def _resolve(session_id: str) -> str | None:
+        return "42" if session_id == live_resolvable else None
+
+    resolver = AsyncMock(side_effect=_resolve)
+    with (
+        patch("vault_ui.api.tasks.resolve_pane_id", new=resolver),
+        patch("vault_ui.api.tasks.get_vault_cli_client_for_vault", return_value=client),
+    ):
+        response = TestClient(app).get("/api/tasks?vault=TestVault")
+
+    assert response.status_code == 200
+    by_id = {t["id"]: t for t in response.json()}
+
+    assert by_id["Live Resolvable"]["session_state"] == "live"
+    assert by_id["Live Resolvable"]["jump_pane"] == "42"
+
+    assert by_id["Live Unresolvable"]["session_state"] == "live"
+    assert by_id["Live Unresolvable"]["jump_pane"] is None
+
+    assert by_id["Quiet Task"]["session_state"] == "quiet"
+    assert by_id["Quiet Task"]["jump_pane"] is None
+    assert by_id["No Session"]["jump_pane"] is None
+
+    # Exactly once per live task, zero times for quiet and sessionless ones.
+    assert resolver.await_count == 2
+    assert {call.args[0] for call in resolver.await_args_list} == {
+        live_resolvable,
+        live_unresolvable,
+    }
+
+
+def _same_origin_request(headers: dict[str, str]) -> Any:
+    """A minimal ASGI request carrying exactly the given headers."""
+    from starlette.requests import Request as StarletteRequest
+
+    raw = [(key.encode(), value.encode()) for key, value in headers.items()]
+    return StarletteRequest({"type": "http", "headers": raw})
+
+
+def test_is_same_origin_gate_matrix() -> None:
+    """The gate's decision table, including the two refusals the route cannot reach."""
+    from vault_ui.api.tasks import _is_same_origin
+
+    # No Host header at all — the request's own origin cannot be established.
+    assert _is_same_origin(_same_origin_request({})) is False
+    # A Referer that is not a URL is refused, not treated as absent.
+    assert _is_same_origin(_same_origin_request({"host": "h", "referer": "not a url"})) is False
+    # No Origin and no Referer — a non-browser loopback client.
+    assert _is_same_origin(_same_origin_request({"host": "h"})) is True
+    # Origin / Referer matching the request's own Host.
+    assert _is_same_origin(_same_origin_request({"host": "h", "origin": "http://h"})) is True
+    assert _is_same_origin(_same_origin_request({"host": "h", "referer": "http://h/board"})) is True
+    # Anything else is refused.
+    assert _is_same_origin(_same_origin_request({"host": "h", "origin": "http://other"})) is False
+    assert (
+        _is_same_origin(_same_origin_request({"host": "h", "referer": "http://other/b"})) is False
+    )
