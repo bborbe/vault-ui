@@ -13,9 +13,9 @@ from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from vault_ui.activity import (
@@ -49,6 +49,7 @@ from vault_ui.factory import (
     watcher_vault_names,
 )
 from vault_ui.launch_registry import FINISHED
+from vault_ui.pane_resolver import perform_jump, read_jump_token, resolve_pane_id
 from vault_ui.session_resolver import is_uuid, resolve_session_id
 from vault_ui.status_cache import StatusCache
 from vault_ui.vault_cli_client import VaultCLIClient, VaultNotFoundError
@@ -774,8 +775,60 @@ async def _process_vault(
                 cache.get_session_started(vault_config.name, task.id) or task.claude_session_started
             )
 
+    # Classify every session once, here, and resolve the live ones' panes
+    # together. Both are per-request work that must never be per-card:
+    # _task_to_response runs inside a loop over the whole board, so classifying
+    # there would re-read the session registry for every card, and resolving
+    # there would spawn one who-needs-me.py per live card and serialize them.
+    project_dir = derive_claude_project_dir(
+        vault_config.vault_path, vault_config.session_project_dir
+    )
+    session_states = {
+        task.id: classify_session_state(
+            task.claude_session_id, project_dir, registry_session_ids=registry_session_ids
+        )
+        for task in tasks
+    }
+    live_session_ids = {
+        task.claude_session_id
+        for task in tasks
+        if session_states[task.id] == "live" and task.claude_session_id is not None
+    }
+    pane_map = await _resolve_pane_map(live_session_ids)
+
     # Convert to response models
-    return [_task_to_response(task, vault_config, registry_session_ids) for task in tasks]
+    return [
+        _task_to_response(
+            task, vault_config, registry_session_ids, session_states[task.id], pane_map
+        )
+        for task in tasks
+    ]
+
+
+async def _resolve_pane_map(session_ids: set[str]) -> dict[str, str]:
+    """Resolve every live session to its pane, concurrently.
+
+    One ``who-needs-me.py`` subprocess per live session, started together rather
+    than one after another: the board resolves panes on every list request, and
+    serializing them would add the sum of their runtimes to the response.
+
+    A session whose pane does not resolve simply has no entry, so the card
+    renders no jump control for it — the same absence rule the jump endpoint
+    refuses on, which is what keeps a card and the endpoint from disagreeing
+    about whether a session is reachable.
+
+    Sorted before dispatch so the gather's result order is deterministic and can
+    be zipped back onto the ids.
+    """
+    if not session_ids:
+        return {}
+    ordered = sorted(session_ids)
+    pane_ids = await asyncio.gather(*(resolve_pane_id(session_id) for session_id in ordered))
+    return {
+        session_id: pane_id
+        for session_id, pane_id in zip(ordered, pane_ids, strict=True)
+        if pane_id is not None
+    }
 
 
 @router.get("/tasks", response_model=list[TaskResponse])
@@ -1634,6 +1687,123 @@ async def _clear_starting_marker(
             vault,
             e,
         )
+
+
+def _is_same_origin(request: Request) -> bool:
+    """True only when the request demonstrably came from the board itself.
+
+    This endpoint deliberately diverges from ``take_over_task``'s "auth belongs
+    at the service boundary" position, and the divergence is load-bearing rather
+    than ceremony — do not "simplify" it away as redundant with the token.
+
+    The shared jump credential exists precisely so that a web page the operator
+    merely visits cannot fire ``<img src="http://127.0.0.1:1337/jump?pane=X">``:
+    the browser never has to know the token because *this server* adds it. A
+    board route on the same loopback port without an origin check re-opens that
+    hole exactly — any page the operator visits could POST to it and move their
+    focus — and the token is no substitute, because the server, not the browser,
+    is what supplies it. ``take_over_task`` can accept a cross-origin call
+    because its destructive effect is gated by a frontend confirm dialog; this
+    endpoint has no such gate, so the origin check *is* the gate.
+
+    Accepted: no ``Origin`` and no ``Referer`` at all (a non-browser client such
+    as ``curl`` on the loopback port, which no visited page can forge), or an
+    ``Origin`` whose host — or, when ``Origin`` is absent, the ``Referer``'s
+    scheme-and-host — is this request's own ``Host``. Everything else is refused.
+    """
+    host = request.headers.get("host")
+    if host is None:
+        return False
+
+    origin = request.headers.get("origin")
+    if origin is None:
+        referer = request.headers.get("referer")
+        if referer is None:
+            return True
+        parts = urlsplit(referer)
+        if not parts.scheme or not parts.netloc:
+            return False
+        origin = f"{parts.scheme}://{parts.netloc}"
+
+    return urlsplit(origin).netloc == host
+
+
+@router.post("/tasks/{task_id}/jump", status_code=204)
+async def jump_to_task(vault: str, task_id: str, request: Request) -> Response:
+    """Activate the WezTerm pane a live task's session runs in.
+
+    The board already tells the operator a session is live but gives them no way
+    to reach it. The fleet-jump server that would do the reaching needs a shared
+    credential, and that credential cannot be published in the served document —
+    so the jump is proxied here, in the server, which reads the credential and
+    never returns it. The browser asks the board; the board asks the jump server.
+
+    The destination is resolved fresh on every request and never cached: a pane
+    id is recycled across tab moves and WezTerm restarts, so a remembered one
+    would eventually point at another session's pane. Resolution is delegated to
+    the supervisor's own ``who-needs-me.py`` rather than re-implemented — see
+    ``vault_ui.pane_resolver``.
+
+    Each refusal is the same absence rule the board applies when it decides
+    whether to draw the jump control, so a card and this endpoint never disagree
+    about whether a session is reachable.
+
+    Access model: as with every sibling endpoint, ``vault`` is a route selector
+    and not a privilege boundary — the service binds loopback for a single
+    operator and takes the same unauthenticated ``vault`` query param. This
+    endpoint is the one deliberate and narrower exception to the position
+    ``take_over_task`` states: it additionally requires a same-origin request
+    (``_is_same_origin``), because unlike take-over it has no frontend confirm
+    dialog standing between a visited web page and the operator's focus.
+
+    Args:
+        vault: Vault name
+        task_id: Task ID (filename without .md)
+        request: The incoming request — read for the same-origin gate only.
+
+    Returns:
+        An empty ``204`` on success. No path returns the token in a body or a
+        header.
+
+    Raises:
+        HTTPException 403: the request did not come from the board itself
+        HTTPException 404: task not found
+        HTTPException 409: the task has no session, or no pane resolves for it
+        HTTPException 502: the jump server refused or was unreachable
+        HTTPException 503: the jump credential could not be read
+    """
+    # First, before any vault or task lookup: a cross-origin probe must not be
+    # able to use this endpoint's status codes or timing to enumerate task ids.
+    if not _is_same_origin(request):
+        raise HTTPException(status_code=403, detail="cross-origin jump request rejected")
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        task = await client.show_task(task_id)
+    except FileNotFoundError as e:
+        logger.error("Task not found for jump: %s", e)
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    session_id = task.claude_session_id or ""
+    if not session_id:
+        raise HTTPException(status_code=409, detail="no session to jump to")
+
+    pane_id = await resolve_pane_id(session_id)
+    if pane_id is None:
+        raise HTTPException(status_code=409, detail="no pane resolves for this session")
+
+    token = read_jump_token()
+    if token is None:
+        raise HTTPException(status_code=503, detail="jump credential unreadable")
+
+    try:
+        await perform_jump(pane_id, token)
+    except Exception as e:
+        logger.warning("Jump to pane %s failed: %s", pane_id, e)
+        raise HTTPException(status_code=502, detail="jump server unreachable") from e
+
+    logger.info("Jumped to pane %s for task %s", pane_id, task_id)
+    return Response(status_code=204)
 
 
 @router.post("/tasks/{task_id}/take-over", response_model=SessionResponse)
@@ -2927,13 +3097,26 @@ async def reload_config_endpoint(request: Request) -> dict[str, list[str]]:
 
 
 def _task_to_response(
-    task: Task, vault_config: VaultConfig, registry_session_ids: set[str]
+    task: Task,
+    vault_config: VaultConfig,
+    registry_session_ids: set[str],
+    session_state: str | None,
+    pane_map: dict[str, str] | None = None,
 ) -> TaskResponse:
     """Convert Task to TaskResponse.
 
     ``registry_session_ids`` is required, not defaulted: the caller reads the
     session registry once per request, and a per-card default would re-read
     every registry file for every card on the board.
+
+    ``session_state`` and ``pane_map`` are passed in rather than computed here
+    for the same reason. The caller classifies every session and resolves every
+    live session's pane once per request; doing either in this function would
+    repeat that work per card.
+
+    ``jump_pane`` is populated only for a live session. A quiet or sessionless
+    card can never carry the jump control, so resolving a pane for one would
+    spend a subprocess on a lookup whose result is discarded.
     """
     # Build Obsidian URL
     # Format: obsidian://open?vault=VaultName&file=Path/To/File.md
@@ -2945,11 +3128,10 @@ def _task_to_response(
         task.claude_session_id,
         derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
     )
-    session_state = classify_session_state(
-        task.claude_session_id,
-        derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
-        registry_session_ids=registry_session_ids,
-    )
+
+    jump_pane: str | None = None
+    if session_state == "live" and task.claude_session_id:
+        jump_pane = (pane_map or {}).get(task.claude_session_id)
 
     return TaskResponse(
         id=task.id,
@@ -2980,4 +3162,5 @@ def _task_to_response(
         flag=task.flag,
         activity_date=activity_date,
         session_state=session_state,
+        jump_pane=jump_pane,
     )

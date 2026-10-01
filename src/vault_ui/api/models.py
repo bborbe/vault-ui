@@ -119,6 +119,11 @@ class TaskResponse(BaseModel):
     # Live/quiet/indeterminate classification of the claude session, from
     # transcript recency (see activity.py). None when no session id.
     session_state: str | None = None
+    # Derived: WezTerm pane id the session resolves to, resolved only for a
+    # live session (see pane_resolver.py). None for every other task and for a
+    # live session whose pane does not resolve — the card draws its jump
+    # control if and only if this is set.
+    jump_pane: str | None = None
 
 
 class GoalResponse(BaseModel):
