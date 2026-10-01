@@ -1,6 +1,12 @@
 ---
-status: draft
+status: completed
+summary: Added a jump control beside the live badge on live cards whose payload resolves a pane, gated on jump_pane, with a non-navigating jumpToPane handler, styling, bumped cachebust tokens, tests, and a CHANGELOG entry
+execution_id: vault-ui-jump-to-pane-exec-102-jump-control-frontend
+dark-factory-version: v0.196.0
 created: "2026-10-01T14:40:00Z"
+queued: "2026-10-01T13:45:58Z"
+started: "2026-10-01T13:46:41Z"
+completed: "2026-10-01T13:50:00Z"
 ---
 
 # Draw a Jump Control Beside the Live Badge on Cards That Resolve a Pane
