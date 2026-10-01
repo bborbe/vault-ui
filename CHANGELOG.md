@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.73.0
 
 - feat: A live task can now hand the operator straight to the session it belongs to. The board already said a session was running but gave no way to reach it, because reaching it needs the fleet-jump credential and that credential cannot be published in the served page. The jump is therefore proxied by the server, which reads the credential and never returns it: `POST /api/tasks/{task_id}/jump` activates the session's WezTerm pane and answers `204` with no body, and every task response now carries a derived `jump_pane` for live sessions so a card whose session resolves to no pane offers no control rather than a dead link. The pane is resolved fresh on each request, never cached, because a pane id is recycled across tab moves and WezTerm restarts. The route accepts only same-origin requests, so a page the operator merely visits cannot POST to it and move their focus.
 
