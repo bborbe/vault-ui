@@ -12,6 +12,7 @@ import (
 	libhttp "github.com/bborbe/http"
 	"github.com/bborbe/log"
 	"github.com/bborbe/run"
+	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/golang/glog"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -33,6 +34,20 @@ func CreateHealthzHandler() http.Handler {
 // CreateReadinessHandler returns the readiness handler backed by readiness.
 func CreateReadinessHandler(readiness vaultui.Readiness) http.Handler {
 	return handler.NewReadinessHandler(readiness)
+}
+
+// CreateConfigLoader returns a vault-cli config loader. An empty configPath
+// makes the loader use vault-cli's default config location.
+func CreateConfigLoader(configPath string) config.Loader {
+	return config.NewLoader(configPath)
+}
+
+// CreateVaultDiscovery returns a run.Func that discovers the configured vaults
+// once and marks readiness ready.
+func CreateVaultDiscovery(loader config.Loader, readiness vaultui.Readiness) run.Func {
+	return func(ctx context.Context) error {
+		return vaultui.DiscoverVaults(ctx, loader, readiness)
+	}
 }
 
 // CreateHTTPServer returns a run.Func serving the canonical bborbe admin block.

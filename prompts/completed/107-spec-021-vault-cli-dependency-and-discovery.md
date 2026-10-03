@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [021-go-backend-foundation-vault-ops]
+summary: Pinned vault-cli v0.159.0 as a direct library dependency (no replace, no subprocess), added DiscoverVaults via config.Loader, wired discovery into main.go so readiness flips only after successful discovery, and covered it with Ginkgo/Gomega tests plus a CHANGELOG entry.
+execution_id: vault-ui-exec-107-spec-021-vault-cli-dependency-and-discovery
+dark-factory-version: v0.196.0
 created: "2026-10-03T21:40:00Z"
 queued: "2026-10-03T21:29:32Z"
+started: "2026-10-03T21:33:01Z"
+completed: "2026-10-03T21:38:41Z"
 branch: dark-factory/go-backend-foundation-vault-ops
 ---
 

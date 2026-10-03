@@ -31,13 +31,12 @@ func main() {
 
 func execute(ctx context.Context) error {
 	readiness := factory.CreateReadiness()
-	// Vault discovery arrives in the next prompt; until then the service has
-	// nothing to wait for, so it is ready immediately.
-	readiness.SetReady()
+	loader := factory.CreateConfigLoader("")
 	if err := run.CancelOnFirstErrorWait(ctx,
+		factory.CreateVaultDiscovery(loader, readiness),
 		factory.CreateHTTPServer(adminListen, readiness),
 	); err != nil {
-		return errors.Wrap(ctx, err, "run http server")
+		return errors.Wrap(ctx, err, "run failed")
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - feat: Add the Go module foundation for vault-ui — composition root serving the canonical admin block on :9090 (healthz, readiness, metrics, setloglevel, gc).
+- feat: Depend on vault-cli as a pinned library and discover configured vaults through its config loader; readiness now reports ready only after discovery succeeds.
 
 ## v0.74.2
 

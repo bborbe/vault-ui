@@ -8,6 +8,8 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -39,29 +41,53 @@ func body(url string) string {
 	return string(data)
 }
 
+// tempDir creates a temp directory removed at the end of the current spec.
+func tempDir() string {
+	dir, err := os.MkdirTemp("", "vault-ui")
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+// writeVaultConfig writes a vault-cli config file naming vaultDir as the vault
+// "test" and returns the config file path.
+func writeVaultConfig(vaultDir string) string {
+	configPath := filepath.Join(tempDir(), "config.yaml")
+	content := "current_user: alice\n" +
+		"default_vault: test\n" +
+		"vaults:\n" +
+		"  test:\n" +
+		"    path: " + vaultDir + "\n" +
+		"    name: test\n"
+	Expect(os.WriteFile(configPath, []byte(content), 0600)).To(Succeed())
+	return configPath
+}
+
+var (
+	ctx       context.Context
+	cancel    context.CancelFunc
+	errChan   chan error
+	readiness vaultui.Readiness
+)
+
+var _ = BeforeEach(func() {
+	ctx, cancel = context.WithCancel(context.Background())
+	readiness = factory.CreateReadiness()
+	errChan = make(chan error, 1)
+	server := factory.CreateHTTPServer(":9090", readiness)
+	go func() {
+		errChan <- server.Run(ctx)
+	}()
+	Eventually(func() int { return statusCode(baseURL + "/healthz") }, "10s").
+		Should(Equal(http.StatusOK))
+})
+
+var _ = AfterEach(func() {
+	cancel()
+	Eventually(errChan, "10s").Should(Receive(BeNil()))
+})
+
 var _ = Describe("CreateHTTPServer", func() {
-	var ctx context.Context
-	var cancel context.CancelFunc
-	var errChan chan error
-	var readiness vaultui.Readiness
-
-	BeforeEach(func() {
-		ctx, cancel = context.WithCancel(context.Background())
-		readiness = factory.CreateReadiness()
-		errChan = make(chan error, 1)
-		server := factory.CreateHTTPServer(":9090", readiness)
-		go func() {
-			errChan <- server.Run(ctx)
-		}()
-		Eventually(func() int { return statusCode(baseURL + "/healthz") }, "10s").
-			Should(Equal(http.StatusOK))
-	})
-
-	AfterEach(func() {
-		cancel()
-		Eventually(errChan, "10s").Should(Receive(BeNil()))
-	})
-
 	Context("once the service is ready", func() {
 		BeforeEach(func() {
 			readiness.SetReady()
@@ -96,5 +122,40 @@ var _ = Describe("CreateHTTPServer", func() {
 			Expect(metrics).To(MatchRegexp(`(?m)^vault_ui_build_info`))
 			Expect(metrics).To(MatchRegexp(`(?m)^go_`))
 		})
+	})
+})
+
+var _ = Describe("CreateVaultDiscovery", func() {
+	It("discovers the configured vault path", func() {
+		vaultDir := tempDir()
+		loader := factory.CreateConfigLoader(writeVaultConfig(vaultDir))
+
+		path, err := loader.GetVaultPath(ctx, "test")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(path).To(Equal(vaultDir))
+	})
+
+	It("flips readiness 503 -> 200 on successful discovery", func() {
+		vaultDir := tempDir()
+		loader := factory.CreateConfigLoader(writeVaultConfig(vaultDir))
+		Expect(statusCode(baseURL + "/readiness")).
+			To(Equal(http.StatusServiceUnavailable))
+
+		Expect(factory.CreateVaultDiscovery(loader, readiness)(ctx)).To(Succeed())
+
+		Expect(statusCode(baseURL + "/readiness")).To(Equal(http.StatusOK))
+	})
+
+	It("leaves readiness not-ready when discovery fails", func() {
+		configPath := filepath.Join(tempDir(), "config.yaml")
+		Expect(os.WriteFile(configPath, []byte("vaults: [\n"), 0600)).To(Succeed())
+		loader := factory.CreateConfigLoader(configPath)
+
+		Expect(factory.CreateVaultDiscovery(loader, readiness)(ctx)).NotTo(Succeed())
+
+		Expect(readiness.IsReady()).To(BeFalse())
+		Expect(statusCode(baseURL + "/readiness")).
+			To(Equal(http.StatusServiceUnavailable))
 	})
 })
