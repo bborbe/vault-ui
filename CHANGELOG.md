@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Add the Go module foundation for vault-ui — composition root serving the canonical admin block on :9090 (healthz, readiness, metrics, setloglevel, gc).
+- feat: Depend on vault-cli as a pinned library and discover configured vaults through its config loader; readiness now reports ready only after discovery succeeds.
+- feat: Wire every vault-cli operation (list, show, set/clear field, work-on, defer, complete, and the goal/topic variants) through its exported ops constructors, assembled into a single op set by the composition root.
+- chore: Run the Go suite (build, format, vet, test) from the Makefile alongside the Python suite; add a make build target producing the Go binary on the host toolchain.
+
 ## v0.74.2
 
 - fix: The `↗` jump on a live task card reaches the running session again when the board runs as a launchd service. launchd starts the service with no `WEZTERM_UNIX_SOCKET`, so the pane-resolution helper's `wezterm cli` talked to `~/.local/share/wezterm/sock` — a separate mux server holding almost none of the operator's panes — and the route answered 409 "no pane resolves for this session". The helper is now spawned with the newest `~/.local/share/wezterm/gui-sock-<pid>` whose process is still alive (the GUI socket name changes on every WezTerm restart, so it cannot be pinned in the plist); a stale socket from an exited GUI is never chosen, and an explicitly set `WEZTERM_UNIX_SOCKET` still wins.

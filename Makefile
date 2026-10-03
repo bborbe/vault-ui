@@ -1,10 +1,27 @@
 # Development targets
+
 .PHONY: sync
 sync:
 	uv sync --all-extras
 
+.PHONY: build
+build:
+	go build -o bin/vault-ui .
+
+.PHONY: go-format
+go-format:
+	go fmt ./...
+
+.PHONY: go-vet
+go-vet:
+	go vet ./...
+
+.PHONY: go-test
+go-test:
+	go test -race ./...
+
 .PHONY: format
-format:
+format: go-format
 	uv run ruff format .
 	uv run ruff check --fix . || true
 
@@ -20,7 +37,7 @@ typecheck:
 check: lint typecheck
 
 .PHONY: test
-test: sync
+test: sync go-test
 	uv run pytest || test $$? -eq 5
 
 .PHONY: test-integration
@@ -28,7 +45,7 @@ test-integration:
 	uv run pytest -m integration -v
 
 .PHONY: precommit
-precommit: sync format test check
+precommit: sync format go-vet test check
 	@echo "✓ All precommit checks passed"
 
 # Run server
