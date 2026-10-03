@@ -96,28 +96,115 @@ def _wezterm_bin_dir() -> Path | None:
     return None
 
 
-def _subprocess_env() -> dict[str, str]:
-    """A copy of ``os.environ`` with the WezTerm bundle prepended to ``PATH``.
+def _pid_alive(pid: int) -> bool:
+    """Whether a process with this id is alive and signalable.
 
-    The launchd service runs with a fixed, minimal ``PATH`` that does not
-    include the WezTerm application bundle, so the pane-resolution helper cannot
-    find ``wezterm`` and every live card silently loses its jump target. Handing
-    the helper an environment whose ``PATH`` starts with the bundle restores it.
+    ``os.kill(pid, 0)`` performs the permission and existence checks without
+    delivering a signal: it returns when the process exists and this process may
+    signal it, and raises ``ProcessLookupError`` (gone) or ``PermissionError``
+    (exists, but owned by someone else) otherwise. Both count as "not ours to
+    use", so every ``OSError`` — and the ``OverflowError`` a pid outside the
+    platform's range raises — returns ``False``.
+
+    A function, not an inline ``os.kill`` call, so tests can decide liveness
+    without depending on real process ids.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, OverflowError):
+        return False
+    return True
+
+
+def _wezterm_gui_socket() -> Path | None:
+    """The newest live WezTerm GUI socket, or ``None`` when there is none.
+
+    The GUI listens on ``~/.local/share/wezterm/gui-sock-<pid>``, where ``<pid>``
+    is the GUI process id — a name that changes on every WezTerm restart, so it
+    cannot be pinned in a launchd plist. A ``gui-sock-<pid>`` file whose process
+    has exited stays on disk, so the name alone is not proof the socket is
+    usable: candidates are kept only when ``_pid_alive`` says the process is
+    still there, and the newest of those (by ``st_mtime``) is returned.
+
+    Only that one directory is scanned — no recursion, no ``PATH`` scan, no
+    other locations — and the home directory is resolved at call time so a test
+    can redirect ``HOME``. A missing or unreadable directory, or a candidate
+    that vanishes between listing and ``stat``, is an expected absence: it
+    returns ``None`` (or skips the candidate) rather than raising.
+    """
+    directory = Path.home() / ".local" / "share" / "wezterm"
+    try:
+        entries = list(directory.iterdir())
+    except OSError as e:
+        logger.debug("[PaneResolver] Cannot list %s: %s", directory, e)
+        return None
+
+    best: Path | None = None
+    best_mtime = 0.0
+    for entry in entries:
+        name = entry.name
+        if not name.startswith("gui-sock-"):
+            continue
+        suffix = name[len("gui-sock-") :]
+        if not suffix.isdigit():
+            continue
+        pid = int(suffix)
+        if pid <= 0 or not _pid_alive(pid):
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mtime > best_mtime:
+            best = entry
+            best_mtime = mtime
+    return best
+
+
+def _subprocess_env() -> dict[str, str]:
+    """A copy of ``os.environ`` adjusted for the launchd service's blind spots.
+
+    launchd starts the board with neither of the two things the pane-resolution
+    helper needs, so both are supplied here:
+
+    - The service runs with a fixed, minimal ``PATH`` that does not include the
+      WezTerm application bundle, so the helper cannot find ``wezterm`` and every
+      live card silently loses its jump target. The bundle is prepended to
+      ``PATH`` when it exists.
+    - The service is started with no ``WEZTERM_UNIX_SOCKET``, so ``wezterm cli``
+      falls back to ``~/.local/share/wezterm/sock`` — a separate mux server that
+      holds almost none of the operator's panes — and the jump answers 409. When
+      the variable is unset or empty it is pointed at the newest live GUI socket
+      (see ``_wezterm_gui_socket``); an explicitly set value always wins.
 
     ``os.environ`` is never mutated: this process serves every other request, and
-    a mutated ``PATH`` would leak into the whole service. When the bundle is not
-    present the unchanged copy is returned, so a machine without WezTerm behaves
-    exactly as it does today.
+    a mutated ``PATH`` or socket would leak into the whole service. When neither
+    adjustment applies the copy is returned unchanged, so a machine without
+    WezTerm behaves exactly as it does today.
     """
     env = dict(os.environ)
+
     bin_dir = _wezterm_bin_dir()
     if bin_dir is None:
         logger.debug(
             "[PaneResolver] wezterm not found in %s; pane resolution may fail",
             _WEZTERM_BUNDLE_DIR,
         )
-        return env
-    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    else:
+        env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+
+    if not os.environ.get("WEZTERM_UNIX_SOCKET"):
+        socket = _wezterm_gui_socket()
+        if socket is None:
+            logger.debug(
+                "[PaneResolver] no live WezTerm GUI socket found; "
+                "wezterm cli will use its default socket"
+            )
+        else:
+            env["WEZTERM_UNIX_SOCKET"] = str(socket)
+
     return env
 
 
