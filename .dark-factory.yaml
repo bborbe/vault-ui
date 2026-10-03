@@ -2,8 +2,9 @@ autoRelease: false
 autoGeneratePrompts: true
 containerImage: docker.io/bborbe/claude-yolo:v0.15.1
 hideGit: true
+pr: true
 validationPrompt: docs/dod.md
-workflow: direct
+workflow: branch
 extraMounts:
   - src: ~/.cache/uv
     dst: /home/node/.cache/uv
