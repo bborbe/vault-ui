@@ -18,13 +18,47 @@ import pytest
 from vault_ui import pane_resolver
 from vault_ui.pane_resolver import (
     _jump_token_path,
+    _pid_alive,
     _subprocess_env,
     _wezterm_bin_dir,
+    _wezterm_gui_socket,
     _who_needs_me_path,
     perform_jump,
     read_jump_token,
     resolve_pane_id,
 )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_wezterm_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point ``HOME`` at a tmp dir and clear ``WEZTERM_UNIX_SOCKET``.
+
+    Socket discovery reads ``Path.home() / ".local/share/wezterm"`` and the
+    explicit-value branch reads ``WEZTERM_UNIX_SOCKET``; without this every test
+    would see the developer's real WezTerm state. ``HOME`` follows ``Path.home()``
+    so tests that compare against ``Path.home()`` keep holding unchanged.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("WEZTERM_UNIX_SOCKET", raising=False)
+
+
+def _make_gui_socket(tmp_path: Path, pid: int, mtime: float) -> Path:
+    """Create ``~/.local/share/wezterm/gui-sock-<pid>`` under ``tmp_path``.
+
+    The file is a regular file, not a socket: discovery never checks the type.
+    """
+    directory = tmp_path / ".local" / "share" / "wezterm"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"gui-sock-{pid}"
+    path.write_text("")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _only_alive(*alive_pids: int):
+    """A ``_pid_alive`` stand-in reporting only ``alive_pids`` as live."""
+    return lambda pid: pid in alive_pids
+
 
 # ---------------------------------------------------------------------------
 # read_jump_token
@@ -160,6 +194,185 @@ def test_subprocess_env_never_mutates_os_environ(
     monkeypatch.setattr("vault_ui.pane_resolver._wezterm_bin_dir", lambda: None)
     _subprocess_env()
     assert os.environ["PATH"] == "/sentinel/bin"
+
+
+# ---------------------------------------------------------------------------
+# _pid_alive
+# ---------------------------------------------------------------------------
+
+
+def test_pid_alive_true_for_own_process() -> None:
+    assert _pid_alive(os.getpid()) is True
+
+
+def test_pid_alive_false_when_kill_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _gone(_pid: int, _sig: int) -> None:
+        raise ProcessLookupError
+
+    monkeypatch.setattr("vault_ui.pane_resolver.os.kill", _gone)
+    assert _pid_alive(4242) is False
+
+
+def test_pid_alive_false_for_non_positive_pid_without_calling_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _explode(_pid: int, _sig: int) -> None:
+        raise AssertionError("os.kill must not be called for a non-positive pid")
+
+    monkeypatch.setattr("vault_ui.pane_resolver.os.kill", _explode)
+    assert _pid_alive(0) is False
+    assert _pid_alive(-1) is False
+
+
+# ---------------------------------------------------------------------------
+# _wezterm_gui_socket
+# ---------------------------------------------------------------------------
+
+
+def test_wezterm_gui_socket_returns_none_when_directory_missing() -> None:
+    assert _wezterm_gui_socket() is None
+
+
+def test_wezterm_gui_socket_picks_newest_live_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_gui_socket(tmp_path, 111, 1000.0)
+    newest = _make_gui_socket(tmp_path, 222, 3000.0)
+    _make_gui_socket(tmp_path, 333, 2000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(111, 222, 333))
+
+    assert _wezterm_gui_socket() == newest
+
+
+def test_wezterm_gui_socket_skips_dead_pids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The newest-by-mtime socket with a dead pid loses to an older live one."""
+    live = _make_gui_socket(tmp_path, 111, 1000.0)
+    _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(111))
+
+    assert _wezterm_gui_socket() == live
+
+
+def test_wezterm_gui_socket_returns_none_when_all_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_gui_socket(tmp_path, 111, 1000.0)
+    _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive())
+
+    assert _wezterm_gui_socket() is None
+
+
+def test_wezterm_gui_socket_ignores_non_matching_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / ".local" / "share" / "wezterm"
+    directory.mkdir(parents=True)
+    for name in ("sock", "gui-sock-abc", "gui-sock-"):
+        (directory / name).write_text("")
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(111))
+
+    assert _wezterm_gui_socket() is None
+
+
+def test_wezterm_gui_socket_skips_non_ascii_digit_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Unicode digit such as ``²`` is skipped rather than raising in ``int``."""
+    directory = tmp_path / ".local" / "share" / "wezterm"
+    directory.mkdir(parents=True)
+    (directory / "gui-sock-²").write_text("")
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", lambda pid: True)
+
+    assert _wezterm_gui_socket() is None
+
+
+def test_wezterm_gui_socket_ignores_non_ascii_digit_next_to_live_ascii(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The odd name loses to a live ASCII socket in the same directory."""
+    live = _make_gui_socket(tmp_path, 222, 1000.0)
+    odd = tmp_path / ".local" / "share" / "wezterm" / "gui-sock-²"
+    odd.write_text("")
+    os.utime(odd, (3000.0, 3000.0))
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(222))
+
+    assert _wezterm_gui_socket() == live
+
+
+def test_wezterm_gui_socket_skips_candidate_whose_stat_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A socket that vanishes between listing and stat is skipped, not fatal."""
+    live = _make_gui_socket(tmp_path, 111, 1000.0)
+    vanished = _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(111, 222))
+
+    original_stat = Path.stat
+
+    def _flaky_stat(self: Path, **kwargs: Any) -> os.stat_result:
+        if self == vanished:
+            raise FileNotFoundError("vanished")
+        return original_stat(self, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _flaky_stat)
+
+    assert _wezterm_gui_socket() == live
+
+
+# ---------------------------------------------------------------------------
+# _subprocess_env socket discovery
+# ---------------------------------------------------------------------------
+
+
+def test_subprocess_env_uses_newest_live_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_gui_socket(tmp_path, 111, 1000.0)
+    newest = _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(111, 222))
+
+    assert _subprocess_env()["WEZTERM_UNIX_SOCKET"] == str(newest)
+
+
+def test_subprocess_env_omits_socket_when_all_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_gui_socket(tmp_path, 111, 1000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive())
+
+    assert "WEZTERM_UNIX_SOCKET" not in _subprocess_env()
+
+
+def test_subprocess_env_omits_socket_when_directory_missing() -> None:
+    assert "WEZTERM_UNIX_SOCKET" not in _subprocess_env()
+
+
+def test_subprocess_env_preserves_explicit_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicitly set value wins over discovery."""
+    _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(222))
+    monkeypatch.setenv("WEZTERM_UNIX_SOCKET", "/explicit/sock")
+
+    assert _subprocess_env()["WEZTERM_UNIX_SOCKET"] == "/explicit/sock"
+
+
+def test_subprocess_env_never_mutates_os_environ_with_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(222))
+    snapshot = dict(os.environ)
+
+    env = _subprocess_env()
+
+    assert env["WEZTERM_UNIX_SOCKET"] == str(tmp_path / ".local/share/wezterm/gui-sock-222")
+    assert "WEZTERM_UNIX_SOCKET" not in os.environ
+    assert dict(os.environ) == snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +542,26 @@ async def test_resolve_pane_id_spawn_env_unchanged_without_wezterm(
     await resolve_pane_id("e0930886-0843-4ca9-adfa-58819443c032")
 
     assert kwargs_record[0]["env"] == dict(os.environ)
+
+
+async def test_resolve_pane_id_spawn_env_names_live_gui_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The discovered socket reaches ``create_subprocess_exec``.
+
+    Captured from the spawn's kwargs, not from ``_subprocess_env`` directly: a
+    correct helper whose result never reaches the spawn is the silent regression
+    this guards.
+    """
+    socket = _make_gui_socket(tmp_path, 222, 3000.0)
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(222))
+    kwargs_record: list[dict[str, Any]] = []
+    _patch_subprocess(monkeypatch, _FakeProc(stdout=b"7\n"), kwargs_record)
+
+    await resolve_pane_id("e0930886-0843-4ca9-adfa-58819443c032")
+
+    assert len(kwargs_record) == 1
+    assert kwargs_record[0]["env"]["WEZTERM_UNIX_SOCKET"] == str(socket)
 
 
 # ---------------------------------------------------------------------------
