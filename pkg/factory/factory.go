@@ -12,7 +12,10 @@ import (
 	libhttp "github.com/bborbe/http"
 	"github.com/bborbe/log"
 	"github.com/bborbe/run"
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -40,6 +43,43 @@ func CreateReadinessHandler(readiness vaultui.Readiness) http.Handler {
 // makes the loader use vault-cli's default config location.
 func CreateConfigLoader(configPath string) config.Loader {
 	return config.NewLoader(configPath)
+}
+
+// CreateOpSet builds the full vault-cli op set for a single vault. The
+// injectable dependencies are parameters so callers and tests can substitute
+// fakes for the session-spawning and publishing behaviour.
+func CreateOpSet(
+	vault *config.Vault,
+	currentDateTime libtime.CurrentDateTime,
+	publisher ops.EscalationPublisher,
+	starter ops.ClaudeSessionStarter,
+	resumer ops.ClaudeResumer,
+	interactionCounter ops.InteractionCounter,
+	uuidGenerator func() string,
+) vaultui.OpSet {
+	storageConfig := storage.NewConfigFromVault(vault)
+	taskStore := storage.NewTaskStorage(storageConfig)
+	goalStore := storage.NewGoalStorage(storageConfig)
+	topicStore := storage.NewTopicStorage(storageConfig)
+	dailyStore := storage.NewDailyNoteStorage(storageConfig)
+	pageStore := storage.NewPageStorage(storageConfig)
+	return vaultui.OpSet{
+		List:             ops.NewListOperation(pageStore),
+		Show:             ops.NewShowOperation(taskStore),
+		FrontmatterSet:   ops.NewFrontmatterSetOperation(taskStore, currentDateTime, publisher, vault.Name, vault.GetTasksDir()),
+		FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, publisher, vault.Name, vault.GetTasksDir()),
+		WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, currentDateTime, uuidGenerator, starter, resumer),
+		Defer:            ops.NewDeferOperation(taskStore, dailyStore, currentDateTime),
+		Complete:         ops.NewCompleteOperation(taskStore, dailyStore, currentDateTime, interactionCounter),
+		GoalSet:          ops.NewGoalSetOperation(goalStore),
+		GoalClear:        ops.NewGoalClearOperation(goalStore),
+		GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, uuidGenerator, starter, resumer),
+		GoalDefer:        ops.NewGoalDeferOperation(goalStore, currentDateTime),
+		GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, currentDateTime),
+		TopicShow:        ops.NewTopicShowOperation(topicStore),
+		TopicSet:         ops.NewTopicSetOperation(topicStore),
+		TopicClear:       ops.NewTopicClearOperation(topicStore),
+	}
 }
 
 // CreateVaultDiscovery returns a run.Func that discovers the configured vaults

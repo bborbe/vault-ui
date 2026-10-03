@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [021-go-backend-foundation-vault-ops]
+summary: Wired all 15 vault-cli operations through their exported ops constructors into a single vaultui.OpSet assembled by factory.CreateOpSet, and proved the wiring with Ginkgo/Gomega integration tests driving the real ops against a temp vault fixture.
+execution_id: vault-ui-exec-108-spec-021-vault-ops-wiring
+dark-factory-version: v0.196.0
 created: "2026-10-03T21:40:00Z"
 queued: "2026-10-03T21:29:32Z"
+started: "2026-10-03T21:38:43Z"
+completed: "2026-10-03T21:42:46Z"
 branch: dark-factory/go-backend-foundation-vault-ops
 ---
 
