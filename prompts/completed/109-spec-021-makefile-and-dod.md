@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [021-go-backend-foundation-vault-ops]
+summary: Added Go Makefile targets (build/go-format/go-vet/go-test), wired Go steps into format/test/precommit, and added the Go code-quality line to docs/dod.md plus README/CLAUDE/CHANGELOG entries
+execution_id: vault-ui-exec-109-spec-021-makefile-and-dod
+dark-factory-version: v0.196.0
 created: "2026-10-03T21:40:00Z"
 queued: "2026-10-03T21:29:32Z"
+started: "2026-10-03T21:42:48Z"
+completed: "2026-10-03T21:45:19Z"
 branch: dark-factory/go-backend-foundation-vault-ops
 ---
 

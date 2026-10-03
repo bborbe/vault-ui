@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 - feat: Add the Go module foundation for vault-ui — composition root serving the canonical admin block on :9090 (healthz, readiness, metrics, setloglevel, gc).
 - feat: Depend on vault-cli as a pinned library and discover configured vaults through its config loader; readiness now reports ready only after discovery succeeds.
 - feat: Wire every vault-cli operation (list, show, set/clear field, work-on, defer, complete, and the goal/topic variants) through its exported ops constructors, assembled into a single op set by the composition root.
+- chore: Run the Go suite (build, format, vet, test) from the Makefile alongside the Python suite; add a make build target producing the Go binary on the host toolchain.
 
 ## v0.74.2
 

@@ -5,6 +5,7 @@ After completing your implementation, review your own changes against each crite
 ## Code Quality
 
 - Functions have type annotations (Python) or clear parameter names (JavaScript)
+- Go code follows the bborbe conventions (errors wrapped with github.com/bborbe/errors, no silently ignored error returns, factory `Create*` functions contain no business logic)
 - Error handling follows project conventions (no silently ignored errors)
 - No debug output (print statements, console.log for debugging) — use structured logging
 

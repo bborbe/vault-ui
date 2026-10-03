@@ -169,6 +169,7 @@ make lint        # Lint code
 make typecheck   # Type check
 make test        # Run tests
 make precommit   # Run all checks
+make build       # Build the Go binary
 ```
 
 ## Configuration
