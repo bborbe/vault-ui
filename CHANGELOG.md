@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Port the session liveness, activity-date, and display-name resolution logic to Go packages, reproducing the Python classifications and refusals.
+
 ## v0.75.0
 
 - feat: Add the Go module foundation for vault-ui — composition root serving the canonical admin block on :9090 (healthz, readiness, metrics, setloglevel, gc).
