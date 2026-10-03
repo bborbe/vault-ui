@@ -1,5 +1,4 @@
 # Development targets
-GO ?= go
 
 .PHONY: sync
 sync:
@@ -7,19 +6,19 @@ sync:
 
 .PHONY: build
 build:
-	$(GO) build -o bin/vault-ui .
+	go build -o bin/vault-ui .
 
 .PHONY: go-format
 go-format:
-	$(GO) fmt ./...
+	go fmt ./...
 
 .PHONY: go-vet
 go-vet:
-	$(GO) vet ./...
+	go vet ./...
 
 .PHONY: go-test
 go-test:
-	$(GO) test -race ./...
+	go test -race ./...
 
 .PHONY: format
 format: go-format
