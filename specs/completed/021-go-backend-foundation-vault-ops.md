@@ -1,8 +1,10 @@
 ---
-status: prompted
+status: completed
 approved: "2026-10-03T20:58:01Z"
 generating: "2026-10-03T21:02:49Z"
 prompted: "2026-10-03T21:28:07Z"
+verifying: "2026-10-03T21:45:19Z"
+completed: "2026-10-03T22:56:13Z"
 branch: dark-factory/go-backend-foundation-vault-ops
 ---
 
@@ -130,3 +132,17 @@ Rationale: prompt 1 produces a compiling, testable skeleton so later prompts hav
 ## Do-Nothing Option
 
 vault-ui keeps its Python/FastAPI backend and keeps spawning a `vault-cli` subprocess per vault operation. That is workable today, so the cost is not a broken system — it is a foundation that never gets laid: the private vault logic (spec 2) and the HTTP surface (spec 3) would have no Go module to live in, the per-operation process fork and stdout contract stay, and the tests keep mocking a subprocess boundary instead of exercising vault-cli's real `ops.*` logic. Deferring only defers the same work.
+
+## Verification Result
+
+**Verified:** 2026-10-03T22:55:52Z (HEAD d945617; merged work 124f9ba, tag v0.75.0)
+**Binary:** /Users/bborbe/Documents/workspaces/vault-ui/bin/vault-ui (make build; go1.27.1 darwin/arm64)
+**Scenario:** no scenario file (spec declares "no new scenario") - replayed the spec's Operator-executable ladder against the freshly built binary plus the in-repo Ginkgo integration suites.
+**Evidence:**
+- `go build ./...` exit 0; `go vet ./...` exit 0
+- live binary on :9090: GET /healthz /readiness /metrics /setloglevel/info /gc all HTTP 200 (curl -w '%{http_code}')
+- live GET /metrics: `vault_ui_build_info 1` (1 line) + 35 `go_*` runtime lines (go_gc_duration_seconds, ...)
+- `go test -race -v ./...` exit 0: 32 specs / 4 packages, incl. `flips readiness 503 -> 200 on successful discovery` and the per-op temp-vault frontmatter assertions
+- `make test` exit 0 (Go ok + 751 pytest passed); `make precommit` exit 0 (go fmt/vet/test + ruff + mypy 20 files)
+- `grep -nE 'replace.*vault-cli' go.mod` -> 0 lines; `grep -rn --include='*.go' 'exec.Command' .` -> 0 lines; `go list -m github.com/bborbe/vault-cli` -> v0.159.0
+**Verdict:** PASS
