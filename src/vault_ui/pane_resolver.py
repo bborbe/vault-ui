@@ -148,7 +148,7 @@ def _wezterm_gui_socket() -> Path | None:
         if not name.startswith("gui-sock-"):
             continue
         suffix = name[len("gui-sock-") :]
-        if not suffix.isdigit():
+        if not (suffix.isascii() and suffix.isdigit()):
             continue
         pid = int(suffix)
         if pid <= 0 or not _pid_alive(pid):

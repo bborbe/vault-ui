@@ -277,6 +277,31 @@ def test_wezterm_gui_socket_ignores_non_matching_names(
     assert _wezterm_gui_socket() is None
 
 
+def test_wezterm_gui_socket_skips_non_ascii_digit_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Unicode digit such as ``²`` is skipped rather than raising in ``int``."""
+    directory = tmp_path / ".local" / "share" / "wezterm"
+    directory.mkdir(parents=True)
+    (directory / "gui-sock-²").write_text("")
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", lambda pid: True)
+
+    assert _wezterm_gui_socket() is None
+
+
+def test_wezterm_gui_socket_ignores_non_ascii_digit_next_to_live_ascii(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The odd name loses to a live ASCII socket in the same directory."""
+    live = _make_gui_socket(tmp_path, 222, 1000.0)
+    odd = tmp_path / ".local" / "share" / "wezterm" / "gui-sock-²"
+    odd.write_text("")
+    os.utime(odd, (3000.0, 3000.0))
+    monkeypatch.setattr("vault_ui.pane_resolver._pid_alive", _only_alive(222))
+
+    assert _wezterm_gui_socket() == live
+
+
 def test_wezterm_gui_socket_skips_candidate_whose_stat_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
