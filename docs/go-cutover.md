@@ -144,8 +144,8 @@ lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .
 PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
 lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
 
-curl -s 'http://127.0.0.1:8000/api/tasks?vault=Personal&status=in_progress' | jq 'length'          # informational
-curl -s 'http://127.0.0.1:8000/api/goals?vault=Personal' | jq 'length'                             # informational
+curl -s 'http://127.0.0.1:8000/api/tasks?vault=private-personal&status=in_progress' | jq 'length'  # → > 0
+curl -s 'http://127.0.0.1:8000/api/goals?vault=private-personal' | jq 'length'                     # → > 0
 ps eww "$PID" | tr ' ' '\n' | grep '^PATH='                                                        # vault-cli dir before homebrew
 ```
 
@@ -160,12 +160,14 @@ Four things about these probes:
   the moment you save the edit, whether or not the restart worked; this reads the
   *running* process. It either matches and prints `running binary: go`, or prints
   nothing — no output here means the listener is not the Go binary.
-- **The two `jq 'length'` calls are informational, not pass/fail gates.** Zero
-  in-progress tasks is a normal state of a healthy vault. What you are checking is that
-  each call returns valid JSON and a number — a 500 or a connection error is the
-  failure. This deliberately deviates from spec `023-go-backend-api-and-cutover.md`,
-  which annotates the task count `→ > 0`; that annotation fails on a correct system
-  whenever no task happens to be in progress.
+- **Both `jq 'length'` calls must return a non-zero count.** A vault that exists always
+  has goals and in-progress tasks, so `0` here means the *vault name* is wrong — not that
+  the board is empty. List the names the API actually serves with
+  `curl -s http://127.0.0.1:8000/api/vaults | jq -r '.[].name'`. Vaults get renamed, and
+  a retired name returns `0`, which reads exactly like a healthy empty vault. Spec
+  `023-go-backend-api-and-cutover.md` still names `Personal` in this probe; that name no
+  longer resolves against this config, so the spec's own annotation cannot pass as
+  written.
 - **The `PATH` probe prints only the `PATH` line.** The full environment is never
   displayed, and the plist sets nothing else (the Go binary reads one env var,
   `VAULT_UI_LISTEN`).
