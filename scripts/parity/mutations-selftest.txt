@@ -1,0 +1,3 @@
+# A single write case for the harness self-test: the flag set path writes
+# frontmatter, so a build that skips the write must be caught by the file diff.
+task-flag-set	PATCH	/api/tasks/TaskOne/flag?vault=personal	{}

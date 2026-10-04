@@ -1,0 +1,5 @@
+# Error-shape cases compared for status and body parity.
+# Columns: NAME<TAB>PATH (including any query string).
+unknown-route	/api/nope
+unknown-vault-topic	/api/topics/TopicOne?vault=Nope
+missing-vault-param	/api/topics/TopicOne

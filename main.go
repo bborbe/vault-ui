@@ -13,6 +13,8 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
+	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
 // adminListen is the canonical bborbe admin port. It is deliberately NOT a
@@ -32,9 +34,22 @@ func main() {
 func execute(ctx context.Context) error {
 	readiness := factory.CreateReadiness()
 	loader := factory.CreateConfigLoader("")
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return errors.Wrap(ctx, err, "resolve home dir")
+	}
+	configPath := factory.CreateVaultUIConfigPath(homeDir)
+
+	cache := statuscache.NewCache()
+	launches := launchregistry.NewRegistry()
+	apiHandler := factory.CreateAPIHandler(loader, configPath, cache, launches, homeDir)
+
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
+		factory.CreateStatusCacheLoader(loader, configPath, cache),
 		factory.CreateHTTPServer(adminListen, readiness),
+		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {
 		return errors.Wrap(ctx, err, "run failed")
 	}

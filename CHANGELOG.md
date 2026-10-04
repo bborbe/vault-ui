@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Serve the Go `:8000` API surface — the six read routes (vaults, assignees, tasks, goals, topics, topic detail) with byte-identical embedded static serving, and the eighteen mutating routes (task/goal session lifecycle, execute-command, phase/flag/status/assign-to-me, session set/clear, the jump proxy, and cache/config reload) — reproducing the Python backend's status codes, bodies, guards, and vault-file side effects.
+- feat: Call vault-cli in-process through its exported Go library for every read and write; no vault-cli subprocess is spawned on any route.
+- feat: Inject a board-event publisher into the mutating handlers and publish exactly the mutations the Python backend broadcasts, so the WebSocket layer can plug in without touching the handlers.
+- test: Extend the parity harness with a mutation-parity section that resets the fixture vault, runs each write route against the Python backend and then against the Go backend, and diffs the status, the normalized body, and the resulting vault-file tree; add a third injected-divergence build tag that skips a vault write and prove the harness rejects it.
+- feat: Serve the six read-only vault-ui routes (`/api/vaults`, `/api/assignees`, `/api/tasks`, `/api/goals`, `/api/topics`, `/api/topics/{topic_id}`) from the Go backend at the frozen paths and query-parameter names, reproducing the Python response shapes, filters, and derived fields (blocked, upcoming, recently_completed, session_state, activity_date, obsidian_url).
+- feat: Serve the frozen frontend from `src/vault_ui/static/` byte-identically at `/`, with explicit path canonicalization that refuses traversal with the same 404 the Python backend returns.
+- feat: Add the `make parity` harness, which boots the Go and Python backends against a disposable fixture vault and compares route sets, normalized bodies, error shapes, static hashes, and a traversal probe; `make parity-selftest` proves the harness rejects an injected route rename and an injected response-body divergence.
+- feat: Retarget `make build` to write the binary to `~/Documents/workspaces/go/bin/vault-ui` and make the API listen address settable via `VAULT_UI_LISTEN` (default `:8000`), leaving the fixed `:9090` admin block unchanged.
+
 ## v0.76.0
 
 - feat: Port the session liveness, activity-date, and display-name resolution logic to Go packages, reproducing the Python classifications and refusals.

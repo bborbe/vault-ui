@@ -69,6 +69,7 @@ func CreateOpSet(
 		FrontmatterSet:   ops.NewFrontmatterSetOperation(taskStore, currentDateTime, publisher, vault.Name, vault.GetTasksDir()),
 		FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, publisher, vault.Name, vault.GetTasksDir()),
 		WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, currentDateTime, uuidGenerator, starter, resumer),
+		Approve:          ops.NewTaskApproveOperation(taskStore, currentDateTime),
 		Defer:            ops.NewDeferOperation(taskStore, dailyStore, currentDateTime),
 		Complete:         ops.NewCompleteOperation(taskStore, dailyStore, currentDateTime, interactionCounter),
 		GoalSet:          ops.NewGoalSetOperation(goalStore),

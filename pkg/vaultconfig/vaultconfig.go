@@ -34,6 +34,7 @@ type Vault struct {
 	Name              string
 	Path              string
 	TasksFolder       string
+	GoalsFolder       string
 	VaultName         string
 	ClaudeScript      string
 	VaultCLIPath      string
@@ -79,6 +80,7 @@ func BuildVaultConfig(name string, cliVault *config.Vault, vaultName, vaultCLIPa
 		Name:              name,
 		Path:              cliVault.Path,
 		TasksFolder:       cliVault.TasksDir,
+		GoalsFolder:       cliVault.GetGoalsDir(),
 		VaultName:         vaultName,
 		ClaudeScript:      claudeScript,
 		VaultCLIPath:      vaultCLIPath,
