@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.78.2
 
 - docs: Add `docs/go-cutover.md`, the operator runbook for the final cutover — repointing the launchd LaunchAgent from the uv-installed Python tool to the Go binary, covering the pre-flight in-flight-launch check, `make build`, the plist edit, restart, the verification probes (including the running-process check that distinguishes a real cutover from an unapplied plist edit), board exercise, the static-tree regression guard, and rollback.
 
