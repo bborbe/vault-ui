@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 - fix: Repair the pane resolver and watcher supervisor tests — realistic subprocess timeouts, and arming the watcher helper's SIGTERM trap before it signals readiness — removing load-dependent flakes that made `go test ./...` and `make test` fail intermittently.
 - fix: Guard the watcher supervisor's subprocess handle with the existing mutex, removing a data race between Stop and the subprocess start that surfaced under `make test`'s -race run.
 
+## v0.75.1
+
+- fix: The board's Start button now approves a task still in the `todo` phase before opening its session, so starting a todo card no longer fails with `vault-cli work-on ... task is at phase "todo"`. The Start click is the operator's own approval surface; cards past approval take the unchanged path with no extra write.
+
 ## v0.75.0
 
 - feat: Add the Go module foundation for vault-ui — composition root serving the canonical admin block on :9090 (healthz, readiness, metrics, setloglevel, gc).

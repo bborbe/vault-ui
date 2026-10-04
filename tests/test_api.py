@@ -158,6 +158,7 @@ def _make_vault_client(tasks: list[Task] | None = None) -> MagicMock:
 
     client.list_tasks = AsyncMock(side_effect=_list_tasks)
     client.show_task = AsyncMock(side_effect=_show_task)
+    client.approve_task = AsyncMock()
     client.clear_field = AsyncMock()
     client.set_field = AsyncMock()
     client.set_goal_field = AsyncMock()
@@ -571,6 +572,47 @@ def test_run_task_endpoint_no_project(
     data = response.json()
     assert "session_id" in data
     assert "command" in data
+
+
+def test_run_task_approves_todo_task_before_launch(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """A todo card's Start approves it first, then launches — in that order."""
+    mock_vault_client._tasks.append(_make_task(task_id="Todo Task", status="todo", phase="todo"))
+    order: list[str] = []
+
+    async def _approve(task_id: str) -> None:
+        order.append("approve")
+
+    async def _exec(*_args: Any, **_kwargs: Any) -> MagicMock:
+        order.append("work-on")
+        return _make_streaming_proc(b'{"session_id": "todo-session-id"}')
+
+    mock_vault_client.approve_task = AsyncMock(side_effect=_approve)
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=_exec)):
+        response = test_client.post("/api/tasks/Todo%20Task/run?vault=TestVault")
+
+    assert response.status_code == 200
+    assert order == ["approve", "work-on"]
+    mock_vault_client.approve_task.assert_awaited_once_with("Todo Task")
+
+
+def test_run_task_skips_approval_for_non_todo_task(
+    test_client: TestClient,
+    mock_vault_client: MagicMock,
+) -> None:
+    """A task past approval (phase != todo) launches without any approve call."""
+    mock_proc = _make_streaming_proc(b'{"session_id": "planning-session-id"}')
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+        response = test_client.post("/api/tasks/Test%20Task/run?vault=TestVault")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {"session_id", "command", "working_dir", "task_title"} <= set(data.keys())
+    mock_vault_client.approve_task.assert_not_awaited()
 
 
 # --- launching-session counting (Start-button admission gate) ---
