@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.78.0
 
 - feat: Serve the Go `:8000` API surface — the six read routes (vaults, assignees, tasks, goals, topics, topic detail) with byte-identical embedded static serving, and the eighteen mutating routes (task/goal session lifecycle, execute-command, phase/flag/status/assign-to-me, session set/clear, the jump proxy, and cache/config reload) — reproducing the Python backend's status codes, bodies, guards, and vault-file side effects.
 - feat: Call vault-cli in-process through its exported Go library for every read and write; no vault-cli subprocess is spawned on any route.
