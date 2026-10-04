@@ -93,6 +93,10 @@ Now edit `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist` so that
 </array>
 ```
 
+The value is written out in full (`/Users/YOUR_USER/…`, substituting your own user)
+rather than as `~`: launchd does not tilde-expand `ProgramArguments`, so an absolute
+path is required here — the only place in this document where `~` will not do.
+
 Leave `PATH`, `WorkingDirectory`, `KeepAlive`, `RunAtLoad` and the log paths as they
 are.
 
@@ -120,23 +124,29 @@ plutil -extract ProgramArguments.0 raw ~/Library/LaunchAgents/com.github.bborbe.
 launchctl list | grep vault-ui                                                                     # exit code 0
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                                    # → 200
 
-# Exactly one process must hold :8000, and it must be the Go binary.
-PIDS=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t)
-echo "$PIDS" | grep -c .                                                                           # → 1; 0 means nothing is listening
-lsof -p "$PIDS" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
+# Gate: exactly one process must hold :8000. 0 = nothing listening; 2+ = a leftover
+# listener is still up. Resolve either before reading the next two probes, which act
+# on the first pid only.
+lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .
+PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
+lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
 
 curl -s 'http://127.0.0.1:8000/api/tasks?vault=Personal&status=in_progress' | jq 'length'          # informational
 curl -s 'http://127.0.0.1:8000/api/goals?vault=Personal' | jq 'length'                             # informational
-ps eww "$PIDS" | tr ' ' '\n' | grep '^PATH='                                                       # vault-cli dir before homebrew
+ps eww "$PID" | tr ' ' '\n' | grep '^PATH='                                                        # vault-cli dir before homebrew
 ```
 
-Three things about these probes:
+Four things about these probes:
 
-- **The listener check is the one that distinguishes a real cutover from a plist edit
-  that never took effect.** `plutil` reads the file on disk and reports the Go path the
-  moment you save the edit, whether or not the restart worked; `lsof -p … -a -d txt`
-  reads the *running* process. The count matters because a leftover Python listener
-  alongside the Go one would otherwise make the probe report on the wrong pid.
+- **The listener count is the gate.** `1` is what you want. `0` means nothing is
+  listening — read `/tmp/vault-ui.log`. `2` or more means a leftover listener is still
+  up; resolve that first, because the two probes below take the first pid only and
+  would otherwise tell you about whichever process `lsof` happened to list first.
+- **`lsof -p … -a -d txt` is the probe that distinguishes a real cutover from a plist
+  edit that never took effect.** `plutil` reads the file on disk and reports the Go path
+  the moment you save the edit, whether or not the restart worked; this reads the
+  *running* process. It either matches and prints `running binary: go`, or prints
+  nothing — no output here means the listener is not the Go binary.
 - **The two `jq 'length'` calls are informational, not pass/fail gates.** Zero
   in-progress tasks is a normal state of a healthy vault. What you are checking is that
   each call returns valid JSON and a number — a 500 or a connection error is the
