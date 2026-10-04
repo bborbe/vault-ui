@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [022-go-backend-private-logic]
+summary: Ported the vault-cli watcher supervisor to pkg/watcher and the WezTerm pane resolver to pkg/pane, reproducing the Python restart/stop lifecycle, malformed-line tolerance, bounded helper, and jump-credential handling with two Ginkgo suites; make precommit exits 0.
+execution_id: vault-ui-exec-114-spec-022-watcher-and-pane-bridges
+dark-factory-version: v0.196.0
 created: "2026-10-03T23:45:00Z"
 queued: "2026-10-03T23:06:15Z"
+started: "2026-10-04T09:58:38Z"
+completed: "2026-10-04T10:13:39Z"
 branch: dark-factory/go-backend-private-logic
 ---
 
