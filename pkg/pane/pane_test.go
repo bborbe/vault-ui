@@ -332,7 +332,7 @@ var _ = Describe("PaneResolver", func() {
 			scriptPath,
 			"e0930886-0843-4ca9-adfa-58819443c032",
 			os.Environ(),
-			time.Second,
+			pane.DefaultResolveTimeout,
 		)
 		Expect(ok).To(BeTrue())
 		Expect(paneID).To(Equal("42"))
@@ -357,7 +357,7 @@ var _ = Describe("PaneResolver", func() {
 			"/opt/supervisor/scripts/who-needs-me.py",
 			"",
 			os.Environ(),
-			time.Second,
+			pane.DefaultResolveTimeout,
 		)
 		Expect(ok).To(BeFalse())
 		Expect(paneID).To(Equal(""))
@@ -373,7 +373,7 @@ var _ = Describe("PaneResolver", func() {
 			"/opt/supervisor/scripts/who-needs-me.py",
 			"e0930886-0843-4ca9-adfa-58819443c032",
 			os.Environ(),
-			time.Second,
+			pane.DefaultResolveTimeout,
 		)
 		Expect(ok).To(BeFalse())
 		Expect(emptyOut).To(Equal(""))
@@ -384,7 +384,7 @@ var _ = Describe("PaneResolver", func() {
 			"/opt/supervisor/scripts/who-needs-me.py",
 			"e0930886-0843-4ca9-adfa-58819443c032",
 			os.Environ(),
-			time.Second,
+			pane.DefaultResolveTimeout,
 		)
 		Expect(ok).To(BeFalse())
 		Expect(nonZero).To(Equal(""))
