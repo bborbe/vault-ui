@@ -1461,6 +1461,13 @@ async def run_task(
         # Read task
         task = await client.show_task(task_id)
 
+        # The Start click is the operator's own approval surface: a card still in the
+        # approval inbox (phase "todo") is approved here before the launch, because
+        # vault-cli work-on refuses a task that has not been approved. Any other phase
+        # (including a missing one) is already past approval and takes the old path.
+        if task.phase == "todo":
+            await client.approve_task(task_id)
+
         # Record the launch as in-flight BEFORE writing the durable marker, so the
         # server-side registry is the authoritative "a launch turn is in flight"
         # signal the moment the marker exists. A concurrent writer restoring the

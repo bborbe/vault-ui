@@ -216,3 +216,46 @@ async def test_show_topic_other_failure_raises_runtime_error() -> None:
 
     assert not isinstance(excinfo.value, FileNotFoundError)
     assert not isinstance(excinfo.value, VaultNotFoundError)
+
+
+async def test_approve_task_builds_argv() -> None:
+    """approve_task runs `task approve <id> --vault <v>` at the subprocess boundary."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)) as mock_exec:
+        result = await client.approve_task("Todo Task")
+
+    assert list(mock_exec.call_args.args) == [
+        "vault-cli",
+        "task",
+        "approve",
+        "Todo Task",
+        "--vault",
+        "TestVault",
+    ]
+    assert result is None
+
+
+async def test_approve_task_refusal_raises_runtime_error() -> None:
+    """vault-cli refuses a task not at phase todo; the stderr text survives."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    stderr = b'refusing to approve "Todo Task": task is at phase "planning", not "todo"'
+    proc = _make_proc(1, b"", stderr)
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await client.approve_task("Todo Task")
+
+    assert 'task is at phase "planning", not "todo"' in str(exc_info.value)
+
+
+async def test_approve_task_success_returns_none() -> None:
+    """A zero return code returns None without raising."""
+    client = VaultCLIClient("vault-cli", "TestVault")
+    proc = _make_proc(0, b"")
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        assert await client.approve_task("Todo Task") is None
