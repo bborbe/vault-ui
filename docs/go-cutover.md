@@ -11,15 +11,23 @@ every service restart, plist edit and tool reinstall out of `prompts/`.
 
 Parity is already proven before you start — `make parity` compares the Go and Python
 backends across all 25 routes, the error shapes, the write path and the WebSocket
-frames. This runbook is about the switch, not about re-establishing that.
+frames. This runbook is about the switch, not about re-establishing that. **Note the
+commit it was proven against**: step 1 pulls new code, and a pull that moves the Go
+backend past that commit invalidates the claim — re-run `make parity` (in the
+container; see § Known limits) if it does.
 
 ## What changes
 
 | | Before | After |
 |---|---|---|
-| `ProgramArguments[0]` | `~/.local/bin/vault-ui` (uv-installed Python) | `~/Documents/workspaces/go/bin/vault-ui` |
+| `ProgramArguments` | `~/.local/bin/vault-ui` — **or** the five-element `uv run --directory <repo> vault-ui` form | the single Go binary path |
 | Backing code | `~/.local/share/uv/tools/vault-ui/` (installed snapshot) | the repo checkout, compiled |
 | Upgrade step | `git pull` + `uv tool install --force --no-cache .` | `git pull` + `make build` + restart |
+
+**Which "Before" you have matters for rollback.** `docs/launchd-service.md` § 1
+documents the five-element `uv run` form; the uv-tool form is a single element. Read
+your plist before you edit it and record the exact array — rollback restores *that*,
+not a guess.
 
 The `PATH` contract, `WorkingDirectory`, `KeepAlive`, `RunAtLoad` and the log paths
 do not change. `docs/launchd-service.md` documents the plist shape and why the PATH
@@ -32,6 +40,19 @@ spawned. If the board shows any `⏳ Starting...` card, let it finish before you
 restart — the restart table in `docs/starting-marker-lifecycle.md` explains what is
 lost otherwise.
 
+**Check where your config lives.** The two backends do not resolve `config.yaml` the
+same way, and this is the one difference that can leave you with no board at all:
+
+- **Go** is XDG-first, then `~/config.yaml` — it does **not** look in the repo.
+- **Python** additionally falls back to the repo root (`<repo>/config.yaml`).
+
+If your Python service has been running off the repo-root file, the Go binary will
+not find it and will exit at startup. Check and migrate before cutting over:
+
+```bash
+ls ~/.config/vault-ui/config.yaml || cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml
+```
+
 ## 1. Build the Go binary
 
 ```bash
@@ -40,16 +61,26 @@ git pull
 make build
 ```
 
-`make build` writes to `~/Documents/workspaces/go/bin/vault-ui`. Confirm it is a real
-executable and not a leftover script:
+`make build` writes to `~/Documents/workspaces/go/bin/vault-ui`. Confirm it is a real,
+runnable executable — `file` alone reports the format regardless of the mode bits, so
+check the exec bit too:
 
 ```bash
 file ~/Documents/workspaces/go/bin/vault-ui     # → Mach-O 64-bit executable arm64
+test -x ~/Documents/workspaces/go/bin/vault-ui && echo "executable"
 ```
 
-## 2. Repoint the LaunchAgent
+## 2. Back up the LaunchAgent, then repoint it
 
-Edit `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist` so that
+Keep the working configuration — a malformed `ProgramArguments` makes
+`launchctl bootstrap` fail with the only copy of it gone:
+
+```bash
+cp ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist \
+   ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist.bak
+```
+
+Now edit `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist` so that
 `ProgramArguments` is the single Go binary path:
 
 ```xml
@@ -62,10 +93,9 @@ Edit `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist` so that
 Leave `PATH`, `WorkingDirectory`, `KeepAlive`, `RunAtLoad` and the log paths as they
 are.
 
-If your plist currently spells the Python service as
-`uv run --directory <repo> vault-ui`, replace the **whole array** with the single
-element above — leaving the `uv`/`run`/`--directory` arguments in place would invoke
-the Go binary with arguments it does not accept.
+Replace the **whole array**. If your plist currently spells the Python service as
+`uv run --directory <repo> vault-ui`, setting only the first element would invoke the
+Go binary with `run --directory …` as arguments it does not accept.
 
 ## 3. Restart
 
@@ -80,19 +110,30 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-
 plutil -extract ProgramArguments.0 raw ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist   # → the Go binary path
 launchctl list | grep vault-ui                                                                     # exit code 0
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                                    # → 200
-lsof -p "$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
-curl -s 'http://127.0.0.1:8000/api/tasks?vault=Personal&status=in_progress' | jq 'length'          # → > 0
-ps eww "$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)" | tr ' ' '\n' | grep '^PATH='            # vault-cli dir before homebrew
+
+# The listener must be exactly one process, and it must be the Go binary.
+PIDS=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t)
+echo "$PIDS" | wc -l                                                                               # → 1
+lsof -p "$PIDS" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
+
+curl -s 'http://127.0.0.1:8000/api/tasks?vault=Personal' | jq 'length'                             # informational — see below
+ps eww "$PIDS" | tr ' ' '\n' | grep '^PATH='                                                       # vault-cli dir before homebrew
 ```
 
-The fourth line is the one that distinguishes a real cutover from a plist edit that
-never took effect: it reads the **running** process's executable, not the file on
-disk. Before the cutover it names the Python service even when the plist has already
-been edited.
+Two things about these probes:
+
+- **The listener check is the one that distinguishes a real cutover from a plist edit
+  that never took effect.** `plutil` reads the file on disk and reports the Go path the
+  moment you save the edit, whether or not the restart worked; `lsof -p … -a -d txt`
+  reads the *running* process. The `wc -l` assertion matters because a leftover Python
+  listener alongside the Go one would otherwise make the probe report on the wrong pid.
+- **The task count is informational, not a pass/fail gate.** Zero in-progress tasks is
+  a normal state of a healthy vault. What you are checking is that the call returns
+  valid JSON and a number — a 500 or a connection error is the failure.
 
 If `launchctl list` shows a non-zero status, read `/tmp/vault-ui.log`. A Go binary
-invoked with leftover `uv run` arguments, or a `PATH` missing the vault-cli
-directory, both fail loudly there.
+invoked with leftover `uv run` arguments, a `PATH` missing the vault-cli directory,
+and a config file it cannot find all fail loudly there.
 
 ## 5. Exercise the board
 
@@ -101,9 +142,14 @@ a card's actions work, and live updates arrive as vault files change.
 
 For a scripted check, use Playwright MCP through `browser_evaluate` with scoped
 selectors. **Do not call `browser_snapshot` or `browser_find` on the board** — the
-DOM contract and the reason are in the vault's `[[vault-ui]]` page.
+board re-renders continuously from live vault updates, so a full-tree snapshot
+either times out or returns a tree that is stale before you can act on it. The DOM
+contract is in the vault's `[[vault-ui]]` page.
 
 ## 6. Regression guard
+
+Run this **from a checkout on `master`** — on a feature branch the diff also contains
+that branch's work and reports a false alarm.
 
 ```bash
 cd ~/Documents/workspaces/vault-ui
@@ -115,13 +161,23 @@ Prints nothing. The frontend is frozen; a non-empty result means something touch
 ## Rollback
 
 The Python backend stays in the tree and stays installable for one rollback window.
-Repoint `ProgramArguments[0]` back to `~/.local/bin/vault-ui`, then:
+Restore the `ProgramArguments` array you recorded in step 2 — the exact array, not a
+guessed one — then:
 
 ```bash
+cp ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist.bak \
+   ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+
 cd ~/Documents/workspaces/vault-ui
 uv tool install --force --no-cache .
 launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 ```
+
+Restoring the `.bak` is the safe path: it returns the exact prior invocation,
+including the five-element `uv run` form if that is what you had. If you edited the
+plist in place instead, `uv tool install` alone is **not** sufficient for that form —
+it reinstalls the tool, but the `uv run --directory` arguments are what make the
+legacy repo-root config reachable.
 
 `--no-cache` is load-bearing: uv keys its build cache on the version string, so
 `--force` alone can reinstall the cached old wheel and still report success. See
@@ -129,6 +185,14 @@ launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui
 
 The Python backend remains in-tree until its removal executes — filed as
 `specs/ideas/remove-superseded-python-backend.md`.
+
+## Known limits
+
+- **`make parity` does not run on the macOS host.** The harness uses GNU
+  `date -u -d '-1 hour'`, which BSD `date` rejects, and the repo `.venv` is a
+  container-built Linux venv. Run it in the spec's container
+  (`docker.io/bborbe/claude-yolo:v0.15.1`, mounting the repo at `/workspace`). This is
+  why the parity precondition above is worth re-checking if step 1 pulls new code.
 
 ## Related
 
