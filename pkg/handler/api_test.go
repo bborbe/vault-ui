@@ -16,9 +16,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
+	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 type fakeBoard struct {
@@ -76,7 +78,10 @@ func newRouter(fake *fakeBoard) http.Handler {
 		"app.js":     {Data: []byte("console.log('app')")},
 		"style.css":  {Data: []byte("body{}")},
 	}
-	return handler.CreateHTTPRouter(fake, &fakeMutations{}, staticFS)
+	readiness := vaultui.NewReadiness()
+	readiness.SetReady()
+	manager := websocket.NewConnectionManager(websocket.NewMetrics())
+	return handler.CreateHTTPRouter(fake, &fakeMutations{}, staticFS, readiness, manager)
 }
 
 func doGet(router http.Handler, target string) *httptest.ResponseRecorder {

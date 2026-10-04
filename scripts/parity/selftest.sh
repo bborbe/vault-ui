@@ -5,9 +5,11 @@
 #
 #   1. a normal build passes the read-only route set (the harness can pass);
 #   2. a build with one route renamed fails and the diagnostic names it;
-#   3. a build with one response field renamed fails and the diagnostic names it.
+#   3. a build with one response field renamed fails and the diagnostic names it;
+#   4. a build with a skipped vault write fails on the file diff;
+#   5. a build with a corrupted WebSocket frame fails on the frame comparison.
 #
-# A harness that emitted constants would pass 2 and 3 and fail the self-test.
+# A harness that emitted constants would pass 2–5 and fail the self-test.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,6 +49,11 @@ grep -q "routes: 6/6 matched" "$WORK/ok.out" || {
 }
 grep -q "mutation-parity: 1/1" "$WORK/ok.out" || {
   echo "FAIL: baseline did not report mutation-parity: 1/1"
+  cat "$WORK/ok.out"
+  exit 1
+}
+grep -Eq "ws-parity: frames identical \([1-9][0-9]* frames\)" "$WORK/ok.out" || {
+  echo "FAIL: baseline did not report a non-empty, identical WebSocket frame sequence"
   cat "$WORK/ok.out"
   exit 1
 }
@@ -90,4 +97,17 @@ grep -q "mutation mismatch task-flag-set" "$WORK/skipwrite.out" || {
   exit 1
 }
 
-echo "selftest: OK — the harness rejects all three injected divergences"
+echo "selftest: divergent WebSocket frame must fail and be named"
+build "parity_selftest_ws_frame" "$WORK/vault-ui-ws"
+if run_parity "$WORK/vault-ui-ws" "$WORK/ws.out"; then
+  echo "FAIL: the harness accepted a divergent WebSocket frame (it is not comparing frames)"
+  cat "$WORK/ws.out"
+  exit 1
+fi
+grep -q "ws-parity: .*divergent" "$WORK/ws.out" || {
+  echo "FAIL: the diagnostic did not report a ws-parity divergence"
+  cat "$WORK/ws.out"
+  exit 1
+}
+
+echo "selftest: OK — the harness rejects all four injected divergences"

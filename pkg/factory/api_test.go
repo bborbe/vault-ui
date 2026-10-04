@@ -6,6 +6,7 @@ package factory_test
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -15,18 +16,46 @@ import (
 
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
+	gws "github.com/gorilla/websocket"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/websocket"
 )
+
+// newTestAPIHandler wires CreateAPIHandler with a ready gate and a fresh
+// connection manager.
+func newTestAPIHandler(loader config.Loader, configPath string) http.Handler {
+	return newTestAPIHandlerWithManager(
+		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()),
+	)
+}
+
+// newTestAPIHandlerWithManager wires CreateAPIHandler with a ready gate and the
+// given connection manager.
+func newTestAPIHandlerWithManager(
+	loader config.Loader,
+	configPath string,
+	manager websocket.ConnectionManager,
+) http.Handler {
+	readiness := vaultui.NewReadiness()
+	readiness.SetReady()
+	return factory.CreateAPIHandler(
+		loader, configPath, statuscache.NewCache(), launchregistry.NewRegistry(), tempDir(),
+		readiness, manager,
+	)
+}
 
 func apiFixture() (config.Loader, string, string) {
 	vaultDir := tempDir()
 	Expect(os.MkdirAll(filepath.Join(vaultDir, "24 Tasks"), 0750)).To(Succeed())
+	Expect(os.MkdirAll(filepath.Join(vaultDir, "23 Goals"), 0750)).To(Succeed())
 	writeFile(vaultDir, "24 Tasks/Task A.md", "---\nstatus: next\n---\n# Task A\n")
+	writeFile(vaultDir, "23 Goals/Goal A.md", "---\nstatus: in_progress\n---\n# Goal A\n")
 
 	configDir := tempDir()
 	configPath := filepath.Join(configDir, "config.yaml")
@@ -37,6 +66,7 @@ func apiFixture() (config.Loader, string, string) {
 		Name:     "personal",
 		Path:     vaultDir,
 		TasksDir: "24 Tasks",
+		GoalsDir: "23 Goals",
 	}}, nil)
 	loader.GetCurrentUserReturns("tester", nil)
 	return loader, configPath, vaultDir
@@ -88,9 +118,7 @@ var _ = Describe("API factory", func() {
 	Describe("CreateAPIHandler", func() {
 		It("serves the read routes", func() {
 			loader, configPath, _ := apiFixture()
-			handler := factory.CreateAPIHandler(
-				loader, configPath, statuscache.NewCache(), launchregistry.NewRegistry(), tempDir(),
-			)
+			handler := newTestAPIHandler(loader, configPath)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/vaults", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
@@ -99,13 +127,85 @@ var _ = Describe("API factory", func() {
 
 		It("serves the frontend at root", func() {
 			loader, configPath, _ := apiFixture()
-			handler := factory.CreateAPIHandler(
-				loader, configPath, statuscache.NewCache(), launchregistry.NewRegistry(), tempDir(),
-			)
+			handler := newTestAPIHandler(loader, configPath)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
 			Expect(recorder.Body.String()).To(ContainSubstring("<html"))
+		})
+	})
+
+	Describe("mutating-route publisher wiring", func() {
+		It("broadcasts a task update to a connected WebSocket client", func() {
+			loader, configPath, _ := apiFixture()
+			manager := websocket.NewConnectionManager(websocket.NewMetrics())
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager))
+			defer server.Close()
+
+			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+			conn, _, err := gws.DefaultDialer.Dial(wsURL, nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = conn.Close() }()
+			Eventually(manager.Count).Should(Equal(1))
+
+			req, err := http.NewRequest(
+				http.MethodPatch,
+				server.URL+"/api/tasks/Task%20A/flag?vault=personal",
+				strings.NewReader(`{"flag":true}`),
+			)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			_, message, err := conn.ReadMessage()
+			Expect(err).NotTo(HaveOccurred())
+			var frame map[string]string
+			Expect(json.Unmarshal(message, &frame)).To(Succeed())
+			Expect(frame).To(Equal(map[string]string{
+				"type":      "task_updated",
+				"task_id":   "Task A",
+				"item_kind": "task",
+				"vault":     "personal",
+			}))
+		})
+
+		It("broadcasts a goal update to a connected WebSocket client", func() {
+			loader, configPath, _ := apiFixture()
+			manager := websocket.NewConnectionManager(websocket.NewMetrics())
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager))
+			defer server.Close()
+
+			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+			conn, _, err := gws.DefaultDialer.Dial(wsURL, nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = conn.Close() }()
+			Eventually(manager.Count).Should(Equal(1))
+
+			req, err := http.NewRequest(
+				http.MethodPatch,
+				server.URL+"/api/goals/Goal%20A/status?vault=personal",
+				strings.NewReader(`{"status":"hold"}`),
+			)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			_, message, err := conn.ReadMessage()
+			Expect(err).NotTo(HaveOccurred())
+			var frame map[string]string
+			Expect(json.Unmarshal(message, &frame)).To(Succeed())
+			Expect(frame).To(Equal(map[string]string{
+				"type":      "goal_updated",
+				"goal_id":   "Goal A",
+				"item_kind": "goal",
+				"vault":     "personal",
+			}))
 		})
 	})
 

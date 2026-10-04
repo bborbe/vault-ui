@@ -10,15 +10,24 @@ import (
 
 	"github.com/gorilla/mux"
 
+	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/mutations"
+	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 // CreateHTTPRouter builds the :8000 API router: the read routes under /api/,
-// the mutating routes under /api/, then the static tree at /. Path cleaning is
-// disabled so a traversal request reaches the static handler and is refused
-// with the same 404 the Python backend returns, instead of a mux 301 redirect.
-func CreateHTTPRouter(b board.Board, m mutations.Service, staticFS fs.FS) http.Handler {
+// the mutating routes under /api/, the WebSocket at /ws, then the static tree
+// at /. Path cleaning is disabled so a traversal request reaches the static
+// handler and is refused with the same 404 the Python backend returns, instead
+// of a mux 301 redirect.
+func CreateHTTPRouter(
+	b board.Board,
+	m mutations.Service,
+	staticFS fs.FS,
+	readiness vaultui.Readiness,
+	manager websocket.ConnectionManager,
+) http.Handler {
 	router := mux.NewRouter()
 	router.SkipClean(true)
 
@@ -63,6 +72,9 @@ func CreateHTTPRouter(b board.Board, m mutations.Service, staticFS fs.FS) http.H
 		Handler(NewSetTaskSessionHandler(m))
 	router.Methods(http.MethodPost).Path("/api/cache/reload").Handler(NewCacheReloadHandler(m))
 	router.Methods(http.MethodPost).Path("/api/config/reload").Handler(NewConfigReloadHandler(m))
+
+	router.Methods(http.MethodGet).Path("/ws").
+		Handler(NewWebSocketHandler(readiness, manager))
 
 	router.PathPrefix("/").Handler(NewStaticHandler(staticFS))
 	return router

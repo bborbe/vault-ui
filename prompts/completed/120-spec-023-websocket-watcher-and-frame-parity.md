@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [023-go-backend-api-and-cutover]
+summary: Implemented the Go /ws WebSocket route with a bounded non-blocking connection manager fed by vault-cli's in-process watcher and the mutating routes' publisher, extended the parity harness with a real ws-parity frame comparison and a fourth self-test divergence, and made make parity fully green (25/25 routes).
+execution_id: vault-ui-exec-120-spec-023-websocket-watcher-and-frame-parity
+dark-factory-version: v0.196.0
 created: "2026-10-04T00:00:00Z"
 queued: "2026-10-04T13:10:34Z"
+started: "2026-10-04T14:59:46Z"
+completed: "2026-10-04T15:21:52Z"
+branch: dark-factory/120-spec-023-websocket-watcher-and-frame-parity
 ---
 
 # Serve `/ws`, drive it from the vault watcher, and prove WebSocket frame parity
