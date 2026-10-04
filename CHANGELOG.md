@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 - feat: Call vault-cli in-process through its exported Go library for every read and write; no vault-cli subprocess is spawned on any route.
 - feat: Inject a board-event publisher into the mutating handlers and publish exactly the mutations the Python backend broadcasts, so the WebSocket layer can plug in without touching the handlers.
 - test: Extend the parity harness with a mutation-parity section that resets the fixture vault, runs each write route against the Python backend and then against the Go backend, and diffs the status, the normalized body, and the resulting vault-file tree; add a third injected-divergence build tag that skips a vault write and prove the harness rejects it.
+- feat: Serve the live-update WebSocket at `/ws` from the Go backend — a bounded, non-blocking connection manager (concurrent-client cap, per-client buffered send queue that drops a slow client rather than stalling the broadcast) fed by vault-cli's in-process file watcher and by the mutating routes' event publisher, answering a client `ping` with `pong` and emitting the same watcher and mutation frames as the Python backend.
+- test: Extend the parity harness with a ws-parity section that connects a client to each backend, drives the same watcher change and route-originated broadcast, and compares the normalized frame sequences (asserting a non-empty result); add a fourth injected-divergence build tag that corrupts a WebSocket frame and prove the harness rejects it.
 
 ## v0.77.0
 

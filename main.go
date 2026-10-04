@@ -43,11 +43,15 @@ func execute(ctx context.Context) error {
 
 	cache := statuscache.NewCache()
 	launches := launchregistry.NewRegistry()
-	apiHandler := factory.CreateAPIHandler(loader, configPath, cache, launches, homeDir)
+	manager := factory.CreateConnectionManager()
+	apiHandler := factory.CreateAPIHandler(
+		loader, configPath, cache, launches, homeDir, readiness, manager,
+	)
 
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
 		factory.CreateStatusCacheLoader(loader, configPath, cache),
+		factory.CreateWatcher(loader, manager),
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {

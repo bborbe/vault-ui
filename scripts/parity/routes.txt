@@ -8,6 +8,9 @@
 #                     fixture between the two backends; it is counted as matched
 #                     here without being issued by this loop (issuing a mutating
 #                     route here would corrupt the fixture for later cases).
+#          "ws"       the WebSocket route is served and its parity is proven by
+#                     the ws-parity section; it is counted as matched here
+#                     without being issued by this loop.
 #          "no"       counts the route as unmatched (named in the diagnostic) —
 #                     the route does not exist in the Go backend yet.
 GET	/api/vaults	-	yes
@@ -34,4 +37,4 @@ DELETE	/api/goals/GoalOne/session	-	mutation
 PATCH	/api/tasks/TaskOne/session	-	mutation
 POST	/api/cache/reload	-	mutation
 POST	/api/config/reload	-	mutation
-WS	/ws	-	no
+WS	/ws	-	ws

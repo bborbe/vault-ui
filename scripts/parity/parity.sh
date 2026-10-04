@@ -3,13 +3,15 @@
 # Parity harness: boots the Go backend and the Python backend side by side
 # against a disposable fixture vault and compares their responses. Any
 # divergence — a route absent, a status difference, a non-empty normalized body
-# diff, a static-hash difference, a traversal probe returning 200 — makes the
-# script exit non-zero with a diagnostic naming the mismatched route.
+# diff, a static-hash difference, a traversal probe returning 200, or a
+# divergent WebSocket frame — makes the script exit non-zero with a diagnostic
+# naming the mismatched route or case.
 #
 # Environment overrides (used by the self-test):
 #   PARITY_ROUTES      route table (default scripts/parity/routes.txt)
 #   PARITY_CASES       extra read cases (default scripts/parity/cases.txt)
 #   PARITY_ERRORS      error cases (default scripts/parity/errors.txt)
+#   PARITY_MUTATIONS   write cases (default scripts/parity/mutations.txt)
 #   PARITY_GO_BINARY   Go binary to test (default: build from the repo)
 #   PARITY_KEEP=1      keep the temp workdir for inspection
 set -euo pipefail
@@ -21,6 +23,7 @@ ERRORS_FILE="${PARITY_ERRORS:-${REPO_ROOT}/scripts/parity/errors.txt}"
 MUTATIONS_FILE="${PARITY_MUTATIONS:-${REPO_ROOT}/scripts/parity/mutations.txt}"
 GO_BINARY="${PARITY_GO_BINARY:-}"
 TZ_PIN="${PARITY_TZ:-UTC}"
+PYTHON="${PARITY_PYTHON:-${REPO_ROOT}/.venv/bin/python}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/vault-ui-parity.XXXXXX")"
 FIXTURE="$WORK/fixture"
@@ -108,9 +111,14 @@ EOF
   chmod +x "$FIXTURE/bin/claude-stub"
 }
 
+# write_vault resets the fixture vault to its pristine bytes. It preserves the
+# watched directories themselves (only their files are replaced): the Go
+# backend's in-process watcher registers the directories once at startup, and
+# deleting a watched directory would drop its fsnotify watch for the rest of
+# the run.
 write_vault() {
-  rm -rf "$VAULT"
   mkdir -p "$VAULT/24 Tasks" "$VAULT/23 Goals" "$VAULT/23 Topics"
+  rm -f "$VAULT/24 Tasks"/*.md "$VAULT/23 Goals"/*.md "$VAULT/23 Topics"/*.md
 
   local recent_past
   recent_past="$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)"
@@ -304,6 +312,15 @@ snapshot_vault() {
     -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})/TIMESTAMP/g'
 }
 
+# normalize_frames reads a JSONL frame file, one normalized frame per line.
+normalize_frames() {
+  local file="$1" line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '%s\n' "$line" | jq -S -c .
+  done <"$file"
+}
+
 # --- main ------------------------------------------------------------------
 
 echo "parity: building fixture and backends" >&2
@@ -348,6 +365,11 @@ while IFS=$'\t' read -r method path query send; do
   if [[ "${send:-no}" == "mutation" ]]; then
     # Served and proven by the mutation-parity section, which resets the
     # fixture between backends.
+    routes_matched=$((routes_matched + 1))
+    continue
+  fi
+  if [[ "${send:-no}" == "ws" ]]; then
+    # Served and proven by the ws-parity section, which drives both clients.
     routes_matched=$((routes_matched + 1))
     continue
   fi
@@ -443,6 +465,54 @@ while IFS=$'\t' read -r name method path body norm; do
   mutations_matched=$((mutations_matched + 1))
 done <"$MUTATIONS_FILE"
 
+# WebSocket cases: connect a client to each backend, drive the same watcher
+# change and the same route-originated broadcast, and compare the frame
+# sequences for length, order, and normalized content. Both backends watch the
+# same fixture vault, so a single file write reaches both watchers.
+ws_frames_go=()
+ws_frames_py=()
+ws_total=0
+ws_divergent=0
+ws_first_index=-1
+ws_first_frame=""
+if ! "$PYTHON" "$REPO_ROOT/scripts/parity/ws_probe.py" \
+  "$GO_BASE" "$PY_BASE" "$VAULT" "$WORK" >"$WORK/ws.log" 2>&1; then
+  diagnostics+=("ws probe failed: $(tr '\n' ' ' <"$WORK/ws.log" | cut -c1-400)")
+  ws_divergent=1
+else
+  mapfile -t ws_frames_go < <(normalize_frames "$WORK/ws-go.jsonl")
+  mapfile -t ws_frames_py < <(normalize_frames "$WORK/ws-py.jsonl")
+  ws_go_n=${#ws_frames_go[@]}
+  ws_py_n=${#ws_frames_py[@]}
+  ws_total=$ws_go_n
+  ws_min=$ws_go_n
+  if [[ $ws_py_n -lt $ws_min ]]; then ws_min=$ws_py_n; fi
+  for ((i = 0; i < ws_min; i++)); do
+    if [[ "${ws_frames_go[i]}" != "${ws_frames_py[i]}" ]]; then
+      ws_divergent=$((ws_divergent + 1))
+      if [[ $ws_first_index -lt 0 ]]; then
+        ws_first_index=$i
+        ws_first_frame="${ws_frames_go[i]}"
+      fi
+    fi
+  done
+  if [[ $ws_go_n -ne $ws_py_n ]]; then
+    ws_diff=$((ws_go_n > ws_py_n ? ws_go_n - ws_py_n : ws_py_n - ws_go_n))
+    ws_divergent=$((ws_divergent + ws_diff))
+    if [[ $ws_first_index -lt 0 ]]; then
+      ws_first_index=$ws_min
+      ws_first_frame="length mismatch go=${ws_go_n} py=${ws_py_n}"
+    fi
+  fi
+  if [[ $ws_go_n -eq 0 || $ws_py_n -eq 0 ]]; then
+    ws_divergent=$((ws_divergent + 1))
+    if [[ $ws_first_index -lt 0 ]]; then
+      ws_first_index=0
+      ws_first_frame="no frames received (go=${ws_go_n} py=${ws_py_n})"
+    fi
+  fi
+fi
+
 # Static assets: byte identity (query strings ignored for path resolution).
 for asset in "index.html" "app.js?v=parity" "style.css?v=parity"; do
   py_hash="$(curl_local -s "${PY_BASE}/${asset}" | sha256sum | cut -d' ' -f1)"
@@ -470,7 +540,12 @@ echo "routes: ${routes_matched}/${routes_total} matched"
 echo "body-parity: ${body_equal}/${body_total}"
 echo "error-parity: ${error_equal}/${error_total}"
 echo "mutation-parity: ${mutations_matched}/${mutations_total}"
-echo "ws-parity: frames identical (0 frames)"
+if [[ $ws_divergent -eq 0 ]]; then
+  echo "ws-parity: frames identical (${ws_total} frames)"
+else
+  echo "ws-parity: ${ws_divergent} divergent frame(s), first at index ${ws_first_index} — ${ws_first_frame}"
+  diagnostics+=("ws-parity: ${ws_divergent} divergent frame(s), first at index ${ws_first_index} — ${ws_first_frame}")
+fi
 echo "static-parity: ${static_ok}/3 byte-identical"
 
 fail=0
@@ -478,6 +553,7 @@ if [[ "$routes_matched" -ne "$routes_total" ]]; then fail=1; fi
 if [[ "$body_equal" -ne "$body_total" ]]; then fail=1; fi
 if [[ "$error_equal" -ne "$error_total" ]]; then fail=1; fi
 if [[ "$mutations_matched" -ne "$mutations_total" ]]; then fail=1; fi
+if [[ "$ws_divergent" -ne 0 ]]; then fail=1; fi
 if [[ "$static_ok" -ne 3 ]]; then fail=1; fi
 if [[ "$trav_ok" -ne 1 ]]; then fail=1; fi
 

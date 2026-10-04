@@ -20,6 +20,7 @@ import (
 	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
+	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
@@ -29,6 +30,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
+	"github.com/bborbe/vault-ui/pkg/websocket"
 	staticui "github.com/bborbe/vault-ui/src/vault_ui"
 )
 
@@ -144,6 +146,8 @@ func CreateAPIHandler(
 	cache statuscache.Cache,
 	launches launchregistry.Registry,
 	homeDir string,
+	readiness vaultui.Readiness,
+	manager websocket.ConnectionManager,
 ) http.Handler {
 	service := board.New(board.Deps{
 		Vaults:  &vaultProvider{loader: loader, configPath: configPath},
@@ -157,8 +161,57 @@ func CreateAPIHandler(
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
+		connectionEventPublisher{manager: manager},
 	)
-	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS())
+	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
+}
+
+// CreateConnectionManager returns the bounded, non-blocking WebSocket
+// connection manager shared by the /ws handler, the watcher, and the mutation
+// publisher.
+func CreateConnectionManager() websocket.ConnectionManager {
+	return websocket.NewConnectionManager(websocket.NewMetrics())
+}
+
+// CreateWatcher returns a run.Func that watches the configured vaults with
+// vault-cli's in-process watcher and broadcasts one frame per change. No
+// vault-cli subprocess is spawned.
+func CreateWatcher(loader config.Loader, manager websocket.ConnectionManager) run.Func {
+	return func(ctx context.Context) error {
+		vaults, err := loader.GetAllVaults(ctx)
+		if err != nil {
+			return errors.Wrap(ctx, err, "load vaults for watcher")
+		}
+		targets := buildWatchTargets(vaults)
+		glog.V(2).Infof("starting vault watcher for %d vaults", len(targets))
+		return ops.NewWatchOperation().Execute(ctx, targets,
+			func(event ops.WatchEvent) error {
+				glog.V(3).Infof("watcher event %s %s/%s", event.Event, event.Vault, event.Name)
+				manager.Broadcast(websocket.WatcherFrame(event))
+				return nil
+			},
+		)
+	}
+}
+
+// buildWatchTargets assembles the vault-cli watch targets for the entity kinds
+// the Python backend watches (task, goal, theme, objective), mirroring
+// buildWatchTargets in vault-cli's pkg/cli/cli.go.
+func buildWatchTargets(vaults []*config.Vault) []ops.WatchTarget {
+	targets := make([]ops.WatchTarget, 0, len(vaults))
+	for _, vault := range vaults {
+		targets = append(targets, ops.WatchTarget{
+			VaultPath: vault.Path,
+			VaultName: vault.Name,
+			WatchDirs: []ops.WatchDir{
+				{Dir: vault.GetTasksDir(), Kind: "task"},
+				{Dir: vault.GetGoalsDir(), Kind: "goal"},
+				{Dir: vault.GetThemesDir(), Kind: "theme"},
+				{Dir: vault.GetObjectivesDir(), Kind: "objective"},
+			},
+		})
+	}
+	return targets
 }
 
 // CreateStatusCacheLoader returns a run.Func that loads every vault's status
