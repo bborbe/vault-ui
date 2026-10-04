@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - feat: Port vault hierarchy discovery, the vault-ui/vault-cli config merge, and the status cache to Go, preserving folder ordering, the absent-tasks-folder skip, and YAML marker normalisation.
 - feat: Port the vault-cli watcher supervisor and the WezTerm pane resolver to Go, with the restart/stop lifecycle, the bounded helper, and the jump-credential handling preserved.
 - feat: Port the cleanup sweep policy to Go — the session-id retention invariant plus the empty-id re-bind, orphaned-marker TTL, and resurrected-marker re-clear passes — and capture the retention invariant in docs/.
-- fix: Bind the pane resolver tests to the product resolve timeout, removing a load-dependent flake that made `go test ./...` and `make test` fail intermittently.
+- fix: Give the pane resolver and watcher supervisor tests realistic subprocess timeouts, removing load-dependent flakes that made `go test ./...` and `make test` fail intermittently.
 
 ## v0.75.0
 

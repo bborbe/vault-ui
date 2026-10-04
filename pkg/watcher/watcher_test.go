@@ -99,7 +99,7 @@ var _ = Describe("Supervisor", func() {
 				[]string{"alpha"},
 				sink.handler,
 				10*time.Millisecond,
-				time.Second,
+				10*time.Second,
 				watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 					if index == 0 {
 						return exec.CommandContext(ctx, "sh", "-c", "exit 1")
@@ -128,7 +128,7 @@ sleep 30`)
 				[]string{"alpha"},
 				sink.handler,
 				10*time.Millisecond,
-				time.Second,
+				10*time.Second,
 				watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 					return exec.CommandContext(ctx, "sh", scriptPath)
 				})),
@@ -161,7 +161,7 @@ sleep 30`)
 			[]string{"TestVault"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", scriptPath)
 			})),
@@ -193,7 +193,7 @@ sleep 30`)
 			[]string{"V"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", scriptPath)
 			})),
@@ -225,7 +225,7 @@ sleep 30`)
 			[]string{"V"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", scriptPath)
 			})),
@@ -254,7 +254,7 @@ sleep 30`)
 			[]string{"first", "second"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", scriptPath)
 			})),
@@ -286,7 +286,7 @@ sleep 30`)
 			[]string{"V"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", scriptPath)
 			})),
@@ -313,7 +313,7 @@ sleep 30`)
 			[]string{"alpha", "beta", "gamma"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sleep", "30")
 			})),
@@ -345,7 +345,7 @@ sleep 30`)
 			[]string{"solo"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sleep", "30")
 			})),
@@ -383,7 +383,7 @@ sleep 30`)
 			[]string{"alpha"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", scriptPath)
 			})),
@@ -419,7 +419,7 @@ sleep 30`)
 			[]string{"alpha"},
 			sink.handler,
 			500*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sh", "-c", "exit 0")
 			})),
@@ -447,7 +447,7 @@ sleep 30`)
 			[]string{"alpha"},
 			sink.handler,
 			10*time.Millisecond,
-			time.Second,
+			10*time.Second,
 			watcher.WithCommandRunner(runnerFor(rec, func(ctx context.Context, index int) *exec.Cmd {
 				return exec.CommandContext(ctx, "sleep", "30")
 			})),

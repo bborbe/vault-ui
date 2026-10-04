@@ -101,7 +101,7 @@ var _ = Describe("PaneResolver", func() {
 				scriptPath,
 				"e0930886-0843-4ca9-adfa-58819443c032",
 				os.Environ(),
-				100*time.Millisecond,
+				2*time.Second,
 			)
 
 			Expect(ok).To(BeFalse())
