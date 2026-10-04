@@ -1,0 +1,18 @@
+# Extra read cases compared for body parity.
+# Columns: NAME<TAB>PATH (including any query string).
+tasks-all	/api/tasks?vault=personal
+tasks-status	/api/tasks?vault=personal&status=in_progress
+tasks-status-csv	/api/tasks?vault=personal&status=in_progress,todo
+tasks-phase	/api/tasks?vault=personal&phase=execution
+tasks-phase-unknown	/api/tasks?vault=personal&phase=bogus
+tasks-assignee	/api/tasks?vault=personal&assignee=alice
+tasks-assignee-unassigned	/api/tasks?vault=personal&assignee=
+tasks-goal	/api/tasks?vault=personal&goal=GoalOne
+tasks-upcoming	/api/tasks?vault=personal&upcoming_hours=168
+tasks-session-live	/api/tasks?vault=personal&session_live=true
+tasks-unknown-vault	/api/tasks?vault=Nope
+assignees-filter	/api/assignees?vault=personal
+goals-filter	/api/goals?vault=personal&status=in_progress
+goals-upcoming	/api/goals?vault=personal&upcoming_hours=168
+topics-filter	/api/topics?vault=personal
+topic-detail	/api/topics/TopicOne?vault=personal

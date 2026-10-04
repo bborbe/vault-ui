@@ -1,0 +1,35 @@
+# Frozen 25-route table from specs/in-progress/023-go-backend-api-and-cutover.md.
+#
+# Columns: METHOD  PATH  QUERY  SEND
+#   QUERY  "-" means no query string.
+#   SEND   "yes" issues the request against both backends and compares.
+#          "no"  counts the route as unmatched (named in the diagnostic) but
+#                does not issue it — the route does not exist in the Go backend
+#                yet (prompts 2 and 3) and issuing a mutating Python route would
+#                spawn sessions or mutate the fixture. Prompts 2 and 3 flip the
+#                flag to "yes" as they land.
+GET	/api/vaults	-	yes
+GET	/api/assignees	-	yes
+GET	/api/tasks	-	yes
+GET	/api/goals	-	yes
+GET	/api/topics	-	yes
+GET	/api/topics/TopicOne	vault=personal	yes
+POST	/api/tasks/TaskOne/run	-	no
+POST	/api/tasks/TaskOne/jump	-	no
+POST	/api/tasks/TaskOne/take-over	-	no
+POST	/api/goals/GoalOne/run	-	no
+POST	/api/goals/GoalOne/take-over	-	no
+POST	/api/tasks/TaskOne/execute-command	-	no
+PATCH	/api/tasks/TaskOne/assign-to-me	-	no
+PATCH	/api/tasks/TaskOne/phase	-	no
+PATCH	/api/tasks/TaskOne/flag	-	no
+PATCH	/api/goals/GoalOne/status	-	no
+POST	/api/goals/GoalOne/execute-command	-	no
+PATCH	/api/tasks/TaskOne/status	-	no
+PATCH	/api/goals/GoalOne/assign-to-me	-	no
+DELETE	/api/tasks/TaskOne/session	-	no
+DELETE	/api/goals/GoalOne/session	-	no
+PATCH	/api/tasks/TaskOne/session	-	no
+POST	/api/cache/reload	-	no
+POST	/api/config/reload	-	no
+WS	/ws	-	no

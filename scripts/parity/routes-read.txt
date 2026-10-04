@@ -1,0 +1,9 @@
+# The six read routes only. Used by the harness self-test so a correct build can
+# reach a fully green parity run (the full 25-route table is red until prompts 2
+# and 3 land).
+GET	/api/vaults	-	yes
+GET	/api/assignees	-	yes
+GET	/api/tasks	-	yes
+GET	/api/goals	-	yes
+GET	/api/topics	-	yes
+GET	/api/topics/TopicOne	vault=personal	yes

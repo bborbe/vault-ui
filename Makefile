@@ -6,7 +6,16 @@ sync:
 
 .PHONY: build
 build:
-	go build -o bin/vault-ui .
+	mkdir -p $(HOME)/Documents/workspaces/go/bin
+	go build -buildvcs=false -o $(HOME)/Documents/workspaces/go/bin/vault-ui .
+
+.PHONY: parity
+parity:
+	bash scripts/parity/parity.sh
+
+.PHONY: parity-selftest
+parity-selftest:
+	bash scripts/parity/selftest.sh
 
 .PHONY: go-format
 go-format:
