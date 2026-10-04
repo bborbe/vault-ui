@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [022-go-backend-private-logic]
+summary: Ported vault hierarchy discovery, the vault-ui/vault-cli config merge, and the status cache to Go (pkg/hierarchy, pkg/vaultconfig, pkg/statuscache) with Ginkgo/Gomega suites, promoted go.yaml.in/yaml/v3 to a direct dependency, and added a CHANGELOG entry; make precommit exits 0.
+execution_id: vault-ui-exec-113-spec-022-topology-and-status-cache
+dark-factory-version: v0.196.0
 created: "2026-10-03T23:45:00Z"
 queued: "2026-10-03T23:06:15Z"
+started: "2026-10-04T09:50:11Z"
+completed: "2026-10-04T09:58:23Z"
 branch: dark-factory/go-backend-private-logic
 ---
 
