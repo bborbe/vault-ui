@@ -54,9 +54,15 @@ not find it and will exit at startup. Check and migrate before cutting over:
 mkdir -p ~/.config/vault-ui
 if [ ! -f ~/.config/vault-ui/config.yaml ]; then
   cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml \
-    || { echo "no config found in either location — stop and locate it"; exit 1; }
-  chmod 600 ~/.config/vault-ui/config.yaml
+    || { echo "no config found in either location — stop and locate it"; false; }
 fi
+chmod 600 ~/.config/vault-ui/config.yaml
+```
+
+`chmod` sits outside the `if` on purpose: an operator who already has the XDG file — the
+common case, since a bare `vault-ui` invocation works precisely because it checks there —
+would otherwise never get the hardening. The block uses `false` rather than `exit 1` so
+pasting it cannot terminate your shell.
 ```
 
 If your config already lives at `~/config.yaml`, the Go binary finds it there and this
@@ -71,9 +77,11 @@ git pull
 make build
 ```
 
-**Be on `master` first.** The parity claim above is pinned to a `master` commit and
-step 6's guard assumes a `master` checkout — a build taken from a feature branch is
-code nothing in this runbook has verified.
+**Be on `master` first, from a clean tree.** The parity claim above is pinned to a
+`master` commit and step 6's guard assumes a `master` checkout — a build taken from a
+feature branch is code nothing in this runbook has verified. Check `git status` first:
+`git checkout` carries uncommitted work across the switch rather than discarding it, so
+a dirty tree does not lose edits, it produces a master build containing them.
 
 `make build` writes to `~/Documents/workspaces/go/bin/vault-ui`. Confirm it is a real,
 runnable executable — `file` alone reports the format regardless of the mode bits, so
@@ -145,9 +153,9 @@ lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .
 PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
 lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
 
-curl -s 'http://127.0.0.1:8000/api/tasks?vault=private-personal&status=in_progress' | jq 'length'  # → > 0
-curl -s 'http://127.0.0.1:8000/api/goals?vault=private-personal' | jq 'length'                     # → > 0
-ps eww "$PID" | tr ' ' '\n' | grep '^PATH='                                                        # vault-cli dir before homebrew
+curl -s 'http://127.0.0.1:8000/api/tasks?vault=private-personal&status=in_progress' | jq -e 'type=="array" and length>0'  # → true
+curl -s 'http://127.0.0.1:8000/api/goals?vault=private-personal' | jq -e 'type=="array" and length>0'                     # → true
+ps eww -p "$PID" | tr ' ' '\n' | grep -m1 '^PATH='                                                 # vault-cli dir before homebrew
 ```
 
 Four things about these probes:
@@ -161,11 +169,14 @@ Four things about these probes:
   the moment you save the edit, whether or not the restart worked; this reads the
   *running* process. It either matches and prints `running binary: go`, or prints
   nothing — no output here means the listener is not the Go binary.
-- **Both `jq 'length'` calls must return a non-zero count.** A vault that exists always
-  has goals and in-progress tasks, so `0` here means the *vault name* is wrong — not that
-  the board is empty. List the names the API actually serves with
-  `curl -s http://127.0.0.1:8000/api/vaults | jq -r '.[].name'`. Vaults get renamed, and
-  a retired name returns `0`, which reads exactly like a healthy empty vault. Spec
+- **The two probes assert `type=="array" and length>0` — never a bare `length`.**
+  `jq 'length'` counts an *object's* keys, and this API's error bodies are single-key
+  objects (`{"detail":"…"}`), so a plain `length` reports a 404, 422 or 500 as a non-zero
+  count: a failed cutover read as healthy. `type=="array"` fails on every error body and
+  still passes a real array. A vault that exists always has goals and in-progress tasks,
+  so a genuine `[]` means the *vault name* is wrong — discover the names the API serves
+  with `curl -s http://127.0.0.1:8000/api/vaults | jq -r '.[].name'`; vaults get renamed,
+  and a retired name reads exactly like a healthy empty vault. Spec
   `specs/in-progress/023-go-backend-api-and-cutover.md` still names `Personal` in this
   probe; that name no longer resolves against this config, so the spec's own annotation
   cannot pass as written.
@@ -218,17 +229,22 @@ including the five-element `uv run` form if that is what you had:
 cp ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist.bak \
    ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 
-# Only needed if your .bak names ~/.local/bin/vault-ui (the uv-tool form). Skip it when
-# the .bak uses the five-element `uv run --directory …` form: that invokes uv directly
-# and never touches the installed tool, so there is nothing to reinstall.
-cd ~/Documents/workspaces/vault-ui
-uv tool install --force --no-cache .
+# Reinstall only for the uv-tool form. When the .bak uses the five-element
+# `uv run --directory …` form it invokes uv directly and never touches the installed
+# tool, so there is nothing to reinstall.
+if grep -q 'local/bin/vault-ui' ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist; then
+  cd ~/Documents/workspaces/vault-ui
+  uv tool install --force --no-cache .
+fi
 
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 
-# Same shape as step 4, asserting the opposite result.
-lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .                                                    # → 1
+# Same shape as step 4, asserting the opposite result. The count gates the rest: if
+# nothing is listening the service never came back, and neither probe below can tell you
+# anything about a process that is not there.
+COUNT=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .)
+[ "$COUNT" = 1 ] || { echo "rollback INCONCLUSIVE: $COUNT listeners on :8000 — read /tmp/vault-ui.log"; false; }
 PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
 lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' \
   && echo "STILL RUNNING THE GO BINARY — the rollback did not take effect" \
@@ -255,6 +271,11 @@ alone is **not** sufficient for the `uv run` form — it reinstalls the tool, bu
 
 The Python backend remains in-tree until its removal executes — filed as
 `specs/ideas/remove-superseded-python-backend.md`.
+
+Once that rollback window closes and the Go service has held, delete
+`~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist.bak` — launchd never loads it
+(it only loads the plist you name), so there is no second-job risk, but it records the
+prior invocation and has no further use.
 
 ## Known limits
 
