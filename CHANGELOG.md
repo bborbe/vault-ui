@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Serve the six read-only vault-ui routes (`/api/vaults`, `/api/assignees`, `/api/tasks`, `/api/goals`, `/api/topics`, `/api/topics/{topic_id}`) from the Go backend at the frozen paths and query-parameter names, reproducing the Python response shapes, filters, and derived fields (blocked, upcoming, recently_completed, session_state, activity_date, obsidian_url).
+- feat: Serve the frozen frontend from `src/vault_ui/static/` byte-identically at `/`, with explicit path canonicalization that refuses traversal with the same 404 the Python backend returns.
+- feat: Add the `make parity` harness, which boots the Go and Python backends against a disposable fixture vault and compares route sets, normalized bodies, error shapes, static hashes, and a traversal probe; `make parity-selftest` proves the harness rejects an injected route rename and an injected response-body divergence.
+- feat: Retarget `make build` to write the binary to `~/Documents/workspaces/go/bin/vault-ui` and make the API listen address settable via `VAULT_UI_LISTEN` (default `:8000`), leaving the fixed `:9090` admin block unchanged.
+
 ## v0.76.0
 
 - feat: Port the session liveness, activity-date, and display-name resolution logic to Go packages, reproducing the Python classifications and refusals.
