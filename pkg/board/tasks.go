@@ -389,12 +389,21 @@ func priorityValue(priority int) any {
 	return priority
 }
 
-// dateTimeString renders a nullable libtime.DateTime as a JSON string.
+// dateTimeString renders a nullable libtime.DateTime as a JSON string the way
+// the Python backend does: UTC with a literal Z suffix, exactly six fractional
+// digits when the microsecond component is non-zero, and no fractional part at
+// all when it is zero. The sub-microsecond remainder is truncated, not rounded.
 func dateTimeString(value *libtime.DateTime) *string {
 	if value == nil {
 		return nil
 	}
-	formatted := value.UTC().Time().Format(time.RFC3339Nano)
+	truncated := value.UTC().Time().Truncate(time.Microsecond)
+	var formatted string
+	if truncated.Nanosecond() == 0 {
+		formatted = truncated.Format(time.RFC3339)
+	} else {
+		formatted = truncated.Format("2006-01-02T15:04:05.000000Z07:00")
+	}
 	return &formatted
 }
 

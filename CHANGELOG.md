@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Render Go board JSON date-time fields with Python's microsecond precision (six fractional digits, omitted when the microsecond component is zero) so the parity harness compares them literally.
+
 ## v0.79.2
 
 - fix: Bind the factory test suite's HTTP server to a run-time free port instead of the fixed admin port, so the suite passes on a machine where the shipped service already holds that port.

@@ -538,6 +538,46 @@ var _ = Describe("ShowTopic", func() {
 	})
 })
 
+var _ = Describe("date-time rendering", func() {
+	// dateTimeString is reached from three call sites: TaskResponse.ModifiedDate
+	// and TaskResponse.ActivityDate in tasks.go, and GoalResponse.ActivityDate in
+	// goals.go. The table below exercises all three through the public entry
+	// points, never by exporting or re-implementing the helper.
+	DescribeTable("renders with Python's microsecond precision",
+		func(modifiedDate, expected string) {
+			h := newHarness(item("Task", func(i *ops.TaskListItem) { i.ModifiedDate = modifiedDate }))
+			responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(responses).To(HaveLen(1))
+			Expect(responses[0].ModifiedDate).NotTo(BeNil())
+			Expect(*responses[0].ModifiedDate).To(Equal(expected))
+			Expect(responses[0].ActivityDate).NotTo(BeNil())
+			Expect(*responses[0].ActivityDate).To(Equal(expected))
+		},
+		Entry("whole second", "2026-10-04T12:00:00Z", "2026-10-04T12:00:00Z"),
+		Entry("500 nanoseconds has a zero microsecond component",
+			"2026-10-04T12:00:00.000000500Z", "2026-10-04T12:00:00Z"),
+		Entry("three fractional digits", "2026-10-04T12:00:00.123Z",
+			"2026-10-04T12:00:00.123000Z"),
+		Entry("eight fractional digits", "2026-10-04T12:00:00.12345678Z",
+			"2026-10-04T12:00:00.123456Z"),
+		Entry("nine fractional digits", "2026-10-04T12:00:00.123456789Z",
+			"2026-10-04T12:00:00.123456Z"),
+	)
+
+	It("renders a goal's ActivityDate the same way", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{
+			{Name: "Goal", Status: "in_progress", ModifiedDate: "2026-10-04T12:00:00.123456789Z"},
+		}
+		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].ActivityDate).NotTo(BeNil())
+		Expect(*responses[0].ActivityDate).To(Equal("2026-10-04T12:00:00.123456Z"))
+	})
+})
+
 var _ = Describe("ListAssignees", func() {
 	It("collects distinct assignees and flags unassigned work", func() {
 		h := newHarness(

@@ -219,6 +219,27 @@ status: in_progress
 ## Notes
 - [[NotAnEntry]]
 EOF
+
+  # Session transcript for TaskTwo/GoalTwo (both carry the same
+  # claude_session_id). activity_date is the newer of the task-file mtime and
+  # this transcript's mtime, so the transcript must be newer than the files
+  # written above or the case goes blind. Its fractional part is deliberately
+  # more than six digits (and its seventh digit is below five, so truncation and
+  # rounding agree) — a renderer that emits raw nanoseconds diverges from
+  # Python's microsecond rendering, while a microsecond-aligned renderer matches.
+  local transcript_dir="$FIXTURE/.claude/projects/fixture"
+  local transcript="$transcript_dir/11111111-1111-1111-1111-111111111111.jsonl"
+  mkdir -p "$transcript_dir"
+  printf '{}\n' >"$transcript"
+  python3 - "$transcript" <<'PY'
+import os
+import sys
+import time
+
+path = sys.argv[1]
+ns = (int(time.time()) + 2) * 1_000_000_000 + 123456123
+os.utime(path, ns=(ns, ns))
+PY
 }
 
 write_fixture() {

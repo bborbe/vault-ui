@@ -10,6 +10,7 @@ tasks-assignee-unassigned	/api/tasks?vault=personal&assignee=
 tasks-goal	/api/tasks?vault=personal&goal=GoalOne
 tasks-upcoming	/api/tasks?vault=personal&upcoming_hours=168
 tasks-session-live	/api/tasks?vault=personal&session_live=true
+tasks-activity-precision	/api/tasks?vault=personal&status=completed
 tasks-unknown-vault	/api/tasks?vault=Nope
 assignees-filter	/api/assignees?vault=personal
 goals-filter	/api/goals?vault=personal&status=in_progress
