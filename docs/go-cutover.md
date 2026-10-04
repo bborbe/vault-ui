@@ -307,6 +307,19 @@ prior invocation and has no further use.
   container-built Linux venv. Run it in the spec's container
   (`docker.io/bborbe/claude-yolo:v0.15.1`, mounting the repo at `/workspace`). This is
   why the parity precondition above is worth re-checking if step 1 pulls new code.
+- **In that container, `go` is not on `PATH`.** It is installed at `/usr/local/go/bin`,
+  which `bborbe/claude-yolo:v0.15.1` does not put on `PATH`, so a plain `make parity`
+  dies in `build_vault_cli` with `make: *** Error 127` before any comparison runs — a
+  failure that looks like a harness bug and is not one. Prepend it:
+
+  ```bash
+  docker run --rm -v ~/Documents/workspaces/vault-ui:/workspace \
+    -v ~/.cache/uv:/home/node/.cache/uv -w /workspace --entrypoint bash \
+    bborbe/claude-yolo:v0.15.1 -c "export PATH=/usr/local/go/bin:\$PATH; make parity"
+  ```
+
+  Pass it inside the `-c` string (or with `-e` on a non-login shell). Setting `-e PATH=…`
+  on the `docker run` does not survive `bash -lc`, which re-sources the login profile.
 
 ## Related
 
