@@ -58,15 +58,21 @@ not find it and will exit at startup. Check and migrate before cutting over:
 mkdir -p ~/.config/vault-ui
 if [ ! -f ~/.config/vault-ui/config.yaml ] && [ ! -f ~/config.yaml ]; then
   cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml \
-    || { echo "no config found in any location — stop and locate it"; false; }
+    || echo "STOP — no config found in any location; locate it before continuing"
 fi
-[ -f ~/.config/vault-ui/config.yaml ] && chmod 600 ~/.config/vault-ui/config.yaml
+# Harden whichever file the Go binary will actually resolve: XDG first, else ~/config.yaml.
+chmod 600 ~/.config/vault-ui/config.yaml 2>/dev/null || chmod 600 ~/config.yaml
 ```
 
-`chmod` applies to an existing XDG config too, not only a freshly copied one — a bare
-`vault-ui` invocation works precisely because it checks there, so that file is the common
-case. The block uses `false` rather than `exit 1` so pasting it cannot terminate your
-shell.
+The `chmod` covers both resolution candidates, not just XDG — when the copy is skipped
+because a config already lives at `~/config.yaml`, that file is the one the Go binary
+reads, and it is the one that needs the mode. It also applies to a pre-existing XDG
+config, not only a freshly copied one: a bare `vault-ui` invocation works precisely
+because it checks there, so that file is the common case.
+
+The block cannot halt itself, and the `STOP` line does not stop it — read the output
+before going on. It uses a plain `echo` rather than `exit 1` so that pasting it cannot
+terminate your shell.
 
 The copy is skipped when a config already lives at `~/config.yaml`. Copying the repo-root
 file into XDG in that case would be worse than doing nothing: resolution is XDG-first, so
@@ -152,10 +158,16 @@ launchctl list | grep vault-ui                                                  
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                                    # → 200
 
 # Gate: exactly one process must hold :8000. 0 means nothing is listening; 2+ means a
-# leftover listener is still up. Either way, stop here — the two probes below act on the
-# first pid only, so any count but 1 makes them meaningless.
+# leftover listener is still up. Run the next block only if this prints nothing.
 COUNT=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .)
-[ "$COUNT" = 1 ] || { echo "cutover NOT verified: $COUNT listeners on :8000 — read /tmp/vault-ui.log"; false; }
+[ "$COUNT" = 1 ] || echo "STOP — cutover NOT verified: $COUNT listeners on :8000; read /tmp/vault-ui.log"
+```
+
+Run the next block **only if the gate above printed nothing.** It is a separate block for
+that reason: a `false` inside a pasted block sets an exit status without halting anything,
+so one combined block would run these probes against a pid that does not exist.
+
+```bash
 PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
 lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
 
@@ -168,7 +180,7 @@ Four things about these probes:
 
 - **The listener count is the gate.** `1` is what you want. `0` means nothing is
   listening — read `/tmp/vault-ui.log`. `2` or more means a leftover listener is still
-  up; resolve that first, because the two probes below take the first pid only and
+  up; resolve that first, because the probes in the next block take the first pid only and
   would otherwise tell you about whichever process `lsof` happened to list first.
 - **`lsof -p … -a -d txt` is the probe that distinguishes a real cutover from a plist
   edit that never took effect.** `plutil` reads the file on disk and reports the Go path
@@ -183,9 +195,9 @@ Four things about these probes:
   so a genuine `[]` means the *vault name* is wrong — discover the names the API serves
   with `curl -s http://127.0.0.1:8000/api/vaults | jq -r '.[].name'`; vaults get renamed,
   and a retired name reads exactly like a healthy empty vault. Spec
-  `specs/in-progress/023-go-backend-api-and-cutover.md` still names `Personal` in this
-  probe; that name no longer resolves against this config, so the spec's own annotation
-  cannot pass as written.
+  `specs/in-progress/023-go-backend-api-and-cutover.md` uses a bare `jq 'length'` on these
+  two probes, which carries the error-body false-pass described here; the
+  `type=="array"` guard above is the stricter form.
 - **The `PATH` probe prints only the `PATH` line.** The full environment is never
   displayed, and the plist sets nothing else (the Go binary reads one env var,
   `VAULT_UI_LISTEN`).
@@ -246,15 +258,20 @@ fi
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 
-# Same shape as step 4, asserting the opposite result. The count gates the rest: if
-# nothing is listening the service never came back, and neither probe below can tell you
-# anything about a process that is not there.
+# Same shape as step 4, asserting the opposite result. Run the next block only if this
+# prints nothing: a count of 0 means the service never came back.
 COUNT=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .)
-[ "$COUNT" = 1 ] || { echo "rollback INCONCLUSIVE: $COUNT listeners on :8000 — read /tmp/vault-ui.log"; false; }
+[ "$COUNT" = 1 ] || echo "STOP — rollback INCONCLUSIVE: $COUNT listeners on :8000; read /tmp/vault-ui.log"
+```
+
+Run the next block **only if the gate above printed nothing** — a count of 0 means the
+service never came back, and no probe can say anything about a process that is not there.
+
+```bash
 PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
 lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' \
   && echo "STILL RUNNING THE GO BINARY — the rollback did not take effect" \
-  || echo "running binary: python (rollback applied)"
+  || echo "running binary: not the Go binary (the rollback took effect)"
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                                    # → 200
 ```
 
