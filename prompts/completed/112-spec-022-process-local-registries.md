@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [022-go-backend-private-logic]
+summary: Ported the Python launch_registry and session_lock_registry to pkg/launchregistry and pkg/sessionlock with 100%-covered Ginkgo/Gomega suites and a CHANGELOG entry
+execution_id: vault-ui-exec-112-spec-022-process-local-registries
+dark-factory-version: v0.196.0
 created: "2026-10-03T23:45:00Z"
 queued: "2026-10-03T23:06:15Z"
+started: "2026-10-04T09:41:15Z"
+completed: "2026-10-04T09:49:41Z"
 branch: dark-factory/go-backend-private-logic
 ---
 
