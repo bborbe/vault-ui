@@ -376,7 +376,10 @@ sleep 30`)
 		DeferCleanup(cancel)
 
 		scriptPath := writeScript(dir,
-			"touch "+ready+"\ntrap 'touch "+flag+"; exit 0' TERM\nwhile :; do sleep 0.05; done")
+			// Arm the trap before signalling readiness, so `ready` means
+			// "safe to signal". Reversed, a SIGTERM landing in the touch->trap
+			// window kills the shell by default action and the trap never runs.
+			"trap 'touch "+flag+"; exit 0' TERM\ntouch "+ready+"\nwhile :; do sleep 0.05; done")
 
 		s := watcher.NewSupervisor(
 			"vault-cli",
