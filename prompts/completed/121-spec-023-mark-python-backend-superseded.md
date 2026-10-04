@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [023-go-backend-api-and-cutover]
+summary: Marked the Python backend SUPERSEDED in src/vault_ui/README.md and filed the removal follow-up at specs/ideas/remove-superseded-python-backend.md; documentation-only, CHANGELOG updated under Unreleased, make precommit exit 0.
+execution_id: vault-ui-exec-121-spec-023-mark-python-backend-superseded
+dark-factory-version: v0.196.0
 created: "2026-10-04T00:00:00Z"
 queued: "2026-10-04T13:10:34Z"
+started: "2026-10-04T15:55:18Z"
+completed: "2026-10-04T15:58:44Z"
+branch: dark-factory/121-spec-023-mark-python-backend-superseded
 ---
 
 # Mark the Python backend superseded in-tree and file its removal as a follow-up
