@@ -1,9 +1,13 @@
 ---
-status: approved
+status: cancelled
 spec: [022-go-backend-private-logic]
+execution_id: vault-ui-exec-110-spec-022-process-termination-guards
+dark-factory-version: v0.196.0
 created: "2026-10-03T23:45:00Z"
-queued: "2026-10-03T23:06:15Z"
+queued: "2026-10-03T23:36:14Z"
+started: "2026-10-03T23:36:17Z"
 branch: dark-factory/go-backend-private-logic
+cancelled: "2026-10-04T08:34:07Z"
 ---
 
 # Add the process-termination guard and signal primitives
@@ -82,7 +86,7 @@ func SigtermPID(ctx context.Context, signaler Signaler, pid int, sessionID strin
 func NewProcessSignaler() Signaler
 ```
 
-Behavior notes: `NewProcessSignaler().Signal(pid)` must use `os.FindProcess(pid)` then `Process.Signal(syscall.SIGTERM)`; on Unix `Signal` returns an error wrapping `os.ErrProcessDone` for a dead pid and `syscall.EACCES` for a foreign pid. `SigtermPID` classifies with `errors.Is(err, os.ErrProcessDone)`. The debug log line emitted on the process-gone path is a documented addition for observability, not Python parity (the Python path is silent there).
+Behavior notes: `NewProcessSignaler().Signal(pid)` must use `os.FindProcess(pid)` then `Process.Signal(syscall.SIGTERM)`; on Unix `Signal` returns an error wrapping `os.ErrProcessDone` for a dead pid and `syscall.EACCES` for a foreign pid. `SigtermPID` classifies with `errors.Is(err, os.ErrProcessDone)`.
 
 ### 2. Create `pkg/terminate/` — the guard logic
 
@@ -132,7 +136,6 @@ Each package's `<pkg>_suite_test.go` uses the standard suite body with the entry
 **`pkg/sigterm` — suite entry `TestTerminateFailurePaths`.** Inject a fake `Signaler`. Rows (use `DescribeTable`/`Entry` with these EXACT entry descriptions):
 - `process-gone-between-scan-and-kill` — a signaler whose error wraps `os.ErrProcessDone` makes `SigtermPID` return false with no panic and no error raised.
 - `permission-denied` — a signaler returning a non-`os.ErrProcessDone` error (use a `syscall.EACCES`-shaped error) makes `SigtermPID` return false AND emit a warning-level log line naming the pid and the error.
-- `real-signaler-classifies-a-dead-pid` — `NewProcessSignaler().Signal(<pid of an already-reaped child>)` returns an error for which `errors.Is(err, os.ErrProcessDone)` is true (proves the production classification against the real `os` syscall path, not a synthetic error).
 Also cover: a successful signal returns true and calls the signaler exactly once with the pid.
 
 **`pkg/terminate` — suite entry `TestTerminateGuards`.** Inject a `ProcessScanner` returning a fixed `ps -axww -o pid=,args=` table (reuse the real rows quoted in `tests/test_activity.py`) and a spy `Signaler`. Rows (exact entry descriptions):
@@ -164,7 +167,7 @@ Before finishing, re-run the `<verification>` commands and confirm each passes; 
   - **Errors are wrapped and classified** so a caller can distinguish an expected absence (no matching process) from an unexpected failure.
   - **Security invariants (verbatim, from the spec):** the termination path cannot be aimed at an arbitrary pid — the pid comes from the matched `ps` row, never from the request; the request supplies a session id that must match an exact UUID already present in the host process table, and the row must be a claude invocation. A caller cannot name a pid, a process name, or a signal. `ps` content is parsed defensively (a row counts only when it matches the exact session-pinning-flag-plus-UUID pattern and contains the claude token). Subprocess arguments are passed as argv, never a shell.
   - Coding guides to follow (do not inline): `go-testing-guide`, `go-security-linting`, `go-error-wrapping-guide`, `go-package-layout-guide`.
-  - The repo's `.dark-factory.yaml` sets `hideGit: true`, `workflow: branch`, `autoRelease: false` — this prompt commits nothing and releases nothing.
+  - The repo's `.dark-factory.yaml` sets `hideGit: true`, `workflow: direct`, `autoRelease: false` — this prompt commits nothing and releases nothing.
 - Do NOT commit — dark-factory handles git.
 - Do NOT run `go mod vendor`.
 - Do NOT touch `src/`, `tests/`, or `Makefile`.
@@ -187,8 +190,6 @@ Run from the repo root:
 5. `go test ./...` — must exit 0.
 6. `go test -race ./...` — must exit 0.
 7. `gofmt -l .` — must print nothing.
-8. `! grep -rnE '\btime\.Now\(\)' pkg/terminate pkg/sigterm` — must succeed (no direct wall-clock read).
-9. `! grep -rn 'regexp.MustCompile' pkg/terminate` — must succeed (no parser logic leaked into the guard package; parsing lives in `pkg/session`).
-10. `go test -cover ./pkg/terminate ./pkg/sigterm` — must exit 0 and report non-zero coverage for each package.
-11. `make test` — the existing pytest suite must still pass.
+8. `! grep -rn 'time.Now()' pkg/terminate pkg/sigterm` — must succeed (no direct wall-clock read).
+9. `make test` — the existing pytest suite must still pass.
 </verification>

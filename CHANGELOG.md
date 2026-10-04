@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - feat: Port the session liveness, activity-date, and display-name resolution logic to Go packages, reproducing the Python classifications and refusals.
+- feat: Port the process-termination guards to Go, issuing SIGTERM only for a matched claude launch row and treating a vanished process and a permission failure as non-fatal.
 
 ## v0.75.0
 
