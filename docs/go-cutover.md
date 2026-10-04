@@ -16,6 +16,10 @@ re-establishing that. If step 1 pulls code that moves the Go backend past `798d9
 the claim no longer covers what you are deploying — re-run `make parity` (in the
 container; see § Known limits).
 
+The executable blocks assume the repo is at `~/Documents/workspaces/vault-ui` and the Go
+binary at `~/Documents/workspaces/go/bin/vault-ui`; substitute your own paths if your
+checkout differs.
+
 ## What changes
 
 | | Before | After |
@@ -52,21 +56,22 @@ not find it and will exit at startup. Check and migrate before cutting over:
 
 ```bash
 mkdir -p ~/.config/vault-ui
-if [ ! -f ~/.config/vault-ui/config.yaml ]; then
+if [ ! -f ~/.config/vault-ui/config.yaml ] && [ ! -f ~/config.yaml ]; then
   cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml \
-    || { echo "no config found in either location — stop and locate it"; false; }
+    || { echo "no config found in any location — stop and locate it"; false; }
 fi
-chmod 600 ~/.config/vault-ui/config.yaml
+[ -f ~/.config/vault-ui/config.yaml ] && chmod 600 ~/.config/vault-ui/config.yaml
 ```
 
-`chmod` sits outside the `if` on purpose: an operator who already has the XDG file — the
-common case, since a bare `vault-ui` invocation works precisely because it checks there —
-would otherwise never get the hardening. The block uses `false` rather than `exit 1` so
-pasting it cannot terminate your shell.
-```
+`chmod` applies to an existing XDG config too, not only a freshly copied one — a bare
+`vault-ui` invocation works precisely because it checks there, so that file is the common
+case. The block uses `false` rather than `exit 1` so pasting it cannot terminate your
+shell.
 
-If your config already lives at `~/config.yaml`, the Go binary finds it there and this
-step is a no-op — that path is the Go-only fallback, not a failure.
+The copy is skipped when a config already lives at `~/config.yaml`. Copying the repo-root
+file into XDG in that case would be worse than doing nothing: resolution is XDG-first, so
+the copied file would take precedence and silently switch the service to a config you were
+not running.
 
 ## 1. Build the Go binary
 
@@ -146,10 +151,11 @@ plutil -extract ProgramArguments.0 raw ~/Library/LaunchAgents/com.github.bborbe.
 launchctl list | grep vault-ui                                                                     # exit code 0
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                                    # → 200
 
-# Gate: exactly one process must hold :8000. 0 = nothing listening; 2+ = a leftover
-# listener is still up. Resolve either before reading the next two probes, which act
-# on the first pid only.
-lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .
+# Gate: exactly one process must hold :8000. 0 means nothing is listening; 2+ means a
+# leftover listener is still up. Either way, stop here — the two probes below act on the
+# first pid only, so any count but 1 makes them meaningless.
+COUNT=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .)
+[ "$COUNT" = 1 ] || { echo "cutover NOT verified: $COUNT listeners on :8000 — read /tmp/vault-ui.log"; false; }
 PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
 lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' && echo "running binary: go"
 
