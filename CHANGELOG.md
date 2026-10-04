@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.79.3
 
 - fix: Render Go board JSON date-time fields with Python's microsecond precision (six fractional digits, omitted when the microsecond component is zero) so the parity harness compares them literally.
 
