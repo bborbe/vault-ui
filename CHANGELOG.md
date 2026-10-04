@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Port the session liveness, activity-date, and display-name resolution logic to Go packages, reproducing the Python classifications and refusals.
+- feat: Port the process-termination guards to Go, issuing SIGTERM only for a matched claude launch row and treating a vanished process and a permission failure as non-fatal.
+- feat: Port the process-local launch registry and session-lock registry to Go, preserving their state machines, holder-count eviction, and single-process assumption.
+- feat: Port vault hierarchy discovery, the vault-ui/vault-cli config merge, and the status cache to Go, preserving folder ordering, the absent-tasks-folder skip, and YAML marker normalisation.
+- feat: Port the vault-cli watcher supervisor and the WezTerm pane resolver to Go, with the restart/stop lifecycle, the bounded helper, and the jump-credential handling preserved.
+- feat: Port the cleanup sweep policy to Go — the session-id retention invariant plus the empty-id re-bind, orphaned-marker TTL, and resurrected-marker re-clear passes — and capture the retention invariant in docs/.
+- fix: Repair the pane resolver and watcher supervisor tests — realistic subprocess timeouts, and arming the watcher helper's SIGTERM trap before it signals readiness — removing load-dependent flakes that made `go test ./...` and `make test` fail intermittently.
+- fix: Guard the watcher supervisor's subprocess handle with the existing mutex, removing a data race between Stop and the subprocess start that surfaced under `make test`'s -race run.
+
 ## v0.75.1
 
 - fix: The board's Start button now approves a task still in the `todo` phase before opening its session, so starting a todo card no longer fails with `vault-cli work-on ... task is at phase "todo"`. The Start click is the operator's own approval surface; cards past approval take the unchanged path with no extra write.
