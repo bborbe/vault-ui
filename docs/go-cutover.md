@@ -52,17 +52,27 @@ not find it and will exit at startup. Check and migrate before cutting over:
 
 ```bash
 mkdir -p ~/.config/vault-ui
-ls ~/.config/vault-ui/config.yaml \
-  || cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml
+if [ ! -f ~/.config/vault-ui/config.yaml ]; then
+  cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml \
+    || { echo "no config found in either location — stop and locate it"; exit 1; }
+fi
 ```
+
+If your config already lives at `~/config.yaml`, the Go binary finds it there and this
+step is a no-op — that path is the Go-only fallback, not a failure.
 
 ## 1. Build the Go binary
 
 ```bash
 cd ~/Documents/workspaces/vault-ui
+git checkout master
 git pull
 make build
 ```
+
+**Be on `master` first.** The parity claim above is pinned to a `master` commit and
+step 6's guard assumes a `master` checkout — a build taken from a feature branch is
+code nothing in this runbook has verified.
 
 `make build` writes to `~/Documents/workspaces/go/bin/vault-ui`. Confirm it is a real,
 runnable executable — `file` alone reports the format regardless of the mode bits, so
@@ -107,9 +117,12 @@ Go binary with `run --directory …` as arguments it does not accept.
 ## 3. Restart
 
 ```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```
+
+`bootout` reports `Could not find specified service` if the job is not currently
+loaded; `|| true` keeps that harmless first-run noise from looking like a failure.
 
 The `bootout`/`bootstrap` pair is what makes launchd **re-read the plist**. A
 `launchctl kickstart -k` would restart the job from launchd's in-memory definition and
@@ -202,7 +215,19 @@ uv tool install --force --no-cache .
 
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+
+# Same shape as step 4, asserting the opposite result.
+lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .                                                    # → 1
+PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | head -1)
+lsof -p "$PID" -a -d txt | grep -q 'workspaces/go/bin/vault-ui' \
+  && echo "STILL RUNNING THE GO BINARY — the rollback did not take effect" \
+  || echo "running binary: python (rollback applied)"
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                                    # → 200
 ```
+
+Verify the rollback, do not assume it. A rollback that leaves the Go binary running
+while reporting success is exactly the failure the `kickstart -k` variant would have
+caused — the check is what tells the two apart.
 
 **The `bootout`/`bootstrap` pair is not interchangeable with `kickstart -k` here.**
 `kickstart -k` restarts the job from launchd's in-memory definition without re-reading
