@@ -7,6 +7,7 @@ package factory_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,12 +19,34 @@ import (
 	"github.com/bborbe/vault-ui/pkg/factory"
 )
 
-const baseURL = "http://127.0.0.1:9090"
+var baseURL string
+
+// freeAddr binds 127.0.0.1:0, reads the port the operating system assigned,
+// closes the listener, and returns the address as "127.0.0.1:<port>".
+// CreateHTTPServer exposes no way to read back the address it bound, so the port
+// must be chosen before the call rather than discovered after it. That leaves an
+// inherent race: another process can claim the port between the close here and
+// the server's bind. The bind is retried a few times to tolerate a transient
+// failure; if no port can be obtained the test fails rather than falling back to
+// a fixed port.
+func freeAddr() string {
+	for attempt := 0; attempt < 5; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			continue
+		}
+		addr := listener.Addr().String()
+		_ = listener.Close()
+		return addr
+	}
+	Fail("could not obtain a free loopback port for the test server")
+	return ""
+}
 
 // statusCode performs a GET and returns the HTTP status code, or 0 while the
 // server is not yet reachable.
 func statusCode(url string) int {
-	resp, err := http.Get(url) //nolint:gosec // fixed loopback URL in tests
+	resp, err := http.Get(url) //nolint:gosec // loopback URL built from a run-time free port in tests
 	if err != nil {
 		return 0
 	}
@@ -33,7 +56,7 @@ func statusCode(url string) int {
 
 // body performs a GET and returns the response body.
 func body(url string) string {
-	resp, err := http.Get(url) //nolint:gosec // fixed loopback URL in tests
+	resp, err := http.Get(url) //nolint:gosec // loopback URL built from a run-time free port in tests
 	Expect(err).NotTo(HaveOccurred())
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
@@ -74,7 +97,9 @@ var _ = BeforeEach(func() {
 	ctx, cancel = context.WithCancel(context.Background())
 	readiness = factory.CreateReadiness()
 	errChan = make(chan error, 1)
-	server := factory.CreateHTTPServer(":9090", readiness)
+	addr := freeAddr()
+	baseURL = "http://" + addr
+	server := factory.CreateHTTPServer(addr, readiness)
 	go func() {
 		errChan <- server.Run(ctx)
 	}()
