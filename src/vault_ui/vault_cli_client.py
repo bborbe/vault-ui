@@ -218,6 +218,31 @@ class VaultCLIClient:
         if proc.returncode != 0:
             raise RuntimeError(f"vault-cli task clear failed: {stderr.decode().strip()}")
 
+    async def approve_task(self, task_id: str) -> None:
+        """Call vault-cli task approve <task_id> — the todo → planning approval.
+
+        vault-cli moves a task at phase ``todo`` to ``planning`` and records
+        ``approved_by``/``approved_at`` in the same write. It **refuses with a
+        non-zero exit** when the task is not at phase ``todo``, so callers must
+        gate this on the phase rather than calling it unconditionally. The
+        command's default ``operator`` attribution is left in place — this is
+        the operator's own Start click — and ``--output json`` is omitted so the
+        refusal text stays on stderr.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            self._vault_cli_path,
+            "task",
+            "approve",
+            task_id,
+            "--vault",
+            self._vault_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"vault-cli task approve failed: {stderr.decode().strip()}")
+
     async def list_goals(self, show_all: bool = False) -> list[Goal]:
         """Call vault-cli goal list --output json, parse into Goal objects."""
         args = [
