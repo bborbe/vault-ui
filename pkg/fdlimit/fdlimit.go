@@ -25,22 +25,21 @@ import (
 // request.
 const MaxLimit uint64 = 65536
 
-// infiniteThreshold is the smallest hard limit treated as "infinity". Both
-// linux (RLIM_INFINITY == -1, i.e. 0xffffffffffffffff as a uint64) and darwin
-// (0x7fffffffffffffff) are far above it, and no real finite limit reaches it.
-const infiniteThreshold uint64 = 1 << 40
+// UnknownLimit is returned by Raise when the current limit could not be read,
+// so a caller can tell "nothing was applied" apart from a real limit. No
+// process runs with a file-descriptor limit of zero.
+const UnknownLimit uint64 = 0
 
 // TargetLimit returns the descriptor limit to request given the process's
-// current soft limit and the hard limit. It never lowers the limit, never
-// exceeds a finite hard limit, and caps an infinite hard limit at MaxLimit.
+// current soft limit and the hard limit. It never lowers the limit and never
+// requests more than the hard limit, except that a hard limit above MaxLimit is
+// capped at MaxLimit. That cap is what handles an infinite hard limit: linux
+// reports it as -1 (0xffffffffffffffff as a uint64) and darwin as
+// 0x7fffffffffffffff, both far above MaxLimit, so neither needs detecting
+// separately — and detecting them by comparison would not compile on linux,
+// where RLIM_INFINITY is an untyped -1 that overflows a uint64.
 func TargetLimit(current, hard uint64) uint64 {
-	target := hard
-	if target > infiniteThreshold {
-		target = MaxLimit
-	}
-	if target > MaxLimit {
-		target = MaxLimit
-	}
+	target := min(hard, MaxLimit)
 	if target < current {
 		return current
 	}
@@ -48,13 +47,16 @@ func TargetLimit(current, hard uint64) uint64 {
 }
 
 // Raise reads the current file-descriptor limits, computes the target with
-// TargetLimit, and applies it. It returns the resulting soft limit. On failure
-// it returns the soft limit still in effect so the caller can report what was
-// actually applied.
+// TargetLimit, and applies it. It returns the resulting soft limit.
+//
+// On a Setrlimit failure it returns the soft limit still in effect, so the
+// caller can report what was actually applied. When the current limit cannot be
+// read at all it returns UnknownLimit: nothing was applied and the real value
+// is not known, so a caller must not report it as an applied limit.
 func Raise(ctx context.Context) (uint64, error) {
 	var before syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &before); err != nil {
-		return 0, errors.Wrap(ctx, err, "get file descriptor limit")
+		return UnknownLimit, errors.Wrap(ctx, err, "get file descriptor limit")
 	}
 
 	target := TargetLimit(before.Cur, before.Max)

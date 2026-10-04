@@ -6,6 +6,7 @@ package fdlimit_test
 
 import (
 	"context"
+	"os"
 	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -13,6 +14,18 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/fdlimit"
 )
+
+// openDescriptorCount reports how many descriptors this process currently
+// holds, so the spec can skip when lowering the soft limit would starve
+// unrelated opens. Returns 0 when the count cannot be read, which skips the
+// guard rather than the spec.
+func openDescriptorCount() int {
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return 0
+	}
+	return len(entries)
+}
 
 // loweredSoftLimit is comfortably above the descriptors this test process
 // already holds, so lowering the soft limit to it never makes an unrelated
@@ -51,6 +64,18 @@ var _ = Describe("Raise", func() {
 		ctx = context.Background()
 		Expect(syscall.Getrlimit(syscall.RLIMIT_NOFILE, &original)).To(Succeed())
 		hardLimit = original.Max
+
+		// Lowering the soft limit is only safe when the hard limit permits it
+		// and the process does not already hold more descriptors than the
+		// lowered value — otherwise unrelated opens fail and this spec breaks
+		// for reasons that have nothing to do with Raise. Skip rather than
+		// fail when the environment cannot host the scenario.
+		if original.Max < loweredSoftLimit {
+			Skip("hard limit is below the lowered soft limit")
+		}
+		if held := openDescriptorCount(); held > int(loweredSoftLimit) {
+			Skip("process already holds more descriptors than the lowered limit")
+		}
 
 		loweredTo = original
 		loweredTo.Cur = loweredSoftLimit

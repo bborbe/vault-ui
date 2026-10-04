@@ -49,13 +49,24 @@ func execute(ctx context.Context) error {
 		loader, configPath, cache, launches, homeDir, readiness, manager,
 	)
 
-	if limit, err := fdlimit.Raise(ctx); err != nil {
+	limit, err := fdlimit.Raise(ctx)
+	switch {
+	case err == nil:
+		// V(2) matches the sibling startup announcements in CreateWatcher and
+		// CreateAPIServer.
+		glog.V(2).Infof("file descriptor limit raised to %d", limit)
+	case limit == fdlimit.UnknownLimit:
+		// Nothing was applied and the current limit could not be read, so
+		// naming a limit here would be a guess.
+		glog.Warningf(
+			"raise file descriptor limit failed: %v; vault watching may be incomplete",
+			err,
+		)
+	default:
 		glog.Warningf(
 			"raise file descriptor limit failed: %v; applied limit %d, vault watching may be incomplete",
 			err, limit,
 		)
-	} else {
-		glog.Infof("file descriptor limit raised to %d", limit)
 	}
 
 	if err := run.CancelOnFirstErrorWait(ctx,
