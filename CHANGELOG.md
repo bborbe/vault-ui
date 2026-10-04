@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.77.0
 
 - feat: Serve the six read-only vault-ui routes (`/api/vaults`, `/api/assignees`, `/api/tasks`, `/api/goals`, `/api/topics`, `/api/topics/{topic_id}`) from the Go backend at the frozen paths and query-parameter names, reproducing the Python response shapes, filters, and derived fields (blocked, upcoming, recently_completed, session_state, activity_date, obsidian_url).
 - feat: Serve the frozen frontend from `src/vault_ui/static/` byte-identically at `/`, with explicit path canonicalization that refuses traversal with the same 404 the Python backend returns.
