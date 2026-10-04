@@ -26,6 +26,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/session"
+	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	staticui "github.com/bborbe/vault-ui/src/vault_ui"
@@ -154,7 +155,10 @@ func CreateAPIHandler(
 		Pane:    paneResolver{homeDir: homeDir, interpreter: "python3"},
 		HomeDir: homeDir,
 	})
-	return handler.CreateHTTPRouter(service, CreateStaticFS())
+	mutationsService := CreateMutationService(
+		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
+	)
+	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS())
 }
 
 // CreateStatusCacheLoader returns a run.Func that loads every vault's status

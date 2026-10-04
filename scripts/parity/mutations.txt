@@ -1,0 +1,40 @@
+# Write-path parity cases.
+# Columns: NAME<TAB>METHOD<TAB>PATH (with query)<TAB>JSON BODY
+#
+# Each case is run against the Python backend and then, after the fixture vault
+# is reset to its pristine bytes, against the Go backend. The two statuses, the
+# two normalized bodies, and the two resulting vault trees must all match.
+task-flag-set	PATCH	/api/tasks/TaskOne/flag?vault=personal	{}
+task-flag-clear	PATCH	/api/tasks/TaskOne/flag?vault=personal	{"flag":false}
+task-phase	PATCH	/api/tasks/TaskOne/phase?vault=personal	{"phase":"execution"}
+task-phase-done	PATCH	/api/tasks/TaskOne/phase?vault=personal	{"phase":"done"}
+task-status	PATCH	/api/tasks/TaskOne/status?vault=personal	{"status":"backlog"}
+task-status-aborted-no-reason	PATCH	/api/tasks/TaskOne/status?vault=personal	{"status":"aborted"}
+task-status-aborted	PATCH	/api/tasks/TaskOne/status?vault=personal	{"status":"aborted","reason":"no longer needed"}
+task-status-enum	PATCH	/api/tasks/TaskOne/status?vault=personal	{"status":"bogus"}
+goal-status	PATCH	/api/goals/GoalOne/status?vault=personal	{"status":"hold"}
+assign-task	PATCH	/api/tasks/TaskFive/assign-to-me?vault=personal	{}
+assign-goal	PATCH	/api/goals/GoalOne/assign-to-me?vault=personal	{}
+clear-task-session	DELETE	/api/tasks/TaskTwo/session?vault=personal	{}
+clear-goal-session	DELETE	/api/goals/GoalTwo/session?vault=personal	{}
+set-task-session	PATCH	/api/tasks/TaskOne/session?vault=personal	{"claude_session_id":"33333333-3333-3333-3333-333333333333"}
+set-task-session-conflict	PATCH	/api/tasks/TaskTwo/session?vault=personal	{"claude_session_id":"33333333-3333-3333-3333-333333333333"}
+exec-task-complete	POST	/api/tasks/TaskOne/execute-command?vault=personal	{"command":"complete-task"}
+exec-task-defer	POST	/api/tasks/TaskOne/execute-command?vault=personal	{"command":"defer-task"}
+exec-task-unknown	POST	/api/tasks/TaskOne/execute-command?vault=personal	{"command":"bogus"}
+exec-goal-complete	POST	/api/goals/GoalOne/execute-command?vault=personal	{"command":"complete-goal"}
+exec-goal-unknown	POST	/api/goals/GoalOne/execute-command?vault=personal	{"command":"bogus"}
+dash-task-status	PATCH	/api/tasks/-bad/status?vault=personal	{"status":"backlog"}
+dash-goal-status	PATCH	/api/goals/-bad/status?vault=personal	{"status":"hold"}
+missing-vault	PATCH	/api/tasks/TaskOne/flag	{}
+unknown-task	PATCH	/api/tasks/Missing/assign-to-me?vault=personal	{}
+unknown-vault-flag	PATCH	/api/tasks/TaskOne/flag?vault=Nope	{}
+take-over-no-session	POST	/api/tasks/TaskOne/take-over?vault=personal	{}
+take-over-goal-no-session	POST	/api/goals/GoalOne/take-over?vault=personal	{}
+jump-no-session	POST	/api/tasks/TaskOne/jump?vault=personal	{}
+run-task	POST	/api/tasks/TaskOne/run?vault=personal	{}
+run-goal	POST	/api/goals/GoalOne/run?vault=personal	{}
+run-task-fail	POST	/api/tasks/TaskFail/run?vault=personal	{}	detail
+run-goal-fail	POST	/api/goals/GoalFail/run?vault=personal	{}	detail
+cache-reload	POST	/api/cache/reload	{}
+config-reload	POST	/api/config/reload	{}

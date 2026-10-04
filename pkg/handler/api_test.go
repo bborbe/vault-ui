@@ -76,7 +76,7 @@ func newRouter(fake *fakeBoard) http.Handler {
 		"app.js":     {Data: []byte("console.log('app')")},
 		"style.css":  {Data: []byte("body{}")},
 	}
-	return handler.CreateHTTPRouter(fake, staticFS)
+	return handler.CreateHTTPRouter(fake, &fakeMutations{}, staticFS)
 }
 
 func doGet(router http.Handler, target string) *httptest.ResponseRecorder {

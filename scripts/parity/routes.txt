@@ -2,34 +2,36 @@
 #
 # Columns: METHOD  PATH  QUERY  SEND
 #   QUERY  "-" means no query string.
-#   SEND   "yes" issues the request against both backends and compares.
-#          "no"  counts the route as unmatched (named in the diagnostic) but
-#                does not issue it — the route does not exist in the Go backend
-#                yet (prompts 2 and 3) and issuing a mutating Python route would
-#                spawn sessions or mutate the fixture. Prompts 2 and 3 flip the
-#                flag to "yes" as they land.
+#   SEND   "yes"      issues the request against both backends and compares.
+#          "mutation" the route is served and its parity is proven by the
+#                     mutation-parity section (mutations.txt), which resets the
+#                     fixture between the two backends; it is counted as matched
+#                     here without being issued by this loop (issuing a mutating
+#                     route here would corrupt the fixture for later cases).
+#          "no"       counts the route as unmatched (named in the diagnostic) —
+#                     the route does not exist in the Go backend yet.
 GET	/api/vaults	-	yes
 GET	/api/assignees	-	yes
 GET	/api/tasks	-	yes
 GET	/api/goals	-	yes
 GET	/api/topics	-	yes
 GET	/api/topics/TopicOne	vault=personal	yes
-POST	/api/tasks/TaskOne/run	-	no
-POST	/api/tasks/TaskOne/jump	-	no
-POST	/api/tasks/TaskOne/take-over	-	no
-POST	/api/goals/GoalOne/run	-	no
-POST	/api/goals/GoalOne/take-over	-	no
-POST	/api/tasks/TaskOne/execute-command	-	no
-PATCH	/api/tasks/TaskOne/assign-to-me	-	no
-PATCH	/api/tasks/TaskOne/phase	-	no
-PATCH	/api/tasks/TaskOne/flag	-	no
-PATCH	/api/goals/GoalOne/status	-	no
-POST	/api/goals/GoalOne/execute-command	-	no
-PATCH	/api/tasks/TaskOne/status	-	no
-PATCH	/api/goals/GoalOne/assign-to-me	-	no
-DELETE	/api/tasks/TaskOne/session	-	no
-DELETE	/api/goals/GoalOne/session	-	no
-PATCH	/api/tasks/TaskOne/session	-	no
-POST	/api/cache/reload	-	no
-POST	/api/config/reload	-	no
+POST	/api/tasks/TaskOne/run	-	mutation
+POST	/api/tasks/TaskOne/jump	-	mutation
+POST	/api/tasks/TaskOne/take-over	-	mutation
+POST	/api/goals/GoalOne/run	-	mutation
+POST	/api/goals/GoalOne/take-over	-	mutation
+POST	/api/tasks/TaskOne/execute-command	-	mutation
+PATCH	/api/tasks/TaskOne/assign-to-me	-	mutation
+PATCH	/api/tasks/TaskOne/phase	-	mutation
+PATCH	/api/tasks/TaskOne/flag	-	mutation
+PATCH	/api/goals/GoalOne/status	-	mutation
+POST	/api/goals/GoalOne/execute-command	-	mutation
+PATCH	/api/tasks/TaskOne/status	-	mutation
+PATCH	/api/goals/GoalOne/assign-to-me	-	mutation
+DELETE	/api/tasks/TaskOne/session	-	mutation
+DELETE	/api/goals/GoalOne/session	-	mutation
+PATCH	/api/tasks/TaskOne/session	-	mutation
+POST	/api/cache/reload	-	mutation
+POST	/api/config/reload	-	mutation
 WS	/ws	-	no

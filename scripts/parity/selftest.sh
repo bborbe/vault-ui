@@ -13,6 +13,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PARITY="$REPO_ROOT/scripts/parity/parity.sh"
 READ_ROUTES="$REPO_ROOT/scripts/parity/routes-read.txt"
+SELFTEST_MUTATIONS="$REPO_ROOT/scripts/parity/mutations-selftest.txt"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/vault-ui-parity-selftest.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -27,7 +28,8 @@ build() {
 
 run_parity() {
   local binary="$1" output="$2"
-  PARITY_ROUTES="$READ_ROUTES" PARITY_GO_BINARY="$binary" \
+  PARITY_ROUTES="$READ_ROUTES" PARITY_MUTATIONS="$SELFTEST_MUTATIONS" \
+    PARITY_GO_BINARY="$binary" \
     bash "$PARITY" >"$output" 2>&1
 }
 
@@ -40,6 +42,11 @@ if ! run_parity "$WORK/vault-ui-ok" "$WORK/ok.out"; then
 fi
 grep -q "routes: 6/6 matched" "$WORK/ok.out" || {
   echo "FAIL: baseline did not report routes: 6/6 matched"
+  cat "$WORK/ok.out"
+  exit 1
+}
+grep -q "mutation-parity: 1/1" "$WORK/ok.out" || {
+  echo "FAIL: baseline did not report mutation-parity: 1/1"
   cat "$WORK/ok.out"
   exit 1
 }
@@ -70,4 +77,17 @@ grep -q "/api/vaults" "$WORK/body.out" || {
   exit 1
 }
 
-echo "selftest: OK — the harness rejects both injected divergences"
+echo "selftest: skipped vault write must fail and be named"
+build "parity_selftest_skip_write" "$WORK/vault-ui-skipwrite"
+if run_parity "$WORK/vault-ui-skipwrite" "$WORK/skipwrite.out"; then
+  echo "FAIL: the harness accepted a skipped vault write (it is not comparing files)"
+  cat "$WORK/skipwrite.out"
+  exit 1
+fi
+grep -q "mutation mismatch task-flag-set" "$WORK/skipwrite.out" || {
+  echo "FAIL: the diagnostic did not name the skipped-write mutation case"
+  cat "$WORK/skipwrite.out"
+  exit 1
+}
+
+echo "selftest: OK — the harness rejects all three injected divergences"

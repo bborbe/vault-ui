@@ -15,6 +15,7 @@ type OpSet struct {
 	FrontmatterSet   ops.FrontmatterSetOperation
 	FrontmatterClear ops.FrontmatterClearOperation
 	WorkOn           ops.WorkOnOperation
+	Approve          ops.TaskApproveOperation
 	Defer            ops.DeferOperation
 	Complete         ops.CompleteOperation
 	GoalSet          ops.EntitySetOperation

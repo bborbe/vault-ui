@@ -18,6 +18,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ROUTES_FILE="${PARITY_ROUTES:-${REPO_ROOT}/scripts/parity/routes.txt}"
 CASES_FILE="${PARITY_CASES:-${REPO_ROOT}/scripts/parity/cases.txt}"
 ERRORS_FILE="${PARITY_ERRORS:-${REPO_ROOT}/scripts/parity/errors.txt}"
+MUTATIONS_FILE="${PARITY_MUTATIONS:-${REPO_ROOT}/scripts/parity/mutations.txt}"
 GO_BINARY="${PARITY_GO_BINARY:-}"
 TZ_PIN="${PARITY_TZ:-UTC}"
 
@@ -58,9 +59,57 @@ PY
 
 # --- fixture ---------------------------------------------------------------
 
-write_fixture() {
+write_config() {
   rm -rf "$FIXTURE"
   mkdir -p "$FIXTURE/.config/vault-cli" "$FIXTURE/.config/vault-ui" "$FIXTURE/bin"
+
+  cat >"$FIXTURE/.config/vault-cli/config.yaml" <<EOF
+current_user: fixtureuser
+default_vault: personal
+vaults:
+  personal:
+    name: personal
+    path: ${VAULT}
+    tasks_dir: "24 Tasks"
+    goals_dir: "23 Goals"
+    topics_dir: "23 Topics"
+    claude_script: ${FIXTURE}/bin/claude-stub
+EOF
+
+  cat >"$FIXTURE/.config/vault-ui/config.yaml" <<EOF
+vault_cli_path: ${FIXTURE}/bin/vault-cli
+host: 127.0.0.1
+port: 8765
+EOF
+
+  cat >"$FIXTURE/bin/claude-stub" <<'EOF'
+#!/usr/bin/env bash
+# Deterministic Claude stub: emits a valid turn result so the session-spawning
+# routes produce reproducible bodies. A task whose name contains "Fail" emits a
+# failed turn instead, so the session-cannot-start error path is exercised too.
+set -euo pipefail
+out=""
+name=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --session-id) out="$2"; shift 2 ;;
+    -n) name="$2"; shift 2 ;;
+    --resume|--mode|--vault|--output) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ "$name" == *Fail* ]]; then
+  printf '{"session_id":"%s","num_turns":1,"is_error":true,"result":"boom"}\n' "$out"
+  exit 0
+fi
+printf '{"session_id":"%s","num_turns":1,"is_error":false,"result":"ok"}\n' "$out"
+exit 0
+EOF
+  chmod +x "$FIXTURE/bin/claude-stub"
+}
+
+write_vault() {
+  rm -rf "$VAULT"
   mkdir -p "$VAULT/24 Tasks" "$VAULT/23 Goals" "$VAULT/23 Topics"
 
   local recent_past
@@ -87,6 +136,7 @@ EOF
 status: completed
 completed_date: ${recent_past}
 assignee: bob
+claude_session_id: 11111111-1111-1111-1111-111111111111
 ---
 
 # Task Two
@@ -140,6 +190,7 @@ EOF
   cat >"$VAULT/23 Goals/GoalTwo.md" <<'EOF'
 ---
 status: completed
+claude_session_id: 11111111-1111-1111-1111-111111111111
 ---
 
 # Goal Two
@@ -160,24 +211,11 @@ status: in_progress
 ## Notes
 - [[NotAnEntry]]
 EOF
+}
 
-  cat >"$FIXTURE/.config/vault-cli/config.yaml" <<EOF
-current_user: fixtureuser
-default_vault: personal
-vaults:
-  personal:
-    name: personal
-    path: ${VAULT}
-    tasks_dir: "24 Tasks"
-    goals_dir: "23 Goals"
-    topics_dir: "23 Topics"
-EOF
-
-  cat >"$FIXTURE/.config/vault-ui/config.yaml" <<EOF
-vault_cli_path: ${FIXTURE}/bin/vault-cli
-host: 127.0.0.1
-port: 8765
-EOF
+write_fixture() {
+  write_config
+  write_vault
 }
 
 # --- backends --------------------------------------------------------------
@@ -227,6 +265,45 @@ normalize() {
   jq -S . "$1" 2>/dev/null || cat "$1"
 }
 
+# normalize_mutation normalizes a JSON body for comparison: canonical key order
+# and session UUIDs replaced by a placeholder, since both backends mint random
+# session ids.
+normalize_mutation() {
+  local tmp mode="${2:--}"
+  tmp="$(mktemp)"
+  # The execute-command fast path reports the vault-cli subprocess stdout; the
+  # Go backend runs in-process and has no such stream, so the value is
+  # normalized away rather than compared. mode=detail additionally normalizes
+  # the error text, which for a failed session launch is the vault-cli
+  # subprocess's stderr framing (Python) versus the in-process error (Go).
+  if jq -e 'type == "object"' "$1" >/dev/null 2>&1; then
+    if [[ "$mode" == "detail" ]]; then
+      jq -S 'if has("detail") then .detail = "ERROR" else . end' "$1" >"$tmp"
+    else
+      jq -S 'if has("response") then .response = "STDOUT" else . end' "$1" >"$tmp"
+    fi
+  else
+    normalize "$1" >"$tmp"
+  fi
+  sed -E \
+    -e 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/SESSIONID/g' \
+    -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})/TIMESTAMP/g' \
+    "$tmp"
+  rm -f "$tmp"
+}
+
+# snapshot_vault copies the fixture vault into dest, replacing session UUIDs so
+# the two backends' random ids compare equal.
+snapshot_vault() {
+  local dest="$1"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  cp -a "$VAULT/." "$dest/"
+  find "$dest" -name '*.md' -print0 | xargs -0 sed -i -E \
+    -e 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/SESSIONID/g' \
+    -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})/TIMESTAMP/g'
+}
+
 # --- main ------------------------------------------------------------------
 
 echo "parity: building fixture and backends" >&2
@@ -268,6 +345,12 @@ static_ok=0
 while IFS=$'\t' read -r method path query send; do
   [[ -z "${method:-}" || "$method" == \#* ]] && continue
   routes_total=$((routes_total + 1))
+  if [[ "${send:-no}" == "mutation" ]]; then
+    # Served and proven by the mutation-parity section, which resets the
+    # fixture between backends.
+    routes_matched=$((routes_matched + 1))
+    continue
+  fi
   if [[ "${send:-no}" != "yes" ]]; then
     diagnostics+=("route not yet served by the Go backend: ${method} ${path}")
     continue
@@ -323,6 +406,43 @@ while IFS=$'\t' read -r name pathq; do
   fi
 done <"$ERRORS_FILE"
 
+# Mutation cases: reset, run against Python, reset, run against Go, compare the
+# status, the normalized body, and the resulting vault-file tree.
+mutations_total=0
+mutations_matched=0
+while IFS=$'\t' read -r name method path body norm; do
+  [[ -z "${name:-}" || "$name" == \#* ]] && continue
+  mutations_total=$((mutations_total + 1))
+  if [[ "${body:--}" == "-" ]]; then body="{}"; fi
+  norm="${norm:--}"
+
+  write_vault
+  py_status="$(curl_local -s -o "$WORK/py.mut" -w '%{http_code}' \
+    -X "$method" -H 'Content-Type: application/json' --data "$body" \
+    "${PY_BASE}${path}" 2>/dev/null || true)"
+  snapshot_vault "$WORK/py.tree"
+
+  write_vault
+  go_status="$(curl_local -s -o "$WORK/go.mut" -w '%{http_code}' \
+    -X "$method" -H 'Content-Type: application/json' --data "$body" \
+    "${GO_BASE}${path}" 2>/dev/null || true)"
+  snapshot_vault "$WORK/go.tree"
+
+  if [[ "$py_status" != "$go_status" ]]; then
+    diagnostics+=("mutation mismatch ${name} (status): python=${py_status} go=${go_status}")
+    continue
+  fi
+  if ! diff -q <(normalize_mutation "$WORK/py.mut" "$norm") <(normalize_mutation "$WORK/go.mut" "$norm") >/dev/null; then
+    diagnostics+=("mutation mismatch ${name} (body): $(diff <(normalize_mutation "$WORK/py.mut" "$norm") <(normalize_mutation "$WORK/go.mut" "$norm") 2>/dev/null | tr '\n' ' ' | cut -c1-300 || true)")
+    continue
+  fi
+  if ! diff -rq "$WORK/py.tree" "$WORK/go.tree" >/dev/null; then
+    diagnostics+=("mutation mismatch ${name} (files): $(diff -r "$WORK/py.tree" "$WORK/go.tree" 2>/dev/null | tr '\n' ' ' | cut -c1-400 || true)")
+    continue
+  fi
+  mutations_matched=$((mutations_matched + 1))
+done <"$MUTATIONS_FILE"
+
 # Static assets: byte identity (query strings ignored for path resolution).
 for asset in "index.html" "app.js?v=parity" "style.css?v=parity"; do
   py_hash="$(curl_local -s "${PY_BASE}/${asset}" | sha256sum | cut -d' ' -f1)"
@@ -349,7 +469,7 @@ fi
 echo "routes: ${routes_matched}/${routes_total} matched"
 echo "body-parity: ${body_equal}/${body_total}"
 echo "error-parity: ${error_equal}/${error_total}"
-echo "mutation-parity: 0/0"
+echo "mutation-parity: ${mutations_matched}/${mutations_total}"
 echo "ws-parity: frames identical (0 frames)"
 echo "static-parity: ${static_ok}/3 byte-identical"
 
@@ -357,6 +477,7 @@ fail=0
 if [[ "$routes_matched" -ne "$routes_total" ]]; then fail=1; fi
 if [[ "$body_equal" -ne "$body_total" ]]; then fail=1; fi
 if [[ "$error_equal" -ne "$error_total" ]]; then fail=1; fi
+if [[ "$mutations_matched" -ne "$mutations_total" ]]; then fail=1; fi
 if [[ "$static_ok" -ne 3 ]]; then fail=1; fi
 if [[ "$trav_ok" -ne 1 ]]; then fail=1; fi
 
