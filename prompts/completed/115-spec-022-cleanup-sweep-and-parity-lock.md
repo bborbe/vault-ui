@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [022-go-backend-private-logic]
+summary: Ported the cleanup sweep policy into pkg/cleanup (retention invariant, empty-id re-bind, marker TTL, resurrected-marker re-clear, startup orphan reconciliation) with a Ginkgo suite named TestCleanupSweep, added docs/cleanup-retention-invariant.md, a CHANGELOG entry, and locked parity (full Go module build/vet/test/race green, Python backend untouched).
+execution_id: vault-ui-exec-115-spec-022-cleanup-sweep-and-parity-lock
+dark-factory-version: v0.196.0
 created: "2026-10-03T23:45:00Z"
 queued: "2026-10-03T23:06:15Z"
+started: "2026-10-04T10:13:54Z"
+completed: "2026-10-04T10:27:45Z"
 branch: dark-factory/go-backend-private-logic
 ---
 
