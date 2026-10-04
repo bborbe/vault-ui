@@ -13,6 +13,7 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
+	"github.com/bborbe/vault-ui/pkg/fdlimit"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
@@ -47,6 +48,15 @@ func execute(ctx context.Context) error {
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, cache, launches, homeDir, readiness, manager,
 	)
+
+	if limit, err := fdlimit.Raise(ctx); err != nil {
+		glog.Warningf(
+			"raise file descriptor limit failed: %v; applied limit %d, vault watching may be incomplete",
+			err, limit,
+		)
+	} else {
+		glog.Infof("file descriptor limit raised to %d", limit)
+	}
 
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
