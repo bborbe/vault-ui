@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- docs: Add `docs/go-cutover.md`, the operator runbook for the final cutover — repointing the launchd LaunchAgent from the uv-installed Python tool to the Go binary, covering the pre-flight in-flight-launch check, `make build`, the plist edit, restart, the six verification probes (including the running-process check that distinguishes a real cutover from an unapplied plist edit), board exercise, the static-tree regression guard, and rollback.
+
 ## v0.78.1
 
 - docs: Mark the Python backend superseded in `src/vault_ui/README.md` (kept in-tree for one rollback window, frontend and tests frozen) and file its removal as `specs/ideas/remove-superseded-python-backend.md`.
