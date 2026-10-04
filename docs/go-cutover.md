@@ -6,7 +6,7 @@ the board on `http://127.0.0.1:8000` is still served by Python.
 
 **This is an operator-run procedure. No dark-factory prompt performs it.** It stops
 and replaces a running service, so it sits deliberately outside the pipeline: spec
-`023-go-backend-api-and-cutover.md` declares the cutover operator-gated and keeps
+`specs/in-progress/023-go-backend-api-and-cutover.md` declares the cutover operator-gated and keeps
 every service restart, plist edit and tool reinstall out of `prompts/`.
 
 Parity is proven before you start — `make parity` compares the Go and Python backends
@@ -55,6 +55,7 @@ mkdir -p ~/.config/vault-ui
 if [ ! -f ~/.config/vault-ui/config.yaml ]; then
   cp ~/Documents/workspaces/vault-ui/config.yaml ~/.config/vault-ui/config.yaml \
     || { echo "no config found in either location — stop and locate it"; exit 1; }
+  chmod 600 ~/.config/vault-ui/config.yaml
 fi
 ```
 
@@ -165,9 +166,9 @@ Four things about these probes:
   the board is empty. List the names the API actually serves with
   `curl -s http://127.0.0.1:8000/api/vaults | jq -r '.[].name'`. Vaults get renamed, and
   a retired name returns `0`, which reads exactly like a healthy empty vault. Spec
-  `023-go-backend-api-and-cutover.md` still names `Personal` in this probe; that name no
-  longer resolves against this config, so the spec's own annotation cannot pass as
-  written.
+  `specs/in-progress/023-go-backend-api-and-cutover.md` still names `Personal` in this
+  probe; that name no longer resolves against this config, so the spec's own annotation
+  cannot pass as written.
 - **The `PATH` probe prints only the `PATH` line.** The full environment is never
   displayed, and the plist sets nothing else (the Go binary reads one env var,
   `VAULT_UI_LISTEN`).
@@ -195,12 +196,17 @@ that branch's work and reports a false alarm.
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git fetch origin
-git diff --stat origin/master -- src/vault_ui/static/
+git diff --stat 798d901 origin/master -- src/vault_ui/static/
 ```
 
-Prints nothing. The frontend is frozen; a non-empty result means something touched it.
-The `git fetch` matters: a stale `origin/master` ref makes the guard report a
-difference that is not there.
+Prints nothing. The frontend is frozen, and this compares the parity baseline against
+what you are about to deploy, so a change merged into the static tree since `798d901`
+shows up here.
+
+Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
+work: step 1's `git pull` has already brought any merged change in, so that comparison
+is empty by construction and could only ever report an uncommitted local edit — never
+the merged change this guard exists to catch.
 
 ## Rollback
 
@@ -212,10 +218,13 @@ including the five-element `uv run` form if that is what you had:
 cp ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist.bak \
    ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 
+# Only needed if your .bak names ~/.local/bin/vault-ui (the uv-tool form). Skip it when
+# the .bak uses the five-element `uv run --directory …` form: that invokes uv directly
+# and never touches the installed tool, so there is nothing to reinstall.
 cd ~/Documents/workspaces/vault-ui
 uv tool install --force --no-cache .
 
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 
 # Same shape as step 4, asserting the opposite result.
