@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.78.1
 
 - docs: Mark the Python backend superseded in `src/vault_ui/README.md` (kept in-tree for one rollback window, frontend and tests frozen) and file its removal as `specs/ideas/remove-superseded-python-backend.md`.
 
