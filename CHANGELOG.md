@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.79.0
 
 - feat: Raise the process's own file-descriptor limit at startup via the new `pkg/fdlimit` package (`TargetLimit`/`Raise`), so the in-process vault watcher can hold roughly one descriptor per watched file across every configured vault regardless of how the service was launched; a limit that cannot be raised is logged as a warning naming the applied limit and the possible incomplete vault watching, and never aborts startup.
 
