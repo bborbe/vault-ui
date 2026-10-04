@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-03T20:58:01Z"
 generating: "2026-10-03T21:28:07Z"
 prompted: "2026-10-03T21:55:28Z"
+verifying: "2026-10-04T10:27:46Z"
 branch: dark-factory/go-backend-private-logic
 ---
 
@@ -137,3 +138,17 @@ Rationale: prompt 1 establishes the process-table and transcript parsing every l
 ## Do-Nothing Option
 
 The Python backend keeps working, but the Go rewrite cannot progress: spec 3's cutover has nothing to wire behind its HTTP surface, and the private logic — liveness, retention, pane resolution, topology — would have to be re-derived from the Python source at cutover time, under time pressure, with the board's own behavior as the only test. The cost of this spec is one port with tests; the cost of skipping it is discovering a liveness or retention regression after the Python backend has been removed and there is no reference left to compare against.
+
+## Verification Result
+
+**Verified:** 2026-10-04T11:57:08Z (HEAD dcf1551)
+**Binary:** none — library port, no binary; verified via `go test` from the module root
+**Scenario:** no scenario file (spec declares none) — replayed each AC's named test command against this worktree, plus repeated full-suite and `-race` runs.
+**Evidence:**
+- `go build ./...` exit 0; `go vet ./...` exit 0; `gofmt -l .` prints nothing
+- `go test ./... -count=1` 25/25 clean; `go test -race ./... -count=1` 10/10 clean; `make test` 5/5 exit 0
+- `go test ./pkg/watcher/ -count=1` 40/40 clean and `-race` 30/30 clean (was 3/30 and 4/30 before dcf1551); no DATA RACE in any captured run
+- `go test ./pkg/pane/ -run TestPaneResolver -v -count=1` 15/15 and `-race` 15/15 clean (was the flaky suite)
+- named rows pass: TestClassifySessionState 34/34, TestActivityDate 14/14, TestResolveDisplayName 16/16, TestTerminateGuards 10/10, TestTerminateFailurePaths 4/4, TestLaunchRegistry 13/13, TestSessionLock 4/4, TestStatusCache 9/9, TestHierarchyFolders 6/6, TestConfigMerge 24/24, TestCleanupSweep 55/55
+- `git diff --stat -- src/vault_ui/` empty; `uv run pytest -q` 751 passed
+**Verdict:** PASS
