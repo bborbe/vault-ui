@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -158,9 +159,15 @@ func (s *supervisor) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	s.stopped = true
 	proc := s.proc
+	// Read cmd.Process under the same lock runSubprocess holds across
+	// cmd.Start, which is what writes it; unsynchronised, the two race.
+	var process *os.Process
+	if proc != nil {
+		process = proc.cmd.Process
+	}
 	s.mu.Unlock()
 
-	if proc == nil || proc.cmd.Process == nil {
+	if process == nil {
 		// Not started yet; runSubprocess honours the stop once it is.
 		return nil
 	}
@@ -171,7 +178,7 @@ func (s *supervisor) Stop(ctx context.Context) error {
 	}
 
 	glog.Infof("[VaultCLIWatcher] Stopping watcher for vaults %s", s.vaultsLabel())
-	_ = proc.cmd.Process.Signal(syscall.SIGTERM)
+	_ = process.Signal(syscall.SIGTERM)
 	select {
 	case <-proc.done:
 		return nil
@@ -180,7 +187,7 @@ func (s *supervisor) Stop(ctx context.Context) error {
 			"[VaultCLIWatcher] Process did not exit in time, killing vaults %s",
 			s.vaultsLabel(),
 		)
-		_ = proc.cmd.Process.Kill()
+		_ = process.Kill()
 		_ = proc.stdout.Close()
 		<-proc.done
 		return nil
@@ -213,6 +220,10 @@ func (s *supervisor) runSubprocess(ctx context.Context) {
 	proc := &subprocess{cmd: cmd, stdout: stdout, done: make(chan struct{})}
 	s.mu.Lock()
 	s.proc = proc
+	// Start under the lock: cmd.Start writes cmd.Process, which Stop reads
+	// under this same lock. The fork it performs is bounded, so a Stop
+	// blocking briefly here beats the two accesses racing.
+	startErr := cmd.Start()
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -220,7 +231,7 @@ func (s *supervisor) runSubprocess(ctx context.Context) {
 		s.mu.Unlock()
 	}()
 
-	if startErr := cmd.Start(); startErr != nil {
+	if startErr != nil {
 		glog.Errorf(
 			"[VaultCLIWatcher] Unexpected error for vaults %s: %v",
 			s.vaultsLabel(),

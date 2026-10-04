@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - feat: Port the vault-cli watcher supervisor and the WezTerm pane resolver to Go, with the restart/stop lifecycle, the bounded helper, and the jump-credential handling preserved.
 - feat: Port the cleanup sweep policy to Go — the session-id retention invariant plus the empty-id re-bind, orphaned-marker TTL, and resurrected-marker re-clear passes — and capture the retention invariant in docs/.
 - fix: Give the pane resolver and watcher supervisor tests realistic subprocess timeouts, removing load-dependent flakes that made `go test ./...` and `make test` fail intermittently.
+- fix: Guard the watcher supervisor's subprocess handle with the existing mutex, removing a data race between Stop and the subprocess start that surfaced under `make test`'s -race run.
 
 ## v0.75.0
 
