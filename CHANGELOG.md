@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.79.1
 
 - docs: Record in `docs/go-cutover.md` § Known limits that `go` is not on `PATH` inside `bborbe/claude-yolo:v0.15.1` — it lives at `/usr/local/go/bin`, so the runbook's `make parity` step dies in `build_vault_cli` with `make: *** Error 127` before any comparison runs, which reads as a harness bug and is not one. The section now shows the invocation that works, and notes that `-e PATH=…` on `docker run` does not survive `bash -lc`.
 
