@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- docs: Mark the Python backend superseded in `src/vault_ui/README.md` (kept in-tree for one rollback window, frontend and tests frozen) and file its removal as `specs/ideas/remove-superseded-python-backend.md`.
+
 ## v0.78.0
 
 - feat: Serve the Go `:8000` API surface — the six read routes (vaults, assignees, tasks, goals, topics, topic detail) with byte-identical embedded static serving, and the eighteen mutating routes (task/goal session lifecycle, execute-command, phase/flag/status/assign-to-me, session set/clear, the jump proxy, and cache/config reload) — reproducing the Python backend's status codes, bodies, guards, and vault-file side effects.
