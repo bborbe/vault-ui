@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.75.1
 
 - fix: The board's Start button now approves a task still in the `todo` phase before opening its session, so starting a todo card no longer fails with `vault-cli work-on ... task is at phase "todo"`. The Start click is the operator's own approval surface; cards past approval take the unchanged path with no extra write.
 
