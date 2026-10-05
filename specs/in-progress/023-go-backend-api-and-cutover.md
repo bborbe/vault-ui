@@ -219,3 +219,19 @@ Rationale: prompt 1 establishes the router, the shared response/error contract, 
 ## Do-Nothing Option
 
 The Go rewrite stays invisible: the operator's board keeps running the Python service, the vault-cli delegation layer rebuilt in Go is dead code, and the migration is paid for without being delivered. Leaving it half-migrated is worse than either end state — two implementations of the same surface, only one of them exercised, drifting apart silently until someone tries to finish the job against a frontend that has moved on. The cutover is reversible (the Python path is retained for one window), so the cost of doing it now is a single operator procedure; the cost of not doing it is an unbounded maintenance split.
+
+## Verification Result
+
+**Verified:** 2026-10-05T07:17:00Z (HEAD e971172)
+**Binary:** /Users/bborbe/Documents/workspaces/go/bin/vault-ui — the live launchd service (pid 99959, built 2026-10-05 08:41 local, started 08:43)
+**Scenario:** no scenario file (spec declares none) — ran `make parity` + `make parity-selftest` in the pinned YOLO container (`bborbe/claude-yolo:v0.15.1`), then probed the deployed Go service on :8000 and rendered the live board with Playwright.
+**Evidence:**
+- `make parity` exit 0 — `routes: 25/25 matched`, `body-parity: 23/23`, `error-parity: 3/3`, `mutation-parity: 34/34`, `ws-parity: frames identical (3 frames)`, `static-parity: 3/3 byte-identical`
+- parity with extra cases (`/api/tasks?vault=personal`, `/tasks`, `/nope`, `/api/nope`) — `body-parity: 10/10` (prefixed and unprefixed path shapes identical to Python)
+- `make parity-selftest` exit 0 — "OK — the harness rejects all four injected divergences" (renamed route, divergent body, skipped write, divergent WS frame)
+- `make precommit` exit 0 in the container — 756 passed, ruff clean, mypy clean
+- live :8000 — `/api/tasks` 200, `/tasks` 404, `/api/ws` 404, `/../config.yaml` 404 (`{"detail":"Not Found"}`); `status=in_progress` tasks 177, goals 262; Playwright `.task-card` count 402
+- launchd — `plutil -extract ProgramArguments.0 raw` → `/Users/bborbe/Documents/workspaces/go/bin/vault-ui`; `launchctl list` → `99959 0 com.github.bborbe.vault-ui`; listener pid 99959 txt = the Go binary; PATH has `workspaces/go/bin` before `/opt/homebrew/bin`
+- static tree `git diff --stat origin/master -- src/vault_ui/static/` empty; served asset hashes == on-disk; `require github.com/bborbe/vault-cli v0.159.0` and no `replace`; `SUPERSEDED` in `src/vault_ui/README.md` → follow-up `specs/ideas/remove-superseded-python-backend.md`; cutover-command grep over `prompts/spec-023-*` → 0 lines
+**Known residual (outside this spec's AC scope):** real-vault `activity_date` — Go truncates sub-µs (`pkg/board/tasks.go` `dateTimeString`), Python rounds, so 14/404 real-vault tasks differ by exactly 1µs. The Rung-2 ACs are functional-only and the Assumptions pin time-derived fields in the fixture; tracked by `25 Tasks/Rewrite the vault-ui Backend in Go…` SC3.
+**Verdict:** PASS
