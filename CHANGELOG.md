@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.80.0
 
 - feat: Resolve WezTerm pane links in a new `pkg/panecache` background refresher instead of on the request path, so `GET /api/tasks` reads pane ids from an in-memory cache and no longer spawns one `who-needs-me.py` helper subprocess per live session per request (measured 7.7s on 2026-10-05); the board's `Deps.Pane` is now the cache, which a `run.Func` refreshes every three seconds, leaving the jump route's on-demand resolution unchanged.
 
