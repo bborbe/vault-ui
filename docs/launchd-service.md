@@ -55,9 +55,9 @@ Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/vault-ui.log</string>
+    <string>/Users/bborbe/Library/Logs/vault-ui.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/vault-ui.log</string>
+    <string>/Users/bborbe/Library/Logs/vault-ui.log</string>
 </dict>
 </plist>
 ```
@@ -98,7 +98,7 @@ launchctl load ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```bash
 launchctl list | grep vault-ui         # status column 0 = healthy
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/   # expect 200
-tail -f /tmp/vault-ui.log
+tail -f /Users/bborbe/Library/Logs/vault-ui.log
 ```
 
 A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and a single `Started vault-cli watcher for vaults: <name>, <name>, …` line naming every configured vault — one watcher process covers them all.
@@ -183,7 +183,7 @@ launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 Verify the level took effect:
 
 ```bash
-tail -f /tmp/vault-ui.log
+tail -f /Users/bborbe/Library/Logs/vault-ui.log
 # At DEBUG you should see per-request lines and "vault-cli stdout [<task_id>]: ..." lines while a Start is in flight.
 ```
 
@@ -191,7 +191,7 @@ tail -f /tmp/vault-ui.log
 
 ### `launchctl list` shows non-zero exit / service keeps restarting
 
-Check `/tmp/vault-ui.log`. Common causes:
+Check `/Users/bborbe/Library/Logs/vault-ui.log`. Common causes:
 
 - `uv` path wrong in the plist (`command -v uv` should match)
 - `vault-cli` not in the `PATH` env var → `[Errno 2] No such file or directory: 'vault-cli'`
