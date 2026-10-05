@@ -26,6 +26,14 @@ ls ~/Documents/workspaces/vault-ui/config.yaml
 
 ## 1. Create the launch agent
 
+Create the log directory first. launchd does not create the parent directory of
+`StandardOutPath`, and `~/Library/Logs` does not exist on a fresh macOS account —
+whereas `/tmp`, the path this doc used before, always did:
+
+```bash
+mkdir -p ~/Library/Logs
+```
+
 Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
 
 ```xml
@@ -55,9 +63,9 @@ Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/bborbe/Library/Logs/vault-ui.log</string>
+    <string>/Users/YOUR_USER/Library/Logs/vault-ui.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/bborbe/Library/Logs/vault-ui.log</string>
+    <string>/Users/YOUR_USER/Library/Logs/vault-ui.log</string>
 </dict>
 </plist>
 ```
@@ -98,7 +106,7 @@ launchctl load ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist
 ```bash
 launchctl list | grep vault-ui         # status column 0 = healthy
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/   # expect 200
-tail -f /Users/bborbe/Library/Logs/vault-ui.log
+tail -f ~/Library/Logs/vault-ui.log
 ```
 
 A healthy startup logs `Uvicorn running on http://127.0.0.1:8000` and a single `Started vault-cli watcher for vaults: <name>, <name>, …` line naming every configured vault — one watcher process covers them all.
@@ -183,7 +191,7 @@ launchctl kickstart -k gui/$UID/com.github.bborbe.vault-ui
 Verify the level took effect:
 
 ```bash
-tail -f /Users/bborbe/Library/Logs/vault-ui.log
+tail -f ~/Library/Logs/vault-ui.log
 # At DEBUG you should see per-request lines and "vault-cli stdout [<task_id>]: ..." lines while a Start is in flight.
 ```
 
@@ -191,7 +199,7 @@ tail -f /Users/bborbe/Library/Logs/vault-ui.log
 
 ### `launchctl list` shows non-zero exit / service keeps restarting
 
-Check `/Users/bborbe/Library/Logs/vault-ui.log`. Common causes:
+Check `~/Library/Logs/vault-ui.log`. Common causes:
 
 - `uv` path wrong in the plist (`command -v uv` should match)
 - `vault-cli` not in the `PATH` env var → `[Errno 2] No such file or directory: 'vault-cli'`
