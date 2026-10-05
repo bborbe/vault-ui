@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.79.5
 
 - fix: Render an empty goal status as an empty string rather than null, matching the Python backend's JSON type for that field.
 
