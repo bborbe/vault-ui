@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Add `pkg/pageindex`, a process-wide in-memory snapshot store of each vault folder's parsed pages that implements vault-cli's `storage.PageStorage`, with one immutable snapshot per `(vaultPath, pagesDir)` key, per-key shared builds so concurrent cold or dirty readers wait on a single `ListPages` call, dirty marks for write invalidation, event-triggered rebuilds that coalesce into one in-flight build plus one follow-up and signal completion only after a post-event swap, a clock-driven rescan loop bounded by `RescanInterval` (50 s), and retention of the previous snapshot on a failed rebuild; nothing is wired into the running service yet, and the staleness, frame-ordering and key-derivation rules are written down in `docs/page-index.md`.
+
 ## v0.80.0
 
 - feat: Resolve WezTerm pane links in a new `pkg/panecache` background refresher instead of on the request path, so `GET /api/tasks` reads pane ids from an in-memory cache and no longer spawns one `who-needs-me.py` helper subprocess per live session per request (measured 7.7s on 2026-10-05); the board's `Deps.Pane` is now the cache, which a `run.Func` refreshes every three seconds, leaving the jump route's on-demand resolution unchanged.
