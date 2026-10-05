@@ -32,6 +32,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
+	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	staticui "github.com/bborbe/vault-ui/src/vault_ui"
 )
@@ -221,10 +222,16 @@ func CreateConnectionManager() websocket.ConnectionManager {
 	return websocket.NewConnectionManager(websocket.NewMetrics())
 }
 
-// CreateWatcher returns a run.Func that watches the configured vaults with
-// vault-cli's in-process watcher and broadcasts one frame per change. No
-// vault-cli subprocess is spawned.
-func CreateWatcher(loader config.Loader, manager websocket.ConnectionManager) run.Func {
+// CreateWatcher returns a run.Func that watches the configured vaults with the
+// injected watch operation and hands every change to watchrefresh's handler,
+// which refreshes the affected page-index folder before broadcasting the
+// frame. No vault-cli subprocess is spawned.
+func CreateWatcher(
+	loader config.Loader,
+	manager websocket.ConnectionManager,
+	pageIndex pageindex.PageIndex,
+	watchOperation ops.WatchOperation,
+) run.Func {
 	return func(ctx context.Context) error {
 		vaults, err := loader.GetAllVaults(ctx)
 		if err != nil {
@@ -232,12 +239,10 @@ func CreateWatcher(loader config.Loader, manager websocket.ConnectionManager) ru
 		}
 		targets := buildWatchTargets(vaults)
 		glog.V(2).Infof("starting vault watcher for %d vaults", len(targets))
-		return ops.NewWatchOperation().Execute(ctx, targets,
-			func(event ops.WatchEvent) error {
-				glog.V(3).Infof("watcher event %s %s/%s", event.Event, event.Vault, event.Name)
-				manager.Broadcast(websocket.WatcherFrame(event))
-				return nil
-			},
+		return watchOperation.Execute(
+			ctx,
+			targets,
+			watchrefresh.NewHandler(ctx, vaults, pageIndex, manager),
 		)
 	}
 }

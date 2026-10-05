@@ -12,35 +12,31 @@ import (
 )
 
 type WebsocketMetrics struct {
-	BroadcastStub        func()
-	broadcastMutex       sync.RWMutex
-	broadcastArgsForCall []struct {
-	}
-	ClientConnectedStub        func()
-	clientConnectedMutex       sync.RWMutex
-	clientConnectedArgsForCall []struct {
-	}
+	BroadcastStub                 func()
+	broadcastMutex                sync.RWMutex
+	broadcastArgsForCall          []struct{}
+	ClientConnectedStub           func()
+	clientConnectedMutex          sync.RWMutex
+	clientConnectedArgsForCall    []struct{}
 	ClientDisconnectedStub        func()
 	clientDisconnectedMutex       sync.RWMutex
-	clientDisconnectedArgsForCall []struct {
-	}
-	ClientDroppedStub        func()
-	clientDroppedMutex       sync.RWMutex
-	clientDroppedArgsForCall []struct {
-	}
-	invocations      map[string][][]interface{}
-	invocationsMutex sync.RWMutex
+	clientDisconnectedArgsForCall []struct{}
+	ClientDroppedStub             func()
+	clientDroppedMutex            sync.RWMutex
+	clientDroppedArgsForCall      []struct{}
+	invocations                   map[string][][]interface{}
+	callOrder                     []string
+	invocationsMutex              sync.RWMutex
 }
 
 func (fake *WebsocketMetrics) Broadcast() {
 	fake.broadcastMutex.Lock()
-	fake.broadcastArgsForCall = append(fake.broadcastArgsForCall, struct {
-	}{})
+	fake.broadcastArgsForCall = append(fake.broadcastArgsForCall, struct{}{})
 	stub := fake.BroadcastStub
 	fake.recordInvocation("Broadcast", []interface{}{})
 	fake.broadcastMutex.Unlock()
 	if stub != nil {
-		fake.BroadcastStub()
+		stub()
 	}
 }
 
@@ -58,13 +54,12 @@ func (fake *WebsocketMetrics) BroadcastCalls(stub func()) {
 
 func (fake *WebsocketMetrics) ClientConnected() {
 	fake.clientConnectedMutex.Lock()
-	fake.clientConnectedArgsForCall = append(fake.clientConnectedArgsForCall, struct {
-	}{})
+	fake.clientConnectedArgsForCall = append(fake.clientConnectedArgsForCall, struct{}{})
 	stub := fake.ClientConnectedStub
 	fake.recordInvocation("ClientConnected", []interface{}{})
 	fake.clientConnectedMutex.Unlock()
 	if stub != nil {
-		fake.ClientConnectedStub()
+		stub()
 	}
 }
 
@@ -82,13 +77,12 @@ func (fake *WebsocketMetrics) ClientConnectedCalls(stub func()) {
 
 func (fake *WebsocketMetrics) ClientDisconnected() {
 	fake.clientDisconnectedMutex.Lock()
-	fake.clientDisconnectedArgsForCall = append(fake.clientDisconnectedArgsForCall, struct {
-	}{})
+	fake.clientDisconnectedArgsForCall = append(fake.clientDisconnectedArgsForCall, struct{}{})
 	stub := fake.ClientDisconnectedStub
 	fake.recordInvocation("ClientDisconnected", []interface{}{})
 	fake.clientDisconnectedMutex.Unlock()
 	if stub != nil {
-		fake.ClientDisconnectedStub()
+		stub()
 	}
 }
 
@@ -106,13 +100,12 @@ func (fake *WebsocketMetrics) ClientDisconnectedCalls(stub func()) {
 
 func (fake *WebsocketMetrics) ClientDropped() {
 	fake.clientDroppedMutex.Lock()
-	fake.clientDroppedArgsForCall = append(fake.clientDroppedArgsForCall, struct {
-	}{})
+	fake.clientDroppedArgsForCall = append(fake.clientDroppedArgsForCall, struct{}{})
 	stub := fake.ClientDroppedStub
 	fake.recordInvocation("ClientDropped", []interface{}{})
 	fake.clientDroppedMutex.Unlock()
 	if stub != nil {
-		fake.ClientDroppedStub()
+		stub()
 	}
 }
 
@@ -138,9 +131,18 @@ func (fake *WebsocketMetrics) Invocations() map[string][][]interface{} {
 	return copiedInvocations
 }
 
+func (fake *WebsocketMetrics) CallOrder() []string {
+	fake.invocationsMutex.RLock()
+	defer fake.invocationsMutex.RUnlock()
+	order := make([]string, len(fake.callOrder))
+	copy(order, fake.callOrder)
+	return order
+}
+
 func (fake *WebsocketMetrics) recordInvocation(key string, args []interface{}) {
 	fake.invocationsMutex.Lock()
 	defer fake.invocationsMutex.Unlock()
+	fake.callOrder = append(fake.callOrder, key)
 	if fake.invocations == nil {
 		fake.invocations = map[string][][]interface{}{}
 	}

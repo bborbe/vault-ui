@@ -50,8 +50,9 @@ parts so equivalent paths produce identical keys.
 - The read side derives the key from the board vault's `Path` plus
   `TasksFolder`, `GoalsFolder` or `TopicsFolder` — exactly the values vault-cli's
   `ListOperation` passes to `ListPages`.
-- The event side maps the watcher's vault name to the configured vault-cli vault
-  and uses its `Path` plus `GetTasksDir()` or `GetGoalsDir()`.
+- The event side is `pkg/watchrefresh`: the handler `factory.CreateWatcher`
+  composes maps the watcher's vault name to the configured vault-cli vault and
+  uses its `Path` plus `GetTasksDir()` or `GetGoalsDir()`.
 - Both sides come from the same vault-cli config entry: `vaultconfig.BuildVaultConfig`
   sets `TasksFolder = TasksDir` (never empty) and `GoalsFolder = GetGoalsDir()`,
   so the two derivations match.

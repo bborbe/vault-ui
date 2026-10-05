@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [024-serve-list-reads-from-page-index]
+summary: Added pkg/watchrefresh so watcher task/goal events refresh only their own page-index folder and broadcast their frame only after a post-event rebuild has swapped in, with an injectable watch operation in factory.CreateWatcher wired from main.go, plus the ConnectionManager counterfeiter fake, Ginkgo tests for AC2/AC4 through the real callback and for the handler, docs and changelog.
+execution_id: vault-ui-page-index-exec-128-spec-024-watcher-refreshes-index-before-frame
+dark-factory-version: v0.196.0
 created: "2026-10-05T19:39:53Z"
 queued: "2026-10-05T20:18:36Z"
+started: "2026-10-05T20:31:56Z"
+completed: "2026-10-05T20:40:10Z"
+branch: dark-factory/128-spec-024-watcher-refreshes-index-before-frame
 ---
 
 # Refresh the page index on watcher events and send each task/goal frame only after the fresh swap
