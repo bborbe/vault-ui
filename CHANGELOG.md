@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.81.0
 
 - feat: Add `pkg/pageindex`, a process-wide in-memory snapshot store of each vault folder's parsed pages that implements vault-cli's `storage.PageStorage`, with one immutable snapshot per `(vaultPath, pagesDir)` key, per-key shared builds so concurrent cold or dirty readers wait on a single `ListPages` call, dirty marks for write invalidation, event-triggered rebuilds that coalesce into one in-flight build plus one follow-up and signal completion only after a post-event swap, a clock-driven rescan loop bounded by `RescanInterval` (50 s), and retention of the previous snapshot on a failed rebuild; the staleness, frame-ordering and key-derivation rules are written down in `docs/page-index.md`.
 - feat: Serve the board's list reads (`/api/tasks`, `/api/assignees`, `/api/goals`, `/api/topics`, and the goal/task lists inside `/api/topics/{id}`) from a single process-wide `pageindex.PageIndex` built concurrently over every configured vault's tasks, goals and topics folders at startup and rescanned at least every 50 s, so a warm request answers from memory instead of re-parsing every vault file; `ShowTopic`'s own topic-file read and the mutation paths still read disk.
