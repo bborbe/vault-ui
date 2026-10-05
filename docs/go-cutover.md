@@ -160,7 +160,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/                 
 # Gate: exactly one process must hold :8000. 0 means nothing is listening; 2+ means a
 # leftover listener is still up. Run the next block only if this prints nothing.
 COUNT=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .)
-[ "$COUNT" = 1 ] || echo "STOP — cutover NOT verified: $COUNT listeners on :8000; read /tmp/vault-ui.log"
+[ "$COUNT" = 1 ] || echo "STOP — cutover NOT verified: $COUNT listeners on :8000; read ~/Library/Logs/vault-ui.log"
 ```
 
 Run the next block **only if the gate above printed nothing.** It is a separate block for
@@ -179,7 +179,7 @@ ps eww -p "$PID" | tr ' ' '\n' | grep -m1 '^PATH='                              
 Four things about these probes:
 
 - **The listener count is the gate.** `1` is what you want. `0` means nothing is
-  listening — read `/tmp/vault-ui.log`. `2` or more means a leftover listener is still
+  listening — read `~/Library/Logs/vault-ui.log`. `2` or more means a leftover listener is still
   up; resolve that first, because the probes in the next block take the first pid only and
   would otherwise tell you about whichever process `lsof` happened to list first.
 - **`lsof -p … -a -d txt` is the probe that distinguishes a real cutover from a plist
@@ -202,7 +202,7 @@ Four things about these probes:
   displayed, and the plist sets nothing else (the Go binary reads one env var,
   `VAULT_UI_LISTEN`).
 
-If `launchctl list` shows a non-zero status, read `/tmp/vault-ui.log`. A Go binary
+If `launchctl list` shows a non-zero status, read `~/Library/Logs/vault-ui.log`. A Go binary
 invoked with leftover `uv run` arguments, a `PATH` missing the vault-cli directory,
 and a config file it cannot find all fail loudly there.
 
@@ -261,7 +261,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-
 # Same shape as step 4, asserting the opposite result. Run the next block only if this
 # prints nothing: a count of 0 means the service never came back.
 COUNT=$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t | grep -c .)
-[ "$COUNT" = 1 ] || echo "STOP — rollback INCONCLUSIVE: $COUNT listeners on :8000; read /tmp/vault-ui.log"
+[ "$COUNT" = 1 ] || echo "STOP — rollback INCONCLUSIVE: $COUNT listeners on :8000; read ~/Library/Logs/vault-ui.log"
 ```
 
 Run the next block **only if the gate above printed nothing** — a count of 0 means the
