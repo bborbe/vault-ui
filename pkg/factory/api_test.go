@@ -45,8 +45,8 @@ func newTestAPIHandlerWithManager(
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	return factory.CreateAPIHandler(
-		loader, configPath, statuscache.NewCache(), launchregistry.NewRegistry(), tempDir(),
-		readiness, manager,
+		loader, configPath, statuscache.NewCache(), factory.CreatePaneCache(),
+		launchregistry.NewRegistry(), tempDir(), readiness, manager,
 	)
 }
 
