@@ -7,6 +7,7 @@ package board_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	libtime "github.com/bborbe/time"
@@ -83,6 +84,22 @@ type fakePane struct {
 
 func (f fakePane) Resolve(_ context.Context, sessionID string) (string, bool) {
 	pane, ok := f.panes[sessionID]
+	return pane, ok
+}
+
+// recordingPane records the session ids handed to Resolve, so a test can prove
+// the board resolves through the injected resolver and nothing else.
+type recordingPane struct {
+	mu    sync.Mutex
+	calls []string
+	panes map[string]string
+}
+
+func (p *recordingPane) Resolve(_ context.Context, sessionID string) (string, bool) {
+	p.mu.Lock()
+	p.calls = append(p.calls, sessionID)
+	p.mu.Unlock()
+	pane, ok := p.panes[sessionID]
 	return pane, ok
 }
 
@@ -366,6 +383,31 @@ var _ = Describe("ListTasks", func() {
 		Expect(*responses[0].SessionState).To(Equal("live"))
 		Expect(responses[0].JumpPane).NotTo(BeNil())
 		Expect(*responses[0].JumpPane).To(Equal("42"))
+	})
+
+	It("resolves panes through the injected resolver and spawns nothing", func() {
+		const sessionID = "11111111-1111-1111-1111-111111111111"
+		h := newHarness(item("Live", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = sessionID
+		}))
+		h.signals.registry = []string{sessionID}
+		pane := &recordingPane{panes: map[string]string{sessionID: "42"}}
+		service := board.New(board.Deps{
+			Vaults:  fakeVaults{vaults: []board.Vault{vault}},
+			Ops:     fakeOps{list: *h.list, show: *h.show},
+			Cache:   h.cache,
+			Launch:  h.launch,
+			Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals: h.signals,
+			Pane:    pane,
+		})
+		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses[0].JumpPane).NotTo(BeNil())
+		Expect(*responses[0].JumpPane).To(Equal("42"))
+		// The resolver is the only pane path, and it is called exactly once with
+		// the live session id.
+		Expect(pane.calls).To(Equal([]string{sessionID}))
 	})
 
 	It("filters to live sessions only", func() {

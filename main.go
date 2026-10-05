@@ -43,10 +43,11 @@ func execute(ctx context.Context) error {
 	configPath := factory.CreateVaultUIConfigPath(homeDir)
 
 	cache := statuscache.NewCache()
+	paneCache := factory.CreatePaneCache()
 	launches := launchregistry.NewRegistry()
 	manager := factory.CreateConnectionManager()
 	apiHandler := factory.CreateAPIHandler(
-		loader, configPath, cache, launches, homeDir, readiness, manager,
+		loader, configPath, cache, paneCache, launches, homeDir, readiness, manager,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -73,6 +74,7 @@ func execute(ctx context.Context) error {
 		factory.CreateVaultDiscovery(loader, readiness),
 		factory.CreateStatusCacheLoader(loader, configPath, cache),
 		factory.CreateWatcher(loader, manager),
+		factory.CreatePaneRefresher(homeDir, paneCache),
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {
