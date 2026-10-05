@@ -204,6 +204,17 @@ claude_session_id: 11111111-1111-1111-1111-111111111111
 # Goal Two
 EOF
 
+  # "draft" is not a recognised goal status, so vault-cli reports it as an
+  # empty string. Python renders that as "", and the Go backend must match
+  # rather than emitting null.
+  cat >"$VAULT/23 Goals/GoalThree.md" <<'EOF'
+---
+status: draft
+---
+
+# Goal Three (unrecognised status)
+EOF
+
   cat >"$VAULT/23 Topics/TopicOne.md" <<'EOF'
 ---
 status: in_progress

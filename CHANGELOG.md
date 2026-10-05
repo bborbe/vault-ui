@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Render an empty goal status as an empty string rather than null, matching the Python backend's JSON type for that field.
+
 ## v0.79.4
 
 - docs: Point `docs/go-cutover.md` and `docs/launchd-service.md` at the log path the service actually writes (`~/Library/Logs/vault-ui.log`, or `/Users/YOUR_USER/…` in the plist template) instead of `/tmp/vault-ui.log`, which nothing writes. The cost landed at the worst moment: the runbook's own STOP messages, read when a cutover or rollback has *already* failed, named a file that does not exist. Adds the `mkdir -p ~/Library/Logs` step the doc was missing — launchd does not create the parent directory of `StandardOutPath`, and `/tmp` always existed.

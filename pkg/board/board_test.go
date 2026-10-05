@@ -447,6 +447,26 @@ var _ = Describe("ListGoals", func() {
 		))
 	})
 
+	// An unrecognised goal status reaches the renderer as an empty string.
+	// Python serialises it as "", so Go must too: a nil pointer here would
+	// render null and diverge. The non-empty entry keeps the empty case from
+	// being satisfied by ignoring the field entirely.
+	DescribeTable("renders the status as a string, never null",
+		func(status, expected string) {
+			h := newHarness()
+			h.list.items["23 Goals"] = []ops.TaskListItem{
+				{Name: "Goal", Status: status},
+			}
+			responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(responses).To(HaveLen(1))
+			Expect(responses[0].Status).NotTo(BeNil())
+			Expect(*responses[0].Status).To(Equal(expected))
+		},
+		Entry("unrecognised status renders as an empty string", "", ""),
+		Entry("non-empty status passes through unchanged", "in_progress", "in_progress"),
+	)
+
 	It("keeps completed and undated goals visible and defers the rest", func() {
 		h := newHarness()
 		h.list.items["23 Goals"] = []ops.TaskListItem{
