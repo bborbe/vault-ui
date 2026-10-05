@@ -20,11 +20,19 @@ readers share the same `*domain.Page` pointers read-only.
   (50 s) plus the poll granularity plus one rebuild — under 60 s normally. If a
   rebuild hangs, each storage call is bounded by `rebuildTimeout` (2 min), so the
   worst case is the rescan interval plus that timeout.
-- Writes made through vault-ui are visible to the next read: the write marks the
-  affected keys dirty and the first read performs one shared rebuild that every
-  concurrent reader waits on.
+- Writes made through vault-ui are visible to the next read. Every vault-writing
+  mutation marks its vault's tasks and goals keys dirty before it returns: the
+  publishing mutations, the non-publishing `Run*`/`TakeOver*` and session
+  writes, and paths that write before failing. The publishing mutations also
+  mark immediately before their `Publish*Updated` frame, so a client that
+  re-fetches on the frame never sees stale data. `JumpTask` and `ReloadConfig`
+  write nothing and mark nothing.
+- The first read of a dirty key performs one shared rebuild that every
+  concurrent reader waits on. Marking a key the index has never seen is a no-op:
+  its first read builds it anyway.
 - Topics folders are not watched. They refresh through the rescan loop and
-  `POST /api/cache/reload`.
+  `POST /api/cache/reload`, which marks every key dirty regardless of its
+  `vault` parameter.
 - A failed rebuild keeps serving the previous snapshot and logs the error with
   the key; the next event, dirty read or rescan retries.
 - A process restart starts with an empty index. Cold reads wait for the startup

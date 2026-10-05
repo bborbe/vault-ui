@@ -33,6 +33,7 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, goalID, "goal")
 	if err := set.GoalSet.Execute(
@@ -95,6 +96,7 @@ func (s *service) TakeOverGoal(
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	sessionID := goal.ClaudeSessionID
 	terminated := false
@@ -152,6 +154,7 @@ func (s *service) UpdateGoalStatus(
 	if !ok {
 		return api.StatusUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if setErr := set.GoalSet.Execute(
 		ctx, resolved.Path, goalID, "status", req.Status, reason, gate,
@@ -159,6 +162,10 @@ func (s *service) UpdateGoalStatus(
 		return api.StatusUpdateResponse{}, newHTTPError(500, setErr.Error())
 	}
 	s.deps.Cache.Invalidate(vault, goalID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.StatusUpdateResponse{Status: "success", GoalID: goalID, NewStatus: req.Status}, nil
 }
@@ -180,6 +187,7 @@ func (s *service) ExecuteGoalCommand(
 	if !ok {
 		return api.GoalCommandResponse{}, newHTTPError(400, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	var runErr error
 	if req.Command == "defer-goal" {
@@ -198,6 +206,10 @@ func (s *service) ExecuteGoalCommand(
 		return api.GoalCommandResponse{}, newHTTPError(500, runErr.Error())
 	}
 	s.deps.Cache.Invalidate(vault, goalID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.GoalCommandResponse{Status: "success", GoalID: goalID, Command: req.Command}, nil
 }
@@ -225,6 +237,7 @@ func (s *service) AssignGoalToMe(
 	if !ok {
 		return api.AssignResponse{}, newHTTPError(404, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if setErr := set.GoalSet.Execute(
 		ctx, resolved.Path, goalID, "assignee", cfg.CurrentUser, "", "",
@@ -232,6 +245,10 @@ func (s *service) AssignGoalToMe(
 		return api.AssignResponse{}, newHTTPError(500, setErr.Error())
 	}
 	s.deps.Cache.Invalidate(vault, goalID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.AssignResponse{Status: "success", GoalID: goalID, Assignee: cfg.CurrentUser}, nil
 }
@@ -250,6 +267,7 @@ func (s *service) ClearGoalSession(
 	if !ok {
 		return api.SessionClearResponse{}, newHTTPError(400, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if clearErr := set.GoalClear.Execute(
 		ctx, resolved.Path, goalID, "claude_session_id",
@@ -260,6 +278,10 @@ func (s *service) ClearGoalSession(
 	// on the next cleanup pass rather than failing the reset.
 	_ = set.GoalClear.Execute(ctx, resolved.Path, goalID, "claude_session_started")
 	s.deps.Cache.Invalidate(vault, goalID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.SessionClearResponse{Status: "success", GoalID: goalID}, nil
 }

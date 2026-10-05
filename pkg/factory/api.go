@@ -210,7 +210,7 @@ func CreateAPIHandler(
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
-		connectionEventPublisher{manager: manager},
+		connectionEventPublisher{manager: manager}, pageIndex,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
 }

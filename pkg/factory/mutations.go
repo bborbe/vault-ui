@@ -101,6 +101,7 @@ func CreateMutationService(
 	locks sessionlock.Registry,
 	homeDir string,
 	publisher mutations.EventPublisher,
+	index mutations.IndexInvalidator,
 ) mutations.Service {
 	return mutations.New(mutations.Deps{
 		Config:    &mutationConfigProvider{loader: loader, configPath: configPath},
@@ -109,6 +110,7 @@ func CreateMutationService(
 		Launch:    launches,
 		Locks:     locks,
 		Publisher: publisher,
+		Index:     index,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.NewPSScanner("-axww", "-o", "args="),
 		Signaler:  sigterm.NewProcessSignaler(),

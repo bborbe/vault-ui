@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [024-serve-list-reads-from-page-index]
+summary: Added a narrow IndexInvalidator dependency to the mutation service so every vault-ui write (and POST /api/cache/reload) marks the page index dirty before returning and before any Publish*Updated frame, wired through the factory, with mutation-level and end-to-end AC5 tests, CHANGELOG and docs updates.
+execution_id: vault-ui-page-index-exec-129-spec-024-writes-mark-index-dirty
+dark-factory-version: v0.196.0
 created: "2026-10-05T19:39:53Z"
 queued: "2026-10-05T20:18:36Z"
+started: "2026-10-05T20:40:18Z"
+completed: "2026-10-05T20:49:17Z"
+branch: dark-factory/129-spec-024-writes-mark-index-dirty
 ---
 
 # Mark the page index dirty on every vault-ui write and on cache reload

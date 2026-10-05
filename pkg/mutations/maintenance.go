@@ -25,6 +25,8 @@ func (s *service) ReloadCache(ctx context.Context, vault string) (api.CacheReloa
 		if !ok {
 			return api.CacheReloadResponse{}, newHTTPError(404, unknownVault(vault))
 		}
+		// Reload marks every key dirty, not only this vault's.
+		s.deps.Index.MarkAllDirty()
 		if loadErr := s.deps.Cache.LoadVault(
 			resolved.Name, resolved.Path, resolved.TasksFolder,
 		); loadErr != nil {
@@ -35,6 +37,8 @@ func (s *service) ReloadCache(ctx context.Context, vault string) (api.CacheReloa
 			Counts:   map[string]int{resolved.Name: s.deps.Cache.Count(resolved.Name)},
 		}, nil
 	}
+	// Reload marks every key dirty, not only the named vault's.
+	s.deps.Index.MarkAllDirty()
 	reloaded := make([]string, 0, len(cfg.Vaults))
 	counts := make(map[string]int, len(cfg.Vaults))
 	for _, resolved := range cfg.Vaults {
