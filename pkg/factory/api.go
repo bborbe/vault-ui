@@ -25,12 +25,14 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/panecache"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
+	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	staticui "github.com/bborbe/vault-ui/src/vault_ui"
 )
@@ -67,11 +69,14 @@ func (p *vaultProvider) Vaults(ctx context.Context) ([]board.Vault, error) {
 	return vaults, nil
 }
 
-// opsProvider builds the vault-cli read operations for a vault.
-type opsProvider struct{}
+// opsProvider builds the vault-cli read operations for a vault. List reads are
+// served from the shared process-wide page index; TopicShow stays on disk.
+type opsProvider struct {
+	pageIndex pageindex.PageIndex
+}
 
-func (opsProvider) List(vault board.Vault) ops.ListOperation {
-	return ops.NewListOperation(storage.NewPageStorage(vault.StorageConfig()))
+func (p opsProvider) List(_ board.Vault) ops.ListOperation {
+	return ops.NewListOperation(p.pageIndex)
 }
 
 func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
@@ -191,10 +196,11 @@ func CreateAPIHandler(
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
+	pageIndex pageindex.PageIndex,
 ) http.Handler {
 	service := board.New(board.Deps{
 		Vaults:  &vaultProvider{loader: loader, configPath: configPath},
-		Ops:     opsProvider{},
+		Ops:     opsProvider{pageIndex: pageIndex},
 		Cache:   cache,
 		Launch:  launches,
 		Clock:   libtime.NewCurrentDateTime(),
@@ -204,7 +210,7 @@ func CreateAPIHandler(
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
-		connectionEventPublisher{manager: manager},
+		connectionEventPublisher{manager: manager}, pageIndex,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
 }
@@ -216,10 +222,16 @@ func CreateConnectionManager() websocket.ConnectionManager {
 	return websocket.NewConnectionManager(websocket.NewMetrics())
 }
 
-// CreateWatcher returns a run.Func that watches the configured vaults with
-// vault-cli's in-process watcher and broadcasts one frame per change. No
-// vault-cli subprocess is spawned.
-func CreateWatcher(loader config.Loader, manager websocket.ConnectionManager) run.Func {
+// CreateWatcher returns a run.Func that watches the configured vaults with the
+// injected watch operation and hands every change to watchrefresh's handler,
+// which refreshes the affected page-index folder before broadcasting the
+// frame. No vault-cli subprocess is spawned.
+func CreateWatcher(
+	loader config.Loader,
+	manager websocket.ConnectionManager,
+	pageIndex pageindex.PageIndex,
+	watchOperation ops.WatchOperation,
+) run.Func {
 	return func(ctx context.Context) error {
 		vaults, err := loader.GetAllVaults(ctx)
 		if err != nil {
@@ -227,12 +239,10 @@ func CreateWatcher(loader config.Loader, manager websocket.ConnectionManager) ru
 		}
 		targets := buildWatchTargets(vaults)
 		glog.V(2).Infof("starting vault watcher for %d vaults", len(targets))
-		return ops.NewWatchOperation().Execute(ctx, targets,
-			func(event ops.WatchEvent) error {
-				glog.V(3).Infof("watcher event %s %s/%s", event.Event, event.Vault, event.Name)
-				manager.Broadcast(websocket.WatcherFrame(event))
-				return nil
-			},
+		return watchOperation.Execute(
+			ctx,
+			targets,
+			watchrefresh.NewHandler(ctx, vaults, pageIndex, manager),
 		)
 	}
 }

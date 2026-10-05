@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	libtime "github.com/bborbe/time"
 	vcmocks "github.com/bborbe/vault-cli/mocks"
@@ -22,6 +23,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/mutations/mocks"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -77,6 +79,7 @@ type harness struct {
 	dir       string
 	service   mutations.Service
 	publisher *mocks.EventPublisher
+	index     *mocks.IndexInvalidator
 	cache     statuscache.Cache
 	launch    launchregistry.Registry
 	pane      *fakePane
@@ -142,6 +145,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	Expect(cache.LoadVault(vault.Name, vault.Path, vault.TasksFolder)).To(Succeed())
 	launch := launchregistry.NewRegistry()
 	publisher := &mocks.EventPublisher{}
+	index := &mocks.IndexInvalidator{}
 	pane := &fakePane{paneID: "pane-1", found: true}
 	jump := &fakeJump{token: "tok", hasToken: true}
 
@@ -153,6 +157,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		Launch:    launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: publisher,
+		Index:     index,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
 		Signaler:  &fakeSignaler{},
@@ -167,6 +172,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		dir:       dir,
 		service:   service,
 		publisher: publisher,
+		index:     index,
 		cache:     cache,
 		launch:    launch,
 		pane:      pane,
@@ -243,6 +249,40 @@ func opsFactoryWithStarter(
 			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, starter, resumer),
 		}
 	}
+}
+
+// newStarterHarness builds the standard harness with a faked session starter
+// and resumer wired into the op set, so RunTask and RunGoal reach a real write
+// instead of failing on the unavailable starter.
+func newStarterHarness() (*harness, *vcmocks.ClaudeSessionStarter) {
+	starter := &vcmocks.ClaudeSessionStarter{}
+	return newStarterHarnessWith(starter, &vcmocks.ClaudeResumer{}), starter
+}
+
+// newStarterHarnessWith builds the standard harness with the given (faked)
+// session starter and resumer wired into the op set.
+func newStarterHarnessWith(
+	starter *vcmocks.ClaudeSessionStarter,
+	resumer *vcmocks.ClaudeResumer,
+) *harness {
+	h := newHarnessWith(nil)
+	vault := h.config.Vaults[0]
+	h.service = mutations.New(mutations.Deps{
+		Config:    configProvider{cfg: h.cfgPtr},
+		Ops:       opsFactoryWithStarter(vault, starter, resumer),
+		Cache:     h.cache,
+		Launch:    h.launch,
+		Locks:     sessionlock.NewRegistry(),
+		Publisher: h.publisher,
+		Index:     h.index,
+		Clock:     libtime.NewCurrentDateTime(),
+		Scanner:   session.ProcessScanner(noScanner),
+		Signaler:  &fakeSignaler{},
+		Pane:      h.pane,
+		Jump:      h.jump,
+		HomeDir:   h.dir,
+	})
+	return h
 }
 
 // readTask returns the task file's frontmatter body.
@@ -514,6 +554,7 @@ var _ = Describe("Mutation service", func() {
 				Launch:    h.launch,
 				Locks:     sessionlock.NewRegistry(),
 				Publisher: h.publisher,
+				Index:     h.index,
 				Clock:     libtime.NewCurrentDateTime(),
 				Scanner:   session.ProcessScanner(noScanner),
 				Signaler:  &fakeSignaler{},
@@ -859,30 +900,11 @@ var _ = Describe("Mutation service session start (counterfeiter fakes)", func() 
 	var h *harness
 	var ctx context.Context
 	var starter *vcmocks.ClaudeSessionStarter
-	var resumer *vcmocks.ClaudeResumer
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		starter = &vcmocks.ClaudeSessionStarter{}
-		resumer = &vcmocks.ClaudeResumer{}
-		h = newHarnessWith(nil)
 		// Rebuild the service with a working (faked) session starter.
-		vault := h.config.Vaults[0]
-		service := mutations.New(mutations.Deps{
-			Config:    configProvider{cfg: h.cfgPtr},
-			Ops:       opsFactoryWithStarter(vault, starter, resumer),
-			Cache:     h.cache,
-			Launch:    h.launch,
-			Locks:     sessionlock.NewRegistry(),
-			Publisher: h.publisher,
-			Clock:     libtime.NewCurrentDateTime(),
-			Scanner:   session.ProcessScanner(noScanner),
-			Signaler:  &fakeSignaler{},
-			Pane:      h.pane,
-			Jump:      h.jump,
-			HomeDir:   h.dir,
-		})
-		h.service = service
+		h, starter = newStarterHarness()
 	})
 
 	It("starts a task session and returns the minted id", func() {
@@ -898,5 +920,196 @@ var _ = Describe("Mutation service session start (counterfeiter fakes)", func() 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.SessionID).To(Equal(uuidTwo))
 		Expect(h.readGoal(goalOneID)).To(ContainSubstring(uuidTwo))
+	})
+})
+
+var _ = Describe("Mutation service page-index invalidation", func() {
+	var h *harness
+	var ctx context.Context
+
+	BeforeEach(func() {
+		h = newHarness()
+		ctx = context.Background()
+	})
+
+	// expectVaultMarked asserts the invalidator recorded at least one MarkDirty
+	// call whose args are exactly the vault's tasks and goals keys.
+	expectVaultMarked := func(index *mocks.IndexInvalidator, dir string) {
+		ExpectWithOffset(1, index.MarkDirtyCallCount()).To(BeNumerically(">=", 1))
+		want := []pageindex.Key{
+			pageindex.NewKey(dir, "24 Tasks"),
+			pageindex.NewKey(dir, "23 Goals"),
+		}
+		matched := false
+		for i := 0; i < index.MarkDirtyCallCount(); i++ {
+			if reflect.DeepEqual(index.MarkDirtyArgsForCall(i), want) {
+				matched = true
+			}
+		}
+		ExpectWithOffset(1, matched).To(BeTrue(), "no MarkDirty call with %v", want)
+	}
+
+	DescribeTable("marks the vault's keys after a successful write",
+		func(run func() *harness) {
+			hh := run()
+			expectVaultMarked(hh.index, hh.dir)
+		},
+		Entry("RunTask", func() *harness {
+			sh, _ := newStarterHarness()
+			_, err := sh.service.RunTask(ctx, "personal", taskOneID)
+			Expect(err).NotTo(HaveOccurred())
+			return sh
+		}),
+		Entry("TakeOverTask", func() *harness {
+			_, err := h.service.TakeOverTask(ctx, "personal", taskFourID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("ExecuteTaskCommand", func() *harness {
+			_, err := h.service.ExecuteTaskCommand(
+				ctx, "personal", taskOneID,
+				api.ExecuteCommandRequest{Command: "complete-task"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("AssignTaskToMe", func() *harness {
+			_, err := h.service.AssignTaskToMe(ctx, "personal", taskOneID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("UpdateTaskPhase", func() *harness {
+			_, err := h.service.UpdateTaskPhase(
+				ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("UpdateTaskFlag", func() *harness {
+			_, err := h.service.UpdateTaskFlag(
+				ctx, "personal", taskOneID, api.UpdateFlagRequest{},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("UpdateTaskStatus", func() *harness {
+			_, err := h.service.UpdateTaskStatus(
+				ctx, "personal", taskOneID, api.UpdateStatusRequest{Status: "backlog"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("ClearTaskSession", func() *harness {
+			_, err := h.service.ClearTaskSession(ctx, "personal", taskTwoID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("SetTaskSession", func() *harness {
+			_, err := h.service.SetTaskSession(
+				ctx, "personal", taskOneID,
+				api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("RunGoal", func() *harness {
+			sh, _ := newStarterHarness()
+			_, err := sh.service.RunGoal(ctx, "personal", goalOneID)
+			Expect(err).NotTo(HaveOccurred())
+			return sh
+		}),
+		Entry("TakeOverGoal", func() *harness {
+			_, err := h.service.TakeOverGoal(ctx, "personal", goalThreeID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("UpdateGoalStatus", func() *harness {
+			_, err := h.service.UpdateGoalStatus(
+				ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("ExecuteGoalCommand", func() *harness {
+			_, err := h.service.ExecuteGoalCommand(
+				ctx, "personal", goalOneID,
+				api.ExecuteCommandRequest{Command: "complete-goal"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("AssignGoalToMe", func() *harness {
+			_, err := h.service.AssignGoalToMe(ctx, "personal", goalOneID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+		Entry("ClearGoalSession", func() *harness {
+			_, err := h.service.ClearGoalSession(ctx, "personal", goalTwoID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}),
+	)
+
+	It("marks before PublishTaskUpdated for UpdateTaskPhase", func() {
+		h.publisher.PublishTaskUpdatedStub = func(context.Context, string, string) {
+			ExpectWithOffset(1, h.index.MarkDirtyCallCount()).To(BeNumerically(">=", 1))
+		}
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
+	})
+
+	It("marks before PublishGoalUpdated for UpdateGoalStatus", func() {
+		h.publisher.PublishGoalUpdatedStub = func(context.Context, string, string) {
+			ExpectWithOffset(1, h.index.MarkDirtyCallCount()).To(BeNumerically(">=", 1))
+		}
+		_, err := h.service.UpdateGoalStatus(
+			ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(1))
+	})
+
+	It("marks when a write fails after writing (RunTask with an erroring starter)", func() {
+		starter := &vcmocks.ClaudeSessionStarter{}
+		starter.StartSessionReturns(errors.New("starter boom"))
+		sh := newStarterHarnessWith(starter, &vcmocks.ClaudeResumer{})
+		_, err := sh.service.RunTask(ctx, "personal", taskOneID)
+		Expect(httpStatus(err)).To(Equal(500))
+		expectVaultMarked(sh.index, sh.dir)
+	})
+
+	It("does not mark for JumpTask", func() {
+		Expect(h.service.JumpTask(ctx, "personal", taskTwoID, true)).To(Succeed())
+		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
+		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+	})
+
+	It("does not mark for ReloadConfig", func() {
+		_, err := h.service.ReloadConfig(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
+		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+	})
+
+	It("marks every key once on a single-vault reload", func() {
+		_, err := h.service.ReloadCache(ctx, "personal")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(1))
+		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
+	})
+
+	It("marks every key once on an all-vault reload", func() {
+		_, err := h.service.ReloadCache(ctx, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(1))
+	})
+
+	It("does not mark on a 404 reload", func() {
+		_, err := h.service.ReloadCache(ctx, "nope")
+		Expect(httpStatus(err)).To(Equal(404))
+		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
 	})
 })

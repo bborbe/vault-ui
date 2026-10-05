@@ -13,11 +13,21 @@ import (
 	"testing"
 	"time"
 
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
+
+// testPageIndex returns a real page index over empty storage, enough for the
+// watcher tests that only assert frame delivery and lifecycle.
+func testPageIndex() pageindex.PageIndex {
+	return CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
+}
 
 // captureConn records frames written by the manager's write pump.
 type captureConn struct {
@@ -64,7 +74,7 @@ func TestCreateWatcherBroadcastsChanges(t *testing.T) {
 	pumpCtx, pumpCancel := context.WithCancel(context.Background())
 	defer pumpCancel()
 	go func() { _ = manager.Pump(pumpCtx, client) }()
-	go func() { _ = CreateWatcher(loader, manager)(ctx) }()
+	go func() { _ = CreateWatcher(loader, manager, testPageIndex(), ops.NewWatchOperation())(ctx) }()
 
 	// Give the watcher time to register the directory.
 	time.Sleep(500 * time.Millisecond)
@@ -124,9 +134,12 @@ func TestCreateConnectionManager(t *testing.T) {
 func TestCreateWatcherSurfacesLoaderError(t *testing.T) {
 	loader := &mocks.Loader{}
 	loader.GetAllVaultsReturns(nil, stderrors.New("config unavailable"))
-	err := CreateWatcher(loader, websocket.NewConnectionManager(websocket.NewMetrics()))(
-		context.Background(),
-	)
+	err := CreateWatcher(
+		loader,
+		websocket.NewConnectionManager(websocket.NewMetrics()),
+		testPageIndex(),
+		ops.NewWatchOperation(),
+	)(context.Background())
 	if err == nil {
 		t.Fatal("expected the loader error to surface")
 	}
@@ -137,7 +150,12 @@ func TestCreateWatcherStopsOnContextCancel(t *testing.T) {
 	loader.GetAllVaultsReturns(nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := CreateWatcher(loader, websocket.NewConnectionManager(websocket.NewMetrics()))(ctx); err != nil {
+	if err := CreateWatcher(
+		loader,
+		websocket.NewConnectionManager(websocket.NewMetrics()),
+		testPageIndex(),
+		ops.NewWatchOperation(),
+	)(ctx); err != nil {
 		t.Fatalf("expected nil on context cancel, got %v", err)
 	}
 }

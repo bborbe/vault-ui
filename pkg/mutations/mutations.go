@@ -23,6 +23,7 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sigterm"
@@ -53,6 +54,16 @@ type EventPublisher interface {
 	PublishGoalUpdated(ctx context.Context, vault, goalID string)
 }
 
+// IndexInvalidator marks the read-side page index stale after a vault-ui write,
+// so the next list read re-reads the affected folders. It deliberately exposes
+// no read method: mutations keep reading vault files directly.
+//
+//counterfeiter:generate -o ./mocks/index_invalidator.go --fake-name IndexInvalidator . IndexInvalidator
+type IndexInvalidator interface {
+	MarkDirty(keys ...pageindex.Key)
+	MarkAllDirty()
+}
+
 // ConfigProvider resolves the merged vault-ui/vault-cli configuration. It never
 // caches: a vault added to vault-cli is visible on the next request.
 type ConfigProvider interface {
@@ -81,6 +92,7 @@ type Deps struct {
 	Launch       launchregistry.Registry
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
+	Index        IndexInvalidator
 	Clock        libtime.CurrentDateTimeGetter
 	Scanner      session.ProcessScanner
 	Signaler     sigterm.Signaler
@@ -133,6 +145,15 @@ type service struct {
 // New returns a Service backed by the given dependencies.
 func New(deps Deps) Service {
 	return &service{deps: deps}
+}
+
+// markVaultDirty marks the vault's tasks and goals keys dirty in the page
+// index. The keys are derived exactly as the read side derives them.
+func (s *service) markVaultDirty(vault vaultconfig.Vault) {
+	s.deps.Index.MarkDirty(
+		pageindex.NewKey(vault.Path, vault.TasksFolder),
+		pageindex.NewKey(vault.Path, vault.GoalsFolder),
+	)
 }
 
 // requireSafeID rejects an identifier beginning with '-' before any vault

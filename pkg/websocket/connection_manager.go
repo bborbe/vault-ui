@@ -53,6 +53,8 @@ type Client struct {
 // tests read it to observe broadcasts without a socket.
 func (c *Client) Messages() <-chan []byte { return c.send }
 
+//counterfeiter:generate -o ./mocks/websocket-connection-manager.go --fake-name WebsocketConnectionManager . ConnectionManager
+
 // ConnectionManager tracks connected clients and fans board events out to them.
 type ConnectionManager interface {
 	// Connect registers an upgraded connection, returning ErrTooManyClients

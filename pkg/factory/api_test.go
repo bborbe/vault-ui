@@ -14,8 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	gws "github.com/gorilla/websocket"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -47,6 +49,7 @@ func newTestAPIHandlerWithManager(
 	return factory.CreateAPIHandler(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneCache(),
 		launchregistry.NewRegistry(), tempDir(), readiness, manager,
+		factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime()),
 	)
 }
 

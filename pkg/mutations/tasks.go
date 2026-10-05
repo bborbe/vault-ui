@@ -41,6 +41,7 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, err := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if err != nil {
@@ -138,6 +139,7 @@ func (s *service) TakeOverTask(
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
@@ -290,6 +292,7 @@ func (s *service) ExecuteTaskCommand(
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
@@ -358,6 +361,10 @@ func (s *service) taskFastPath(
 		return api.SessionResponse{}, newHTTPError(500, runErr.Error())
 	}
 	s.deps.Cache.Invalidate(vault, taskID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	stdout := ""
 	success := true
@@ -391,6 +398,7 @@ func (s *service) AssignTaskToMe(
 	if !ok {
 		return api.AssignResponse{}, newHTTPError(404, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if _, showErr := set.Show.Execute(
 		ctx, resolved.Path, resolved.Name, taskID,
@@ -403,6 +411,10 @@ func (s *service) AssignTaskToMe(
 		return api.AssignResponse{}, newHTTPError(500, setErr.Error())
 	}
 	s.deps.Cache.Invalidate(vault, taskID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	return api.AssignResponse{Status: "success", TaskID: taskID, Assignee: cfg.CurrentUser}, nil
 }
@@ -418,6 +430,7 @@ func (s *service) UpdateTaskPhase(
 	if !ok {
 		return api.PhaseUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if setErr := set.FrontmatterSet.Execute(
 		ctx, resolved.Path, taskID, "phase", req.Phase, "", "", "", false,
@@ -446,6 +459,10 @@ func (s *service) UpdateTaskPhase(
 		}
 	}
 	s.deps.Cache.Invalidate(vault, taskID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
 }
@@ -465,6 +482,7 @@ func (s *service) UpdateTaskFlag(
 	if req.Flag != nil {
 		flag = *req.Flag
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if flag && !selftestSkipFlagWrite() {
 		if setErr := set.FrontmatterSet.Execute(
@@ -480,6 +498,10 @@ func (s *service) UpdateTaskFlag(
 		}
 	}
 	s.deps.Cache.Invalidate(vault, taskID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	return api.FlagUpdateResponse{Status: "success", TaskID: taskID, Flag: flag}, nil
 }
@@ -506,6 +528,7 @@ func (s *service) UpdateTaskStatus(
 	if !ok {
 		return api.StatusUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if setErr := set.FrontmatterSet.Execute(
 		ctx, resolved.Path, taskID, "status", req.Status, reason, gate, "", false,
@@ -513,6 +536,10 @@ func (s *service) UpdateTaskStatus(
 		return api.StatusUpdateResponse{}, newHTTPError(500, setErr.Error())
 	}
 	s.deps.Cache.Invalidate(vault, taskID)
+	// Mark before publishing so a client reacting to the frame never re-fetches
+	// stale data; the deferred mark still covers error returns after a partial
+	// write, and the extra mark costs at most one extra rebuild.
+	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	return api.StatusUpdateResponse{Status: "success", TaskID: taskID, NewStatus: req.Status}, nil
 }
@@ -528,6 +555,7 @@ func (s *service) ClearTaskSession(
 	if !ok {
 		return api.SessionClearResponse{}, newHTTPError(500, unknownVault(vault))
 	}
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	if clearErr := set.FrontmatterClear.Execute(
 		ctx, resolved.Path, taskID, "claude_session_id",
@@ -571,6 +599,7 @@ func (s *service) SetTaskSession(
 		return api.SessionSetResponse{}, newHTTPError(500, lockErr.Error())
 	}
 	defer release()
+	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
