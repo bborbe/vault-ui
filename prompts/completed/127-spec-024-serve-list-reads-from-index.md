@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [024-serve-list-reads-from-page-index]
+summary: Board list reads now serve from one process-wide pageindex.PageIndex built concurrently at startup and rescanned every 50s, with a factory-level test proving 25 warm requests cause zero additional page-storage reads and parity unchanged.
+execution_id: vault-ui-page-index-exec-127-spec-024-serve-list-reads-from-index
+dark-factory-version: v0.196.0
 created: "2026-10-05T19:39:53Z"
 queued: "2026-10-05T20:18:36Z"
+started: "2026-10-05T20:26:11Z"
+completed: "2026-10-05T20:31:50Z"
+branch: dark-factory/127-spec-024-serve-list-reads-from-index
 ---
 
 # Serve every board list read from the process-wide page index

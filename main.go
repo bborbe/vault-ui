@@ -10,6 +10,8 @@ import (
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/run"
+	libtime "github.com/bborbe/time"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
@@ -46,8 +48,11 @@ func execute(ctx context.Context) error {
 	paneCache := factory.CreatePaneCache()
 	launches := launchregistry.NewRegistry()
 	manager := factory.CreateConnectionManager()
+	// ListPages ignores the storage config, so one shared page storage serves
+	// every vault behind the process-wide page index.
+	pageIndex := factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
 	apiHandler := factory.CreateAPIHandler(
-		loader, configPath, cache, paneCache, launches, homeDir, readiness, manager,
+		loader, configPath, cache, paneCache, launches, homeDir, readiness, manager, pageIndex,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -73,6 +78,8 @@ func execute(ctx context.Context) error {
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
 		factory.CreateStatusCacheLoader(loader, configPath, cache),
+		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
+		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager),
 		factory.CreatePaneRefresher(homeDir, paneCache),
 		factory.CreateHTTPServer(adminListen, readiness),

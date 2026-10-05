@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/panecache"
 	"github.com/bborbe/vault-ui/pkg/session"
@@ -67,11 +68,14 @@ func (p *vaultProvider) Vaults(ctx context.Context) ([]board.Vault, error) {
 	return vaults, nil
 }
 
-// opsProvider builds the vault-cli read operations for a vault.
-type opsProvider struct{}
+// opsProvider builds the vault-cli read operations for a vault. List reads are
+// served from the shared process-wide page index; TopicShow stays on disk.
+type opsProvider struct {
+	pageIndex pageindex.PageIndex
+}
 
-func (opsProvider) List(vault board.Vault) ops.ListOperation {
-	return ops.NewListOperation(storage.NewPageStorage(vault.StorageConfig()))
+func (p opsProvider) List(_ board.Vault) ops.ListOperation {
+	return ops.NewListOperation(p.pageIndex)
 }
 
 func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
@@ -191,10 +195,11 @@ func CreateAPIHandler(
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
+	pageIndex pageindex.PageIndex,
 ) http.Handler {
 	service := board.New(board.Deps{
 		Vaults:  &vaultProvider{loader: loader, configPath: configPath},
-		Ops:     opsProvider{},
+		Ops:     opsProvider{pageIndex: pageIndex},
 		Cache:   cache,
 		Launch:  launches,
 		Clock:   libtime.NewCurrentDateTime(),
