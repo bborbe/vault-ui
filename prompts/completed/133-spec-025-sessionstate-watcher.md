@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [025-lazy-pane-resolution-at-jump-time]
+summary: Added a new pkg/sessionstate package that keeps the harness session registry's live ids in memory from an initial read, fsnotify file events and a 60 s rescan, wired it through factory.CreateSessionState/CreateSessionStateWatcher and main.go so the board's Live badge and jump availability read from it and a live-set change pushes the existing watcher frame (task + goal per vault), promoted fsnotify to a direct dependency, and documented it in docs/pane-resolution.md with a CHANGELOG entry.
+execution_id: vault-ui-lazy-pane-exec-133-spec-025-sessionstate-watcher
+dark-factory-version: dev
 created: "2026-10-06T06:16:43Z"
 queued: "2026-10-06T06:48:20Z"
+started: "2026-10-06T07:56:47Z"
+completed: "2026-10-06T08:09:29Z"
+branch: dark-factory/133-spec-025-sessionstate-watcher
 ---
 
 # Keep live session state current from registry file events

@@ -125,6 +125,7 @@ func indexHandler(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), tempDir(), readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
+		factory.CreateSessionState(),
 	)
 }
 

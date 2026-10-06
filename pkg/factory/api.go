@@ -30,6 +30,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
+	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	"github.com/bborbe/vault-ui/pkg/watchrefresh"
@@ -83,13 +84,15 @@ func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
 	return ops.NewTopicShowOperation(storage.NewTopicStorage(vault.StorageConfig()))
 }
 
-// sessionSignals reads the Claude session registry and the live process table.
+// sessionSignals reads the live session state and the live process table. The
+// registry ids come from the process-wide session-state store, which the
+// session-state watcher keeps current; the `ps` scan stays on the request path.
 type sessionSignals struct {
-	homeDir string
+	state sessionstate.State
 }
 
 func (s sessionSignals) RegistrySessionIDs(ctx context.Context) []string {
-	return activity.ReadRegistrySessionIDs(ctx, filepath.Join(s.homeDir, ".claude", "sessions"))
+	return s.state.RegistrySessionIDs(ctx)
 }
 
 func (s sessionSignals) ResumeSessionIDs(ctx context.Context) []string {
@@ -149,6 +152,7 @@ func CreateAPIHandler(
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
 	pageIndex pageindex.PageIndex,
+	sessionState sessionstate.State,
 ) http.Handler {
 	service := board.New(board.Deps{
 		Vaults:  &vaultProvider{loader: loader, configPath: configPath},
@@ -156,7 +160,7 @@ func CreateAPIHandler(
 		Cache:   cache,
 		Launch:  launches,
 		Clock:   libtime.NewCurrentDateTime(),
-		Signals: sessionSignals{homeDir: homeDir},
+		Signals: sessionSignals{state: sessionState},
 		HomeDir: homeDir,
 	})
 	mutationsService := CreateMutationService(
@@ -164,6 +168,70 @@ func CreateAPIHandler(
 		paneResolver, connectionEventPublisher{manager: manager}, pageIndex,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
+}
+
+// CreateSessionState returns the process-wide live-session state the board reads.
+func CreateSessionState() sessionstate.State {
+	return sessionstate.NewState()
+}
+
+// CreateSessionStateWatcher returns a run.Func that keeps state current from the
+// harness session registry and pushes a board refresh whenever the live set
+// changes. The initial read pushes nothing: only a later change is worth a
+// frame.
+func CreateSessionStateWatcher(
+	loader config.Loader,
+	manager websocket.ConnectionManager,
+	state sessionstate.State,
+	homeDir string,
+) run.Func {
+	return func(ctx context.Context) error {
+		vaults, err := loader.GetAllVaults(ctx)
+		if err != nil {
+			return errors.Wrap(ctx, err, "load vaults for session state watcher")
+		}
+		names := sessionStateVaultNames(vaults)
+		glog.V(2).Infof("starting session state watcher for %d vaults", len(names))
+		return sessionstate.NewWatcher(sessionstate.WatchParams{
+			Dir:      filepath.Join(homeDir, ".claude", "sessions"),
+			State:    state,
+			Source:   sessionstate.NewFSNotifySource(),
+			Read:     activity.ReadRegistrySessionIDs,
+			Changed:  sessionRefreshBroadcaster(manager, names),
+			Interval: sessionstate.DefaultRescanInterval,
+		}).Run(ctx)
+	}
+}
+
+// sessionStateVaultNames collects the names of the vaults a refresh frame is
+// addressed to.
+func sessionStateVaultNames(vaults []*config.Vault) []string {
+	names := make([]string, 0, len(vaults))
+	for _, vault := range vaults {
+		names = append(names, vault.Name)
+	}
+	return names
+}
+
+// sessionRefreshBroadcaster returns the callback the session-state watcher runs
+// when the live set changes. It pushes one frame per configured vault per
+// entity kind: the frontend dispatches a frame by item_kind and ignores the
+// other kind, so a task-only frame would never refresh a browser sitting on the
+// goals view.
+func sessionRefreshBroadcaster(
+	manager websocket.ConnectionManager,
+	names []string,
+) func() {
+	return func() {
+		for _, name := range names {
+			manager.Broadcast(websocket.WatcherFrame(ops.WatchEvent{
+				Event: "modified", Vault: name, Type: "task",
+			}))
+			manager.Broadcast(websocket.WatcherFrame(ops.WatchEvent{
+				Event: "modified", Vault: name, Type: "goal",
+			}))
+		}
+	}
 }
 
 // CreateConnectionManager returns the bounded, non-blocking WebSocket

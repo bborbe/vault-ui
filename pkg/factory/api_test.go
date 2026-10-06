@@ -50,6 +50,7 @@ func newTestAPIHandlerWithManager(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), tempDir(), readiness, manager,
 		factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime()),
+		factory.CreateSessionState(),
 	)
 }
 

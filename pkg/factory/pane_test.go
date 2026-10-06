@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
+	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -95,10 +96,20 @@ func paneHandler(
 	Expect(
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
 	).To(Succeed())
+
+	// The board reads the live set from the session state, which production
+	// keeps current with the session-state watcher. Seed it from the fixture's
+	// registry directory so the fixture's registry entry stays load-bearing.
+	sessionState := factory.CreateSessionState()
+	sessionState.Replace(activity.ReadRegistrySessionIDs(
+		context.Background(), filepath.Join(homeDir, ".claude", "sessions"),
+	))
+
 	return factory.CreateAPIHandler(
 		loader, configPath, statuscache.NewCache(), paneResolver,
 		launchregistry.NewRegistry(), homeDir, readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
+		sessionState,
 	)
 }
 
