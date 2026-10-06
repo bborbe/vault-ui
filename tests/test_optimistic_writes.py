@@ -1,4 +1,4 @@
-"""Hermetic browser tests for spec 025's board optimistic-write overlay.
+"""Hermetic browser tests for spec 026's board optimistic-write overlay.
 
 The board must render a queued frontmatter write the moment the server accepts
 it (202), hold that value across refetches until the item's own frame confirms

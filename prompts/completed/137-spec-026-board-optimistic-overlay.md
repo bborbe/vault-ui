@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: [025-optimistic-writes-through-a-per-vault-queue]
+spec: [026-optimistic-writes-through-a-per-vault-queue]
 execution_id: vault-ui-write-queue-exec-132-spec-025-board-optimistic-overlay
 dark-factory-version: dev
 created: "2026-10-06T06:49:18Z"

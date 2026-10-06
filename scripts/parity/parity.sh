@@ -7,7 +7,7 @@
 # 200, or a divergent WebSocket frame — makes the script exit non-zero with a
 # diagnostic naming the mismatched route or case. Mutation statuses are not
 # compared: the Python backend is superseded and answers 200 where the Go
-# backend answers 202 for the queued writes (spec 025).
+# backend answers 202 for the queued writes (spec 026).
 #
 # Environment overrides (used by the self-test):
 #   PARITY_ROUTES      route table (default scripts/parity/routes.txt)
@@ -304,7 +304,16 @@ wait_for() {
 }
 
 normalize() {
-  jq -S . "$1" 2>/dev/null || cat "$1"
+  # `jump_pane` is intentionally absent from the Go backend's task responses
+  # (spec 025 — a session's pane is resolved when the jump control is clicked,
+  # never on a list read). The Python reference still emits it, so it is removed
+  # from BOTH sides before comparison. Every other key stays compared: widening
+  # this filter would silently drop the safety net for the routes this change
+  # does not touch.
+  jq -S 'if type == "array"
+         then map(if type == "object" then del(.jump_pane) else . end)
+         elif type == "object" then del(.jump_pane)
+         else . end' "$1" 2>/dev/null || cat "$1"
 }
 
 # normalize_mutation normalizes a JSON body for comparison: canonical key order
@@ -470,7 +479,7 @@ done <"$ERRORS_FILE"
 
 # Mutation cases: reset, run against Python, reset, run against Go, compare the
 # normalized body and the resulting vault-file tree. Statuses are not compared
-# (spec 025): the Python backend is superseded and answers 200 where the Go
+# (spec 026): the Python backend is superseded and answers 200 where the Go
 # backend answers 202 for the queued writes.
 mutations_total=0
 mutations_matched=0
@@ -491,12 +500,12 @@ while IFS=$'\t' read -r name method path body norm; do
     -X "$method" -H 'Content-Type: application/json' --data "$body" \
     "${GO_BASE}${path}" 2>/dev/null || true)"
   snapshot_vault "$WORK/go.tree"
-  # The Python backend is superseded (spec 025) and answers 200 where the Go
+  # The Python backend is superseded (spec 026) and answers 200 where the Go
   # backend answers 202 for the nine queued writes, so mutation statuses are
   # not compared; the body and file-tree comparisons below still are.
   if [[ "$go_status" == "202" ]]; then
     # The Go backend answers 202 before its per-vault queue writes the file
-    # (spec 025). Poll until the tree matches Python's or 5 s pass, then take
+    # (spec 026). Poll until the tree matches Python's or 5 s pass, then take
     # one more snapshot after a short settle so a late divergent write is
     # still caught by the diff below.
     for _ in $(seq 1 50); do
@@ -567,6 +576,11 @@ else
 fi
 
 # Static assets: byte identity (query strings ignored for path resolution).
+# `app.js` changed on purpose with spec 025 — the frontend no longer reads the
+# removed `jump_pane` field. This stays a live comparison of the two backends'
+# served bytes, not a stored baseline: the Python backend mounts
+# `src/vault_ui/static/` and the Go binary embeds the same tree, so a frontend
+# edit moves both sides together and there is no pinned hash to re-baseline here.
 for asset in "index.html" "app.js?v=parity" "style.css?v=parity"; do
   py_hash="$(curl_local -s "${PY_BASE}/${asset}" | sha256sum | cut -d' ' -f1)"
   go_hash="$(curl_local -s "${GO_BASE}/${asset}" | sha256sum | cut -d' ' -f1)"

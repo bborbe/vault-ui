@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: [025-optimistic-writes-through-a-per-vault-queue]
+spec: [026-optimistic-writes-through-a-per-vault-queue]
 summary: 'Routed the nine frontmatter-writing routes through the per-vault queue: synchronous validation, 202 with today''s typed body, post-write side-effects moved into the queue consumer, a new write_failed frame on failure, plus router-level AC1/AC3/AC4 tests and a CHANGELOG Unreleased section.'
 execution_id: vault-ui-write-queue-exec-131-spec-025-queue-frontmatter-writes
 dark-factory-version: dev

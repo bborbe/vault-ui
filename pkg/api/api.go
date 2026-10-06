@@ -55,7 +55,6 @@ type TaskResponse struct {
 	Flag                 bool     `json:"flag"`
 	ActivityDate         *string  `json:"activity_date"`
 	SessionState         *string  `json:"session_state"`
-	JumpPane             *string  `json:"jump_pane"`
 }
 
 // GoalResponse is the wire shape of a goal card.

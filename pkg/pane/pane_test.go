@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,13 +40,6 @@ func (c *captureLogger) String() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.buf.String()
-}
-
-// writeScript writes an executable shell script and returns its path.
-func writeScript(dir, body string) string {
-	path := filepath.Join(dir, "helper.sh")
-	ExpectWithOffset(1, os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700)).To(Succeed())
-	return path
 }
 
 // makeSocket creates ~/.local/share/wezterm/gui-sock-<pid> under home with the
@@ -85,61 +77,31 @@ func envValueOf(env []string, key string) string {
 }
 
 var _ = Describe("PaneResolver", func() {
-	DescribeTable("PaneResolver",
-		func(body func(dir string)) {
-			body(GinkgoT().TempDir())
-		},
-		Entry("timeout-kills-helper", func(dir string) {
-			pidFile := filepath.Join(dir, "pid")
-			// exec replaces the shell with sleep, so no grandchild holds the
-			// stdout pipe open after the helper is killed.
-			scriptPath := writeScript(dir, "echo $$ > "+pidFile+"\nexec sleep 30")
+	It("percent-encodes both jump query values", func() {
+		queries := make(chan url.Values, 1)
+		server := httptest.NewServer(http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				queries <- r.URL.Query()
+				w.WriteHeader(http.StatusOK)
+			},
+		))
+		DeferCleanup(server.Close)
 
-			paneID, ok := pane.ResolvePaneID(
-				context.Background(),
-				"/bin/sh",
-				scriptPath,
-				"e0930886-0843-4ca9-adfa-58819443c032",
-				os.Environ(),
-				2*time.Second,
-			)
+		paneID := "w1:p7"
+		token := "a&b=c d/e?f"
+		Expect(pane.PerformJump(
+			context.Background(),
+			server.URL,
+			paneID,
+			token,
+			2*time.Second,
+		)).To(Succeed())
 
-			Expect(ok).To(BeFalse())
-			Expect(paneID).To(Equal(""))
-
-			pidBytes, err := os.ReadFile(pidFile)
-			Expect(err).NotTo(HaveOccurred())
-			pid, convErr := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
-			Expect(convErr).NotTo(HaveOccurred())
-			// The killed helper must not outlive the call.
-			Eventually(func() bool { return pane.PidAlive(pid) }).Should(BeFalse())
-		}),
-		Entry("jump-percent-encodes-both-query-values", func(dir string) {
-			queries := make(chan url.Values, 1)
-			server := httptest.NewServer(http.HandlerFunc(
-				func(w http.ResponseWriter, r *http.Request) {
-					queries <- r.URL.Query()
-					w.WriteHeader(http.StatusOK)
-				},
-			))
-			DeferCleanup(server.Close)
-
-			paneID := "w1:p7"
-			token := "a&b=c d/e?f"
-			Expect(pane.PerformJump(
-				context.Background(),
-				server.URL,
-				paneID,
-				token,
-				2*time.Second,
-			)).To(Succeed())
-
-			var query url.Values
-			Eventually(queries).Should(Receive(&query))
-			Expect(query.Get("pane")).To(Equal(paneID))
-			Expect(query.Get("t")).To(Equal(token))
-		}),
-	)
+		var query url.Values
+		Eventually(queries).Should(Receive(&query))
+		Expect(query.Get("pane")).To(Equal(paneID))
+		Expect(query.Get("t")).To(Equal(token))
+	})
 
 	It("returns the stripped jump token value", func() {
 		path := filepath.Join(GinkgoT().TempDir(), "jump-token")
@@ -185,26 +147,6 @@ var _ = Describe("PaneResolver", func() {
 	It("builds the jump token path under home secrets", func() {
 		Expect(pane.JumpTokenPath("/home/operator")).To(
 			Equal(filepath.Join("/home/operator", ".claude", "secrets", "jump-token")),
-		)
-	})
-
-	It("prefers the plugin root for the pane-resolution script", func() {
-		Expect(pane.WhoNeedsMePath("/opt/supervisor", "/home/operator")).To(
-			Equal(filepath.Join("/opt/supervisor", "scripts", "who-needs-me.py")),
-		)
-	})
-
-	It("falls back to the default marketplace location", func() {
-		Expect(pane.WhoNeedsMePath("", "/home/operator")).To(
-			Equal(filepath.Join(
-				"/home/operator",
-				".claude",
-				"plugins",
-				"marketplaces",
-				"claude-supervisor",
-				"scripts",
-				"who-needs-me.py",
-			)),
 		)
 	})
 
@@ -318,76 +260,6 @@ var _ = Describe("PaneResolver", func() {
 		)
 
 		Expect(envValueOf(out, "WEZTERM_UNIX_SOCKET")).To(Equal("/explicit/sock"))
-	})
-
-	It("passes the exact argv with only the first 8 characters of the session id", func() {
-		dir := GinkgoT().TempDir()
-		argsFile := filepath.Join(dir, "args")
-		recorder := writeScript(dir, `printf '%s\n' "$@" > `+argsFile+"\nprintf '42\\n'")
-		scriptPath := "/opt/supervisor/scripts/who-needs-me.py"
-
-		paneID, ok := pane.ResolvePaneID(
-			context.Background(),
-			recorder,
-			scriptPath,
-			"e0930886-0843-4ca9-adfa-58819443c032",
-			os.Environ(),
-			pane.DefaultResolveTimeout,
-		)
-		Expect(ok).To(BeTrue())
-		Expect(paneID).To(Equal("42"))
-
-		argsBytes, err := os.ReadFile(argsFile)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(strings.Split(strings.TrimSpace(string(argsBytes)), "\n")).To(Equal([]string{
-			scriptPath,
-			"--pane-for",
-			"e0930886",
-		}))
-	})
-
-	It("never spawns for an empty session id", func() {
-		dir := GinkgoT().TempDir()
-		spawned := filepath.Join(dir, "spawned")
-		recorder := writeScript(dir, "touch "+spawned+"\nprintf '42\\n'")
-
-		paneID, ok := pane.ResolvePaneID(
-			context.Background(),
-			recorder,
-			"/opt/supervisor/scripts/who-needs-me.py",
-			"",
-			os.Environ(),
-			pane.DefaultResolveTimeout,
-		)
-		Expect(ok).To(BeFalse())
-		Expect(paneID).To(Equal(""))
-
-		_, err := os.Stat(spawned)
-		Expect(err).To(HaveOccurred())
-	})
-
-	It("returns false for empty stdout and for a non-zero exit", func() {
-		emptyOut, ok := pane.ResolvePaneID(
-			context.Background(),
-			"/bin/true",
-			"/opt/supervisor/scripts/who-needs-me.py",
-			"e0930886-0843-4ca9-adfa-58819443c032",
-			os.Environ(),
-			pane.DefaultResolveTimeout,
-		)
-		Expect(ok).To(BeFalse())
-		Expect(emptyOut).To(Equal(""))
-
-		nonZero, ok := pane.ResolvePaneID(
-			context.Background(),
-			"/bin/false",
-			"/opt/supervisor/scripts/who-needs-me.py",
-			"e0930886-0843-4ca9-adfa-58819443c032",
-			os.Environ(),
-			pane.DefaultResolveTimeout,
-		)
-		Expect(ok).To(BeFalse())
-		Expect(nonZero).To(Equal(""))
 	})
 
 	It("returns an error on a non-2xx jump status", func() {

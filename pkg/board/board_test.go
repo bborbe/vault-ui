@@ -7,7 +7,6 @@ package board_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	libtime "github.com/bborbe/time"
@@ -78,31 +77,6 @@ func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string { return f.r
 
 func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string { return f.resume }
 
-type fakePane struct {
-	panes map[string]string
-}
-
-func (f fakePane) Resolve(_ context.Context, sessionID string) (string, bool) {
-	pane, ok := f.panes[sessionID]
-	return pane, ok
-}
-
-// recordingPane records the session ids handed to Resolve, so a test can prove
-// the board resolves through the injected resolver and nothing else.
-type recordingPane struct {
-	mu    sync.Mutex
-	calls []string
-	panes map[string]string
-}
-
-func (p *recordingPane) Resolve(_ context.Context, sessionID string) (string, bool) {
-	p.mu.Lock()
-	p.calls = append(p.calls, sessionID)
-	p.mu.Unlock()
-	pane, ok := p.panes[sessionID]
-	return pane, ok
-}
-
 type fakeCache struct {
 	statuses map[string]string
 	started  map[string]string
@@ -147,7 +121,6 @@ type harness struct {
 	show    *fakeShow
 	cache   fakeCache
 	signals fakeSignals
-	pane    fakePane
 	launch  launchregistry.Registry
 }
 
@@ -156,9 +129,8 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 	show := &fakeShow{}
 	cache := fakeCache{statuses: map[string]string{}, started: map[string]string{}}
 	signals := fakeSignals{}
-	pane := fakePane{panes: map[string]string{}}
 	launch := launchregistry.NewRegistry()
-	h := &harness{list: list, show: show, cache: cache, signals: signals, pane: pane, launch: launch}
+	h := &harness{list: list, show: show, cache: cache, signals: signals, launch: launch}
 	h.build()
 	return h
 }
@@ -173,7 +145,6 @@ func (h *harness) build() {
 		Launch:  h.launch,
 		Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 		Signals: h.signals,
-		Pane:    h.pane,
 	})
 }
 
@@ -362,12 +333,11 @@ var _ = Describe("ListTasks", func() {
 		Expect(responses[0].ClaudeSessionStarted).To(BeNil())
 	})
 
-	It("classifies a session from the registry and resolves its pane", func() {
+	It("classifies a session from the registry", func() {
 		h := newHarness(item("Live", func(i *ops.TaskListItem) {
 			i.ClaudeSessionID = "11111111-1111-1111-1111-111111111111"
 		}))
 		h.signals.registry = []string{"11111111-1111-1111-1111-111111111111"}
-		h.pane.panes["11111111-1111-1111-1111-111111111111"] = "42"
 		service := board.New(board.Deps{
 			Vaults:  fakeVaults{vaults: []board.Vault{vault}},
 			Ops:     fakeOps{list: *h.list, show: *h.show},
@@ -375,39 +345,11 @@ var _ = Describe("ListTasks", func() {
 			Launch:  h.launch,
 			Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 			Signals: h.signals,
-			Pane:    h.pane,
 		})
 		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses[0].SessionState).NotTo(BeNil())
 		Expect(*responses[0].SessionState).To(Equal("live"))
-		Expect(responses[0].JumpPane).NotTo(BeNil())
-		Expect(*responses[0].JumpPane).To(Equal("42"))
-	})
-
-	It("resolves panes through the injected resolver and spawns nothing", func() {
-		const sessionID = "11111111-1111-1111-1111-111111111111"
-		h := newHarness(item("Live", func(i *ops.TaskListItem) {
-			i.ClaudeSessionID = sessionID
-		}))
-		h.signals.registry = []string{sessionID}
-		pane := &recordingPane{panes: map[string]string{sessionID: "42"}}
-		service := board.New(board.Deps{
-			Vaults:  fakeVaults{vaults: []board.Vault{vault}},
-			Ops:     fakeOps{list: *h.list, show: *h.show},
-			Cache:   h.cache,
-			Launch:  h.launch,
-			Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals: h.signals,
-			Pane:    pane,
-		})
-		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses[0].JumpPane).NotTo(BeNil())
-		Expect(*responses[0].JumpPane).To(Equal("42"))
-		// The resolver is the only pane path, and it is called exactly once with
-		// the live session id.
-		Expect(pane.calls).To(Equal([]string{sessionID}))
 	})
 
 	It("filters to live sessions only", func() {
@@ -553,7 +495,6 @@ var _ = Describe("ListTopics", func() {
 			Launch:  h.launch,
 			Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 			Signals: h.signals,
-			Pane:    h.pane,
 		})
 		responses, err := service.ListTopics(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())

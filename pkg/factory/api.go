@@ -25,12 +25,13 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
-	"github.com/bborbe/vault-ui/pkg/panecache"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
+	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	"github.com/bborbe/vault-ui/pkg/watchrefresh"
@@ -84,13 +85,15 @@ func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
 	return ops.NewTopicShowOperation(storage.NewTopicStorage(vault.StorageConfig()))
 }
 
-// sessionSignals reads the Claude session registry and the live process table.
+// sessionSignals reads the live session state and the live process table. The
+// registry ids come from the process-wide session-state store, which the
+// session-state watcher keeps current; the `ps` scan stays on the request path.
 type sessionSignals struct {
-	homeDir string
+	state sessionstate.State
 }
 
 func (s sessionSignals) RegistrySessionIDs(ctx context.Context) []string {
-	return activity.ReadRegistrySessionIDs(ctx, filepath.Join(s.homeDir, ".claude", "sessions"))
+	return s.state.RegistrySessionIDs(ctx)
 }
 
 func (s sessionSignals) ResumeSessionIDs(ctx context.Context) []string {
@@ -101,22 +104,15 @@ func (s sessionSignals) ResumeSessionIDs(ctx context.Context) []string {
 	return session.ParseLiveSessionIDs(output)
 }
 
-// paneResolver resolves a live session to its WezTerm pane via the
-// supervisor's who-needs-me.py.
-type paneResolver struct {
-	homeDir     string
-	pluginRoot  string
-	interpreter string
-}
-
-func (p paneResolver) Resolve(ctx context.Context, sessionID string) (string, bool) {
-	script := pane.WhoNeedsMePath(p.pluginRoot, p.homeDir)
-	env := pane.BuildSubprocessEnv(
-		os.Environ(), p.homeDir, pane.DefaultWeztermBundleDir, pane.PidAlive,
-	)
-	return pane.ResolvePaneID(
-		ctx, p.interpreter, script, sessionID, env, pane.DefaultResolveTimeout,
-	)
+// CreatePaneResolver returns the Go pane resolver: the session registry under
+// homeDir matched against the WezTerm pane titles.
+func CreatePaneResolver(homeDir string) pane.Resolver {
+	return pane.NewResolver(pane.ResolverParams{
+		HomeDir:     homeDir,
+		BundleDir:   pane.DefaultWeztermBundleDir,
+		RegistryDir: filepath.Join(homeDir, ".claude", "sessions"),
+		Timeout:     pane.DefaultResolveTimeout,
+	})
 }
 
 // CreateVaultUIConfigPath resolves vault-ui's config.yaml path, XDG-first.
@@ -146,58 +142,18 @@ func CreateStaticFS() fs.FS {
 	return sub
 }
 
-// CreatePaneCache returns the shared in-memory pane cache the board reads pane
-// ids from. A background refresher keeps it current.
-func CreatePaneCache() panecache.Cache {
-	return panecache.NewCache()
-}
-
-// CreatePaneRefresher returns a run.Func that keeps the pane cache current for
-// every live session, resolving panes off the request path.
-func CreatePaneRefresher(homeDir string, cache panecache.Cache) run.Func {
-	return func(ctx context.Context) error {
-		return panecache.NewRefresher(panecache.RefreshParams{
-			Cache:          cache,
-			Resolver:       paneResolver{homeDir: homeDir, interpreter: "python3"},
-			LiveSessionIDs: func(ctx context.Context) []string { return liveSessionIDs(ctx, homeDir) },
-			Interval:       panecache.DefaultRefreshInterval,
-		}).RunLoop(ctx)
-	}
-}
-
-// liveSessionIDs returns the deduped union of the Claude session registry ids
-// and the live resume/session-id process ids, mirroring sessionSignals. A
-// ps-scanner error yields an empty resume-id list.
-func liveSessionIDs(ctx context.Context, homeDir string) []string {
-	signals := sessionSignals{homeDir: homeDir}
-	seen := map[string]bool{}
-	ids := make([]string, 0)
-	for _, id := range signals.RegistrySessionIDs(ctx) {
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-	for _, id := range signals.ResumeSessionIDs(ctx) {
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
 // CreateAPIHandler builds the :8000 API router.
 func CreateAPIHandler(
 	loader config.Loader,
 	configPath string,
 	cache statuscache.Cache,
-	paneCache panecache.Cache,
+	paneResolver mutations.PaneResolver,
 	launches launchregistry.Registry,
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
 	pageIndex pageindex.PageIndex,
+	sessionState sessionstate.State,
 	writeQueue queue.Queue,
 ) http.Handler {
 	service := board.New(board.Deps{
@@ -206,13 +162,12 @@ func CreateAPIHandler(
 		Cache:   cache,
 		Launch:  launches,
 		Clock:   libtime.NewCurrentDateTime(),
-		Signals: sessionSignals{homeDir: homeDir},
-		Pane:    paneCache,
+		Signals: sessionSignals{state: sessionState},
 		HomeDir: homeDir,
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
-		websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
+		paneResolver, websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
 }
@@ -221,6 +176,70 @@ func CreateAPIHandler(
 // Consume must run in main's run group.
 func CreateWriteQueue() queue.Queue {
 	return queue.NewQueue()
+}
+
+// CreateSessionState returns the process-wide live-session state the board reads.
+func CreateSessionState() sessionstate.State {
+	return sessionstate.NewState()
+}
+
+// CreateSessionStateWatcher returns a run.Func that keeps state current from the
+// harness session registry and pushes a board refresh whenever the live set
+// changes. The initial read pushes nothing: only a later change is worth a
+// frame.
+func CreateSessionStateWatcher(
+	loader config.Loader,
+	manager websocket.ConnectionManager,
+	state sessionstate.State,
+	homeDir string,
+) run.Func {
+	return func(ctx context.Context) error {
+		vaults, err := loader.GetAllVaults(ctx)
+		if err != nil {
+			return errors.Wrap(ctx, err, "load vaults for session state watcher")
+		}
+		names := sessionStateVaultNames(vaults)
+		glog.V(2).Infof("starting session state watcher for %d vaults", len(names))
+		return sessionstate.NewWatcher(sessionstate.WatchParams{
+			Dir:      filepath.Join(homeDir, ".claude", "sessions"),
+			State:    state,
+			Source:   sessionstate.NewFSNotifySource(),
+			Read:     activity.ReadRegistrySessionIDs,
+			Changed:  sessionRefreshBroadcaster(manager, names),
+			Interval: sessionstate.DefaultRescanInterval,
+		}).Run(ctx)
+	}
+}
+
+// sessionStateVaultNames collects the names of the vaults a refresh frame is
+// addressed to.
+func sessionStateVaultNames(vaults []*config.Vault) []string {
+	names := make([]string, 0, len(vaults))
+	for _, vault := range vaults {
+		names = append(names, vault.Name)
+	}
+	return names
+}
+
+// sessionRefreshBroadcaster returns the callback the session-state watcher runs
+// when the live set changes. It pushes one frame per configured vault per
+// entity kind: the frontend dispatches a frame by item_kind and ignores the
+// other kind, so a task-only frame would never refresh a browser sitting on the
+// goals view.
+func sessionRefreshBroadcaster(
+	manager websocket.ConnectionManager,
+	names []string,
+) func() {
+	return func() {
+		for _, name := range names {
+			manager.Broadcast(websocket.WatcherFrame(ops.WatchEvent{
+				Event: "modified", Vault: name, Type: "task",
+			}))
+			manager.Broadcast(websocket.WatcherFrame(ops.WatchEvent{
+				Event: "modified", Vault: name, Type: "goal",
+			}))
+		}
+	}
 }
 
 // CreateConnectionManager returns the bounded, non-blocking WebSocket

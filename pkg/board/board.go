@@ -72,11 +72,6 @@ type SessionSignals interface {
 	ResumeSessionIDs(ctx context.Context) []string
 }
 
-// PaneResolver resolves a live session id to its WezTerm pane id.
-type PaneResolver interface {
-	Resolve(ctx context.Context, sessionID string) (string, bool)
-}
-
 // Deps are the board's injected dependencies.
 type Deps struct {
 	Vaults  VaultsProvider
@@ -85,7 +80,6 @@ type Deps struct {
 	Launch  launchregistry.Registry
 	Clock   libtime.CurrentDateTimeGetter
 	Signals SessionSignals
-	Pane    PaneResolver
 	HomeDir string
 }
 
@@ -106,7 +100,6 @@ type board struct {
 	launch  launchregistry.Registry
 	clock   libtime.CurrentDateTimeGetter
 	signals SessionSignals
-	pane    PaneResolver
 	homeDir string
 }
 
@@ -119,7 +112,6 @@ func New(deps Deps) Board {
 		launch:  deps.Launch,
 		clock:   deps.Clock,
 		signals: deps.Signals,
-		pane:    deps.Pane,
 		homeDir: deps.HomeDir,
 	}
 }

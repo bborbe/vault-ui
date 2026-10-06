@@ -1,6 +1,6 @@
 ---
 status: completed
-spec: [025-optimistic-writes-through-a-per-vault-queue]
+spec: [026-optimistic-writes-through-a-per-vault-queue]
 summary: Added pkg/queue, an in-memory per-vault FIFO write queue with one consumer per vault, exposing Enqueue/Consume/Done behind a counterfeiter-mocked interface, at 98.2% coverage and race-clean, wired into nothing yet.
 execution_id: vault-ui-write-queue-exec-130-spec-025-per-vault-write-queue
 dark-factory-version: dev
