@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-10-06T06:18:21Z"
 generating: "2026-10-06T07:16:13Z"
 prompted: "2026-10-06T07:16:13Z"
 verifying: "2026-10-06T08:28:57Z"
+completed: "2026-10-06T09:51:44Z"
 branch: dark-factory/optimistic-writes-through-a-per-vault-queue
 ---
 
