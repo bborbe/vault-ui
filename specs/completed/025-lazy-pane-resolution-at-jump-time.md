@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-10-06T06:06:48Z"
 generating: "2026-10-06T06:48:20Z"
 prompted: "2026-10-06T06:48:20Z"
 verifying: "2026-10-06T08:15:31Z"
+completed: "2026-10-06T13:17:20Z"
 branch: dark-factory/lazy-pane-resolution-at-jump-time
 ---
 
