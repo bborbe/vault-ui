@@ -1,9 +1,11 @@
 ---
-status: approved
+status: prompted
 tags:
     - dark-factory
     - spec
 approved: "2026-10-06T08:59:58Z"
+generating: "2026-10-06T09:01:26Z"
+prompted: "2026-10-06T09:21:27Z"
 branch: dark-factory/incremental-page-index-updates
 ---
 
