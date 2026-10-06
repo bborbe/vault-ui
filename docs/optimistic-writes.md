@@ -58,6 +58,8 @@ a case-different name, a case-insensitive filesystem, vault-cli's substring
 fallback — the mark widens to a folder-level mark of that key, resolved by the
 same stat-diff every other folder mark uses, so the file vault-cli actually wrote
 is still picked up. Nothing is published and nothing is marked before the write.
+A write's page-index mark also invalidates that key's task-list snapshot, so the
+next `/api/tasks` read rebuilds before serving.
 The two task session routes (`DELETE` and `PATCH /api/tasks/{id}/session`)
 publish no frame, as before, but still invalidate and mark after the write; the
 goal session clear does publish `goal_updated`. The file watcher also sees the

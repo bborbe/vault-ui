@@ -47,6 +47,21 @@ fires decides the outcome.
    would offer a corrupting Resume. When no process matches, the state is
    `quiet`.
 
+## Cached inputs
+
+The classification inputs are now read from a process-wide, timer-refreshed
+session snapshot (`pkg/sessionsnapshot`), not from the request path. The registry
+ids and the live `--resume`/`--session-id` ids — the latter from one `ps` scan
+per refresh — and the transcript mtimes, probed at most once per session per
+refresh, are cached with a timestamp and refreshed on a fixed interval of at
+least 60 s (`SessionRefreshInterval`). A cached verdict never outlives its
+refresh window: once a later refresh has been published, the cached value is
+discarded and probed again.
+
+The `ps` cross-check stays signal #4 in the fixed order above, the four outcomes
+and the five-minute window are unchanged. Only the source of the two inputs
+changes; the signal-order and outcome tables are authoritative as written.
+
 ## The task-file mtime is never a liveness signal
 
 The task file's mtime moves when a human edits the file and says nothing about

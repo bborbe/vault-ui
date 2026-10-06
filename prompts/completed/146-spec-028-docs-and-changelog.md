@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [028-precompute-task-list-snapshot]
+summary: 'Documented the task-list snapshot''s staleness bounds, rebuild triggers, atomicity and write-visibility chain in docs/page-index.md, the timestamped session-input cache in docs/liveness-classification.md, the task-list invalidation note in docs/optimistic-writes.md, and added the feat: entry under ## Unreleased in CHANGELOG.md.'
+execution_id: vault-ui-precompute-task-list-exec-146-spec-028-docs-and-changelog
+dark-factory-version: v0.196.0
 created: "2026-10-06T20:28:50Z"
 queued: "2026-10-06T20:57:28Z"
+started: "2026-10-06T21:39:29Z"
+completed: "2026-10-06T21:46:25Z"
 branch: dark-factory/precompute-task-list-snapshot
 ---
 
