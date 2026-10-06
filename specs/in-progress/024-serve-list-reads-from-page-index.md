@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-05T19:31:28Z"
 generating: "2026-10-05T20:04:07Z"
 prompted: "2026-10-05T20:04:07Z"
+verifying: "2026-10-06T07:18:43Z"
 branch: dark-factory/serve-list-reads-from-page-index
 ---
 
