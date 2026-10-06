@@ -8,6 +8,7 @@ created: "2026-10-06T06:49:18Z"
 queued: "2026-10-06T07:16:00Z"
 started: "2026-10-06T08:21:58Z"
 completed: "2026-10-06T08:28:56Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/130
 branch: dark-factory/133-spec-025-parity-amendment-and-docs
 ---
 
