@@ -25,6 +25,7 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -35,6 +36,24 @@ func newTestAPIHandler(loader config.Loader, configPath string) http.Handler {
 	return newTestAPIHandlerWithManager(
 		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()),
 	)
+}
+
+// startWriteQueue returns a fresh write queue whose Consume runs until the spec
+// ends, so no in-flight write outlives the spec's temp dir.
+func startWriteQueue() queue.Queue {
+	writeQueue := factory.CreateWriteQueue()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer GinkgoRecover()
+		defer close(done)
+		_ = writeQueue.Consume(ctx)
+	}()
+	DeferCleanup(func() {
+		cancel()
+		<-done
+	})
+	return writeQueue
 }
 
 // newTestAPIHandlerWithManager wires CreateAPIHandler with a ready gate and the
@@ -50,6 +69,7 @@ func newTestAPIHandlerWithManager(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneCache(),
 		launchregistry.NewRegistry(), tempDir(), readiness, manager,
 		factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime()),
+		startWriteQueue(),
 	)
 }
 
@@ -161,7 +181,7 @@ var _ = Describe("API factory", func() {
 			resp, err := http.DefaultClient.Do(req)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
-			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
 
 			_, message, err := conn.ReadMessage()
 			Expect(err).NotTo(HaveOccurred())
@@ -197,7 +217,7 @@ var _ = Describe("API factory", func() {
 			resp, err := http.DefaultClient.Do(req)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
-			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
 
 			_, message, err := conn.ReadMessage()
 			Expect(err).NotTo(HaveOccurred())

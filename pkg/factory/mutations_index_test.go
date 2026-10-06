@@ -20,6 +20,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/factory"
+	"github.com/bborbe/vault-ui/pkg/queue"
 )
 
 // ac5Fixture is a full factory wiring over a temp vault whose page storage is a
@@ -30,6 +31,7 @@ type ac5Fixture struct {
 	fake     *mocks.PageStorage
 	vaultDir string
 	tasksKey [2]string
+	queue    queue.Queue
 }
 
 // newAC5Fixture builds the fixture and warms the page index.
@@ -38,7 +40,8 @@ func newAC5Fixture() *ac5Fixture {
 	writeFile(vaultDir, "24 Tasks/Task B.md", "---\nstatus: next\n---\n# Task B\n")
 	fake := countingPageStorage()
 	pageIndex := factory.CreatePageIndex(fake, libtime.NewCurrentDateTime())
-	handler := indexHandler(loader, configPath, pageIndex)
+	writeQueue := startWriteQueue()
+	handler := indexHandler(loader, configPath, pageIndex, writeQueue)
 	Expect(
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
 	).To(Succeed())
@@ -47,7 +50,14 @@ func newAC5Fixture() *ac5Fixture {
 		fake:     fake,
 		vaultDir: vaultDir,
 		tasksKey: [2]string{vaultDir, "24 Tasks"},
+		queue:    writeQueue,
 	}
+}
+
+// drain waits until the fixture vault has no pending or in-flight write, so a
+// following read or call-count assertion sees the applied write.
+func (f *ac5Fixture) drain() {
+	EventuallyWithOffset(1, f.queue.Done("personal")).Should(BeClosed())
 }
 
 // tasksCalls returns the tasks-folder ListPages call count.
@@ -100,7 +110,8 @@ var _ = Describe("Page index write invalidation", func() {
 			"/api/tasks/Task%20A/phase?vault=personal",
 			`{"phase":"execution"}`,
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		f.drain()
 		// The write itself only marks; it must not rebuild.
 		Expect(f.tasksCalls()).To(Equal(before))
 
@@ -115,7 +126,8 @@ var _ = Describe("Page index write invalidation", func() {
 			"/api/tasks/Task%20A/phase?vault=personal",
 			`{"phase":"done"}`,
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		f.drain()
 		beforeConcurrent := f.tasksCalls()
 
 		bodies := make([]string, 2)
@@ -146,7 +158,8 @@ var _ = Describe("Page index write invalidation", func() {
 			"/api/tasks/Task%20A/session?vault=personal",
 			`{"claude_session_id":"33333333-3333-3333-3333-333333333333"}`,
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		f.drain()
 		Expect(f.tasksCalls()).To(Equal(before))
 
 		task := findTask(f.listTasks(), "Task A")
@@ -160,7 +173,8 @@ var _ = Describe("Page index write invalidation", func() {
 			"/api/tasks/Task%20B/session?vault=personal",
 			`{"claude_session_id":"44444444-4444-4444-4444-444444444444"}`,
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		f.drain()
 		beforeConcurrent := f.tasksCalls()
 
 		bodies := make([]string, 2)

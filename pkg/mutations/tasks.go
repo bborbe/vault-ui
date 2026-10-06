@@ -378,7 +378,21 @@ func (s *service) taskFastPath(
 	}, nil
 }
 
-// AssignTaskToMe sets a task's assignee to the configured current user.
+// sessionConflict is the frozen 409 body for overwriting a different valid
+// session UUID.
+func sessionConflict(taskID, current, storedValue string) *HTTPError {
+	if current != "" && sessionresolver.IsUUID(current) && current != storedValue {
+		return newHTTPError(
+			409,
+			"Task "+taskID+" already holds session "+current+"; refusing to overwrite with "+
+				storedValue+". Call DELETE /api/tasks/"+taskID+"/session to release it first.",
+		)
+	}
+	return nil
+}
+
+// AssignTaskToMe queues a task's assignee write to the configured current user.
+// The route answers 202 before the vault is written.
 func (s *service) AssignTaskToMe(
 	ctx context.Context, vault, taskID string,
 ) (api.AssignResponse, error) {
@@ -398,28 +412,33 @@ func (s *service) AssignTaskToMe(
 	if !ok {
 		return api.AssignResponse{}, newHTTPError(404, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if _, showErr := set.Show.Execute(
+	// The task-existence read stays on the request path so the frozen 404 body
+	// (parity case unknown-task) answers synchronously. No vault-cli write, no
+	// Cache.Invalidate, no MarkDirty and no frame happens here.
+	if _, showErr := s.opsForVault(resolved).Show.Execute(
 		ctx, resolved.Path, resolved.Name, taskID,
 	); showErr != nil {
 		return api.AssignResponse{}, newHTTPError(404, taskNotFound(taskID))
 	}
-	if setErr := set.FrontmatterSet.Execute(
-		ctx, resolved.Path, taskID, "assignee", cfg.CurrentUser, "", "", "", false,
-	); setErr != nil {
-		return api.AssignResponse{}, newHTTPError(500, setErr.Error())
+	assignee := cfg.CurrentUser
+	write := func(ctx context.Context) error {
+		if setErr := s.opsForVault(resolved).FrontmatterSet.Execute(
+			ctx, resolved.Path, taskID, "assignee", assignee, "", "", "", false,
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
-	return api.AssignResponse{Status: "success", TaskID: taskID, Assignee: cfg.CurrentUser}, nil
+	if err := s.enqueueWrite(
+		ctx, resolved, "task", taskID, write, s.taskWritten(resolved, taskID),
+	); err != nil {
+		return api.AssignResponse{}, err
+	}
+	return api.AssignResponse{Status: "success", TaskID: taskID, Assignee: assignee}, nil
 }
 
-// UpdateTaskPhase updates a task's phase, then its status to match.
+// UpdateTaskPhase queues a task's phase update, then its status to match. The
+// route answers 202 before the vault is written.
 func (s *service) UpdateTaskPhase(
 	ctx context.Context, vault, taskID string, req api.UpdatePhaseRequest,
 ) (api.PhaseUpdateResponse, error) {
@@ -430,44 +449,46 @@ func (s *service) UpdateTaskPhase(
 	if !ok {
 		return api.PhaseUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if setErr := set.FrontmatterSet.Execute(
-		ctx, resolved.Path, taskID, "phase", req.Phase, "", "", "", false,
-	); setErr != nil {
-		return api.PhaseUpdateResponse{}, newHTTPError(500, setErr.Error())
-	}
-	newStatus := ""
-	if req.Phase == "done" {
-		newStatus = "completed"
-	} else {
-		currentStatus := ""
-		if task, showErr := set.Show.Execute(
-			ctx, resolved.Path, resolved.Name, taskID,
-		); showErr == nil {
-			currentStatus = task.Status
-		}
-		if currentStatus != "hold" {
-			newStatus = "in_progress"
-		}
-	}
-	if newStatus != "" {
+	write := func(ctx context.Context) error {
+		set := s.opsForVault(resolved)
 		if setErr := set.FrontmatterSet.Execute(
-			ctx, resolved.Path, taskID, "status", newStatus, "", "", "", false,
+			ctx, resolved.Path, taskID, "phase", req.Phase, "", "", "", false,
 		); setErr != nil {
-			return api.PhaseUpdateResponse{}, newHTTPError(500, setErr.Error())
+			return newHTTPError(500, setErr.Error())
 		}
+		newStatus := ""
+		if req.Phase == "done" {
+			newStatus = "completed"
+		} else {
+			currentStatus := ""
+			if task, showErr := set.Show.Execute(
+				ctx, resolved.Path, resolved.Name, taskID,
+			); showErr == nil {
+				currentStatus = task.Status
+			}
+			if currentStatus != "hold" {
+				newStatus = "in_progress"
+			}
+		}
+		if newStatus != "" {
+			if setErr := set.FrontmatterSet.Execute(
+				ctx, resolved.Path, taskID, "status", newStatus, "", "", "", false,
+			); setErr != nil {
+				return newHTTPError(500, setErr.Error())
+			}
+		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
+	if err := s.enqueueWrite(
+		ctx, resolved, "task", taskID, write, s.taskWritten(resolved, taskID),
+	); err != nil {
+		return api.PhaseUpdateResponse{}, err
+	}
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
 }
 
-// UpdateTaskFlag sets or clears a task's flag (picked-for-today marker).
+// UpdateTaskFlag queues a set or clear of a task's flag (picked-for-today
+// marker). The route answers 202 before the vault is written.
 func (s *service) UpdateTaskFlag(
 	ctx context.Context, vault, taskID string, req api.UpdateFlagRequest,
 ) (api.FlagUpdateResponse, error) {
@@ -482,31 +503,33 @@ func (s *service) UpdateTaskFlag(
 	if req.Flag != nil {
 		flag = *req.Flag
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if flag && !selftestSkipFlagWrite() {
-		if setErr := set.FrontmatterSet.Execute(
-			ctx, resolved.Path, taskID, "flag", "true", "", "", "operator", false,
-		); setErr != nil {
-			return api.FlagUpdateResponse{}, newHTTPError(500, setErr.Error())
+	write := func(ctx context.Context) error {
+		set := s.opsForVault(resolved)
+		if flag && !selftestSkipFlagWrite() {
+			if setErr := set.FrontmatterSet.Execute(
+				ctx, resolved.Path, taskID, "flag", "true", "", "", "operator", false,
+			); setErr != nil {
+				return newHTTPError(500, setErr.Error())
+			}
+			return nil
 		}
-	} else {
 		if clearErr := set.FrontmatterClear.Execute(
 			ctx, resolved.Path, taskID, "flag",
 		); clearErr != nil {
-			return api.FlagUpdateResponse{}, newHTTPError(500, clearErr.Error())
+			return newHTTPError(500, clearErr.Error())
 		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
+	if err := s.enqueueWrite(
+		ctx, resolved, "task", taskID, write, s.taskWritten(resolved, taskID),
+	); err != nil {
+		return api.FlagUpdateResponse{}, err
+	}
 	return api.FlagUpdateResponse{Status: "success", TaskID: taskID, Flag: flag}, nil
 }
 
-// UpdateTaskStatus updates a task's status via the task card menu.
+// UpdateTaskStatus queues a task's status update via the task card menu. The
+// route answers 202 before the vault is written.
 func (s *service) UpdateTaskStatus(
 	ctx context.Context, vault, taskID string, req api.UpdateStatusRequest,
 ) (api.StatusUpdateResponse, error) {
@@ -528,23 +551,24 @@ func (s *service) UpdateTaskStatus(
 	if !ok {
 		return api.StatusUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if setErr := set.FrontmatterSet.Execute(
-		ctx, resolved.Path, taskID, "status", req.Status, reason, gate, "", false,
-	); setErr != nil {
-		return api.StatusUpdateResponse{}, newHTTPError(500, setErr.Error())
+	write := func(ctx context.Context) error {
+		if setErr := s.opsForVault(resolved).FrontmatterSet.Execute(
+			ctx, resolved.Path, taskID, "status", req.Status, reason, gate, "", false,
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
+	if err := s.enqueueWrite(
+		ctx, resolved, "task", taskID, write, s.taskWritten(resolved, taskID),
+	); err != nil {
+		return api.StatusUpdateResponse{}, err
+	}
 	return api.StatusUpdateResponse{Status: "success", TaskID: taskID, NewStatus: req.Status}, nil
 }
 
-// ClearTaskSession clears a task's claude_session_id and started marker.
+// ClearTaskSession queues a clear of a task's claude_session_id and started
+// marker. The route answers 202 before the vault is written.
 func (s *service) ClearTaskSession(
 	ctx context.Context, vault, taskID string,
 ) (api.SessionClearResponse, error) {
@@ -555,24 +579,31 @@ func (s *service) ClearTaskSession(
 	if !ok {
 		return api.SessionClearResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if clearErr := set.FrontmatterClear.Execute(
-		ctx, resolved.Path, taskID, "claude_session_id",
-	); clearErr != nil {
-		return api.SessionClearResponse{}, newHTTPError(404, taskNotFound(taskID))
+	write := func(ctx context.Context) error {
+		set := s.opsForVault(resolved)
+		if clearErr := set.FrontmatterClear.Execute(
+			ctx, resolved.Path, taskID, "claude_session_id",
+		); clearErr != nil {
+			return newHTTPError(404, taskNotFound(taskID))
+		}
+		if clearErr := set.FrontmatterClear.Execute(
+			ctx, resolved.Path, taskID, "claude_session_started",
+		); clearErr != nil {
+			return newHTTPError(500, clearErr.Error())
+		}
+		return nil
 	}
-	if clearErr := set.FrontmatterClear.Execute(
-		ctx, resolved.Path, taskID, "claude_session_started",
-	); clearErr != nil {
-		return api.SessionClearResponse{}, newHTTPError(500, clearErr.Error())
+	if err := s.enqueueWrite(
+		ctx, resolved, "task", taskID, write, s.itemWrittenSilently(resolved, taskID),
+	); err != nil {
+		return api.SessionClearResponse{}, err
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
 	return api.SessionClearResponse{Status: "success", TaskID: taskID}, nil
 }
 
-// SetTaskSession sets a task's claude_session_id, resolving display names to
-// UUIDs eagerly and refusing to overwrite a different valid UUID.
+// SetTaskSession queues a write of a task's claude_session_id, resolving
+// display names to UUIDs eagerly and refusing to overwrite a different valid
+// UUID. The route answers 202 before the vault is written.
 func (s *service) SetTaskSession(
 	ctx context.Context, vault, taskID string, req api.UpdateSessionRequest,
 ) (api.SessionSetResponse, error) {
@@ -594,31 +625,45 @@ func (s *service) SetTaskSession(
 			storedValue = resolvedID
 		}
 	}
-	release, lockErr := s.deps.Locks.Lock(ctx, vault, taskID)
-	if lockErr != nil {
-		return api.SessionSetResponse{}, newHTTPError(500, lockErr.Error())
-	}
-	defer release()
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
+	// The different-session conflict read stays on the request path, without
+	// the lock, so the frozen 409 body (parity case set-task-session-conflict)
+	// answers synchronously. No vault-cli write, no Cache.Invalidate, no
+	// MarkDirty and no frame happens here.
+	task, showErr := s.opsForVault(resolved).Show.Execute(
+		ctx, resolved.Path, resolved.Name, taskID,
+	)
 	if showErr != nil {
 		return api.SessionSetResponse{}, newHTTPError(500, showErr.Error())
 	}
-	current := task.ClaudeSessionID
-	if current != "" && sessionresolver.IsUUID(current) && current != storedValue {
-		return api.SessionSetResponse{}, newHTTPError(
-			409,
-			"Task "+taskID+" already holds session "+current+"; refusing to overwrite with "+
-				storedValue+". Call DELETE /api/tasks/"+taskID+"/session to release it first.",
-		)
+	if conflict := sessionConflict(taskID, task.ClaudeSessionID, storedValue); conflict != nil {
+		return api.SessionSetResponse{}, conflict
 	}
-	if setErr := set.FrontmatterSet.Execute(
-		ctx, resolved.Path, taskID, "claude_session_id", storedValue, "", "", "", false,
-	); setErr != nil {
-		return api.SessionSetResponse{}, newHTTPError(500, setErr.Error())
+	write := func(ctx context.Context) error {
+		release, lockErr := s.deps.Locks.Lock(ctx, resolved.Name, taskID)
+		if lockErr != nil {
+			return newHTTPError(500, lockErr.Error())
+		}
+		defer release()
+		set := s.opsForVault(resolved)
+		current, readErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
+		if readErr != nil {
+			return newHTTPError(500, readErr.Error())
+		}
+		if conflict := sessionConflict(taskID, current.ClaudeSessionID, storedValue); conflict != nil {
+			return conflict
+		}
+		if setErr := set.FrontmatterSet.Execute(
+			ctx, resolved.Path, taskID, "claude_session_id", storedValue, "", "", "", false,
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
+	if err := s.enqueueWrite(
+		ctx, resolved, "task", taskID, write, s.itemWrittenSilently(resolved, taskID),
+	); err != nil {
+		return api.SessionSetResponse{}, err
+	}
 	return api.SessionSetResponse{
 		Status: "success", TaskID: taskID, ClaudeSessionID: storedValue,
 	}, nil

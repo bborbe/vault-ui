@@ -52,8 +52,10 @@ func execute(ctx context.Context) error {
 	// ListPages ignores the storage config, so one shared page storage serves
 	// every vault behind the process-wide page index.
 	pageIndex := factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
+	writeQueue := factory.CreateWriteQueue()
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, cache, paneCache, launches, homeDir, readiness, manager, pageIndex,
+		writeQueue,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -83,6 +85,7 @@ func execute(ctx context.Context) error {
 		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
 		factory.CreatePaneRefresher(homeDir, paneCache),
+		writeQueue.Consume,
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {

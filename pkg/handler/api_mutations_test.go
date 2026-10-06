@@ -156,7 +156,7 @@ var _ = Describe("Mutation handlers", func() {
 				},
 			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
 		Expect(recorder.Body.String()).To(ContainSubstring(`"flag":true`))
 	})
 
@@ -170,7 +170,7 @@ var _ = Describe("Mutation handlers", func() {
 				},
 			}), http.MethodPatch, "/api/tasks/TaskOne/assign-to-me?vault=personal", "",
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
 		Expect(recorder.Body.String()).To(ContainSubstring(`"assignee":"fixtureuser"`))
 	})
 
@@ -184,7 +184,7 @@ var _ = Describe("Mutation handlers", func() {
 				},
 			}), http.MethodDelete, "/api/tasks/TaskOne/session?vault=personal", "",
 		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
 		Expect(recorder.Body.String()).To(ContainSubstring(`"status":"success"`))
 	})
 
@@ -240,22 +240,6 @@ var _ = Describe("Mutation handler success paths", func() {
 			},
 		}), http.MethodPost, "/api/tasks/TaskOne/execute-command?vault=personal",
 			`{"command":"complete-task"}`, http.StatusOK),
-		Entry("task phase", handler.NewTaskPhaseHandler(&fakeMutations{
-			updateTaskPhase: func(
-				context.Context, string, string, api.UpdatePhaseRequest,
-			) (api.PhaseUpdateResponse, error) {
-				return api.PhaseUpdateResponse{Status: "success"}, nil
-			},
-		}), http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
-			`{"phase":"execution"}`, http.StatusOK),
-		Entry("goal status", handler.NewGoalStatusHandler(&fakeMutations{
-			updateGoalStatus: func(
-				context.Context, string, string, api.UpdateStatusRequest,
-			) (api.StatusUpdateResponse, error) {
-				return api.StatusUpdateResponse{Status: "success"}, nil
-			},
-		}), http.MethodPatch, "/api/goals/GoalOne/status?vault=personal",
-			`{"status":"hold"}`, http.StatusOK),
 		Entry("goal execute command", handler.NewExecuteGoalCommandHandler(&fakeMutations{
 			executeGoalCommand: func(
 				context.Context, string, string, api.ExecuteCommandRequest,
@@ -264,16 +248,41 @@ var _ = Describe("Mutation handler success paths", func() {
 			},
 		}), http.MethodPost, "/api/goals/GoalOne/execute-command?vault=personal",
 			`{"command":"complete-goal"}`, http.StatusOK),
+	)
+
+	DescribeTable("202s the queued routes",
+		func(handler http.Handler, method, target, body string, want int) {
+			recorder := doRequest(handler, method, target, body)
+			Expect(recorder.Code).To(Equal(want))
+		},
+		Entry("task phase", handler.NewTaskPhaseHandler(&fakeMutations{
+			updateTaskPhase: func(
+				context.Context, string, string, api.UpdatePhaseRequest,
+			) (api.PhaseUpdateResponse, error) {
+				return api.PhaseUpdateResponse{Status: "success"}, nil
+			},
+		}), http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"execution"}`, http.StatusAccepted),
+		Entry("goal status", handler.NewGoalStatusHandler(&fakeMutations{
+			updateGoalStatus: func(
+				context.Context, string, string, api.UpdateStatusRequest,
+			) (api.StatusUpdateResponse, error) {
+				return api.StatusUpdateResponse{Status: "success"}, nil
+			},
+		}), http.MethodPatch, "/api/goals/GoalOne/status?vault=personal",
+			`{"status":"hold"}`, http.StatusAccepted),
 		Entry("assign goal", handler.NewAssignGoalHandler(&fakeMutations{
 			assignGoalToMe: func(context.Context, string, string) (api.AssignResponse, error) {
 				return api.AssignResponse{Status: "success"}, nil
 			},
-		}), http.MethodPatch, "/api/goals/GoalOne/assign-to-me?vault=personal", "", http.StatusOK),
+		}), http.MethodPatch, "/api/goals/GoalOne/assign-to-me?vault=personal", "",
+			http.StatusAccepted),
 		Entry("clear goal session", handler.NewClearGoalSessionHandler(&fakeMutations{
 			clearGoalSession: func(context.Context, string, string) (api.SessionClearResponse, error) {
 				return api.SessionClearResponse{Status: "success"}, nil
 			},
-		}), http.MethodDelete, "/api/goals/GoalOne/session?vault=personal", "", http.StatusOK),
+		}), http.MethodDelete, "/api/goals/GoalOne/session?vault=personal", "",
+			http.StatusAccepted),
 		Entry("set task session", handler.NewSetTaskSessionHandler(&fakeMutations{
 			setTaskSession: func(
 				context.Context, string, string, api.UpdateSessionRequest,
@@ -281,7 +290,7 @@ var _ = Describe("Mutation handler success paths", func() {
 				return api.SessionSetResponse{Status: "success"}, nil
 			},
 		}), http.MethodPatch, "/api/tasks/TaskOne/session?vault=personal",
-			`{"claude_session_id":"x"}`, http.StatusOK),
+			`{"claude_session_id":"x"}`, http.StatusAccepted),
 	)
 
 	It("500s an unclassified service error", func() {

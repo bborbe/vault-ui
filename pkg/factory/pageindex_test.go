@@ -23,6 +23,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -113,11 +114,12 @@ func listPagesCounts(fake *mocks.PageStorage) map[[2]string]int {
 }
 
 // indexHandler wires CreateAPIHandler exactly as production does, over the
-// given index.
+// given index and write queue.
 func indexHandler(
 	loader config.Loader,
 	configPath string,
 	pageIndex pageindex.PageIndex,
+	writeQueue queue.Queue,
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
@@ -125,6 +127,7 @@ func indexHandler(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneCache(),
 		launchregistry.NewRegistry(), tempDir(), readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
+		writeQueue,
 	)
 }
 
@@ -135,7 +138,7 @@ var _ = Describe("Page index read wiring", func() {
 		loader, configPath := indexLoader(alpha, beta)
 		fake := countingPageStorage()
 		pageIndex := factory.CreatePageIndex(fake, libtime.NewCurrentDateTime())
-		handler := indexHandler(loader, configPath, pageIndex)
+		handler := indexHandler(loader, configPath, pageIndex, startWriteQueue())
 
 		Expect(
 			factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),

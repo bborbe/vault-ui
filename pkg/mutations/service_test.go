@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 
 	libtime "github.com/bborbe/time"
 	vcmocks "github.com/bborbe/vault-cli/mocks"
@@ -24,6 +25,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/mutations/mocks"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -86,6 +88,31 @@ type harness struct {
 	jump      *fakeJump
 	config    vaultconfig.Config
 	cfgPtr    *vaultconfig.Config
+	queue     queue.Queue
+}
+
+// startWriteQueue returns a real per-vault queue whose Consume runs until the
+// spec ends, so no in-flight write outlives the spec's temp dir.
+func startWriteQueue() queue.Queue {
+	q := queue.NewQueue()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer GinkgoRecover()
+		defer close(done)
+		_ = q.Consume(ctx)
+	}()
+	DeferCleanup(func() {
+		cancel()
+		<-done
+	})
+	return q
+}
+
+// drain waits until the personal vault's queued writes have been applied, so a
+// following file, publisher, cache or index assertion sees the write.
+func (h *harness) drain() {
+	EventuallyWithOffset(1, h.queue.Done("personal")).Should(BeClosed())
 }
 
 func writeFile(path, content string) {
@@ -150,6 +177,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	jump := &fakeJump{token: "tok", hasToken: true}
 
 	cfgPtr := &cfg
+	writeQueue := startWriteQueue()
 	service := mutations.New(mutations.Deps{
 		Config:    configProvider{cfg: cfgPtr},
 		Ops:       opsFactory(vault),
@@ -158,6 +186,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: publisher,
 		Index:     index,
+		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
 		Signaler:  &fakeSignaler{},
@@ -179,6 +208,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		jump:      jump,
 		config:    cfg,
 		cfgPtr:    cfgPtr,
+		queue:     writeQueue,
 	}
 }
 
@@ -275,6 +305,7 @@ func newStarterHarnessWith(
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
 		Index:     h.index,
+		Queue:     h.queue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
 		Signaler:  &fakeSignaler{},
@@ -283,6 +314,27 @@ func newStarterHarnessWith(
 		HomeDir:   h.dir,
 	})
 	return h
+}
+
+// withQueue rebuilds the harness's service with the given write queue, so a
+// spec can drive the enqueue-failure path.
+func (h *harness) withQueue(q mutations.WriteQueue) mutations.Service {
+	return mutations.New(mutations.Deps{
+		Config:    configProvider{cfg: h.cfgPtr},
+		Ops:       opsFactory(h.config.Vaults[0]),
+		Cache:     h.cache,
+		Launch:    h.launch,
+		Locks:     sessionlock.NewRegistry(),
+		Publisher: h.publisher,
+		Index:     h.index,
+		Queue:     q,
+		Clock:     libtime.NewCurrentDateTime(),
+		Scanner:   session.ProcessScanner(noScanner),
+		Signaler:  &fakeSignaler{},
+		Pane:      h.pane,
+		Jump:      h.jump,
+		HomeDir:   h.dir,
+	})
 }
 
 // readTask returns the task file's frontmatter body.
@@ -324,6 +376,7 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Flag).To(BeTrue())
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("flag: true"))
 			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
 		})
@@ -352,6 +405,7 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.NewStatus).To(Equal("backlog"))
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("status: backlog"))
 			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
 		})
@@ -379,6 +433,7 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.NewStatus).To(Equal("aborted"))
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("aborted"))
 		})
 	})
@@ -390,6 +445,7 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.GoalID).To(Equal(goalOneID))
+			h.drain()
 			Expect(h.readGoal(goalOneID)).To(ContainSubstring("status: hold"))
 			Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(1))
 		})
@@ -400,6 +456,36 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(httpStatus(err)).To(Equal(400))
 		})
+
+		It("400s an aborted close-out with no reason", func() {
+			_, err := h.service.UpdateGoalStatus(
+				ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "aborted"},
+			)
+			Expect(httpStatus(err)).To(Equal(400))
+			Expect(err.Error()).To(ContainSubstring("reason is required"))
+		})
+
+		It("accepts an aborted close-out with a reason", func() {
+			reason := "no longer needed"
+			result, err := h.service.UpdateGoalStatus(
+				ctx, "personal", goalOneID,
+				api.UpdateStatusRequest{Status: "aborted", Reason: &reason},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.NewStatus).To(Equal("aborted"))
+			h.drain()
+			Expect(h.readGoal(goalOneID)).To(ContainSubstring("aborted"))
+		})
+
+		It("accepts a completed close-out", func() {
+			result, err := h.service.UpdateGoalStatus(
+				ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "completed"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.NewStatus).To(Equal("completed"))
+			h.drain()
+			Expect(h.readGoal(goalOneID)).To(ContainSubstring("completed"))
+		})
 	})
 
 	Describe("UpdateTaskPhase", func() {
@@ -409,6 +495,7 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Phase).To(Equal("execution"))
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("phase: execution"))
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("status: in_progress"))
 		})
@@ -418,6 +505,7 @@ var _ = Describe("Mutation service", func() {
 				ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "done"},
 			)
 			Expect(err).NotTo(HaveOccurred())
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("status: completed"))
 		})
 	})
@@ -427,6 +515,7 @@ var _ = Describe("Mutation service", func() {
 			result, err := h.service.AssignTaskToMe(ctx, "personal", taskOneID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Assignee).To(Equal("fixtureuser"))
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring("assignee: fixtureuser"))
 			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
 		})
@@ -442,6 +531,7 @@ var _ = Describe("Mutation service", func() {
 			result, err := h.service.AssignGoalToMe(ctx, "personal", goalOneID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Assignee).To(Equal("fixtureuser"))
+			h.drain()
 			Expect(h.readGoal(goalOneID)).To(ContainSubstring("assignee: fixtureuser"))
 		})
 	})
@@ -451,6 +541,7 @@ var _ = Describe("Mutation service", func() {
 			result, err := h.service.ClearTaskSession(ctx, "personal", taskTwoID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.TaskID).To(Equal(taskTwoID))
+			h.drain()
 			Expect(h.readTask(taskTwoID)).NotTo(ContainSubstring("claude_session_id"))
 		})
 	})
@@ -460,6 +551,7 @@ var _ = Describe("Mutation service", func() {
 			result, err := h.service.ClearGoalSession(ctx, "personal", goalTwoID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.GoalID).To(Equal(goalTwoID))
+			h.drain()
 			Expect(h.readGoal(goalTwoID)).NotTo(ContainSubstring("claude_session_id"))
 			Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(1))
 		})
@@ -477,6 +569,7 @@ var _ = Describe("Mutation service", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.ClaudeSessionID).To(Equal(uuidTwo))
+			h.drain()
 			Expect(h.readTask(taskOneID)).To(ContainSubstring(uuidTwo))
 		})
 
@@ -890,9 +983,47 @@ var _ = Describe("Mutation service remaining branches", func() {
 		Expect(httpStatus(err)).To(Equal(500))
 	})
 
-	It("404s update-task-flag for an unknown task", func() {
-		_, err := h.service.UpdateTaskFlag(ctx, "personal", "Missing", api.UpdateFlagRequest{})
-		Expect(httpStatus(err)).To(Equal(500))
+	It("202s update-task-flag for an unknown task and publishes write_failed", func() {
+		result, err := h.service.UpdateTaskFlag(
+			ctx, "personal", "Missing", api.UpdateFlagRequest{},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(api.FlagUpdateResponse{
+			Status: "success", TaskID: "Missing", Flag: true,
+		}))
+		h.drain()
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+		_, vault, itemKind, itemID, reason := h.publisher.PublishWriteFailedArgsForCall(0)
+		Expect(vault).To(Equal("personal"))
+		Expect(itemKind).To(Equal("task"))
+		Expect(itemID).To(Equal("Missing"))
+		Expect(reason).NotTo(BeEmpty())
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+		Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(0))
+		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
+	})
+
+	It("202s update-task-phase for an unknown task and publishes write_failed", func() {
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Missing", api.UpdatePhaseRequest{Phase: "execution"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
+	})
+
+	It("202s clear-task-session for an unknown task and publishes write_failed", func() {
+		_, err := h.service.ClearTaskSession(ctx, "personal", "Missing")
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+		_, _, itemKind, itemID, reason := h.publisher.PublishWriteFailedArgsForCall(0)
+		Expect(itemKind).To(Equal("task"))
+		Expect(itemID).To(Equal("Missing"))
+		Expect(reason).To(Equal("Task not found: Missing"))
+		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 })
 
@@ -952,6 +1083,10 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 	DescribeTable("marks the vault's keys after a successful write",
 		func(run func() *harness) {
 			hh := run()
+			// The queued routes mark only once their consumer applies the
+			// write; the synchronous routes leave the queue idle, so this is
+			// a no-op for them.
+			hh.drain()
 			expectVaultMarked(hh.index, hh.dir)
 		},
 		Entry("RunTask", func() *harness {
@@ -1051,25 +1186,43 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 	)
 
 	It("marks before PublishTaskUpdated for UpdateTaskPhase", func() {
+		// The publisher stub runs on the queue consumer goroutine, where a
+		// failed Expect cannot fail the spec, so it records the count instead.
+		var mu sync.Mutex
+		marksAtPublish := -1
 		h.publisher.PublishTaskUpdatedStub = func(context.Context, string, string) {
-			ExpectWithOffset(1, h.index.MarkDirtyCallCount()).To(BeNumerically(">=", 1))
+			mu.Lock()
+			defer mu.Unlock()
+			marksAtPublish = h.index.MarkDirtyCallCount()
 		}
 		_, err := h.service.UpdateTaskPhase(
 			ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
 		)
 		Expect(err).NotTo(HaveOccurred())
+		h.drain()
 		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(marksAtPublish).To(BeNumerically(">=", 1))
 	})
 
 	It("marks before PublishGoalUpdated for UpdateGoalStatus", func() {
+		var mu sync.Mutex
+		marksAtPublish := -1
 		h.publisher.PublishGoalUpdatedStub = func(context.Context, string, string) {
-			ExpectWithOffset(1, h.index.MarkDirtyCallCount()).To(BeNumerically(">=", 1))
+			mu.Lock()
+			defer mu.Unlock()
+			marksAtPublish = h.index.MarkDirtyCallCount()
 		}
 		_, err := h.service.UpdateGoalStatus(
 			ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
 		)
 		Expect(err).NotTo(HaveOccurred())
+		h.drain()
 		Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(1))
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(marksAtPublish).To(BeNumerically(">=", 1))
 	})
 
 	It("marks when a write fails after writing (RunTask with an erroring starter)", func() {
@@ -1111,5 +1264,189 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		_, err := h.service.ReloadCache(ctx, "nope")
 		Expect(httpStatus(err)).To(Equal(404))
 		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+	})
+})
+
+var _ = Describe("Mutation service enqueue failure", func() {
+	var h *harness
+	var ctx context.Context
+	var service mutations.Service
+
+	BeforeEach(func() {
+		h = newHarness()
+		ctx = context.Background()
+		writeQueue := &mocks.WriteQueue{}
+		writeQueue.EnqueueReturns(errors.New("closed"))
+		service = h.withQueue(writeQueue)
+	})
+
+	DescribeTable("returns the enqueue error and writes nothing",
+		func(read func() string, run func() error) {
+			before := read()
+			err := run()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("closed"))
+			Expect(read()).To(Equal(before))
+			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+			Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(0))
+			Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
+			Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
+		},
+		Entry("task phase",
+			func() string { return h.readTask(taskOneID) },
+			func() error {
+				_, e := service.UpdateTaskPhase(
+					ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
+				)
+				return e
+			}),
+		Entry("task status",
+			func() string { return h.readTask(taskOneID) },
+			func() error {
+				_, e := service.UpdateTaskStatus(
+					ctx, "personal", taskOneID, api.UpdateStatusRequest{Status: "backlog"},
+				)
+				return e
+			}),
+		Entry("task flag",
+			func() string { return h.readTask(taskOneID) },
+			func() error {
+				_, e := service.UpdateTaskFlag(
+					ctx, "personal", taskOneID, api.UpdateFlagRequest{},
+				)
+				return e
+			}),
+		Entry("assign task",
+			func() string { return h.readTask(taskOneID) },
+			func() error {
+				_, e := service.AssignTaskToMe(ctx, "personal", taskOneID)
+				return e
+			}),
+		Entry("set task session",
+			func() string { return h.readTask(taskOneID) },
+			func() error {
+				_, e := service.SetTaskSession(
+					ctx, "personal", taskOneID,
+					api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
+				)
+				return e
+			}),
+		Entry("clear task session",
+			func() string { return h.readTask(taskTwoID) },
+			func() error {
+				_, e := service.ClearTaskSession(ctx, "personal", taskTwoID)
+				return e
+			}),
+		Entry("goal status",
+			func() string { return h.readGoal(goalOneID) },
+			func() error {
+				_, e := service.UpdateGoalStatus(
+					ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
+				)
+				return e
+			}),
+		Entry("assign goal",
+			func() string { return h.readGoal(goalOneID) },
+			func() error {
+				_, e := service.AssignGoalToMe(ctx, "personal", goalOneID)
+				return e
+			}),
+		Entry("clear goal session",
+			func() string { return h.readGoal(goalTwoID) },
+			func() error {
+				_, e := service.ClearGoalSession(ctx, "personal", goalTwoID)
+				return e
+			}),
+	)
+})
+
+// failingLocks is a Registry whose Lock always fails.
+type failingLocks struct{ err error }
+
+func (l failingLocks) Lock(context.Context, string, string) (func(), error) {
+	return nil, l.err
+}
+
+func (l failingLocks) Size() int { return 0 }
+
+var _ = Describe("SetTaskSession queued write failures", func() {
+	var h *harness
+	var ctx context.Context
+
+	BeforeEach(func() {
+		h = newHarness()
+		ctx = context.Background()
+	})
+
+	// newService wires a service over the given fakes, sharing the harness's
+	// queue so the write runs on the harness's consumer.
+	newService := func(
+		locks sessionlock.Registry,
+		show *vcmocks.ShowOperation,
+		set *vcmocks.FrontmatterSetOperation,
+	) mutations.Service {
+		return mutations.New(mutations.Deps{
+			Config: configProvider{cfg: h.cfgPtr},
+			Ops: func(vaultconfig.Vault) vaultui.OpSet {
+				return vaultui.OpSet{Show: show, FrontmatterSet: set}
+			},
+			Cache:     h.cache,
+			Launch:    h.launch,
+			Locks:     locks,
+			Publisher: h.publisher,
+			Index:     h.index,
+			Queue:     h.queue,
+			Clock:     libtime.NewCurrentDateTime(),
+			HomeDir:   h.dir,
+		})
+	}
+
+	// writeFailedReason returns the reason of the single write_failed frame.
+	writeFailedReason := func() string {
+		h.drain()
+		ExpectWithOffset(1, h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+		_, _, _, _, reason := h.publisher.PublishWriteFailedArgsForCall(0)
+		return reason
+	}
+
+	It("publishes write_failed when the lock cannot be taken", func() {
+		show := &vcmocks.ShowOperation{}
+		show.ExecuteReturns(ops.TaskDetail{Name: taskOneID}, nil)
+		service := newService(
+			failingLocks{err: errors.New("locked")}, show, &vcmocks.FrontmatterSetOperation{},
+		)
+		_, err := service.SetTaskSession(
+			ctx, "personal", taskOneID, api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(writeFailedReason()).To(Equal("locked"))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+	})
+
+	It("publishes write_failed when a session appears under the lock", func() {
+		show := &vcmocks.ShowOperation{}
+		show.ExecuteReturnsOnCall(0, ops.TaskDetail{Name: taskOneID}, nil)
+		show.ExecuteReturnsOnCall(1, ops.TaskDetail{
+			Name: taskOneID, ClaudeSessionID: uuidOne,
+		}, nil)
+		service := newService(sessionlock.NewRegistry(), show, &vcmocks.FrontmatterSetOperation{})
+		_, err := service.SetTaskSession(
+			ctx, "personal", taskOneID, api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(writeFailedReason()).To(ContainSubstring("already holds session"))
+	})
+
+	It("publishes write_failed when the queued write fails", func() {
+		show := &vcmocks.ShowOperation{}
+		show.ExecuteReturns(ops.TaskDetail{Name: taskOneID}, nil)
+		set := &vcmocks.FrontmatterSetOperation{}
+		set.ExecuteReturns(errors.New("boom"))
+		service := newService(sessionlock.NewRegistry(), show, set)
+		_, err := service.SetTaskSession(
+			ctx, "personal", taskOneID, api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(writeFailedReason()).To(Equal("boom"))
 	})
 })

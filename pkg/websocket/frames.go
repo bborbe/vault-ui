@@ -68,6 +68,28 @@ func GoalUpdatedFrame(vault, goalID string) []byte {
 	})
 }
 
+// writeFailedFrame is broadcast when a queued vault write fails. Like the
+// watcher frame, the identifier key is task_id for every item kind.
+type writeFailedFrame struct {
+	Type     string `json:"type"`
+	TaskID   string `json:"task_id"`
+	ItemKind string `json:"item_kind"`
+	Vault    string `json:"vault"`
+	Reason   string `json:"reason"`
+}
+
+// WriteFailedFrame builds the frame for a failed queued write. itemKind is
+// "task" or "goal".
+func WriteFailedFrame(vault, itemKind, itemID, reason string) []byte {
+	return marshal(writeFailedFrame{
+		Type:     "write_failed",
+		TaskID:   itemID,
+		ItemKind: itemKind,
+		Vault:    vault,
+		Reason:   reason,
+	})
+}
+
 // marshal encodes a frame. The frame structs are fixed-shape and cannot fail to
 // marshal.
 func marshal(frame any) []byte {

@@ -28,6 +28,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/panecache"
+	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -197,6 +198,7 @@ func CreateAPIHandler(
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
 	pageIndex pageindex.PageIndex,
+	writeQueue queue.Queue,
 ) http.Handler {
 	service := board.New(board.Deps{
 		Vaults:  &vaultProvider{loader: loader, configPath: configPath},
@@ -210,9 +212,15 @@ func CreateAPIHandler(
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
-		connectionEventPublisher{manager: manager}, pageIndex,
+		websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
+}
+
+// CreateWriteQueue returns the process-wide per-vault write queue. Its
+// Consume must run in main's run group.
+func CreateWriteQueue() queue.Queue {
+	return queue.NewQueue()
 }
 
 // CreateConnectionManager returns the bounded, non-blocking WebSocket
