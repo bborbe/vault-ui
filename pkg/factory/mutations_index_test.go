@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -213,4 +215,34 @@ var _ = Describe("Page index write invalidation", func() {
 
 		Expect(findTask(f.listTasks(), "Task A").Priority).To(BeEquivalentTo(3))
 	})
+
+	It("AC5(iii) re-reads every file exactly once after POST /api/cache/reload", func() {
+		f := newAC5Fixture()
+		before := f.seams.readCount()
+
+		recorder := f.request(http.MethodPost, "/api/cache/reload", "")
+		Expect(recorder.Code).To(Equal(http.StatusOK))
+
+		// Reading every key re-reads every file, fingerprints notwithstanding.
+		Expect(f.request(
+			http.MethodGet, "/api/tasks?vault=personal", "",
+		).Code).To(Equal(http.StatusOK))
+		Expect(f.request(
+			http.MethodGet, "/api/goals?vault=personal", "",
+		).Code).To(Equal(http.StatusOK))
+
+		Expect(f.seams.readCount() - before).To(Equal(countMarkdownFiles(f.vaultDir)))
+	})
 })
+
+// countMarkdownFiles returns the number of .md files under root.
+func countMarkdownFiles(root string) int {
+	count := 0
+	_ = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			count++
+		}
+		return nil
+	})
+	return count
+}

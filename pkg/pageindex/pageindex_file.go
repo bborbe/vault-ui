@@ -55,7 +55,7 @@ func (p *pageIndex) RefreshFile(ctx context.Context, key Key, filename string) e
 	recordRead(reasonEvent)
 
 	p.mu.Lock()
-	applyFileReadLocked(e, key, filename, seq, page, fingerprint, readErr)
+	p.applyFileReadLocked(e, key, filename, seq, page, fingerprint, readErr)
 	p.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
@@ -67,7 +67,7 @@ func (p *pageIndex) RefreshFile(ctx context.Context, key Key, filename string) e
 // applyFileReadLocked applies one single-file read to the current snapshot. A
 // read that started before one already applied is discarded. The caller must
 // hold the mutex.
-func applyFileReadLocked(
+func (p *pageIndex) applyFileReadLocked(
 	e *entry,
 	key Key,
 	filename string,
@@ -98,7 +98,7 @@ func applyFileReadLocked(
 			readErr,
 		)
 	case !known || previous != fingerprint:
-		glog.Warningf(
+		p.warnf(
 			"unreadable page excluded %q in %q/%q: %v",
 			filename,
 			key.VaultPath,

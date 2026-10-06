@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [027-incremental-page-index-updates]
+summary: 'Turned pkg/pageindex''s folder-level work into stat-diff work: Refresh/rescan re-read only changed files and publish only on change, MarkDirty resolves by stat-diff, the new MarkFileDirty marks one exactly-identified file and blocks its readers, and ForceReload (POST /api/cache/reload) is the only fingerprint-ignoring full re-read.'
+execution_id: vault-ui-incremental-index-exec-141-spec-027-stat-diff-and-write-marks
+dark-factory-version: dev
 created: "2026-10-06T09:08:51Z"
 queued: "2026-10-06T09:33:58Z"
+started: "2026-10-06T10:35:22Z"
+completed: "2026-10-06T11:01:12Z"
 branch: dark-factory/incremental-page-index-updates
 ---
 

@@ -13,15 +13,15 @@ import (
 )
 
 type IndexInvalidator struct {
-	MarkAllDirtyStub        func()
-	markAllDirtyMutex       sync.RWMutex
-	markAllDirtyArgsForCall []struct{}
-	MarkDirtyStub           func(...pageindex.Key)
-	markDirtyMutex          sync.RWMutex
-	markDirtyArgsForCall    []IndexInvalidatorMarkDirtyArgs
-	invocations             map[string][][]interface{}
-	callOrder               []string
-	invocationsMutex        sync.RWMutex
+	ForceReloadStub        func()
+	forceReloadMutex       sync.RWMutex
+	forceReloadArgsForCall []struct{}
+	MarkDirtyStub          func(...pageindex.Key)
+	markDirtyMutex         sync.RWMutex
+	markDirtyArgsForCall   []IndexInvalidatorMarkDirtyArgs
+	invocations            map[string][][]interface{}
+	callOrder              []string
+	invocationsMutex       sync.RWMutex
 }
 
 // IndexInvalidatorMarkDirtyArgs holds the arguments of one call to MarkDirty.
@@ -29,27 +29,27 @@ type IndexInvalidatorMarkDirtyArgs struct {
 	Arg1 []pageindex.Key
 }
 
-func (fake *IndexInvalidator) MarkAllDirty() {
-	fake.markAllDirtyMutex.Lock()
-	fake.markAllDirtyArgsForCall = append(fake.markAllDirtyArgsForCall, struct{}{})
-	stub := fake.MarkAllDirtyStub
-	fake.recordInvocation("MarkAllDirty", []interface{}{})
-	fake.markAllDirtyMutex.Unlock()
+func (fake *IndexInvalidator) ForceReload() {
+	fake.forceReloadMutex.Lock()
+	fake.forceReloadArgsForCall = append(fake.forceReloadArgsForCall, struct{}{})
+	stub := fake.ForceReloadStub
+	fake.recordInvocation("ForceReload", []interface{}{})
+	fake.forceReloadMutex.Unlock()
 	if stub != nil {
 		stub()
 	}
 }
 
-func (fake *IndexInvalidator) MarkAllDirtyCallCount() int {
-	fake.markAllDirtyMutex.RLock()
-	defer fake.markAllDirtyMutex.RUnlock()
-	return len(fake.markAllDirtyArgsForCall)
+func (fake *IndexInvalidator) ForceReloadCallCount() int {
+	fake.forceReloadMutex.RLock()
+	defer fake.forceReloadMutex.RUnlock()
+	return len(fake.forceReloadArgsForCall)
 }
 
-func (fake *IndexInvalidator) MarkAllDirtyCalls(stub func()) {
-	fake.markAllDirtyMutex.Lock()
-	defer fake.markAllDirtyMutex.Unlock()
-	fake.MarkAllDirtyStub = stub
+func (fake *IndexInvalidator) ForceReloadCalls(stub func()) {
+	fake.forceReloadMutex.Lock()
+	defer fake.forceReloadMutex.Unlock()
+	fake.ForceReloadStub = stub
 }
 
 func (fake *IndexInvalidator) MarkDirty(arg1 ...pageindex.Key) {

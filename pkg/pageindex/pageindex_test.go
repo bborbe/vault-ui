@@ -566,22 +566,28 @@ var _ = Describe("PageIndex", func() {
 			Expect(fake.lister.ListFilesCallCount()).To(Equal(3))
 		})
 
-		It("dirties every known key on MarkAllDirty", func() {
+		It("re-reads every file of every known key on ForceReload", func() {
 			aTasks := pageindex.NewKey("/vault-a", "24 Tasks")
 			bTasks := pageindex.NewKey("/vault-b", "24 Tasks")
 			fake.setPages(aTasks, "a")
 			fake.setPages(bTasks, "b")
 			index := newIndex(fake)
 			Expect(index.Build(ctx, []pageindex.Key{aTasks, bTasks})).To(BeNil())
-
-			index.MarkAllDirty()
 			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
+			before := fake.reader.ReadPageCallCount()
+
+			index.ForceReload()
+			// The mark alone reads and lists nothing.
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
+			Expect(fake.reader.ReadPageCallCount()).To(Equal(before))
 
 			_, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			_, err = index.ListPages(ctx, "/vault-b", "24 Tasks")
 			Expect(err).To(BeNil())
 			Expect(fake.lister.ListFilesCallCount()).To(Equal(4))
+			// Every file is re-read although no fingerprint changed.
+			Expect(fake.reader.ReadPageCallCount() - before).To(Equal(2))
 		})
 
 		It("ignores a dirty mark for an unknown key", func() {

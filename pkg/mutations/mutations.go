@@ -76,13 +76,16 @@ type WriteQueue interface {
 }
 
 // IndexInvalidator marks the read-side page index stale after a vault-ui write,
-// so the next list read re-reads the affected folders. It deliberately exposes
-// no read method: mutations keep reading vault files directly.
+// so the next list read re-reads what the write changed. MarkDirty marks whole
+// folders, whose next read compares fingerprints and re-reads only what
+// changed; ForceReload is the operator escape hatch behind the cache-reload
+// route. It deliberately exposes no page-content read method: mutations keep
+// reading vault files directly.
 //
 //counterfeiter:generate -o ./mocks/index_invalidator.go --fake-name IndexInvalidator . IndexInvalidator
 type IndexInvalidator interface {
 	MarkDirty(keys ...pageindex.Key)
-	MarkAllDirty()
+	ForceReload()
 }
 
 // ConfigProvider resolves the merged vault-ui/vault-cli configuration. It never

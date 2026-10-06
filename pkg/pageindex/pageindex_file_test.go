@@ -288,6 +288,8 @@ var _ = Describe("RefreshFile", func() {
 			list()
 
 			entered, release := fake.blockReads("alpha.md")
+			// The stat-diff re-reads alpha only because its fingerprint changed.
+			fake.putPage(key, "alpha", "# alpha v2")
 			index.MarkDirty(key)
 			buildDone := make(chan []*domain.Page, 1)
 			go func() {
@@ -296,10 +298,10 @@ var _ = Describe("RefreshFile", func() {
 				Expect(err).To(BeNil())
 				buildDone <- pages
 			}()
-			// The folder build lists, then blocks reading alpha.md.
+			// The stat-diff lists, then blocks reading alpha.md.
 			Eventually(entered).Should(Receive(Equal("alpha.md")))
 
-			fake.putPage(key, "alpha", "# alpha v2")
+			fake.putPage(key, "alpha", "# alpha v3")
 			event := readFile(ctx, "alpha.md")
 			Eventually(entered).Should(Receive(Equal("alpha.md")))
 			release("alpha.md", 1)
@@ -308,8 +310,8 @@ var _ = Describe("RefreshFile", func() {
 			// The build's older read is discarded, so even the caller that
 			// joined the build sees the event's page.
 			release("alpha.md", 0)
-			Expect(string((<-buildDone)[0].Content)).To(Equal("# alpha v2"))
-			Expect(string(list()[0].Content)).To(Equal("# alpha v2"))
+			Expect(string((<-buildDone)[0].Content)).To(Equal("# alpha v3"))
+			Expect(string(list()[0].Content)).To(Equal("# alpha v3"))
 		})
 
 		It("AC6/behavior 6 lets a folder build beat an event that started earlier", func() {

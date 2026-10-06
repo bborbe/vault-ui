@@ -1237,33 +1237,33 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 	It("does not mark for JumpTask", func() {
 		Expect(h.service.JumpTask(ctx, "personal", taskTwoID, true)).To(Succeed())
 		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 
 	It("does not mark for ReloadConfig", func() {
 		_, err := h.service.ReloadConfig(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 
-	It("marks every key once on a single-vault reload", func() {
+	It("forces a full re-read once on a single-vault reload", func() {
 		_, err := h.service.ReloadCache(ctx, "personal")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(1))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(1))
 		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 
-	It("marks every key once on an all-vault reload", func() {
+	It("forces a full re-read once on an all-vault reload", func() {
 		_, err := h.service.ReloadCache(ctx, "")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(1))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(1))
 	})
 
 	It("does not mark on a 404 reload", func() {
 		_, err := h.service.ReloadCache(ctx, "nope")
 		Expect(httpStatus(err)).To(Equal(404))
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 })
 

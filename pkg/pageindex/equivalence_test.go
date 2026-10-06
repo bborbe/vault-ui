@@ -120,6 +120,68 @@ var _ = Describe("Snapshot equivalence", func() {
 		Expect(reflect.DeepEqual(got, want)).To(BeTrue())
 	})
 
+	It("AC3 stays equal to vault-cli through create, modify, delete and rename", func() {
+		ctx := context.Background()
+		vaultDir := buildEquivalenceVault()
+		index := newEquivalenceIndex()
+		key := pageindex.NewKey(vaultDir, equivalenceFolder)
+
+		// Every step is checked against vault-cli's own listing of the same dir.
+		assertEquivalent := func() {
+			want, err := storage.NewPageStorage(nil).ListPages(ctx, vaultDir, equivalenceFolder)
+			Expect(err).NotTo(HaveOccurred())
+			got, err := index.ListPages(ctx, vaultDir, equivalenceFolder)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reflect.DeepEqual(got, want)).To(
+				BeTrue(),
+				"index %v != vault-cli %v",
+				indexedNames(got),
+				indexedNames(want),
+			)
+		}
+
+		// The cold build is the starting point.
+		assertEquivalent()
+
+		// Create, through a per-file update.
+		writeFixtureFile(vaultDir, "Created.md", "---\ntitle: Created\n---\n# Created\n")
+		Expect(index.RefreshFile(ctx, key, "Created.md")).To(Succeed())
+		assertEquivalent()
+
+		// Modify Plain.md, whose symlink Inside.md shares the same bytes.
+		writeFixtureFile(vaultDir, "Plain.md", "---\ntitle: Plain\nstatus: done\n---\n# Plain v2\n")
+		Expect(index.RefreshFile(ctx, key, "Plain.md")).To(Succeed())
+		Expect(index.RefreshFile(ctx, key, "Inside.md")).To(Succeed())
+		assertEquivalent()
+
+		// Delete, through a per-file update.
+		Expect(os.Remove(filepath.Join(vaultDir, equivalenceFolder, "NoFrontmatter.md"))).
+			To(Succeed())
+		Expect(index.RefreshFile(ctx, key, "NoFrontmatter.md")).To(Succeed())
+		assertEquivalent()
+
+		// Rename is a delete plus a create.
+		Expect(os.Rename(
+			filepath.Join(vaultDir, equivalenceFolder, "Wikilink.md"),
+			filepath.Join(vaultDir, equivalenceFolder, "Renamed.md"),
+		)).To(Succeed())
+		Expect(index.RefreshFile(ctx, key, "Wikilink.md")).To(Succeed())
+		Expect(index.RefreshFile(ctx, key, "Renamed.md")).To(Succeed())
+		assertEquivalent()
+
+		// The in-vault symlink's target is rewritten with no event delivered; a
+		// stat-diff must pick up both the target and the symlink.
+		writeFixtureFile(
+			vaultDir, "Plain.md", "---\ntitle: Plain\nstatus: blocked\n---\n# Plain v3 longer\n",
+		)
+		Expect(index.Refresh(ctx, key)).To(BeNil())
+		assertEquivalent()
+
+		// And the stat-diff of an unchanged folder changes nothing.
+		Expect(index.Refresh(ctx, key)).To(BeNil())
+		assertEquivalent()
+	})
+
 	It("matches vault-cli on a missing folder", func() {
 		ctx := context.Background()
 		vaultDir := GinkgoT().TempDir()

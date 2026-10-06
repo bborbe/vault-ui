@@ -140,6 +140,13 @@ func (c *countingSeams) listCounts() map[[2]string]int {
 	return counts
 }
 
+// readCount returns the total single-file reads the index has made.
+func (c *countingSeams) readCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
+}
+
 func (c *countingSeams) totalListCalls() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
