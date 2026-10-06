@@ -8,6 +8,7 @@ created: "2026-10-06T09:08:51Z"
 queued: "2026-10-06T09:33:58Z"
 started: "2026-10-06T11:01:17Z"
 completed: "2026-10-06T11:30:49Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/133
 branch: dark-factory/incremental-page-index-updates
 ---
 
