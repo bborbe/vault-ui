@@ -112,7 +112,7 @@ func (r *resolver) Resolve(ctx context.Context, sessionID string) (string, bool)
 	}
 
 	env := BuildSubprocessEnv(os.Environ(), r.homeDir, r.bundleDir, PidAlive)
-	output, err := r.exec(ctx, env, "wezterm", "cli", "list", "--format", "json")
+	output, err := r.exec(ctx, env, weztermBinary(r.bundleDir), "cli", "list", "--format", "json")
 	if err != nil {
 		logDebug("[PaneResolver] wezterm cli list failed for session %s: %v", sessionID, err)
 		return "", false
@@ -169,6 +169,17 @@ func (r *resolver) candidateName(ctx context.Context, sessionID string) (string,
 		return "", false
 	}
 	return name, true
+}
+
+// weztermBinary returns the absolute wezterm path when the app bundle holds the
+// binary, else the bare name. exec resolves a bare name against this process's
+// own PATH, not the child env, so prepending the bundle dir to the child PATH
+// alone never finds wezterm under launchd, whose PATH lacks the bundle.
+func weztermBinary(bundleDir string) string {
+	if binDir, ok := WeztermBinDir(bundleDir); ok {
+		return filepath.Join(binDir, "wezterm")
+	}
+	return "wezterm"
 }
 
 // stripStatusGlyph trims text, then drops leading runes while the first rune is

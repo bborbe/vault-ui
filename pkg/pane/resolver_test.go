@@ -284,6 +284,29 @@ var _ = Describe("Resolver", func() {
 		}),
 	)
 
+	It("runs the bundle's wezterm by absolute path when the bundle holds it", func() {
+		// exec resolves a bare name against the board's own PATH, which under
+		// launchd lacks the bundle dir, so the bare name is never found there.
+		bundleDir := GinkgoT().TempDir()
+		Expect(os.WriteFile(filepath.Join(bundleDir, "wezterm"), []byte("#!/bin/sh\n"), 0o700)).To(Succeed())
+		params := baseParams()
+		params.BundleDir = bundleDir
+		resolver, execRec, _ := newResolver(
+			params,
+			`[{"pane_id":7,"title":"✳ Fleet Manager"}]`,
+			nil,
+			map[string]string{fullSessionID: "Fleet Manager"},
+		)
+
+		paneID, ok := resolver.Resolve(context.Background(), fullSessionID)
+		Expect(ok).To(BeTrue())
+		Expect(paneID).To(Equal("7"))
+
+		calls := execRec.snapshot()
+		Expect(calls).To(HaveLen(1))
+		Expect(calls[0].name).To(Equal(filepath.Join(bundleDir, "wezterm")))
+	})
+
 	It("hands wezterm cli list --format json as the exact argv", func() {
 		resolver, execRec, _ := newResolver(
 			baseParams(),
