@@ -784,10 +784,12 @@ h1 {
     outline-offset: 1px;
 }
 
-/* Jump control — a sibling of the live badge on a card whose session resolves to
-   a WezTerm pane (jump_pane set). The badge states a fact and ends the session
-   when clicked; this offers the non-destructive move to that pane, so it is
-   drawn lighter than the badge and never changes the badge's own box. */
+/* Jump control — a sibling of the live badge on a live task card. The pane is
+   resolved when the control is clicked, not when the card is drawn, so the
+   control is offered on live session state alone. The badge states a fact and
+   ends the session when clicked; this offers the non-destructive move to that
+   pane, so it is drawn lighter than the badge and never changes the badge's
+   own box. */
 .jump-btn {
     display: inline-flex;
     align-items: center;

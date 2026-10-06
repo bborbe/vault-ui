@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [025-lazy-pane-resolution-at-jump-time]
+summary: Gated the task card's jump control on live session state alone (kind !== 'task' guard), removed every jump_pane read from the served app.js, reconciled the stale CSS comment, bumped both index.html cache-bust tokens to 2026-10-06-lazy-pane-jump, and updated tests/test_jump_control.py to pin the new rule.
+execution_id: vault-ui-lazy-pane-exec-132-spec-025-frontend-jump-on-live-session
+dark-factory-version: dev
 created: "2026-10-06T06:16:43Z"
 queued: "2026-10-06T06:48:20Z"
+started: "2026-10-06T07:52:15Z"
+completed: "2026-10-06T07:56:40Z"
+branch: dark-factory/132-spec-025-frontend-jump-on-live-session
 ---
 
 # Offer the jump control on live session state alone

@@ -1,15 +1,15 @@
 """Static + integration assertions for the card's jump control.
 
 The board tells the operator a session is live but gives no way to reach it;
-``jump_pane`` (backend prompt 101) is the contract this renders against. A live
-card whose payload resolves a pane carries a ``.jump-btn`` sibling beside the
-``● Live`` badge, and clicking it POSTs to the jump route without navigating.
+the contract this renders against is live session state plus a task kind. A live
+task card carries a ``.jump-btn`` sibling beside the ``● Live`` badge, and
+clicking it POSTs to the jump route without navigating.
 
 The static assertions below slice ``sessionButtonHtml`` as text — that is the
 only way this repo can inspect ``app.js`` (no ``package.json``, no node). They
-deliberately assert *presence* of the markup and the guard field, never
-conditional behaviour: a substring cannot show the control is absent when
-``jump_pane`` is null, nor that the Start/Resume/Starting branches emit none.
+deliberately assert *presence* of the markup and the guard, never conditional
+behaviour: a substring cannot show the control is absent for a non-live card,
+nor that the Start/Resume/Starting branches emit none.
 That runtime property is covered only by the Playwright case at the bottom,
 which ``make test-integration`` runs in a browser the container does not have.
 """
@@ -41,11 +41,15 @@ def _slice(marker: str, length: int) -> str:
 
 
 def test_jump_control_rendered_inside_session_button_helper() -> None:
-    """The control is emitted from ``sessionButtonHtml`` and gated on the payload
-    field — not merely present somewhere else in the file."""
+    """The control is emitted from ``sessionButtonHtml`` on live session state for
+    a task card — not merely present somewhere else in the file."""
     body = _slice("function sessionButtonHtml", 4000)
     assert 'class="jump-btn"' in body
-    assert "item.jump_pane" in body  # mirrors models.py TaskResponse.jump_pane
+    assert "jump_pane" not in body  # the control is gated on live session state, not pane data
+    assert (
+        "jump_pane" not in APP_JS
+    )  # whole file: keeps the go-cutover guard's -S baseline a fixed point
+    assert "kind !== 'task'" in body  # a goal card has no jump route
 
 
 def test_jump_control_does_not_replace_the_live_badge_handler() -> None:
@@ -103,7 +107,8 @@ def _write_transcript(root: Path, session_id: str, age_seconds: int) -> None:
 @pytest.fixture
 def jump_server(tmp_path, monkeypatch):
     """Real FastAPI app on a random port, mocked vault-cli, hermetic transcripts,
-    and a stubbed pane resolver so the live task carries ``jump_pane``."""
+    and a stubbed pane resolver so the Python list path stays hermetic; the
+    control renders from live session state alone."""
     projects_root = tmp_path / "claude-projects"
     _write_transcript(projects_root, LIVE_ID, 30)
     monkeypatch.setattr("vault_ui.activity._claude_projects_root", lambda: projects_root)
