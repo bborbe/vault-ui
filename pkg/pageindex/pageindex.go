@@ -67,6 +67,16 @@ type PageIndex interface {
 	// Refresh rebuilds the key's snapshot and blocks until the rebuild that
 	// started after this call has been swapped in.
 	Refresh(ctx context.Context, key Key) error
+	// RefreshFile re-reads one file of the key's folder and publishes a new
+	// snapshot with the result spliced in. It blocks until a snapshot
+	// containing a read that started after this call has been published. The
+	// file's current on-disk state decides the outcome, not the caller's reason
+	// for calling: present and readable replaces or inserts the page at its
+	// filename-ordered position, absent or unreadable removes it. The filename
+	// is a single plain base name including ".md"; a filename that is empty,
+	// contains a path separator, contains "..", or does not end in ".md" is
+	// rejected with an error and nothing is read.
+	RefreshFile(ctx context.Context, key Key, filename string) error
 	// MarkDirty marks the keys stale so the next read performs a shared rebuild.
 	MarkDirty(keys ...Key)
 	// MarkAllDirty marks every known key stale.
@@ -100,6 +110,11 @@ type entry struct {
 	snapshotSeq  uint64
 	fingerprints map[string]FileFingerprint
 
+	// fileReadSeq holds, per base filename, the read sequence of the read whose
+	// result is currently applied — the page present or removed. A name whose
+	// page was removed keeps its entry as a tombstone; it is never deleted.
+	fileReadSeq map[string]uint64
+
 	// requestSeq is bumped by every Refresh and every dirty mark.
 	requestSeq uint64
 	// dirtySeq is requestSeq at the most recent dirty mark.
@@ -110,8 +125,11 @@ type entry struct {
 }
 
 type pageIndex struct {
-	mu                    sync.Mutex
-	entries               map[Key]*entry
+	mu      sync.Mutex
+	entries map[Key]*entry
+	// readSeq is bumped under mu at the start of every single-file read. It
+	// orders those reads against each other and nothing else.
+	readSeq               uint64
 	reader                PageReader
 	lister                DirectoryLister
 	currentDateTimeGetter libtime.CurrentDateTimeGetter
@@ -273,8 +291,17 @@ func (p *pageIndex) snapshot(key Key) ([]*domain.Page, bool) {
 func (p *pageIndex) entryLocked(key Key) *entry {
 	e, ok := p.entries[key]
 	if !ok {
-		e = &entry{}
+		e = &entry{fileReadSeq: map[string]uint64{}}
 		p.entries[key] = e
 	}
 	return e
+}
+
+// takeReadSeq reserves the next single-file read sequence. The caller must not
+// hold the mutex.
+func (p *pageIndex) takeReadSeq() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.readSeq++
+	return p.readSeq
 }

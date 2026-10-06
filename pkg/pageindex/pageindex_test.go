@@ -7,6 +7,7 @@ package pageindex_test
 import (
 	"context"
 	stderrors "errors"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,17 +31,17 @@ type storageFake struct {
 	mu       sync.Mutex
 	pages    map[pageindex.Key][]*domain.Page
 	versions map[pageindex.Key]map[string]int64
-	listed   map[pageindex.Key][]fakeFile
 	gate     chan struct{}
 	entered  chan struct{}
 	failure  error
-}
 
-// fakeFile is one page file captured by a listing.
-type fakeFile struct {
-	name    string
-	page    *domain.Page
-	version int64
+	// readMu guards the per-read gate: while readBlocked is set, a read of a
+	// gated name registers its own gate and waits on it until the test opens it.
+	readMu      sync.Mutex
+	readBlocked bool
+	readGated   map[string]bool
+	readGates   map[string][]chan struct{}
+	readEntered chan string
 }
 
 func newStorageFake() *storageFake {
@@ -49,7 +50,6 @@ func newStorageFake() *storageFake {
 		lister:   &pageindexmocks.DirectoryLister{},
 		pages:    map[pageindex.Key][]*domain.Page{},
 		versions: map[pageindex.Key]map[string]int64{},
-		listed:   map[pageindex.Key][]fakeFile{},
 	}
 	fake.reader.ReadPageStub = fake.readPage
 	fake.lister.ListFilesStub = fake.listFiles
@@ -74,17 +74,14 @@ func (f *storageFake) listFiles(
 
 	f.mu.Lock()
 	gate, entered := f.gate, f.entered
-	live := f.pages[key]
-	captured := make([]fakeFile, 0, len(live))
-	for _, page := range live {
+	entries := make([]pageindex.FileEntry, 0, len(f.pages[key]))
+	for _, page := range f.pages[key] {
 		name := page.FileMetadata.Name
-		captured = append(captured, fakeFile{
-			name:    name,
-			page:    page,
-			version: f.versions[key][name],
+		entries = append(entries, pageindex.FileEntry{
+			Name:        name + ".md",
+			Fingerprint: fingerprint(f.versions[key][name]),
 		})
 	}
-	f.listed[key] = captured
 	f.mu.Unlock()
 
 	if entered != nil {
@@ -102,16 +99,13 @@ func (f *storageFake) listFiles(
 	if f.failure != nil {
 		return nil, f.failure
 	}
-	entries := make([]pageindex.FileEntry, 0, len(captured))
-	for _, file := range captured {
-		entries = append(entries, pageindex.FileEntry{
-			Name:        file.name + ".md",
-			Fingerprint: fingerprint(file.version),
-		})
-	}
+	// The production lister reads os.ReadDir, which is filename ascending.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
 }
 
+// readPage reads the file's current page, captured before any gate wait so a
+// blocked read still reports the content the caller would have seen.
 func (f *storageFake) readPage(
 	_ context.Context,
 	vaultPath string,
@@ -120,15 +114,67 @@ func (f *storageFake) readPage(
 ) (*domain.Page, pageindex.FileFingerprint, error) {
 	key := pageindex.NewKey(vaultPath, pagesDir)
 	name := strings.TrimSuffix(filename, ".md")
+
 	f.mu.Lock()
-	captured := f.listed[key]
-	f.mu.Unlock()
-	for _, file := range captured {
-		if file.name == name {
-			return file.page, fingerprint(file.version), nil
+	var page *domain.Page
+	for _, candidate := range f.pages[key] {
+		if candidate.FileMetadata.Name == name {
+			page = candidate
+			break
 		}
 	}
-	return nil, pageindex.FileFingerprint{}, stderrors.New("page not listed: " + name)
+	version := f.versions[key][name]
+	f.mu.Unlock()
+
+	if gate, entered := f.enterRead(filename); gate != nil {
+		select {
+		case entered <- filename:
+		default:
+		}
+		<-gate
+	}
+
+	if page == nil {
+		return nil, pageindex.FileFingerprint{}, stderrors.New("page not found: " + name)
+	}
+	return page, fingerprint(version), nil
+}
+
+// enterRead registers a read of filename against the active read gate, if the
+// filename is gated, and returns the gate the read must wait on.
+func (f *storageFake) enterRead(filename string) (chan struct{}, chan string) {
+	f.readMu.Lock()
+	defer f.readMu.Unlock()
+	if !f.readBlocked || !f.readGated[filename] {
+		return nil, nil
+	}
+	gate := make(chan struct{})
+	f.readGates[filename] = append(f.readGates[filename], gate)
+	return gate, f.readEntered
+}
+
+// blockReads makes every read of the named files wait on its own gate until the
+// test opens it. The returned channel reports the filename of each read that
+// entered, and the release func opens the nth gate registered for a filename,
+// so the test decides the order the reads finish in.
+func (f *storageFake) blockReads(names ...string) (<-chan string, func(name string, n int)) {
+	entered := make(chan string, 64)
+	gated := map[string]bool{}
+	for _, name := range names {
+		gated[name] = true
+	}
+	f.readMu.Lock()
+	f.readBlocked = true
+	f.readGated = gated
+	f.readGates = map[string][]chan struct{}{}
+	f.readEntered = entered
+	f.readMu.Unlock()
+	return entered, func(name string, n int) {
+		f.readMu.Lock()
+		gate := f.readGates[name][n]
+		f.readMu.Unlock()
+		close(gate)
+	}
 }
 
 // block makes every listing wait until the returned release func runs. The
@@ -175,6 +221,48 @@ func (f *storageFake) setPages(key pageindex.Key, titles ...string) {
 	f.pages[key] = pages
 }
 
+// putPage writes one file into the key's folder, replacing any file of the same
+// name, and bumps its version so its fingerprint changes. Content is given
+// separately from the name, so a test can modify a file without renaming it.
+func (f *storageFake) putPage(key pageindex.Key, name, content string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key = pageindex.NewKey(key.VaultPath, key.PagesDir)
+	replaced := false
+	pages := make([]*domain.Page, 0, len(f.pages[key])+1)
+	for _, page := range f.pages[key] {
+		if page.FileMetadata.Name == name {
+			pages = append(pages, newPageContent(name, content))
+			replaced = true
+			continue
+		}
+		pages = append(pages, page)
+	}
+	if !replaced {
+		pages = append(pages, newPageContent(name, content))
+	}
+	f.pages[key] = pages
+	if f.versions[key] == nil {
+		f.versions[key] = map[string]int64{}
+	}
+	f.versions[key][name]++
+}
+
+// dropPage removes one file from the key's folder.
+func (f *storageFake) dropPage(key pageindex.Key, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key = pageindex.NewKey(key.VaultPath, key.PagesDir)
+	pages := make([]*domain.Page, 0, len(f.pages[key]))
+	for _, page := range f.pages[key] {
+		if page.FileMetadata.Name == name {
+			continue
+		}
+		pages = append(pages, page)
+	}
+	f.pages[key] = pages
+}
+
 func (f *storageFake) setFailure(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -182,10 +270,16 @@ func (f *storageFake) setFailure(err error) {
 }
 
 func newPage(title string) *domain.Page {
+	return newPageContent(title, "# "+title)
+}
+
+// newPageContent builds a page whose file name and content differ, so a test
+// can change a file's content without changing its name.
+func newPageContent(name, content string) *domain.Page {
 	return domain.NewPage(
-		map[string]any{"title": title},
-		domain.FileMetadata{Name: title, FilePath: "/vault/" + title + ".md"},
-		domain.Content("# "+title),
+		map[string]any{"title": name},
+		domain.FileMetadata{Name: name, FilePath: "/vault/" + name + ".md"},
+		domain.Content(content),
 	)
 }
 

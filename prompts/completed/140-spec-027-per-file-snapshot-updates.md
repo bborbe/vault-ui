@@ -1,11 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [027-incremental-page-index-updates]
+summary: Added PageIndex.RefreshFile with copy-on-write splice, per-file read sequencing (newest-started wins, cross-file merge in the folder build) and the vault_ui_page_index_files_read_total{reason} counter, with regenerated fakes, 19 new specs and 96.6% package coverage.
+execution_id: vault-ui-incremental-index-exec-140-spec-027-per-file-snapshot-updates
+dark-factory-version: dev
 created: "2026-10-06T09:08:51Z"
 queued: "2026-10-06T09:33:58Z"
-completed: "2026-10-06T09:34:00Z"
+started: "2026-10-06T10:04:58Z"
+completed: "2026-10-06T10:35:17Z"
 branch: dark-factory/incremental-page-index-updates
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/incremental-page-index-updates"; uncommitted changes: specs/in-progress/027-incremental-page-index-updates.md'
 ---
 
 # Update the page index one file at a time with a copy-on-write splice
