@@ -1412,10 +1412,10 @@ function sessionButtonHtml(kind, item) {
         // lost — that is the accepted trade-off, stated in the confirm dialog.
         const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
         // Jump control — a sibling of the badge, never a second handler on it: the
-        // badge's click ENDS the session, so navigation must not ride on it. Gated
-        // on jump_pane (models.py TaskResponse), the server-resolved pane: absent →
-        // no control at all, never a dead one. Route: POST /tasks/{id}/jump.
-        if (!item.jump_pane) {
+        // badge's click ENDS the session, so navigation must not ride on it. Offered
+        // on live session state alone, and only for tasks: a goal card has no jump
+        // route. Route: POST /tasks/{id}/jump.
+        if (kind !== 'task') {
             return liveBadge;
         }
         return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}')" title="Jump to this session's terminal pane">↗</span>`;
@@ -1936,8 +1936,9 @@ async function jumpToPane(kind, id) {
             { method: 'POST' }
         );
         if (!response.ok) {
-            // Transient failure is not evidence the pane is gone: the payload
-            // said it resolves, so leave the control in place.
+            // Transient failure is not evidence the pane is gone: the control's
+            // availability follows live session state, not pane resolution, so
+            // it stays in place.
             showToast(await parseErrorResponse(response), true);
             return;
         }

@@ -302,7 +302,16 @@ wait_for() {
 }
 
 normalize() {
-  jq -S . "$1" 2>/dev/null || cat "$1"
+  # `jump_pane` is intentionally absent from the Go backend's task responses
+  # (spec 025 — a session's pane is resolved when the jump control is clicked,
+  # never on a list read). The Python reference still emits it, so it is removed
+  # from BOTH sides before comparison. Every other key stays compared: widening
+  # this filter would silently drop the safety net for the routes this change
+  # does not touch.
+  jq -S 'if type == "array"
+         then map(if type == "object" then del(.jump_pane) else . end)
+         elif type == "object" then del(.jump_pane)
+         else . end' "$1" 2>/dev/null || cat "$1"
 }
 
 # normalize_mutation normalizes a JSON body for comparison: canonical key order
@@ -546,6 +555,11 @@ else
 fi
 
 # Static assets: byte identity (query strings ignored for path resolution).
+# `app.js` changed on purpose with spec 025 — the frontend no longer reads the
+# removed `jump_pane` field. This stays a live comparison of the two backends'
+# served bytes, not a stored baseline: the Python backend mounts
+# `src/vault_ui/static/` and the Go binary embeds the same tree, so a frontend
+# edit moves both sides together and there is no pinned hash to re-baseline here.
 for asset in "index.html" "app.js?v=parity" "style.css?v=parity"; do
   py_hash="$(curl_local -s "${PY_BASE}/${asset}" | sha256sum | cut -d' ' -f1)"
   go_hash="$(curl_local -s "${GO_BASE}/${asset}" | sha256sum | cut -d' ' -f1)"

@@ -7,7 +7,6 @@ package board
 import (
 	"context"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/bborbe/errors"
@@ -149,13 +148,11 @@ func (b *board) tasksForVault(
 		rows[i].sessionState = sessionStatePtr(state)
 	}
 
-	paneMap := b.resolvePanes(ctx, rows)
-
 	responses := make([]api.TaskResponse, 0, len(rows))
 	for i := range rows {
 		responses = append(
 			responses,
-			b.taskResponse(ctx, vault, rows[i], projectDir, projectsRoot, paneMap),
+			b.taskResponse(ctx, vault, rows[i], projectDir, projectsRoot),
 		)
 	}
 	return responses, nil
@@ -224,52 +221,17 @@ func (b *board) sessionStarted(vaultName, itemID string) *string {
 	return nil
 }
 
-func (b *board) resolvePanes(ctx context.Context, rows []taskRow) map[string]string {
-	ids := make([]string, 0)
-	seen := map[string]bool{}
-	for _, row := range rows {
-		if row.sessionState != nil &&
-			*row.sessionState == string(session.SessionStateLive) &&
-			row.item.ClaudeSessionID != "" &&
-			!seen[row.item.ClaudeSessionID] {
-			seen[row.item.ClaudeSessionID] = true
-			ids = append(ids, row.item.ClaudeSessionID)
-		}
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-	sort.Strings(ids)
-	resolved := map[string]string{}
-	for _, id := range ids {
-		if paneID, ok := b.pane.Resolve(ctx, id); ok {
-			resolved[id] = paneID
-		}
-	}
-	return resolved
-}
-
 func (b *board) taskResponse(
 	ctx context.Context,
 	vault Vault,
 	row taskRow,
 	projectDir, projectsRoot string,
-	paneMap map[string]string,
 ) api.TaskResponse {
 	item := row.item
 
 	phase := strPtr(item.Phase)
 	if row.phaseOverride != nil {
 		phase = row.phaseOverride
-	}
-
-	var jumpPane *string
-	if row.sessionState != nil &&
-		*row.sessionState == string(session.SessionStateLive) &&
-		item.ClaudeSessionID != "" {
-		if paneID, ok := paneMap[item.ClaudeSessionID]; ok {
-			jumpPane = &paneID
-		}
 	}
 
 	blockers := row.blockers
@@ -317,7 +279,6 @@ func (b *board) taskResponse(
 			projectsRoot,
 		)),
 		SessionState: row.sessionState,
-		JumpPane:     jumpPane,
 	}
 }
 
