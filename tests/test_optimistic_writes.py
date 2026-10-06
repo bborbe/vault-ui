@@ -3,7 +3,9 @@
 The board must render a queued frontmatter write the moment the server accepts
 it (202), hold that value across refetches until the item's own frame confirms
 it, render the confirmed value exactly once even though the file watcher echoes
-the write back, and revert with an error toast when the write fails.
+the write back, consume that echo once per item however late it arrives — and
+let the expectation lapse after a ceiling when no echo comes — and revert with an
+error toast when the write fails.
 
 These specs serve the real static bundle (``src/vault_ui/static``) and answer
 every ``/api/**`` request and the ``/ws`` socket from the test itself, so the
@@ -316,6 +318,38 @@ def _drag_and_hold(board: _Board, page: Page) -> None:
     assert board.state["tasks"][0]["phase"] == "planning", "the write must still be held"
 
 
+def _send_modified(board: _Board, task_id: str) -> None:
+    """Push one watcher `modified` frame for ``task_id``."""
+    board.send(
+        {
+            "type": "modified",
+            "task_id": task_id,
+            "vault": VAULT_NAME,
+            "item_kind": "task",
+        }
+    )
+
+
+def _confirm_own_write(board: _Board) -> float:
+    """Release the held write, push its own frame and wait for its single list read.
+
+    Returns the monotonic timestamp at which the own frame was sent — the point
+    after which only the watcher's echo (and later frames) may cause a read.
+    """
+    board.set_phase(PROBE_TASK, "execution")
+    own_frame_at = time.monotonic()
+    board.send(
+        {
+            "type": "task_updated",
+            "task_id": PROBE_TASK,
+            "item_kind": "task",
+            "vault": VAULT_NAME,
+        }
+    )
+    board.wait_for_list_read(after=own_frame_at)
+    return own_frame_at
+
+
 def _refetch_from_an_unrelated_frame(board: _Board, page: Page) -> None:
     """Push a watcher frame for the other card and wait for the refetch it causes."""
     page.evaluate(
@@ -324,14 +358,7 @@ def _refetch_from_an_unrelated_frame(board: _Board, page: Page) -> None:
         }}"""
     )
     frame_at = time.monotonic()
-    board.send(
-        {
-            "type": "modified",
-            "task_id": OTHER_TASK,
-            "vault": VAULT_NAME,
-            "item_kind": "task",
-        }
-    )
+    _send_modified(board, OTHER_TASK)
     # renderTasks recreates every card, so a Probe Task card without the tag is
     # a freshly rendered node — the positive control that a refetch happened.
     expect(page.locator(f'[data-task-id="{PROBE_TASK}"]:not([data-pre-refetch])')).to_have_count(1)
@@ -422,6 +449,67 @@ def test_ac6b_confirmed_value_is_rendered_exactly_once(board: _Board, page: Page
     assert page.evaluate("() => window.__confirmedRenders") == 1
     assert len(board.list_reads(after=own_frame_at)) == 1
     expect(page.locator(f'#cards-execution [data-task-id="{PROBE_TASK}"]')).to_have_count(1)
+
+
+def test_late_echo_is_suppressed(board: _Board, page: Page) -> None:
+    """An echo arriving past the old 3 s window is still consumed as our own write."""
+    page.clock.install()
+    board.goto()
+    _drag_and_hold(board, page)
+    _confirm_own_write(board)
+
+    # The echo trails the own frame by vault-cli's watch debounce plus the
+    # page-index refresh the watcher runs before broadcasting; ~3.9 s was
+    # observed live, beyond the old 3 s window.
+    page.clock.fast_forward(3_900)
+
+    echo_at = time.monotonic()
+    _send_modified(board, PROBE_TASK)
+    # Frames are handled in order, so the unrelated frame's read below proves the
+    # echo above was processed (and consumed) first.
+    _send_modified(board, OTHER_TASK)
+    board.wait_for_list_read(after=echo_at)
+    page.wait_for_timeout(1000)
+
+    assert len(board.list_reads(after=echo_at)) == 1, "only the unrelated frame may refetch"
+    expect(page.locator(f'#cards-execution [data-task-id="{PROBE_TASK}"]')).to_have_count(1)
+
+
+def test_frame_after_the_echo_is_dispatched(board: _Board, page: Page) -> None:
+    """The echo consumes the expectation; the next frame for the item refetches."""
+    board.goto()
+    _drag_and_hold(board, page)
+    _confirm_own_write(board)
+
+    echo_at = time.monotonic()
+    _send_modified(board, PROBE_TASK)
+    page.wait_for_timeout(1000)
+    assert not board.list_reads(after=echo_at), "the echo itself must not refetch"
+
+    second_at = time.monotonic()
+    _send_modified(board, PROBE_TASK)
+    board.wait_for_list_read(after=second_at)
+    page.wait_for_timeout(1000)
+    assert len(board.list_reads(after=second_at)) == 1
+
+
+def test_external_frame_after_the_ceiling_is_dispatched_when_no_echo_came(
+    board: _Board, page: Page
+) -> None:
+    """No echo within the ceiling: the expectation lapses and the next frame shows."""
+    page.clock.install()
+    board.goto()
+    _drag_and_hold(board, page)
+    _confirm_own_write(board)
+
+    ceiling_ms = page.evaluate("() => OWN_WRITE_ECHO_CEILING_MS")
+    page.clock.fast_forward(ceiling_ms + 1_000)
+
+    frame_at = time.monotonic()
+    _send_modified(board, PROBE_TASK)
+    board.wait_for_list_read(after=frame_at)
+    page.wait_for_timeout(1000)
+    assert len(board.list_reads(after=frame_at)) == 1
 
 
 def test_failed_write_reverts_the_card_and_toasts(board: _Board, page: Page) -> None:

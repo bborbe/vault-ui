@@ -29,18 +29,27 @@ const POLL_INTERVAL_MS = 60000; // Fallback polling every 60 seconds
 // Spec 025 — optimistic writes. A queued frontmatter write answers 202 with the
 // requested value; the board renders it at once and holds it as a pending
 // overlay until the item's own frame confirms it or a failed-write frame names
-// it. Echo window: after a write's own frame confirms it, watcher frames for the
-// same item are its own file change echoing back and are ignored for this long.
-// The echo trails the own frame by vault-cli's 100 ms watch debounce plus the
-// page-index refresh the watcher runs before broadcasting (docs/page-index.md).
-// Trade-offs: an echo later than this costs one extra, value-identical re-read;
-// a genuine external edit of the same item inside the window is picked up by
-// the next poll or unrelated frame instead. Not a setting — do not expose it.
-const OWN_WRITE_ECHO_WINDOW_MS = 3000;
+// it. Echo marker: the echo is matched by item key and consumed once, not timed.
+// After a write's own frame confirms it, the first non-`deleted` watcher frame
+// for that item is its own file change echoing back and is ignored; the marker
+// is then deleted, so the next frame for that item is dispatched normally.
+// A timer alone failed because the echo trails the own frame by vault-cli's
+// watch debounce plus the page-index refresh the watcher runs before
+// broadcasting (docs/page-index.md) — observed at ~3.9 s live, beyond the old
+// 3 s window. The ceiling exists only so a write whose echo never arrives cannot
+// mute the item forever. Trade-off: if no echo comes (including a burst whose
+// echoes the watcher coalesced into one), one genuine external edit of that item
+// within the ceiling is ignored and is picked up by the next poll
+// (POLL_INTERVAL_MS) or an unrelated frame instead. Trade-off: the marker is one
+// per item, not one per write; if the watcher emits more than one echo for a
+// burst of writes to the same item, each extra echo costs one value-identical
+// re-read. Not a setting — do not expose it.
+const OWN_WRITE_ECHO_CEILING_MS = 30000;
 // Pending optimistic writes: key -> { kind, vault, id, fields, outstanding, expectsFrame }
 let pendingWrites = new Map();
-// key -> epoch ms until which watcher frames for that item are echo-suppressed
-let echoSuppressUntil = new Map();
+// key -> epoch ms until which the item's single expected echo frame is still
+// awaited (one-shot; deleted when consumed, expired, failed or on reconnect)
+let ownWriteEchoUntil = new Map();
 
 async function parseErrorResponse(response) {
     // Backend returns FastAPI HTTPException → {"detail": "..."} as application/json.
@@ -1400,7 +1409,7 @@ function handleWriteFailed(data) {
         entry.outstanding -= 1;
         if (entry.outstanding <= 0) pendingWrites.delete(key);
     }
-    echoSuppressUntil.delete(key);
+    ownWriteEchoUntil.delete(key);
     showToast(`Could not save ${id}: ${data.reason}`, true);
     loadCurrentView();
 }
@@ -1408,7 +1417,7 @@ function handleWriteFailed(data) {
 // Pending-write bookkeeping for one WebSocket frame. Deliberately runs before
 // the "vault not displayed" check: a write can be in flight while the operator
 // switches the vault filter, and dropping its frame there would leave the entry
-// (and its echo suppression) stuck for the session and hide a failure. Returns
+// (and its echo expectation) stuck for the session and hide a failure. Returns
 // true when the frame is fully handled and no dispatch should happen. Any
 // task_updated/goal_updated for the item counts as its own — a second client's
 // write confirms ours too.
@@ -1422,7 +1431,7 @@ function consumePendingWriteFrame(type, kind, vault, id, data) {
         const entry = pendingWrites.get(key);
         if (!entry) return false;
         entry.outstanding -= 1;
-        echoSuppressUntil.set(key, Date.now() + OWN_WRITE_ECHO_WINDOW_MS);
+        ownWriteEchoUntil.set(key, Date.now() + OWN_WRITE_ECHO_CEILING_MS);
         // A later write for this item is still queued and will confirm it.
         if (entry.outstanding > 0) return true;
         pendingWrites.delete(key);
@@ -1432,12 +1441,18 @@ function consumePendingWriteFrame(type, kind, vault, id, data) {
     }
     if (type !== 'deleted') {
         const entry = pendingWrites.get(key);
-        const suppressedUntil = echoSuppressUntil.get(key);
-        const isEcho = (entry && entry.expectsFrame === true) ||
-            (suppressedUntil !== undefined && suppressedUntil > Date.now());
-        if (isEcho) {
+        if (entry && entry.expectsFrame === true) {
             console.log(`Ignoring ${type} frame for ${id} — own write echo`);
             return true;
+        }
+        const echoUntil = ownWriteEchoUntil.get(key);
+        if (echoUntil !== undefined) {
+            // One-shot: consume the marker whether it is live or expired.
+            ownWriteEchoUntil.delete(key);
+            if (echoUntil > Date.now()) {
+                console.log(`Ignoring ${type} frame for ${id} — own write echo`);
+                return true;
+            }
         }
     }
     return false;
@@ -2793,7 +2808,7 @@ function connectWebSocket() {
             // overlay could be stuck on a value the server never took. The
             // catch-up read is authoritative — drop the overlay and re-read.
             pendingWrites.clear();
-            echoSuppressUntil.clear();
+            ownWriteEchoUntil.clear();
             loadCurrentView();
         }
         wsHasConnected = true;
