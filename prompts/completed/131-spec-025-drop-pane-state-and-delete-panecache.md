@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [025-lazy-pane-resolution-at-jump-time]
+summary: Deleted pkg/panecache and the 3s pane refresher, dropped the pane id from the board's read model, and made the jump route resolve panes on demand via the Go resolver.
+execution_id: vault-ui-lazy-pane-exec-131-spec-025-drop-pane-state-and-delete-panecache
+dark-factory-version: dev
 created: "2026-10-06T06:16:43Z"
 queued: "2026-10-06T06:48:20Z"
+started: "2026-10-06T07:44:30Z"
+completed: "2026-10-06T07:52:06Z"
+branch: dark-factory/131-spec-025-drop-pane-state-and-delete-panecache
 ---
 
 # Drop pane state from the board and delete the pane cache

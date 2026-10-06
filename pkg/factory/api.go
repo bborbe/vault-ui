@@ -25,9 +25,9 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
-	"github.com/bborbe/vault-ui/pkg/panecache"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -138,53 +138,12 @@ func CreateStaticFS() fs.FS {
 	return sub
 }
 
-// CreatePaneCache returns the shared in-memory pane cache the board reads pane
-// ids from. A background refresher keeps it current.
-func CreatePaneCache() panecache.Cache {
-	return panecache.NewCache()
-}
-
-// CreatePaneRefresher returns a run.Func that keeps the pane cache current for
-// every live session, resolving panes off the request path.
-func CreatePaneRefresher(homeDir string, cache panecache.Cache) run.Func {
-	return func(ctx context.Context) error {
-		return panecache.NewRefresher(panecache.RefreshParams{
-			Cache:          cache,
-			Resolver:       CreatePaneResolver(homeDir),
-			LiveSessionIDs: func(ctx context.Context) []string { return liveSessionIDs(ctx, homeDir) },
-			Interval:       panecache.DefaultRefreshInterval,
-		}).RunLoop(ctx)
-	}
-}
-
-// liveSessionIDs returns the deduped union of the Claude session registry ids
-// and the live resume/session-id process ids, mirroring sessionSignals. A
-// ps-scanner error yields an empty resume-id list.
-func liveSessionIDs(ctx context.Context, homeDir string) []string {
-	signals := sessionSignals{homeDir: homeDir}
-	seen := map[string]bool{}
-	ids := make([]string, 0)
-	for _, id := range signals.RegistrySessionIDs(ctx) {
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-	for _, id := range signals.ResumeSessionIDs(ctx) {
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
 // CreateAPIHandler builds the :8000 API router.
 func CreateAPIHandler(
 	loader config.Loader,
 	configPath string,
 	cache statuscache.Cache,
-	paneCache panecache.Cache,
+	paneResolver mutations.PaneResolver,
 	launches launchregistry.Registry,
 	homeDir string,
 	readiness vaultui.Readiness,
@@ -198,12 +157,11 @@ func CreateAPIHandler(
 		Launch:  launches,
 		Clock:   libtime.NewCurrentDateTime(),
 		Signals: sessionSignals{homeDir: homeDir},
-		Pane:    paneCache,
 		HomeDir: homeDir,
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
-		connectionEventPublisher{manager: manager}, pageIndex,
+		paneResolver, connectionEventPublisher{manager: manager}, pageIndex,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
 }

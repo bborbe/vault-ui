@@ -100,6 +100,7 @@ func CreateMutationService(
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
+	paneResolver mutations.PaneResolver,
 	publisher mutations.EventPublisher,
 	index mutations.IndexInvalidator,
 ) mutations.Service {
@@ -114,7 +115,7 @@ func CreateMutationService(
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.NewPSScanner("-axww", "-o", "args="),
 		Signaler:  sigterm.NewProcessSignaler(),
-		Pane:      CreatePaneResolver(homeDir),
+		Pane:      paneResolver,
 		Jump:      paneJumpClient{homeDir: homeDir},
 		HomeDir:   homeDir,
 		WatcherNames: func(ctx context.Context) []string {

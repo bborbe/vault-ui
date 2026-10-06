@@ -46,14 +46,14 @@ func execute(ctx context.Context) error {
 	configPath := factory.CreateVaultUIConfigPath(homeDir)
 
 	cache := statuscache.NewCache()
-	paneCache := factory.CreatePaneCache()
+	paneResolver := factory.CreatePaneResolver(homeDir)
 	launches := launchregistry.NewRegistry()
 	manager := factory.CreateConnectionManager()
 	// ListPages ignores the storage config, so one shared page storage serves
 	// every vault behind the process-wide page index.
 	pageIndex := factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
 	apiHandler := factory.CreateAPIHandler(
-		loader, configPath, cache, paneCache, launches, homeDir, readiness, manager, pageIndex,
+		loader, configPath, cache, paneResolver, launches, homeDir, readiness, manager, pageIndex,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -82,7 +82,6 @@ func execute(ctx context.Context) error {
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
 		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
-		factory.CreatePaneRefresher(homeDir, paneCache),
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {

@@ -122,7 +122,7 @@ func indexHandler(
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	return factory.CreateAPIHandler(
-		loader, configPath, statuscache.NewCache(), factory.CreatePaneCache(),
+		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), tempDir(), readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
 	)
