@@ -16,7 +16,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -91,7 +91,8 @@ func paneHandler(
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	pageIndex := factory.CreatePageIndex(
-		storage.NewPageStorage(nil), libtime.NewCurrentDateTime(),
+		pageindex.NewPageReader(), pageindex.NewDirectoryLister(),
+		libtime.NewCurrentDateTime(),
 	)
 	Expect(
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),

@@ -16,8 +16,8 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -26,7 +26,71 @@ import (
 // testPageIndex returns a real page index over empty storage, enough for the
 // watcher tests that only assert frame delivery and lifecycle.
 func testPageIndex() pageindex.PageIndex {
-	return CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
+	return CreatePageIndex(
+		pageindex.NewPageReader(), pageindex.NewDirectoryLister(), libtime.NewCurrentDateTime(),
+	)
+}
+
+// countingSeams counts single-file reads and folder listings while delegating
+// to the real disk seams, so the watcher's per-file path is observable end to
+// end without changing what it reads.
+type countingSeams struct {
+	pageindex.PageReader
+	pageindex.DirectoryLister
+
+	mu      sync.Mutex
+	reads   []string
+	listing int
+}
+
+func newCountingSeams() *countingSeams {
+	return &countingSeams{
+		PageReader:      pageindex.NewPageReader(),
+		DirectoryLister: pageindex.NewDirectoryLister(),
+	}
+}
+
+func (c *countingSeams) ListFiles(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+) ([]pageindex.FileEntry, error) {
+	c.mu.Lock()
+	c.listing++
+	c.mu.Unlock()
+	return c.DirectoryLister.ListFiles(ctx, vaultPath, pagesDir)
+}
+
+func (c *countingSeams) ReadPage(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+	filename string,
+) (*domain.Page, pageindex.FileFingerprint, error) {
+	c.mu.Lock()
+	c.reads = append(c.reads, filename)
+	c.mu.Unlock()
+	return c.PageReader.ReadPage(ctx, vaultPath, pagesDir, filename)
+}
+
+// reset clears the recorded work, so a test counts only its own change.
+func (c *countingSeams) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reads = nil
+	c.listing = 0
+}
+
+func (c *countingSeams) readFilenames() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.reads...)
+}
+
+func (c *countingSeams) listCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listing
 }
 
 // captureConn records frames written by the manager's write pump.
@@ -74,7 +138,17 @@ func TestCreateWatcherBroadcastsChanges(t *testing.T) {
 	pumpCtx, pumpCancel := context.WithCancel(context.Background())
 	defer pumpCancel()
 	go func() { _ = manager.Pump(pumpCtx, client) }()
-	go func() { _ = CreateWatcher(loader, manager, testPageIndex(), ops.NewWatchOperation())(ctx) }()
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		_ = CreateWatcher(loader, manager, testPageIndex(), ops.NewWatchOperation())(ctx)
+	}()
+	// Stop the watcher and wait for it before the test returns, so its
+	// fsnotify goroutine cannot outlive the test and race later suites.
+	defer func() {
+		cancel()
+		<-watcherDone
+	}()
 
 	// Give the watcher time to register the directory.
 	time.Sleep(500 * time.Millisecond)
@@ -89,6 +163,90 @@ func TestCreateWatcherBroadcastsChanges(t *testing.T) {
 		t.Logf("frame: %s", frame)
 	case <-time.After(5 * time.Second):
 		t.Fatal("watcher did not broadcast a frame")
+	}
+}
+
+// TestCreateWatcherReadsOnlyTheEventFile drives the real watcher over a real
+// temp directory: a single file written into a warm folder must cost exactly
+// one single-file read of that file and no folder listing at all.
+func TestCreateWatcherReadsOnlyTheEventFile(t *testing.T) {
+	vaultDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vaultDir, "24 Tasks"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(vaultDir, "24 Tasks", "Warm.md"),
+		[]byte("---\nstatus: todo\n---\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := &mocks.Loader{}
+	loader.GetAllVaultsReturns([]*config.Vault{{
+		Name: "personal", Path: vaultDir, TasksDir: "24 Tasks",
+	}}, nil)
+
+	seams := newCountingSeams()
+	index := CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
+	if err := index.Build(context.Background(), []pageindex.Key{
+		pageindex.NewKey(vaultDir, "24 Tasks"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seams.reset()
+
+	manager := websocket.NewConnectionManager(websocket.NewMetrics())
+	conn := newCaptureConn()
+	client, err := manager.Connect(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pumpCtx, pumpCancel := context.WithCancel(context.Background())
+	defer pumpCancel()
+	go func() { _ = manager.Pump(pumpCtx, client) }()
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		_ = CreateWatcher(loader, manager, index, ops.NewWatchOperation())(ctx)
+	}()
+	// Stop the watcher and wait for it before the test returns, so its
+	// fsnotify goroutine cannot outlive the test and race later suites.
+	defer func() {
+		cancel()
+		<-watcherDone
+	}()
+
+	// Give the watcher time to register the directory.
+	time.Sleep(500 * time.Millisecond)
+	if err := os.WriteFile(
+		filepath.Join(vaultDir, "24 Tasks", "New.md"),
+		[]byte("---\nstatus: todo\n---\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case frame := <-conn.signal:
+		t.Logf("frame: %s", frame)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not broadcast a frame")
+	}
+
+	reads := seams.readFilenames()
+	if len(reads) == 0 {
+		t.Fatal("expected at least one single-file read")
+	}
+	for _, name := range reads {
+		if name != "New.md" {
+			t.Fatalf("expected only New.md to be read, got %q", name)
+		}
+	}
+	if listings := seams.listCount(); listings != 0 {
+		t.Fatalf("expected 0 folder listings, got %d", listings)
 	}
 }
 

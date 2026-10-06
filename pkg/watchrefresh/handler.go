@@ -5,17 +5,21 @@
 // Package watchrefresh turns vault-cli watcher events into page-index
 // refreshes and WebSocket frames.
 //
-// It is the event side of the page index: a task or goal event refreshes the
-// single folder it names, and the event's frame is broadcast only after that
-// refresh has swapped in a snapshot built after the event, so a client that
-// re-fetches on the frame sees fresh data. Theme and objective events, and
-// events for a vault the service does not know, are broadcast unchanged
-// without touching the index. The staleness, frame-ordering and key-derivation
-// rules are written down in docs/page-index.md.
+// It is the event side of the page index: a task or goal event re-reads the
+// single file the event names, and the event's frame is broadcast only after
+// that read has swapped in a snapshot built after the event, so a client that
+// re-fetches on the frame sees fresh data. An event whose path is not a single
+// plain filename inside the key's folder falls back to the folder-level
+// stat-diff. Theme and objective events, and events for a vault the service
+// does not know, are broadcast unchanged without touching the index. The
+// staleness, frame-ordering and key-derivation rules are written down in
+// docs/page-index.md.
 package watchrefresh
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
@@ -46,11 +50,25 @@ func EventKey(
 	}
 }
 
-// NewHandler returns the watch handler: it refreshes the event's key, then
-// broadcasts the event's frame. It builds the vault lookup once; the returned
-// handler holds no mutable state and is safe to run concurrently, which the
-// debouncer requires — a new event for a path whose previous handler is still
-// blocked starts a second handler at the same time.
+// EventFilename returns the file's base name within the key's folder for a
+// watcher event, or false when the event's path is not a single plain filename
+// directly inside that folder. The name includes the ".md" suffix.
+func EventFilename(event ops.WatchEvent, key pageindex.Key) (string, bool) {
+	rel, err := filepath.Rel(key.PagesDir, event.Path)
+	if err != nil || rel == "." || filepath.Base(rel) != rel ||
+		strings.Contains(rel, "..") || !strings.HasSuffix(rel, ".md") {
+		return "", false
+	}
+	return rel, true
+}
+
+// NewHandler returns the watch handler: it re-reads the event's single file
+// (falling back to the folder-level stat-diff when the event's path is not a
+// single plain filename inside the key's folder), then broadcasts the event's
+// frame. It builds the vault lookup once; the returned handler holds no mutable
+// state and is safe to run concurrently, which the debouncer requires — a new
+// event for a path whose previous handler is still blocked starts a second
+// handler at the same time.
 func NewHandler(
 	ctx context.Context,
 	vaults []*config.Vault,
@@ -73,10 +91,17 @@ func NewHandler(
 				)
 			}
 		default:
-			if err := pageIndex.Refresh(ctx, key); err != nil {
-				// Refresh returns an error only when ctx was cancelled first:
-				// shutdown. The rebuild itself keeps the previous snapshot and
-				// logs its own failure, so there is nothing to surface here.
+			var err error
+			if filename, ok := EventFilename(event, key); ok {
+				err = pageIndex.RefreshFile(ctx, key, filename)
+			} else {
+				err = pageIndex.Refresh(ctx, key)
+			}
+			if err != nil {
+				// RefreshFile pre-validates its filename and Refresh fails only
+				// when ctx was cancelled first: shutdown. The read itself keeps
+				// the previous snapshot and logs its own failure, so there is
+				// nothing to surface here.
 				glog.V(2).Infof("drop frame on shutdown for %s/%s", event.Vault, event.Name)
 				return nil
 			}

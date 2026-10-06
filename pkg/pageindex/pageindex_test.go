@@ -7,46 +7,81 @@ package pageindex_test
 import (
 	"context"
 	stderrors "errors"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	libtime "github.com/bborbe/time"
-	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
 )
 
-// storageFake is a page storage whose per-key content and blocking behaviour
-// the tests control. The counterfeiter fake underneath records every call.
+// storageFake is a reader and lister pair whose per-key content and blocking
+// behaviour the tests control. The counterfeiter fakes underneath record every
+// call.
 type storageFake struct {
-	*mocks.PageStorage
+	reader *pageindexmocks.PageReader
+	lister *pageindexmocks.DirectoryLister
 
-	mu      sync.Mutex
-	pages   map[pageindex.Key][]*domain.Page
-	gate    chan struct{}
-	entered chan struct{}
-	failure error
+	mu       sync.Mutex
+	pages    map[pageindex.Key][]*domain.Page
+	versions map[pageindex.Key]map[string]int64
+	gate     chan struct{}
+	entered  chan struct{}
+	failure  error
+
+	// readMu guards the per-read gate: while readBlocked is set, a read of a
+	// gated name registers its own gate and waits on it until the test opens it.
+	readMu      sync.Mutex
+	readBlocked bool
+	readGated   map[string]bool
+	readGates   map[string][]chan struct{}
+	readEntered chan string
 }
 
 func newStorageFake() *storageFake {
 	fake := &storageFake{
-		PageStorage: &mocks.PageStorage{},
-		pages:       map[pageindex.Key][]*domain.Page{},
+		reader:   &pageindexmocks.PageReader{},
+		lister:   &pageindexmocks.DirectoryLister{},
+		pages:    map[pageindex.Key][]*domain.Page{},
+		versions: map[pageindex.Key]map[string]int64{},
 	}
-	fake.PageStorage.ListPagesStub = fake.listPages
+	fake.reader.ReadPageStub = fake.readPage
+	fake.lister.ListFilesStub = fake.listFiles
 	return fake
 }
 
-func (f *storageFake) listPages(
-	ctx context.Context,
+// fingerprint derives a file's fingerprint from its version counter, so a
+// content change always changes the fingerprint.
+func fingerprint(version int64) pageindex.FileFingerprint {
+	return pageindex.FileFingerprint{
+		Size:    version,
+		ModTime: time.Unix(version, 0).UTC(),
+	}
+}
+
+func (f *storageFake) listFiles(
+	_ context.Context,
 	vaultPath string,
 	pagesDir string,
-) ([]*domain.Page, error) {
+) ([]pageindex.FileEntry, error) {
+	key := pageindex.NewKey(vaultPath, pagesDir)
+
 	f.mu.Lock()
 	gate, entered := f.gate, f.entered
+	entries := make([]pageindex.FileEntry, 0, len(f.pages[key]))
+	for _, page := range f.pages[key] {
+		name := page.FileMetadata.Name
+		entries = append(entries, pageindex.FileEntry{
+			Name:        name + ".md",
+			Fingerprint: fingerprint(f.versions[key][name]),
+		})
+	}
 	f.mu.Unlock()
 
 	if entered != nil {
@@ -64,11 +99,86 @@ func (f *storageFake) listPages(
 	if f.failure != nil {
 		return nil, f.failure
 	}
-	return f.pages[pageindex.NewKey(vaultPath, pagesDir)], nil
+	// The production lister reads os.ReadDir, which is filename ascending.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
 }
 
-// block makes every ListPages call wait until the returned release func runs.
-// The returned channel reports each call that entered the stub.
+// readPage reads the file's current page, captured before any gate wait so a
+// blocked read still reports the content the caller would have seen.
+func (f *storageFake) readPage(
+	_ context.Context,
+	vaultPath string,
+	pagesDir string,
+	filename string,
+) (*domain.Page, pageindex.FileFingerprint, error) {
+	key := pageindex.NewKey(vaultPath, pagesDir)
+	name := strings.TrimSuffix(filename, ".md")
+
+	f.mu.Lock()
+	var page *domain.Page
+	for _, candidate := range f.pages[key] {
+		if candidate.FileMetadata.Name == name {
+			page = candidate
+			break
+		}
+	}
+	version := f.versions[key][name]
+	f.mu.Unlock()
+
+	if gate, entered := f.enterRead(filename); gate != nil {
+		select {
+		case entered <- filename:
+		default:
+		}
+		<-gate
+	}
+
+	if page == nil {
+		return nil, pageindex.FileFingerprint{}, stderrors.New("page not found: " + name)
+	}
+	return page, fingerprint(version), nil
+}
+
+// enterRead registers a read of filename against the active read gate, if the
+// filename is gated, and returns the gate the read must wait on.
+func (f *storageFake) enterRead(filename string) (chan struct{}, chan string) {
+	f.readMu.Lock()
+	defer f.readMu.Unlock()
+	if !f.readBlocked || !f.readGated[filename] {
+		return nil, nil
+	}
+	gate := make(chan struct{})
+	f.readGates[filename] = append(f.readGates[filename], gate)
+	return gate, f.readEntered
+}
+
+// blockReads makes every read of the named files wait on its own gate until the
+// test opens it. The returned channel reports the filename of each read that
+// entered, and the release func opens the nth gate registered for a filename,
+// so the test decides the order the reads finish in.
+func (f *storageFake) blockReads(names ...string) (<-chan string, func(name string, n int)) {
+	entered := make(chan string, 64)
+	gated := map[string]bool{}
+	for _, name := range names {
+		gated[name] = true
+	}
+	f.readMu.Lock()
+	f.readBlocked = true
+	f.readGated = gated
+	f.readGates = map[string][]chan struct{}{}
+	f.readEntered = entered
+	f.readMu.Unlock()
+	return entered, func(name string, n int) {
+		f.readMu.Lock()
+		gate := f.readGates[name][n]
+		f.readMu.Unlock()
+		close(gate)
+	}
+}
+
+// block makes every listing wait until the returned release func runs. The
+// returned channel reports each call that entered the stub.
 func (f *storageFake) block() (<-chan struct{}, func()) {
 	gate := make(chan struct{})
 	entered := make(chan struct{}, 64)
@@ -86,13 +196,71 @@ func (f *storageFake) block() (<-chan struct{}, func()) {
 }
 
 func (f *storageFake) setPages(key pageindex.Key, titles ...string) {
+	key = pageindex.NewKey(key.VaultPath, key.PagesDir)
 	pages := make([]*domain.Page, 0, len(titles))
 	for _, title := range titles {
 		pages = append(pages, newPage(title))
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.pages[pageindex.NewKey(key.VaultPath, key.PagesDir)] = pages
+	previous := map[string]*domain.Page{}
+	for _, page := range f.pages[key] {
+		previous[page.FileMetadata.Name] = page
+	}
+	versions := f.versions[key]
+	if versions == nil {
+		versions = map[string]int64{}
+		f.versions[key] = versions
+	}
+	for _, page := range pages {
+		name := page.FileMetadata.Name
+		if old, ok := previous[name]; !ok || old.Content != page.Content {
+			versions[name]++
+		}
+	}
+	f.pages[key] = pages
+}
+
+// putPage writes one file into the key's folder, replacing any file of the same
+// name, and bumps its version so its fingerprint changes. Content is given
+// separately from the name, so a test can modify a file without renaming it.
+func (f *storageFake) putPage(key pageindex.Key, name, content string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key = pageindex.NewKey(key.VaultPath, key.PagesDir)
+	replaced := false
+	pages := make([]*domain.Page, 0, len(f.pages[key])+1)
+	for _, page := range f.pages[key] {
+		if page.FileMetadata.Name == name {
+			pages = append(pages, newPageContent(name, content))
+			replaced = true
+			continue
+		}
+		pages = append(pages, page)
+	}
+	if !replaced {
+		pages = append(pages, newPageContent(name, content))
+	}
+	f.pages[key] = pages
+	if f.versions[key] == nil {
+		f.versions[key] = map[string]int64{}
+	}
+	f.versions[key][name]++
+}
+
+// dropPage removes one file from the key's folder.
+func (f *storageFake) dropPage(key pageindex.Key, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key = pageindex.NewKey(key.VaultPath, key.PagesDir)
+	pages := make([]*domain.Page, 0, len(f.pages[key]))
+	for _, page := range f.pages[key] {
+		if page.FileMetadata.Name == name {
+			continue
+		}
+		pages = append(pages, page)
+	}
+	f.pages[key] = pages
 }
 
 func (f *storageFake) setFailure(err error) {
@@ -102,10 +270,16 @@ func (f *storageFake) setFailure(err error) {
 }
 
 func newPage(title string) *domain.Page {
+	return newPageContent(title, "# "+title)
+}
+
+// newPageContent builds a page whose file name and content differ, so a test
+// can change a file's content without changing its name.
+func newPageContent(name, content string) *domain.Page {
 	return domain.NewPage(
-		map[string]any{"title": title},
-		domain.FileMetadata{Name: title, FilePath: "/vault/" + title + ".md"},
-		domain.Content("# "+title),
+		map[string]any{"title": name},
+		domain.FileMetadata{Name: name, FilePath: "/vault/" + name + ".md"},
+		domain.Content(content),
 	)
 }
 
@@ -120,8 +294,8 @@ func titles(pages []*domain.Page) []string {
 func callCountFor(fake *storageFake, key pageindex.Key) int {
 	want := pageindex.NewKey(key.VaultPath, key.PagesDir)
 	count := 0
-	for i := 0; i < fake.ListPagesCallCount(); i++ {
-		_, vaultPath, pagesDir := fake.ListPagesArgsForCall(i)
+	for i := 0; i < fake.lister.ListFilesCallCount(); i++ {
+		_, vaultPath, pagesDir := fake.lister.ListFilesArgsForCall(i)
 		if pageindex.NewKey(vaultPath, pagesDir) == want {
 			count++
 		}
@@ -143,7 +317,9 @@ func fastWaiter() libtime.WaiterDuration {
 }
 
 func newIndex(fake *storageFake) pageindex.PageIndex {
-	return pageindex.NewPageIndex(fake, libtime.NewCurrentDateTime(), fastWaiter())
+	return pageindex.NewPageIndex(
+		fake.reader, fake.lister, libtime.NewCurrentDateTime(), fastWaiter(),
+	)
 }
 
 var _ = Describe("PageIndex", func() {
@@ -165,14 +341,14 @@ var _ = Describe("PageIndex", func() {
 			first, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			Expect(titles(first)).To(Equal([]string{"one", "two"}))
-			Expect(fake.ListPagesCallCount()).To(Equal(1))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(1))
 
 			for i := 0; i < 5; i++ {
 				again, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 				Expect(err).To(BeNil())
 				Expect(again[0]).To(BeIdenticalTo(first[0]))
 			}
-			Expect(fake.ListPagesCallCount()).To(Equal(1))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(1))
 		})
 
 		It("shares a single build across concurrent cold reads", func() {
@@ -200,12 +376,12 @@ var _ = Describe("PageIndex", func() {
 			}()
 
 			Eventually(entered).Should(Receive())
-			Consistently(fake.ListPagesCallCount, "200ms").Should(Equal(1))
+			Consistently(fake.lister.ListFilesCallCount, "200ms").Should(Equal(1))
 
 			release()
 			wg.Wait()
 
-			Expect(fake.ListPagesCallCount()).To(Equal(1))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(1))
 			for i := range results {
 				Expect(errs[i]).To(BeNil())
 				Expect(titles(results[i])).To(Equal([]string{"one"}))
@@ -225,7 +401,7 @@ var _ = Describe("PageIndex", func() {
 			}
 			index := newIndex(fake)
 			Expect(index.Build(ctx, all)).To(BeNil())
-			Expect(fake.ListPagesCallCount()).To(Equal(4))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(4))
 
 			fake.setPages(aTasks, "new")
 			Expect(index.Refresh(ctx, aTasks)).To(BeNil())
@@ -290,7 +466,7 @@ var _ = Describe("PageIndex", func() {
 					done <- index.Refresh(ctx, key)
 				}()
 			}
-			Consistently(fake.ListPagesCallCount, "200ms").Should(Equal(1))
+			Consistently(fake.lister.ListFilesCallCount, "200ms").Should(Equal(1))
 
 			fake.setPages(key, "new")
 			release()
@@ -302,7 +478,7 @@ var _ = Describe("PageIndex", func() {
 				Expect(err).To(BeNil())
 				Expect(titles(pages)).To(Equal([]string{"new"}))
 			}
-			Expect(fake.ListPagesCallCount()).To(Equal(2))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
 		})
 	})
 
@@ -316,12 +492,12 @@ var _ = Describe("PageIndex", func() {
 
 			fake.setPages(key, "new")
 			index.MarkDirty(key)
-			Expect(fake.ListPagesCallCount()).To(Equal(1))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(1))
 
 			pages, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			Expect(titles(pages)).To(Equal([]string{"new"}))
-			Expect(fake.ListPagesCallCount()).To(Equal(2))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
 		})
 
 		It("shares one rebuild between two concurrent reads after one mark", func() {
@@ -349,7 +525,7 @@ var _ = Describe("PageIndex", func() {
 			release()
 			wg.Wait()
 
-			Expect(fake.ListPagesCallCount()).To(Equal(2))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
 			for i := range results {
 				Expect(titles(results[i])).To(Equal([]string{"new"}))
 			}
@@ -381,37 +557,43 @@ var _ = Describe("PageIndex", func() {
 				readDone <- pages
 				readErr <- err
 			}()
-			Consistently(fake.ListPagesCallCount, "150ms").Should(Equal(2))
+			Consistently(fake.lister.ListFilesCallCount, "150ms").Should(Equal(2))
 
 			release()
 			Expect(<-refreshDone).To(BeNil())
 			Expect(<-readErr).To(BeNil())
 			Expect(titles(<-readDone)).To(Equal([]string{"new"}))
-			Expect(fake.ListPagesCallCount()).To(Equal(3))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(3))
 		})
 
-		It("dirties every known key on MarkAllDirty", func() {
+		It("re-reads every file of every known key on ForceReload", func() {
 			aTasks := pageindex.NewKey("/vault-a", "24 Tasks")
 			bTasks := pageindex.NewKey("/vault-b", "24 Tasks")
 			fake.setPages(aTasks, "a")
 			fake.setPages(bTasks, "b")
 			index := newIndex(fake)
 			Expect(index.Build(ctx, []pageindex.Key{aTasks, bTasks})).To(BeNil())
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
+			before := fake.reader.ReadPageCallCount()
 
-			index.MarkAllDirty()
-			Expect(fake.ListPagesCallCount()).To(Equal(2))
+			index.ForceReload()
+			// The mark alone reads and lists nothing.
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
+			Expect(fake.reader.ReadPageCallCount()).To(Equal(before))
 
 			_, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			_, err = index.ListPages(ctx, "/vault-b", "24 Tasks")
 			Expect(err).To(BeNil())
-			Expect(fake.ListPagesCallCount()).To(Equal(4))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(4))
+			// Every file is re-read although no fingerprint changed.
+			Expect(fake.reader.ReadPageCallCount() - before).To(Equal(2))
 		})
 
 		It("ignores a dirty mark for an unknown key", func() {
 			index := newIndex(fake)
 			index.MarkDirty(pageindex.NewKey("/unknown", "24 Tasks"))
-			Expect(fake.ListPagesCallCount()).To(Equal(0))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(0))
 		})
 	})
 
@@ -429,17 +611,17 @@ var _ = Describe("PageIndex", func() {
 			pages, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			Expect(titles(pages)).To(Equal([]string{"old"}))
-			Expect(fake.ListPagesCallCount()).To(Equal(2))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
 
 			Expect(index.Refresh(ctx, key)).To(BeNil())
-			Expect(fake.ListPagesCallCount()).To(Equal(3))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(3))
 
 			fake.setFailure(nil)
 			fake.setPages(key, "new")
 			pages, err = index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			Expect(titles(pages)).To(Equal([]string{"new"}))
-			Expect(fake.ListPagesCallCount()).To(Equal(4))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(4))
 		})
 
 		It("returns an error when the very first build fails", func() {
@@ -460,9 +642,9 @@ var _ = Describe("PageIndex", func() {
 			bTasks := pageindex.NewKey("/vault-b", "24 Tasks")
 			fake.setPages(aTasks, "a")
 			fake.setPages(bTasks, "b")
-			index := pageindex.NewPageIndex(fake, clock, fastWaiter())
+			index := pageindex.NewPageIndex(fake.reader, fake.lister, clock, fastWaiter())
 			Expect(index.Build(ctx, []pageindex.Key{aTasks, bTasks})).To(BeNil())
-			Expect(fake.ListPagesCallCount()).To(Equal(2))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(2))
 
 			rescanCtx, cancel := context.WithCancel(ctx)
 			rescanDone := make(chan error, 1)
@@ -471,19 +653,19 @@ var _ = Describe("PageIndex", func() {
 				rescanDone <- index.Rescan(rescanCtx)
 			}()
 
-			Consistently(fake.ListPagesCallCount, "100ms").Should(Equal(2))
+			Consistently(fake.lister.ListFilesCallCount, "100ms").Should(Equal(2))
 
 			fake.setPages(aTasks, "a2")
 			fake.setPages(bTasks, "b2")
 			clock.SetNow(libtime.DateTime(start.Add(time.Minute)))
 
-			Eventually(fake.ListPagesCallCount, "2s").Should(Equal(4))
+			Eventually(fake.lister.ListFilesCallCount, "2s").Should(Equal(4))
 			Eventually(func() []string {
 				pages, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 				Expect(err).To(BeNil())
 				return titles(pages)
 			}, "2s").Should(Equal([]string{"a2"}))
-			Consistently(fake.ListPagesCallCount, "100ms").Should(Equal(4))
+			Consistently(fake.lister.ListFilesCallCount, "100ms").Should(Equal(4))
 
 			cancel()
 			Eventually(rescanDone, "2s").Should(Receive(BeNil()))
@@ -521,7 +703,7 @@ var _ = Describe("PageIndex", func() {
 				_, err := index.ListPages(readCtx, "/vault-a", "24 Tasks")
 				readDone <- err
 			}()
-			Consistently(fake.ListPagesCallCount, "100ms").Should(Equal(2))
+			Consistently(fake.lister.ListFilesCallCount, "100ms").Should(Equal(2))
 			cancelRead()
 			Eventually(readDone).Should(Receive(HaveOccurred()))
 
@@ -557,18 +739,18 @@ var _ = Describe("PageIndex", func() {
 				_, err := index.ListPages(readCtx, "/vault-a", "24 Tasks")
 				readDone <- err
 			}()
-			Consistently(fake.ListPagesCallCount, "150ms").Should(Equal(2))
+			Consistently(fake.lister.ListFilesCallCount, "150ms").Should(Equal(2))
 
 			cancelRead()
 			release()
 			Expect(<-refreshDone).To(BeNil())
 			Eventually(readDone, "2s").Should(Receive(HaveOccurred()))
 
-			Expect(fake.ListPagesCallCount()).To(Equal(3))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(3))
 			pages, err := index.ListPages(ctx, "/vault-a", "24 Tasks")
 			Expect(err).To(BeNil())
 			Expect(titles(pages)).To(Equal([]string{"new"}))
-			Expect(fake.ListPagesCallCount()).To(Equal(3))
+			Expect(fake.lister.ListFilesCallCount()).To(Equal(3))
 		})
 
 		It("returns an error from Build when ctx is already cancelled", func() {

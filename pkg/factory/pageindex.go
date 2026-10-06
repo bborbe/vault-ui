@@ -11,19 +11,21 @@ import (
 	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
-// CreatePageIndex returns the process-wide page index over pageStorage.
+// CreatePageIndex returns the process-wide page index over the reader and
+// lister seams.
 func CreatePageIndex(
-	pageStorage storage.PageStorage,
+	reader pageindex.PageReader,
+	lister pageindex.DirectoryLister,
 	currentDateTimeGetter libtime.CurrentDateTimeGetter,
 ) pageindex.PageIndex {
 	return pageindex.NewPageIndex(
-		pageStorage,
+		reader,
+		lister,
 		currentDateTimeGetter,
 		libtime.NewWaiterDuration(),
 	)

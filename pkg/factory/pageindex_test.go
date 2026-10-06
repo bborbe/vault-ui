@@ -10,12 +10,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/domain"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -88,29 +88,115 @@ func indexLoader(vaults ...indexVault) (*mocks.Loader, string) {
 	return loader, configPath
 }
 
-// countingPageStorage is a PageStorage fake that counts calls while delegating
-// to the real disk reader, so responses stay byte-identical.
-func countingPageStorage() *mocks.PageStorage {
-	real := storage.NewPageStorage(nil)
-	fake := &mocks.PageStorage{}
-	fake.ListPagesStub = func(
-		ctx context.Context,
-		vaultPath string,
-		pagesDir string,
-	) ([]*domain.Page, error) {
-		return real.ListPages(ctx, vaultPath, pagesDir)
-	}
-	return fake
+// countingSeams counts reads and listings while delegating to the real disk
+// seams, so responses stay byte-identical. Reads are counted per filename and
+// listings per key, so a test can tell a per-file update from a stat-diff.
+type countingSeams struct {
+	pageindex.PageReader
+	pageindex.DirectoryLister
+
+	mu        sync.Mutex
+	reads     int
+	readCalls []seamRead
+	listCalls [][2]string
 }
 
-// listPagesCounts returns the per-(vaultPath, pagesDir) call count.
-func listPagesCounts(fake *mocks.PageStorage) map[[2]string]int {
-	counts := map[[2]string]int{}
-	for i := 0; i < fake.ListPagesCallCount(); i++ {
-		_, vaultPath, pagesDir := fake.ListPagesArgsForCall(i)
-		counts[[2]string{vaultPath, pagesDir}]++
+// seamRead is one ReadPage call.
+type seamRead struct {
+	key      [2]string
+	filename string
+}
+
+func newCountingSeams() *countingSeams {
+	return &countingSeams{
+		PageReader:      pageindex.NewPageReader(),
+		DirectoryLister: pageindex.NewDirectoryLister(),
+	}
+}
+
+func (c *countingSeams) ListFiles(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+) ([]pageindex.FileEntry, error) {
+	c.mu.Lock()
+	c.listCalls = append(c.listCalls, [2]string{vaultPath, pagesDir})
+	c.mu.Unlock()
+	return c.DirectoryLister.ListFiles(ctx, vaultPath, pagesDir)
+}
+
+func (c *countingSeams) ReadPage(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+	filename string,
+) (*domain.Page, pageindex.FileFingerprint, error) {
+	c.mu.Lock()
+	c.reads++
+	c.readCalls = append(c.readCalls, seamRead{
+		key:      [2]string{vaultPath, pagesDir},
+		filename: filename,
+	})
+	c.mu.Unlock()
+	return c.PageReader.ReadPage(ctx, vaultPath, pagesDir, filename)
+}
+
+// reset clears the recorded reads and listings, so a fixture can count only
+// what the test's own requests caused.
+func (c *countingSeams) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reads = 0
+	c.readCalls = nil
+	c.listCalls = nil
+}
+
+// readCounts returns, per key and filename, the number of single-file reads.
+func (c *countingSeams) readCounts() map[[2]string]map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	counts := map[[2]string]map[string]int{}
+	for _, call := range c.readCalls {
+		if counts[call.key] == nil {
+			counts[call.key] = map[string]int{}
+		}
+		counts[call.key][call.filename]++
 	}
 	return counts
+}
+
+// readsFor returns how many times one file of one key was read.
+func (c *countingSeams) readsFor(key [2]string, filename string) int {
+	return c.readCounts()[key][filename]
+}
+
+// readsForKey returns every filename read for one key, with its count.
+func (c *countingSeams) readsForKey(key [2]string) map[string]int {
+	return c.readCounts()[key]
+}
+
+// listCounts returns the per-(vaultPath, pagesDir) listing count.
+func (c *countingSeams) listCounts() map[[2]string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	counts := map[[2]string]int{}
+	for _, call := range c.listCalls {
+		counts[call]++
+	}
+	return counts
+}
+
+// readCount returns the total single-file reads the index has made.
+func (c *countingSeams) readCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
+}
+
+func (c *countingSeams) totalListCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.listCalls)
 }
 
 // indexHandler wires CreateAPIHandler exactly as production does, over the
@@ -137,8 +223,8 @@ var _ = Describe("Page index read wiring", func() {
 		alpha := newIndexVault("alpha")
 		beta := newIndexVault("beta")
 		loader, configPath := indexLoader(alpha, beta)
-		fake := countingPageStorage()
-		pageIndex := factory.CreatePageIndex(fake, libtime.NewCurrentDateTime())
+		seams := newCountingSeams()
+		pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
 		handler := indexHandler(loader, configPath, pageIndex, startWriteQueue())
 
 		Expect(
@@ -146,7 +232,7 @@ var _ = Describe("Page index read wiring", func() {
 		).To(Succeed())
 
 		// Positive control: the warm-up built every (vault, folder) pair.
-		counts := listPagesCounts(fake)
+		counts := seams.listCounts()
 		for _, pair := range [][2]string{
 			{alpha.path, alpha.tasks}, {alpha.path, alpha.goals}, {alpha.path, alpha.topics},
 			{beta.path, beta.tasks}, {beta.path, beta.goals}, {beta.path, beta.topics},
@@ -154,7 +240,7 @@ var _ = Describe("Page index read wiring", func() {
 			Expect(counts[pair]).To(BeNumerically(">=", 1), "warm-up must build %v", pair)
 		}
 
-		warmCalls := fake.ListPagesCallCount()
+		warmCalls := seams.totalListCalls()
 
 		targets := []struct {
 			target string
@@ -179,13 +265,14 @@ var _ = Describe("Page index read wiring", func() {
 		}
 
 		// Evidence: 25 warm requests caused exactly 0 additional reads.
-		Expect(fake.ListPagesCallCount()).To(Equal(warmCalls))
+		Expect(seams.totalListCalls()).To(Equal(warmCalls))
 	})
 
 	Describe("CreatePageIndexWarmup", func() {
 		It("fails when the config cannot be loaded", func() {
 			loader, _ := indexLoader(newIndexVault("alpha"))
-			pageIndex := factory.CreatePageIndex(countingPageStorage(), libtime.NewCurrentDateTime())
+			seams := newCountingSeams()
+			pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
 
 			err := factory.CreatePageIndexWarmup(
 				loader, filepath.Join(tempDir(), "missing.yaml"), pageIndex,
@@ -195,7 +282,8 @@ var _ = Describe("Page index read wiring", func() {
 
 		It("returns nil when the context is cancelled", func() {
 			loader, configPath := indexLoader(newIndexVault("alpha"))
-			pageIndex := factory.CreatePageIndex(countingPageStorage(), libtime.NewCurrentDateTime())
+			seams := newCountingSeams()
+			pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
 
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
@@ -219,13 +307,13 @@ var _ = Describe("Page index read wiring", func() {
 			configPath := filepath.Join(tempDir(), "config.yaml")
 			Expect(os.WriteFile(configPath, []byte("host: 127.0.0.1\n"), 0600)).To(Succeed())
 
-			fake := countingPageStorage()
-			pageIndex := factory.CreatePageIndex(fake, libtime.NewCurrentDateTime())
+			seams := newCountingSeams()
+			pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
 			Expect(
 				factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
 			).To(Succeed())
 
-			counts := listPagesCounts(fake)
+			counts := seams.listCounts()
 			Expect(counts[[2]string{dir, "Tasks"}]).To(BeNumerically(">=", 1))
 			Expect(counts[[2]string{dir, "Goals"}]).To(BeNumerically(">=", 1))
 			Expect(counts[[2]string{dir, ""}]).To(Equal(0))

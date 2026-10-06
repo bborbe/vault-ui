@@ -23,10 +23,13 @@ type PageIndex struct {
 	buildReturnsOnCall map[int]struct {
 		result1 error
 	}
-	ListPagesStub        func(context.Context, string, string) ([]*domain.Page, error)
-	listPagesMutex       sync.RWMutex
-	listPagesArgsForCall []PageIndexListPagesArgs
-	listPagesReturns     struct {
+	ForceReloadStub        func()
+	forceReloadMutex       sync.RWMutex
+	forceReloadArgsForCall []struct{}
+	ListPagesStub          func(context.Context, string, string) ([]*domain.Page, error)
+	listPagesMutex         sync.RWMutex
+	listPagesArgsForCall   []PageIndexListPagesArgs
+	listPagesReturns       struct {
 		result1 []*domain.Page
 		result2 error
 	}
@@ -34,19 +37,28 @@ type PageIndex struct {
 		result1 []*domain.Page
 		result2 error
 	}
-	MarkAllDirtyStub        func()
-	markAllDirtyMutex       sync.RWMutex
-	markAllDirtyArgsForCall []struct{}
-	MarkDirtyStub           func(...pageindex.Key)
-	markDirtyMutex          sync.RWMutex
-	markDirtyArgsForCall    []PageIndexMarkDirtyArgs
-	RefreshStub             func(context.Context, pageindex.Key) error
-	refreshMutex            sync.RWMutex
-	refreshArgsForCall      []PageIndexRefreshArgs
-	refreshReturns          struct {
+	MarkDirtyStub            func(...pageindex.Key)
+	markDirtyMutex           sync.RWMutex
+	markDirtyArgsForCall     []PageIndexMarkDirtyArgs
+	MarkFileDirtyStub        func(pageindex.Key, string)
+	markFileDirtyMutex       sync.RWMutex
+	markFileDirtyArgsForCall []PageIndexMarkFileDirtyArgs
+	RefreshStub              func(context.Context, pageindex.Key) error
+	refreshMutex             sync.RWMutex
+	refreshArgsForCall       []PageIndexRefreshArgs
+	refreshReturns           struct {
 		result1 error
 	}
 	refreshReturnsOnCall map[int]struct {
+		result1 error
+	}
+	RefreshFileStub        func(context.Context, pageindex.Key, string) error
+	refreshFileMutex       sync.RWMutex
+	refreshFileArgsForCall []PageIndexRefreshFileArgs
+	refreshFileReturns     struct {
+		result1 error
+	}
+	refreshFileReturnsOnCall map[int]struct {
 		result1 error
 	}
 	RescanStub        func(context.Context) error
@@ -81,10 +93,23 @@ type PageIndexMarkDirtyArgs struct {
 	Arg1 []pageindex.Key
 }
 
+// PageIndexMarkFileDirtyArgs holds the arguments of one call to MarkFileDirty.
+type PageIndexMarkFileDirtyArgs struct {
+	Arg1 pageindex.Key
+	Arg2 string
+}
+
 // PageIndexRefreshArgs holds the arguments of one call to Refresh.
 type PageIndexRefreshArgs struct {
 	Arg1 context.Context
 	Arg2 pageindex.Key
+}
+
+// PageIndexRefreshFileArgs holds the arguments of one call to RefreshFile.
+type PageIndexRefreshFileArgs struct {
+	Arg1 context.Context
+	Arg2 pageindex.Key
+	Arg3 string
 }
 
 // PageIndexRescanArgs holds the arguments of one call to Rescan.
@@ -164,6 +189,29 @@ func (fake *PageIndex) BuildReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
+func (fake *PageIndex) ForceReload() {
+	fake.forceReloadMutex.Lock()
+	fake.forceReloadArgsForCall = append(fake.forceReloadArgsForCall, struct{}{})
+	stub := fake.ForceReloadStub
+	fake.recordInvocation("ForceReload", []interface{}{})
+	fake.forceReloadMutex.Unlock()
+	if stub != nil {
+		stub()
+	}
+}
+
+func (fake *PageIndex) ForceReloadCallCount() int {
+	fake.forceReloadMutex.RLock()
+	defer fake.forceReloadMutex.RUnlock()
+	return len(fake.forceReloadArgsForCall)
+}
+
+func (fake *PageIndex) ForceReloadCalls(stub func()) {
+	fake.forceReloadMutex.Lock()
+	defer fake.forceReloadMutex.Unlock()
+	fake.ForceReloadStub = stub
+}
+
 func (fake *PageIndex) ListPages(arg1 context.Context, arg2 string, arg3 string) ([]*domain.Page, error) {
 	fake.listPagesMutex.Lock()
 	ret, specificReturn := fake.listPagesReturnsOnCall[len(fake.listPagesArgsForCall)]
@@ -234,29 +282,6 @@ func (fake *PageIndex) ListPagesReturnsOnCall(i int, result1 []*domain.Page, res
 	}{result1, result2}
 }
 
-func (fake *PageIndex) MarkAllDirty() {
-	fake.markAllDirtyMutex.Lock()
-	fake.markAllDirtyArgsForCall = append(fake.markAllDirtyArgsForCall, struct{}{})
-	stub := fake.MarkAllDirtyStub
-	fake.recordInvocation("MarkAllDirty", []interface{}{})
-	fake.markAllDirtyMutex.Unlock()
-	if stub != nil {
-		stub()
-	}
-}
-
-func (fake *PageIndex) MarkAllDirtyCallCount() int {
-	fake.markAllDirtyMutex.RLock()
-	defer fake.markAllDirtyMutex.RUnlock()
-	return len(fake.markAllDirtyArgsForCall)
-}
-
-func (fake *PageIndex) MarkAllDirtyCalls(stub func()) {
-	fake.markAllDirtyMutex.Lock()
-	defer fake.markAllDirtyMutex.Unlock()
-	fake.MarkAllDirtyStub = stub
-}
-
 func (fake *PageIndex) MarkDirty(arg1 ...pageindex.Key) {
 	var arg1Copy []pageindex.Key
 	if arg1 != nil {
@@ -297,6 +322,44 @@ func (fake *PageIndex) MarkDirtyArgs() []PageIndexMarkDirtyArgs {
 	defer fake.markDirtyMutex.RUnlock()
 	args := make([]PageIndexMarkDirtyArgs, len(fake.markDirtyArgsForCall))
 	copy(args, fake.markDirtyArgsForCall)
+	return args
+}
+
+func (fake *PageIndex) MarkFileDirty(arg1 pageindex.Key, arg2 string) {
+	fake.markFileDirtyMutex.Lock()
+	fake.markFileDirtyArgsForCall = append(fake.markFileDirtyArgsForCall, PageIndexMarkFileDirtyArgs{arg1, arg2})
+	stub := fake.MarkFileDirtyStub
+	fake.recordInvocation("MarkFileDirty", []interface{}{arg1, arg2})
+	fake.markFileDirtyMutex.Unlock()
+	if stub != nil {
+		stub(arg1, arg2)
+	}
+}
+
+func (fake *PageIndex) MarkFileDirtyCallCount() int {
+	fake.markFileDirtyMutex.RLock()
+	defer fake.markFileDirtyMutex.RUnlock()
+	return len(fake.markFileDirtyArgsForCall)
+}
+
+func (fake *PageIndex) MarkFileDirtyCalls(stub func(pageindex.Key, string)) {
+	fake.markFileDirtyMutex.Lock()
+	defer fake.markFileDirtyMutex.Unlock()
+	fake.MarkFileDirtyStub = stub
+}
+
+func (fake *PageIndex) MarkFileDirtyArgsForCall(i int) (pageindex.Key, string) {
+	fake.markFileDirtyMutex.RLock()
+	defer fake.markFileDirtyMutex.RUnlock()
+	argsForCall := fake.markFileDirtyArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2
+}
+
+func (fake *PageIndex) MarkFileDirtyArgs() []PageIndexMarkFileDirtyArgs {
+	fake.markFileDirtyMutex.RLock()
+	defer fake.markFileDirtyMutex.RUnlock()
+	args := make([]PageIndexMarkFileDirtyArgs, len(fake.markFileDirtyArgsForCall))
+	copy(args, fake.markFileDirtyArgsForCall)
 	return args
 }
 
@@ -363,6 +426,73 @@ func (fake *PageIndex) RefreshReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.refreshReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *PageIndex) RefreshFile(arg1 context.Context, arg2 pageindex.Key, arg3 string) error {
+	fake.refreshFileMutex.Lock()
+	ret, specificReturn := fake.refreshFileReturnsOnCall[len(fake.refreshFileArgsForCall)]
+	fake.refreshFileArgsForCall = append(fake.refreshFileArgsForCall, PageIndexRefreshFileArgs{arg1, arg2, arg3})
+	stub := fake.RefreshFileStub
+	fakeReturns := fake.refreshFileReturns
+	fake.recordInvocation("RefreshFile", []interface{}{arg1, arg2, arg3})
+	fake.refreshFileMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *PageIndex) RefreshFileCallCount() int {
+	fake.refreshFileMutex.RLock()
+	defer fake.refreshFileMutex.RUnlock()
+	return len(fake.refreshFileArgsForCall)
+}
+
+func (fake *PageIndex) RefreshFileCalls(stub func(context.Context, pageindex.Key, string) error) {
+	fake.refreshFileMutex.Lock()
+	defer fake.refreshFileMutex.Unlock()
+	fake.RefreshFileStub = stub
+}
+
+func (fake *PageIndex) RefreshFileArgsForCall(i int) (context.Context, pageindex.Key, string) {
+	fake.refreshFileMutex.RLock()
+	defer fake.refreshFileMutex.RUnlock()
+	argsForCall := fake.refreshFileArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3
+}
+
+func (fake *PageIndex) RefreshFileArgs() []PageIndexRefreshFileArgs {
+	fake.refreshFileMutex.RLock()
+	defer fake.refreshFileMutex.RUnlock()
+	args := make([]PageIndexRefreshFileArgs, len(fake.refreshFileArgsForCall))
+	copy(args, fake.refreshFileArgsForCall)
+	return args
+}
+
+func (fake *PageIndex) RefreshFileReturns(result1 error) {
+	fake.refreshFileMutex.Lock()
+	defer fake.refreshFileMutex.Unlock()
+	fake.RefreshFileStub = nil
+	fake.refreshFileReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *PageIndex) RefreshFileReturnsOnCall(i int, result1 error) {
+	fake.refreshFileMutex.Lock()
+	defer fake.refreshFileMutex.Unlock()
+	fake.RefreshFileStub = nil
+	if fake.refreshFileReturnsOnCall == nil {
+		fake.refreshFileReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.refreshFileReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

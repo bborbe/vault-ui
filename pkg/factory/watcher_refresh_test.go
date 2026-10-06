@@ -8,6 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,119 +49,264 @@ func (v refreshVault) key(dir string) pageindex.Key {
 	return pageindex.NewKey(v.path, dir)
 }
 
-// refreshCall records one storage call together with the content it captured
-// when the call started, before any gate blocked it.
-type refreshCall struct {
+// refreshRead records one ReadPage call.
+type refreshRead struct {
 	vaultPath string
 	pagesDir  string
-	content   []*domain.Page
+	filename  string
 }
 
-// refreshStorage is a PageStorage fake serving test-controlled content per
-// (vaultPath, pagesDir) key. It records every call with the content it saw at
-// the call's start, and can block calls on per-call gates.
-type refreshStorage struct {
-	mu    sync.Mutex
-	pages map[[2]string][]*domain.Page
-	errs  map[[2]string]error
-	calls []refreshCall
-	gate  func(callIndex int) <-chan struct{}
+// refreshFile is one page file of a test-controlled folder: its page plus the
+// version counter that changes whenever its content changes.
+type refreshFile struct {
+	page    *domain.Page
+	version int64
 }
 
-func newRefreshStorage() *refreshStorage {
-	return &refreshStorage{
-		pages: map[[2]string][]*domain.Page{},
-		errs:  map[[2]string]error{},
+// refreshFingerprint derives a file's fingerprint from its version counter, so
+// a content change always changes the fingerprint.
+func refreshFingerprint(version int64) pageindex.FileFingerprint {
+	return pageindex.FileFingerprint{
+		Size:    version,
+		ModTime: time.Unix(version, 0).UTC(),
 	}
 }
 
-// fake returns the counterfeiter PageStorage delegating to this fake.
-func (s *refreshStorage) fake() *vaultmocks.PageStorage {
-	fake := &vaultmocks.PageStorage{}
-	fake.ListPagesStub = s.listPages
-	return fake
+// refreshContent is the test-controlled folder content shared by the reader and
+// the lister fakes, so both see the same files and fingerprints.
+type refreshContent struct {
+	mu       sync.Mutex
+	files    map[[2]string]map[string]refreshFile
+	readErrs map[[2]string]map[string]error
+	listErrs map[[2]string]error
 }
 
-func (s *refreshStorage) listPages(
+func newRefreshContent() *refreshContent {
+	return &refreshContent{
+		files:    map[[2]string]map[string]refreshFile{},
+		readErrs: map[[2]string]map[string]error{},
+		listErrs: map[[2]string]error{},
+	}
+}
+
+// setPages replaces the key's files. A file whose content changed keeps its
+// name and bumps its version, so only it has a new fingerprint.
+func (c *refreshContent) setPages(vaultPath, pagesDir string, pages ...*domain.Page) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := [2]string{vaultPath, pagesDir}
+	previous := c.files[key]
+	next := make(map[string]refreshFile, len(pages))
+	for _, page := range pages {
+		name := page.FileMetadata.Name
+		old, ok := previous[name]
+		version := old.version
+		if !ok || old.page.Content != page.Content {
+			version++
+		}
+		next[name] = refreshFile{page: page, version: version}
+	}
+	c.files[key] = next
+}
+
+func (c *refreshContent) setReadError(vaultPath, pagesDir, name string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := [2]string{vaultPath, pagesDir}
+	if c.readErrs[key] == nil {
+		c.readErrs[key] = map[string]error{}
+	}
+	c.readErrs[key][name] = err
+}
+
+func (c *refreshContent) setListError(vaultPath, pagesDir string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.listErrs[[2]string{vaultPath, pagesDir}] = err
+}
+
+// listEntriesLocked returns the key's entries in filename-ascending order, as
+// os.ReadDir would. The caller must hold the mutex.
+func (c *refreshContent) listEntriesLocked(key [2]string) []pageindex.FileEntry {
+	names := make([]string, 0, len(c.files[key]))
+	for name := range c.files[key] {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]pageindex.FileEntry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, pageindex.FileEntry{
+			Name:        name + ".md",
+			Fingerprint: refreshFingerprint(c.files[key][name].version),
+		})
+	}
+	return entries
+}
+
+// refreshReader is the counting single-file reader fake. It serves the key's
+// live content, records every call per filename and can block a call on a gate.
+type refreshReader struct {
+	content *refreshContent
+
+	mu    sync.Mutex
+	reads []refreshRead
+	gate  func(callIndex int) <-chan struct{}
+}
+
+func (r *refreshReader) ReadPage(
 	_ context.Context,
 	vaultPath string,
 	pagesDir string,
-) ([]*domain.Page, error) {
+	filename string,
+) (*domain.Page, pageindex.FileFingerprint, error) {
 	key := [2]string{vaultPath, pagesDir}
-	s.mu.Lock()
-	index := len(s.calls)
-	content := s.pages[key]
-	err := s.errs[key]
-	s.calls = append(s.calls, refreshCall{
-		vaultPath: vaultPath, pagesDir: pagesDir, content: content,
-	})
-	gate := s.gate
-	s.mu.Unlock()
+	name := strings.TrimSuffix(filename, ".md")
+
+	r.mu.Lock()
+	index := len(r.reads)
+	r.reads = append(r.reads, refreshRead{vaultPath, pagesDir, filename})
+	gate := r.gate
+	r.mu.Unlock()
+
+	// The content is captured at call time, before any gate blocks, so a
+	// blocked read still serves the file as it was when the read started.
+	r.content.mu.Lock()
+	file, known := r.content.files[key][name]
+	err := r.content.readErrs[key][name]
+	r.content.mu.Unlock()
+
 	if gate != nil {
 		if ch := gate(index); ch != nil {
 			<-ch
 		}
 	}
-	return content, err
+
+	if err != nil {
+		return nil, pageindex.FileFingerprint{}, err
+	}
+	if !known {
+		return nil, pageindex.FileFingerprint{}, stderrors.New("page not found: " + name)
+	}
+	return file.page, refreshFingerprint(file.version), nil
 }
 
-func (s *refreshStorage) setPages(vaultPath, pagesDir string, pages ...*domain.Page) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pages[[2]string{vaultPath, pagesDir}] = pages
+func (r *refreshReader) setGate(gate func(callIndex int) <-chan struct{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gate = gate
 }
 
-func (s *refreshStorage) setError(vaultPath, pagesDir string, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.errs[[2]string{vaultPath, pagesDir}] = err
+func (r *refreshReader) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reads = nil
 }
 
-func (s *refreshStorage) setGate(gate func(callIndex int) <-chan struct{}) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.gate = gate
+func (r *refreshReader) calls() []refreshRead {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]refreshRead(nil), r.reads...)
 }
 
-// reset drops the call log so counts are relative to the warm-up.
-func (s *refreshStorage) reset() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = nil
+func (r *refreshReader) readCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.reads)
 }
 
-func (s *refreshStorage) callsFor(vaultPath, pagesDir string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// filenames returns the base names of every recorded read, in call order.
+func (r *refreshReader) filenames() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	names := make([]string, 0, len(r.reads))
+	for _, read := range r.reads {
+		names = append(names, read.filename)
+	}
+	return names
+}
+
+// refreshLister is the counting directory lister fake.
+type refreshLister struct {
+	content *refreshContent
+
+	mu    sync.Mutex
+	calls [][2]string
+}
+
+func (l *refreshLister) ListFiles(
+	_ context.Context,
+	vaultPath string,
+	pagesDir string,
+) ([]pageindex.FileEntry, error) {
+	key := [2]string{vaultPath, pagesDir}
+	l.mu.Lock()
+	l.calls = append(l.calls, key)
+	l.mu.Unlock()
+
+	l.content.mu.Lock()
+	defer l.content.mu.Unlock()
+	if err := l.content.listErrs[key]; err != nil {
+		return nil, err
+	}
+	return l.content.listEntriesLocked(key), nil
+}
+
+func (l *refreshLister) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = nil
+}
+
+func (l *refreshLister) callCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.calls)
+}
+
+func (l *refreshLister) callsFor(vaultPath, pagesDir string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	count := 0
-	for _, call := range s.calls {
-		if call.vaultPath == vaultPath && call.pagesDir == pagesDir {
+	for _, call := range l.calls {
+		if call == [2]string{vaultPath, pagesDir} {
 			count++
 		}
 	}
 	return count
 }
 
-func (s *refreshStorage) totalCalls() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.calls)
-}
-
 // refreshFrame is one broadcast as observed by the connection-manager fake: the
-// frame bytes plus the page content the index served for the frame's key at the
+// frame bytes plus the snapshot the index served for the frame's key at the
 // instant of the broadcast.
 type refreshFrame struct {
-	frame    []byte
-	indexed  bool
-	key      pageindex.Key
-	contents []string
+	frame   []byte
+	indexed bool
+	key     pageindex.Key
+	pages   []*domain.Page
 }
 
-// refreshFixture wires CreateWatcher over fake storage, a fake watch operation
-// and a fake connection manager, and exposes the handler the factory built.
+// content returns the content the frame's snapshot held for the named page, or
+// "" when the page was absent.
+func (f refreshFrame) content(name string) string {
+	for _, page := range f.pages {
+		if page.FileMetadata.Name == name {
+			return string(page.Content)
+		}
+	}
+	return ""
+}
+
+func (f refreshFrame) names() []string {
+	return pageNames(f.pages)
+}
+
+// refreshFixture wires CreateWatcher over the reader and lister fakes, a fake
+// watch operation and a fake connection manager, and exposes the handler the
+// factory built.
 type refreshFixture struct {
-	storage *refreshStorage
+	content *refreshContent
+	reader  *refreshReader
+	lister  *refreshLister
 	index   pageindex.PageIndex
 	manager *websocketmocks.WebsocketConnectionManager
 	handler func(ops.WatchEvent) error
@@ -191,10 +340,15 @@ func newRefreshFixture() *refreshFixture {
 	loader := &vaultmocks.Loader{}
 	loader.GetAllVaultsReturns(vaults, nil)
 
-	storage := newRefreshStorage()
-	index := factory.CreatePageIndex(storage.fake(), libtime.NewCurrentDateTime())
+	content := newRefreshContent()
+	reader := &refreshReader{content: content}
+	lister := &refreshLister{content: content}
+	index := factory.CreatePageIndex(reader, lister, libtime.NewCurrentDateTime())
 
-	fixture := &refreshFixture{storage: storage, index: index, alpha: alpha, beta: beta}
+	fixture := &refreshFixture{
+		content: content, reader: reader, lister: lister, index: index,
+		alpha: alpha, beta: beta,
+	}
 	fixture.manager = &websocketmocks.WebsocketConnectionManager{}
 	fixture.manager.BroadcastStub = func(frame []byte) {
 		fixture.record(frame, vaultsByName)
@@ -220,9 +374,9 @@ func newRefreshFixture() *refreshFixture {
 }
 
 // record captures a broadcast: it maps the frame back to its index key and
-// reads the content the index serves for that key at that instant. A frame with
-// no key (theme, objective, unknown vault) is recorded without a read, so the
-// recorder never builds a key the index has never seen.
+// reads the snapshot the index serves for that key at that instant. A frame
+// with no key (theme, objective, unknown vault) is recorded without a read, so
+// the recorder never builds a key the index has never seen.
 func (f *refreshFixture) record(frame []byte, vaultsByName map[string]*config.Vault) {
 	rec := refreshFrame{frame: frame}
 	var wire struct {
@@ -235,7 +389,7 @@ func (f *refreshFixture) record(frame []byte, vaultsByName map[string]*config.Va
 			rec.indexed = true
 			rec.key = key
 			pages, _ := f.index.ListPages(context.Background(), key.VaultPath, key.PagesDir)
-			rec.contents = pageNames(pages)
+			rec.pages = pages
 		}
 	}
 	f.mu.Lock()
@@ -255,8 +409,8 @@ func (f *refreshFixture) broadcastCount() int {
 	return len(f.frames)
 }
 
-// warm builds the four keys the fixture's events target and clears the call
-// log so later counts are the refreshes the events caused.
+// warm builds the four keys the fixture's events target and clears the reader
+// and lister call logs so later counts are the work the events caused.
 func (f *refreshFixture) warm() {
 	Expect(f.index.Build(context.Background(), []pageindex.Key{
 		f.alpha.key(refreshTasksDir),
@@ -264,7 +418,8 @@ func (f *refreshFixture) warm() {
 		f.beta.key(refreshTasksDir),
 		f.beta.key(refreshGoalsDir),
 	})).To(Succeed())
-	f.storage.reset()
+	f.reader.reset()
+	f.lister.reset()
 }
 
 func testPage(name string) *domain.Page {
@@ -272,6 +427,16 @@ func testPage(name string) *domain.Page {
 		map[string]any{"status": "next"},
 		domain.FileMetadata{Name: name},
 		domain.Content("# "+name+"\n"),
+	)
+}
+
+// pageWithContent builds a page of the given name holding the given content, so
+// a test can rewrite one file in place.
+func pageWithContent(name, content string) *domain.Page {
+	return domain.NewPage(
+		map[string]any{"status": "next"},
+		domain.FileMetadata{Name: name},
+		domain.Content(content),
 	)
 }
 
@@ -283,53 +448,88 @@ func pageNames(pages []*domain.Page) []string {
 	return names
 }
 
-var _ = Describe("Watcher page-index refresh", func() {
-	It("refreshes only the event's folder and serves the new content", func() {
-		fixture := newRefreshFixture()
-		fixture.storage.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
-		fixture.warm()
-		fixture.storage.setPages(
-			fixture.alpha.path, refreshTasksDir, testPage("One"), testPage("Two"),
-		)
+// taskEvent builds a task event whose path names the file inside the vault's
+// tasks folder, so the handler re-reads exactly that file.
+func taskEvent(v refreshVault, event, name string) ops.WatchEvent {
+	return ops.WatchEvent{
+		Event: event, Name: name, Vault: v.name,
+		Path: filepath.Join(refreshTasksDir, name+".md"), Type: "task",
+	}
+}
 
-		event := ops.WatchEvent{
-			Event: "created", Name: "Two", Vault: fixture.alpha.name,
-			Path: refreshTasksDir + "/Two.md", Type: "task",
-		}
+// goalEvent is taskEvent for the vault's goals folder.
+func goalEvent(v refreshVault, event, name string) ops.WatchEvent {
+	return ops.WatchEvent{
+		Event: event, Name: name, Vault: v.name,
+		Path: filepath.Join(refreshGoalsDir, name+".md"), Type: "goal",
+	}
+}
+
+// manyPages builds count pages named "Page 0000" upwards, so the snapshot's
+// filename order is well defined and the event's file sits in the middle.
+func manyPages(count int) []*domain.Page {
+	pages := make([]*domain.Page, 0, count)
+	for i := 0; i < count; i++ {
+		pages = append(pages, testPage(fmt.Sprintf("Page %04d", i)))
+	}
+	return pages
+}
+
+var _ = Describe("Watcher page-index refresh", func() {
+	It("reads exactly the event's file of a 1000-page folder and lists nothing", func() {
+		fixture := newRefreshFixture()
+		fixture.content.setPages(fixture.alpha.path, refreshTasksDir, manyPages(1000)...)
+		fixture.warm()
+
+		// One file changes on disk; the fake bumps only its fingerprint.
+		pages := manyPages(1000)
+		pages[500] = pageWithContent("Page 0500", "# Page 0500 changed\n")
+		fixture.content.setPages(fixture.alpha.path, refreshTasksDir, pages...)
+
+		event := taskEvent(fixture.alpha, "modified", "Page 0500")
 		Expect(fixture.handler(event)).To(Succeed())
 
-		Expect(fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir)).To(Equal(1))
-		Expect(fixture.storage.callsFor(fixture.alpha.path, refreshGoalsDir)).To(Equal(0))
-		Expect(fixture.storage.callsFor(fixture.beta.path, refreshTasksDir)).To(Equal(0))
-		Expect(fixture.storage.callsFor(fixture.beta.path, refreshGoalsDir)).To(Equal(0))
+		// Evidence: exactly one single-file read, naming the event's file, and
+		// no folder listing at all.
+		Expect(fixture.reader.readCount()).To(Equal(1))
+		Expect(fixture.reader.filenames()).To(Equal([]string{"Page 0500.md"}))
+		Expect(fixture.lister.callCount()).To(Equal(0))
 
-		pages, err := fixture.index.ListPages(
+		// The next read of the key serves the new content.
+		served, err := fixture.index.ListPages(
 			context.Background(), fixture.alpha.path, refreshTasksDir,
 		)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(pageNames(pages)).To(Equal([]string{"One", "Two"}))
+		Expect(pageNames(served)).To(HaveLen(1000))
+		Expect(string(findPage(served, "Page 0500").Content)).To(Equal("# Page 0500 changed\n"))
+
+		// The frame is broadcast only after that snapshot is published, and the
+		// snapshot the recorder saw already held the new content.
+		Expect(fixture.broadcastCount()).To(Equal(1))
+		recorded := fixture.recorded()
+		Expect(recorded[0].frame).To(Equal(websocket.WatcherFrame(event)))
+		Expect(recorded[0].indexed).To(BeTrue())
+		Expect(recorded[0].key).To(Equal(fixture.alpha.key(refreshTasksDir)))
+		Expect(recorded[0].content("Page 0500")).To(Equal("# Page 0500 changed\n"))
+		Expect(fixture.lister.callCount()).To(Equal(0))
 	})
 
-	It("broadcasts the frame only after the refreshed snapshot is swapped in", func() {
+	It("broadcasts the frame only after the file's read is applied", func() {
 		fixture := newRefreshFixture()
-		fixture.storage.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
+		fixture.content.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
 		fixture.warm()
 
 		gate := make(chan struct{})
-		fixture.storage.setGate(func(int) <-chan struct{} { return gate })
-		fixture.storage.setPages(
+		fixture.reader.setGate(func(int) <-chan struct{} { return gate })
+		fixture.content.setPages(
 			fixture.alpha.path, refreshTasksDir, testPage("One"), testPage("Two"),
 		)
 
-		event := ops.WatchEvent{
-			Event: "created", Name: "Two", Vault: fixture.alpha.name, Type: "task",
-		}
+		event := taskEvent(fixture.alpha, "created", "Two")
 		done := make(chan error, 1)
 		go func() { done <- fixture.handler(event) }()
 
-		Eventually(
-			func() int { return fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir) },
-		).Should(Equal(1))
+		Eventually(fixture.reader.readCount).Should(Equal(1))
 		Consistently(fixture.broadcastCount, 100*time.Millisecond).Should(Equal(0))
 
 		close(gate)
@@ -338,64 +538,47 @@ var _ = Describe("Watcher page-index refresh", func() {
 
 		recorded := fixture.recorded()
 		Expect(recorded[0].frame).To(Equal(websocket.WatcherFrame(event)))
-		Expect(recorded[0].indexed).To(BeTrue())
-		Expect(recorded[0].contents).To(Equal([]string{"One", "Two"}))
+		Expect(recorded[0].names()).To(Equal([]string{"One", "Two"}))
 	})
 
-	It("holds a second event's frame until a rebuild started after it has swapped", func() {
+	It("holds a second event's frame for the same file until its own read is applied", func() {
 		fixture := newRefreshFixture()
-		fixture.storage.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
+		fixture.content.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
 		fixture.warm()
 
 		gates := []chan struct{}{make(chan struct{}), make(chan struct{})}
-		fixture.storage.setGate(func(index int) <-chan struct{} {
+		fixture.reader.setGate(func(index int) <-chan struct{} {
 			if index < len(gates) {
 				return gates[index]
 			}
 			return nil
 		})
-		fixture.storage.setPages(
-			fixture.alpha.path, refreshTasksDir, testPage("One"), testPage("v1"),
+		fixture.content.setPages(
+			fixture.alpha.path, refreshTasksDir, pageWithContent("One", "# v1\n"),
 		)
 
-		first := ops.WatchEvent{
-			Event: "modified", Name: "One", Vault: fixture.alpha.name, Type: "task",
-		}
+		first := taskEvent(fixture.alpha, "modified", "One")
 		firstDone := make(chan error, 1)
 		go func() { firstDone <- fixture.handler(first) }()
+		Eventually(fixture.reader.readCount).Should(Equal(1))
 
-		// The first rebuild entered and captured v1 before blocking.
-		Eventually(
-			func() int { return fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir) },
-		).Should(Equal(1))
-
-		fixture.storage.setPages(
-			fixture.alpha.path, refreshTasksDir, testPage("One"), testPage("v2"),
+		fixture.content.setPages(
+			fixture.alpha.path, refreshTasksDir, pageWithContent("One", "# v2\n"),
 		)
 
-		second := ops.WatchEvent{
-			Event: "modified", Name: "Two", Vault: fixture.alpha.name, Type: "task",
-		}
+		second := taskEvent(fixture.alpha, "modified", "One")
 		secondDone := make(chan error, 1)
 		go func() { secondDone <- fixture.handler(second) }()
 
-		// The second event queues a follow-up that cannot start while the first
-		// rebuild is still blocked, so no second storage call happens yet.
-		Consistently(
-			func() int { return fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir) },
-			100*time.Millisecond,
-		).Should(Equal(1))
+		// Per-file reads are independent: the second read starts without waiting
+		// for the first, and neither frame is out yet.
+		Eventually(fixture.reader.readCount).Should(Equal(2))
+		Consistently(fixture.broadcastCount, 100*time.Millisecond).Should(Equal(0))
 
 		close(gates[0])
 		Eventually(firstDone).Should(Receive(BeNil()))
 		Eventually(fixture.broadcastCount).Should(Equal(1))
-		Expect(fixture.recorded()[0].contents).To(Equal([]string{"One", "v1"}))
-
-		// The follow-up rebuild started, captured v2 and is blocked.
-		Eventually(
-			func() int { return fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir) },
-		).Should(Equal(2))
-		Consistently(fixture.broadcastCount, 100*time.Millisecond).Should(Equal(1))
+		Expect(fixture.recorded()[0].content("One")).To(Equal("# v1\n"))
 
 		close(gates[1])
 		Eventually(secondDone).Should(Receive(BeNil()))
@@ -403,8 +586,9 @@ var _ = Describe("Watcher page-index refresh", func() {
 
 		recorded := fixture.recorded()
 		Expect(recorded[1].frame).To(Equal(websocket.WatcherFrame(second)))
-		Expect(recorded[1].contents).To(Equal([]string{"One", "v2"}))
-		Expect(fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir)).To(Equal(2))
+		Expect(recorded[1].content("One")).To(Equal("# v2\n"))
+		Expect(fixture.reader.readCount()).To(Equal(2))
+		Expect(fixture.lister.callCount()).To(Equal(0))
 	})
 
 	It("broadcasts theme and objective frames unchanged without touching the index", func() {
@@ -412,11 +596,12 @@ var _ = Describe("Watcher page-index refresh", func() {
 		fixture.warm()
 
 		theme := ops.WatchEvent{
-			Event: "modified", Name: "A Theme", Vault: fixture.alpha.name, Type: "theme",
+			Event: "modified", Name: "A Theme", Vault: fixture.alpha.name,
+			Path: filepath.Join(refreshThemesDir, "A Theme.md"), Type: "theme",
 		}
 		objective := ops.WatchEvent{
 			Event: "modified", Name: "An Objective", Vault: fixture.alpha.name,
-			Type: "objective",
+			Path: filepath.Join(refreshObjectivesDir, "An Objective.md"), Type: "objective",
 		}
 		Expect(fixture.handler(theme)).To(Succeed())
 		Expect(fixture.handler(objective)).To(Succeed())
@@ -424,31 +609,31 @@ var _ = Describe("Watcher page-index refresh", func() {
 		Expect(fixture.manager.BroadcastCallCount()).To(Equal(2))
 		Expect(fixture.manager.BroadcastArgsForCall(0)).To(Equal(websocket.WatcherFrame(theme)))
 		Expect(fixture.manager.BroadcastArgsForCall(1)).To(Equal(websocket.WatcherFrame(objective)))
-		Expect(fixture.storage.totalCalls()).To(Equal(0))
+		Expect(fixture.reader.readCount()).To(Equal(0))
+		Expect(fixture.lister.callCount()).To(Equal(0))
 	})
 
-	It("refreshes only the goals key for a goal event", func() {
+	It("reads only the goals key's file for a goal event", func() {
 		fixture := newRefreshFixture()
-		fixture.storage.setPages(fixture.beta.path, refreshGoalsDir, testPage("G1"))
+		fixture.content.setPages(fixture.beta.path, refreshGoalsDir, testPage("G1"))
 		fixture.warm()
-		fixture.storage.setPages(
+		fixture.content.setPages(
 			fixture.beta.path, refreshGoalsDir, testPage("G1"), testPage("G2"),
 		)
 
-		Expect(fixture.handler(ops.WatchEvent{
-			Event: "created", Name: "G2", Vault: fixture.beta.name, Type: "goal",
-		})).To(Succeed())
+		Expect(fixture.handler(goalEvent(fixture.beta, "created", "G2"))).To(Succeed())
 
-		Expect(fixture.storage.callsFor(fixture.beta.path, refreshGoalsDir)).To(Equal(1))
-		Expect(fixture.storage.callsFor(fixture.beta.path, refreshTasksDir)).To(Equal(0))
-		Expect(fixture.storage.callsFor(fixture.alpha.path, refreshTasksDir)).To(Equal(0))
-		Expect(fixture.storage.callsFor(fixture.alpha.path, refreshGoalsDir)).To(Equal(0))
+		Expect(fixture.reader.readCount()).To(Equal(1))
+		Expect(fixture.reader.filenames()).To(Equal([]string{"G2.md"}))
+		Expect(fixture.reader.calls()[0].pagesDir).To(Equal(refreshGoalsDir))
+		Expect(fixture.reader.calls()[0].vaultPath).To(Equal(fixture.beta.path))
+		Expect(fixture.lister.callCount()).To(Equal(0))
 
-		pages, err := fixture.index.ListPages(
+		served, err := fixture.index.ListPages(
 			context.Background(), fixture.beta.path, refreshGoalsDir,
 		)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(pageNames(pages)).To(Equal([]string{"G1", "G2"}))
+		Expect(pageNames(served)).To(Equal([]string{"G1", "G2"}))
 	})
 
 	It("broadcasts an event for an unknown vault without touching the index", func() {
@@ -456,35 +641,76 @@ var _ = Describe("Watcher page-index refresh", func() {
 		fixture.warm()
 
 		event := ops.WatchEvent{
-			Event: "modified", Name: "X", Vault: "gamma", Type: "task",
+			Event: "modified", Name: "X", Vault: "gamma",
+			Path: filepath.Join(refreshTasksDir, "X.md"), Type: "task",
 		}
 		Expect(fixture.handler(event)).To(Succeed())
 
 		Expect(fixture.manager.BroadcastCallCount()).To(Equal(1))
 		Expect(fixture.manager.BroadcastArgsForCall(0)).To(Equal(websocket.WatcherFrame(event)))
-		Expect(fixture.storage.totalCalls()).To(Equal(0))
+		Expect(fixture.reader.readCount()).To(Equal(0))
+		Expect(fixture.lister.callCount()).To(Equal(0))
 	})
 
-	It("broadcasts the frame and keeps the previous snapshot when a rebuild fails", func() {
+	It("falls back to the folder stat-diff for a path that is not a plain filename", func() {
 		fixture := newRefreshFixture()
-		fixture.storage.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
+		fixture.content.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
 		fixture.warm()
-		fixture.storage.setError(
+		fixture.content.setPages(
+			fixture.alpha.path, refreshTasksDir, testPage("One"), testPage("Two"),
+		)
+
+		event := ops.WatchEvent{
+			Event: "created", Name: "Two", Vault: fixture.alpha.name,
+			Path: filepath.Join(refreshTasksDir, "sub", "Two.md"), Type: "task",
+		}
+		Expect(fixture.handler(event)).To(Succeed())
+
+		// Evidence: the folder is listed once and no single file is read for the
+		// event; the stat-diff re-reads only the file whose fingerprint changed.
+		Expect(fixture.lister.callCount()).To(Equal(1))
+		Expect(fixture.lister.callsFor(fixture.alpha.path, refreshTasksDir)).To(Equal(1))
+		Expect(fixture.reader.filenames()).To(Equal([]string{"Two.md"}))
+
+		served, err := fixture.index.ListPages(
+			context.Background(), fixture.alpha.path, refreshTasksDir,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pageNames(served)).To(Equal([]string{"One", "Two"}))
+	})
+
+	It("broadcasts the frame and keeps the previous snapshot when the stat-diff fails", func() {
+		fixture := newRefreshFixture()
+		fixture.content.setPages(fixture.alpha.path, refreshTasksDir, testPage("One"))
+		fixture.warm()
+		fixture.content.setListError(
 			fixture.alpha.path, refreshTasksDir, stderrors.New("folder unreadable"),
 		)
 
 		event := ops.WatchEvent{
-			Event: "modified", Name: "One", Vault: fixture.alpha.name, Type: "task",
+			Event: "modified", Name: "One", Vault: fixture.alpha.name,
+			Path: filepath.Join(refreshTasksDir, "sub", "One.md"), Type: "task",
 		}
 		Expect(fixture.handler(event)).To(Succeed())
 
 		Expect(fixture.manager.BroadcastCallCount()).To(Equal(1))
 		Expect(fixture.manager.BroadcastArgsForCall(0)).To(Equal(websocket.WatcherFrame(event)))
 
-		pages, err := fixture.index.ListPages(
+		served, err := fixture.index.ListPages(
 			context.Background(), fixture.alpha.path, refreshTasksDir,
 		)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(pageNames(pages)).To(Equal([]string{"One"}))
+		Expect(pageNames(served)).To(Equal([]string{"One"}))
 	})
 })
+
+// findPage returns the named page of a snapshot.
+func findPage(pages []*domain.Page, name string) *domain.Page {
+	for _, page := range pages {
+		if page.FileMetadata.Name == name {
+			return page
+		}
+	}
+	Fail("page not found: " + name)
+	return nil
+}

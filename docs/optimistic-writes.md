@@ -50,12 +50,18 @@ vault-cli write and the post-write side-effects — moves to the consumer.
 
 The `task_updated`/`goal_updated` frame is published only **after the file is
 written**, by the consumer, in today's order: invalidate the status cache for the
-item, mark the vault's tasks and goals page-index keys dirty, then publish.
-Nothing is published and nothing is marked dirty before the write. The two task
-session routes (`DELETE` and `PATCH /api/tasks/{id}/session`) publish no frame,
-as before, but still invalidate and mark after the write; the goal session clear
-does publish `goal_updated`. The file watcher also sees the write's own change
-and publishes its own frame — the echo.
+item, mark the item's own file in the page index, then publish. The mark is
+per-file — a queued write edits exactly one item's frontmatter, so the next read
+of that key re-reads only that item's file and lists nothing, and a reader of the
+key blocks until it has been re-read. When the id does not name a file exactly —
+a case-different name, a case-insensitive filesystem, vault-cli's substring
+fallback — the mark widens to a folder-level mark of that key, resolved by the
+same stat-diff every other folder mark uses, so the file vault-cli actually wrote
+is still picked up. Nothing is published and nothing is marked before the write.
+The two task session routes (`DELETE` and `PATCH /api/tasks/{id}/session`)
+publish no frame, as before, but still invalidate and mark after the write; the
+goal session clear does publish `goal_updated`. The file watcher also sees the
+write's own change and publishes its own frame — the echo.
 
 ## Failure and revert
 

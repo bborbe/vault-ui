@@ -9,15 +9,77 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
+	libtime "github.com/bborbe/time"
+	vaultmocks "github.com/bborbe/vault-cli/mocks"
+	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/ops"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/factory"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/websocket"
 )
+
+// watcherHandler builds the watch handler factory.CreateWatcher composes over
+// the given index, driven by a fake watch operation that hands the handler out.
+func watcherHandler(
+	vaults []*config.Vault,
+	index pageindex.PageIndex,
+) func(ops.WatchEvent) error {
+	loader := &vaultmocks.Loader{}
+	loader.GetAllVaultsReturns(vaults, nil)
+	handlerCh := make(chan func(ops.WatchEvent) error, 1)
+	watch := &vaultmocks.WatchOperation{}
+	watch.ExecuteStub = func(
+		ctx context.Context,
+		_ []ops.WatchTarget,
+		handler func(ops.WatchEvent) error,
+	) error {
+		handlerCh <- handler
+		<-ctx.Done()
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	DeferCleanup(cancel)
+	go func() {
+		_ = factory.CreateWatcher(
+			loader, websocket.NewConnectionManager(websocket.NewMetrics()), index, watch,
+		)(ctx)
+	}()
+	var handler func(ops.WatchEvent) error
+	Eventually(handlerCh, 5*time.Second).Should(Receive(&handler))
+	return handler
+}
+
+// pageIndexReads returns the vault_ui_page_index_files_read_total value of one
+// reason label, scraped the way GET /metrics serves it.
+func pageIndexReads(reason string) float64 {
+	recorder := httptest.NewRecorder()
+	promhttp.Handler().ServeHTTP(
+		recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil),
+	)
+	prefix := `vault_ui_page_index_files_read_total{reason="` + reason + `"} `
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, prefix)), 64)
+		Expect(err).NotTo(HaveOccurred())
+		return value
+	}
+	Fail("no " + prefix + "series in the metrics scrape")
+	return 0
+}
 
 var baseURL string
 
@@ -146,6 +208,42 @@ var _ = Describe("CreateHTTPServer", func() {
 			metrics := body(baseURL + "/metrics")
 			Expect(metrics).To(MatchRegexp(`(?m)^vault_ui_build_info`))
 			Expect(metrics).To(MatchRegexp(`(?m)^go_`))
+		})
+
+		It("counts page-index file reads by reason", func() {
+			vaultDir := tempDir()
+			Expect(os.MkdirAll(filepath.Join(vaultDir, "24 Tasks"), 0750)).To(Succeed())
+			names := []string{"One", "Two", "Three"}
+			for _, name := range names {
+				Expect(os.WriteFile(
+					filepath.Join(vaultDir, "24 Tasks", name+".md"),
+					[]byte("---\nstatus: next\n---\n# "+name+"\n"), 0600,
+				)).To(Succeed())
+			}
+			vaults := []*config.Vault{{
+				Name: "personal", Path: vaultDir, TasksDir: "24 Tasks",
+			}}
+			index := factory.CreatePageIndex(
+				pageindex.NewPageReader(), pageindex.NewDirectoryLister(),
+				libtime.NewCurrentDateTime(),
+			)
+			key := pageindex.NewKey(vaultDir, "24 Tasks")
+
+			beforeBuild := pageIndexReads("build")
+			beforeEvent := pageIndexReads("event")
+
+			// A warm build reads every file of the folder exactly once.
+			Expect(index.Build(context.Background(), []pageindex.Key{key})).To(Succeed())
+			Expect(pageIndexReads("build") - beforeBuild).To(Equal(float64(len(names))))
+
+			// One task event delivered through the handler CreateWatcher builds
+			// costs exactly one single-file read.
+			handler := watcherHandler(vaults, index)
+			Expect(handler(ops.WatchEvent{
+				Event: "modified", Name: "One", Vault: "personal",
+				Path: filepath.Join("24 Tasks", "One.md"), Type: "task",
+			})).To(Succeed())
+			Expect(pageIndexReads("event") - beforeEvent).To(Equal(1.0))
 		})
 	})
 })

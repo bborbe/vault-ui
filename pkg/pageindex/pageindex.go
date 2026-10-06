@@ -18,7 +18,9 @@ package pageindex
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,11 +29,12 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/storage"
+	"github.com/golang/glog"
 )
 
-// RescanInterval is the time between full rescans of every known key. It is
-// deliberately below the 60 s ceiling so that interval + rescanPollInterval +
-// one rebuild stays inside it.
+// RescanInterval is the time between stat-diff rescans of every known key. It
+// is deliberately below the 60 s ceiling so that interval + rescanPollInterval
+// + one read stays inside it.
 const RescanInterval = 50 * time.Second
 
 // rescanPollInterval is the granularity at which the rescan loop checks the
@@ -64,20 +67,63 @@ type PageIndex interface {
 	storage.PageStorage
 	// Build warms the given keys, discarding the pages.
 	Build(ctx context.Context, keys []Key) error
-	// Refresh rebuilds the key's snapshot and blocks until the rebuild that
-	// started after this call has been swapped in.
+	// Refresh re-reads the key's files whose size, modification time or
+	// status-change time changed since they were last read, and blocks until a
+	// listing that started after this call has been applied. It reads nothing
+	// when nothing changed and publishes a new snapshot only when something
+	// did. A key with no snapshot yet is built in full.
 	Refresh(ctx context.Context, key Key) error
-	// MarkDirty marks the keys stale so the next read performs a shared rebuild.
+	// RefreshFile re-reads one file of the key's folder and publishes a new
+	// snapshot with the result spliced in. It blocks until a snapshot
+	// containing a read that started after this call has been published. The
+	// file's current on-disk state decides the outcome, not the caller's reason
+	// for calling: present and readable replaces or inserts the page at its
+	// filename-ordered position, absent or unreadable removes it. The filename
+	// is a single plain base name including ".md"; a filename that is empty,
+	// contains a path separator, contains "..", or does not end in ".md" is
+	// rejected with an error and nothing is read.
+	RefreshFile(ctx context.Context, key Key, filename string) error
+	// MarkDirty marks the named keys stale at folder level, so the next read of
+	// each compares the folder's fingerprints and re-reads only what changed.
 	MarkDirty(keys ...Key)
-	// MarkAllDirty marks every known key stale.
-	MarkAllDirty()
+	// MarkFileDirty marks one file of the key stale so the next read re-reads it
+	// before serving. The name is the item id; it is applied only when the
+	// exactness rule holds, otherwise the whole key is marked folder-level.
+	MarkFileDirty(key Key, name string)
+	// ForceReload marks every known key so the next read of each re-reads every
+	// file, whatever the fingerprints say. It is the only path that ignores
+	// fingerprints.
+	ForceReload()
 	// Rescan refreshes every known key once per RescanInterval until ctx is done.
 	Rescan(ctx context.Context) error
 }
 
-// build is one rebuild of one key. It is created under the index mutex and its
-// result fields are written under that mutex before done is closed.
+// buildKind is the work one build does for its key.
+type buildKind int
+
+const (
+	// buildCold lists the folder and reads every file. It is used when the key
+	// has no snapshot yet.
+	buildCold buildKind = iota
+	// buildStatDiff lists the folder, compares each entry's fingerprint with the
+	// one recorded at its last read and re-reads only what changed.
+	buildStatDiff
+	// buildFileReads re-reads exactly the write-marked files and lists nothing.
+	buildFileReads
+	// buildReload lists the folder and re-reads every file, ignoring
+	// fingerprints.
+	buildReload
+)
+
+// build is one resolution of one key. It is created under the index mutex and
+// its result fields are written under that mutex before done is closed.
 type build struct {
+	kind buildKind
+	// reason is the metric label the creator wants for the reads this build
+	// makes; a cold build and a reload override it.
+	reason string
+	// startSeq is the key's requestSeq when this build last started. A mark with
+	// a higher sequence is not covered by this build.
 	startSeq uint64
 	started  chan struct{}
 	done     chan struct{}
@@ -85,54 +131,102 @@ type build struct {
 	err      error
 }
 
-func newBuild(startSeq uint64) *build {
+func newBuild(kind buildKind, reason string, startSeq uint64) *build {
 	return &build{
+		kind:     kind,
+		reason:   reason,
 		startSeq: startSeq,
 		started:  make(chan struct{}),
 		done:     make(chan struct{}),
 	}
 }
 
+// covers reports whether this build, having started at startSeq, resolves work
+// recorded at needSeq of the given kind.
+func (b *build) covers(kind buildKind, needSeq uint64) bool {
+	if b.startSeq < needSeq {
+		return false
+	}
+	switch b.kind {
+	case buildCold, buildReload:
+		return true
+	case buildFileReads:
+		return kind == buildFileReads
+	case buildStatDiff:
+		return kind == buildStatDiff
+	}
+	return false
+}
+
 // entry is the per-key state.
 type entry struct {
-	snapshot    []*domain.Page
-	hasSnapshot bool
-	snapshotSeq uint64
+	snapshot     []*domain.Page
+	hasSnapshot  bool
+	fingerprints map[string]FileFingerprint
 
-	// requestSeq is bumped by every Refresh and every dirty mark.
+	// fileReadSeq holds, per base filename, the read sequence of the read whose
+	// result is currently applied — the page present or removed. A name whose
+	// page was removed keeps its entry as a tombstone; it is never deleted.
+	fileReadSeq map[string]uint64
+
+	// requestSeq is bumped by every refresh, mark and forced reload.
 	requestSeq uint64
-	// dirtySeq is requestSeq at the most recent dirty mark.
+	// dirtySeq is requestSeq at the most recent folder-level mark; it is
+	// resolved once a listing that started after it succeeded.
 	dirtySeq uint64
+	// dirtyResolvedSeq is requestSeq at the start of the most recent successful
+	// listing — a stat-diff from any caller, a cold build or a forced reload.
+	dirtyResolvedSeq uint64
+	// reloadSeq is requestSeq at the most recent forced reload; it is resolved
+	// only by a successful full re-read.
+	reloadSeq uint64
+	// reloadResolvedSeq is requestSeq at the start of the most recent successful
+	// full re-read.
+	reloadResolvedSeq uint64
+	// writeMarked holds, per base filename, the requestSeq at which the file was
+	// marked for a per-file re-read. An entry is taken out when its read starts.
+	writeMarked map[string]uint64
 
 	inflight *build
 	followUp *build
 }
 
 type pageIndex struct {
-	mu                    sync.Mutex
-	entries               map[Key]*entry
-	pageStorage           storage.PageStorage
+	mu      sync.Mutex
+	entries map[Key]*entry
+	// readSeq is bumped under mu at the start of every single-file read. It
+	// orders those reads against each other and nothing else.
+	readSeq               uint64
+	reader                PageReader
+	lister                DirectoryLister
 	currentDateTimeGetter libtime.CurrentDateTimeGetter
 	waiter                libtime.WaiterDuration
+	// warnf emits the per-file exclusion warnings. It is a field so a test can
+	// capture them per index instance.
+	warnf func(format string, args ...any)
 }
 
-// NewPageIndex creates an empty page index over the given storage.
+// NewPageIndex creates an empty page index over the given reader and lister.
 func NewPageIndex(
-	pageStorage storage.PageStorage,
+	reader PageReader,
+	lister DirectoryLister,
 	currentDateTimeGetter libtime.CurrentDateTimeGetter,
 	waiter libtime.WaiterDuration,
 ) PageIndex {
 	return &pageIndex{
 		entries:               map[Key]*entry{},
-		pageStorage:           pageStorage,
+		reader:                reader,
+		lister:                lister,
 		currentDateTimeGetter: currentDateTimeGetter,
 		waiter:                waiter,
+		warnf:                 glog.Warningf,
 	}
 }
 
 // ListPages returns the pages of the key's folder from the in-memory snapshot.
-// It touches the underlying storage only when the key has no snapshot or was
-// marked dirty.
+// It resolves any pending write mark before serving, so a reader sees the
+// content its own write produced. A key whose only pending work is an event or
+// a rescan read is served from the current snapshot without waiting.
 func (p *pageIndex) ListPages(
 	ctx context.Context,
 	vaultPath string,
@@ -178,17 +272,18 @@ func (p *pageIndex) Build(ctx context.Context, keys []Key) error {
 	return nil
 }
 
-// Refresh rebuilds the key and blocks until a rebuild that started after this
-// call has been swapped in. It returns nil whether that rebuild succeeded or
-// failed, and a wrapped error only when ctx was cancelled first.
+// Refresh re-reads the key's changed files and blocks until a listing that
+// started after this call has been applied. It returns nil whether that
+// listing succeeded or failed, and a wrapped error only when ctx was cancelled
+// first.
 func (p *pageIndex) Refresh(ctx context.Context, key Key) error {
 	key = NewKey(key.VaultPath, key.PagesDir)
 	_, _, cancelErr := p.ensure(ctx, key, true)
 	return cancelErr
 }
 
-// MarkDirty marks the named keys stale. Keys the index has never seen are
-// ignored: their first read builds them anyway.
+// MarkDirty marks the named keys stale at folder level. Keys the index has
+// never seen are ignored: their first read builds them anyway.
 func (p *pageIndex) MarkDirty(keys ...Key) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -201,13 +296,51 @@ func (p *pageIndex) MarkDirty(keys ...Key) {
 	}
 }
 
-// MarkAllDirty marks every known key stale.
-func (p *pageIndex) MarkAllDirty() {
+// MarkFileDirty marks one file of the key stale so the next read re-reads it
+// before serving. The name is the item id; it is applied only when the
+// exactness rule holds, otherwise the whole key is marked folder-level.
+//
+// The exactness rule mirrors vault-cli's own file lookup: the id is taken with
+// its "[["/"]]" wrapper stripped, it must be a plain base name without a path
+// separator or "..", the key's current snapshot must hold a page whose name
+// equals it byte-for-byte, and "<name>.md" must exist at mark time. Anything
+// else may have been resolved by vault-cli's case-insensitive substring
+// fallback, so the mark widens to the whole folder.
+func (p *pageIndex) MarkFileDirty(key Key, name string) {
+	key = NewKey(key.VaultPath, key.PagesDir)
+	stripped := stripWikilinkName(name)
+
+	p.mu.Lock()
+	e, ok := p.entries[key]
+	if !ok || !e.hasSnapshot || !validFileMarkName(stripped) ||
+		!snapshotHasName(e.snapshot, stripped) {
+		p.mu.Unlock()
+		p.MarkDirty(key)
+		return
+	}
+	p.mu.Unlock()
+
+	filename := stripped + ".md"
+	if _, err := os.Stat(filepath.Join(key.VaultPath, key.PagesDir, filename)); err != nil {
+		p.MarkDirty(key)
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e = p.entryLocked(key)
+	e.requestSeq++
+	e.writeMarked[filename] = e.requestSeq
+}
+
+// ForceReload marks every known key so the next read of each re-reads every
+// file, whatever the fingerprints say.
+func (p *pageIndex) ForceReload() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, e := range p.entries {
 		e.requestSeq++
-		e.dirtySeq = e.requestSeq
+		e.reloadSeq = e.requestSeq
 	}
 }
 
@@ -269,8 +402,46 @@ func (p *pageIndex) snapshot(key Key) ([]*domain.Page, bool) {
 func (p *pageIndex) entryLocked(key Key) *entry {
 	e, ok := p.entries[key]
 	if !ok {
-		e = &entry{}
+		e = &entry{
+			fileReadSeq: map[string]uint64{},
+			writeMarked: map[string]uint64{},
+		}
 		p.entries[key] = e
 	}
 	return e
+}
+
+// takeReadSeq reserves the next single-file read sequence. The caller must not
+// hold the mutex.
+func (p *pageIndex) takeReadSeq() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.readSeq++
+	return p.readSeq
+}
+
+// stripWikilinkName removes the "[[" and "]]" wrapper an item id may carry,
+// exactly as vault-cli's own file lookup does.
+func stripWikilinkName(name string) string {
+	name = strings.TrimPrefix(name, "[[")
+	return strings.TrimSuffix(name, "]]")
+}
+
+// validFileMarkName rejects an id that must never be turned into a file path.
+func validFileMarkName(name string) bool {
+	return name != "" &&
+		!strings.Contains(name, "..") &&
+		!strings.ContainsRune(name, filepath.Separator) &&
+		!strings.ContainsRune(name, '/')
+}
+
+// snapshotHasName reports whether the snapshot holds a page whose file name
+// equals name byte-for-byte.
+func snapshotHasName(pages []*domain.Page, name string) bool {
+	for _, page := range pages {
+		if page.FileMetadata.Name == name {
+			return true
+		}
+	}
+	return false
 }

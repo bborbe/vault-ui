@@ -1080,14 +1080,95 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		ExpectWithOffset(1, matched).To(BeTrue(), "no MarkDirty call with %v", want)
 	}
 
-	DescribeTable("marks the vault's keys after a successful write",
+	// expectItemMarked asserts the invalidator recorded a per-file MarkFileDirty
+	// call naming exactly the item's own key and id, and no folder-level
+	// MarkDirty call at all.
+	expectItemMarked := func(index *mocks.IndexInvalidator, dir, folder, id string) {
+		want := pageindex.NewKey(dir, folder)
+		ExpectWithOffset(1, index.MarkFileDirtyCallCount()).To(Equal(1))
+		key, name := index.MarkFileDirtyArgsForCall(0)
+		ExpectWithOffset(1, key).To(Equal(want))
+		ExpectWithOffset(1, name).To(Equal(id))
+		ExpectWithOffset(1, index.MarkDirtyCallCount()).To(Equal(0))
+	}
+
+	// The three queued post-write callbacks (task publishing, goal publishing,
+	// task session silent) mark the item's own file, since a queued write edits
+	// exactly one item's frontmatter.
+	DescribeTable("marks one file after a queued write",
+		func(run func() *harness, folder, id string) {
+			hh := run()
+			hh.drain()
+			expectItemMarked(hh.index, hh.dir, folder, id)
+		},
+		Entry("AssignTaskToMe", func() *harness {
+			_, err := h.service.AssignTaskToMe(ctx, "personal", taskOneID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "24 Tasks", taskOneID),
+		Entry("UpdateTaskPhase", func() *harness {
+			_, err := h.service.UpdateTaskPhase(
+				ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "24 Tasks", taskOneID),
+		Entry("UpdateTaskFlag", func() *harness {
+			_, err := h.service.UpdateTaskFlag(
+				ctx, "personal", taskOneID, api.UpdateFlagRequest{},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "24 Tasks", taskOneID),
+		Entry("UpdateTaskStatus", func() *harness {
+			_, err := h.service.UpdateTaskStatus(
+				ctx, "personal", taskOneID, api.UpdateStatusRequest{Status: "backlog"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "24 Tasks", taskOneID),
+		Entry("ClearTaskSession", func() *harness {
+			_, err := h.service.ClearTaskSession(ctx, "personal", taskTwoID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "24 Tasks", taskTwoID),
+		Entry("SetTaskSession", func() *harness {
+			_, err := h.service.SetTaskSession(
+				ctx, "personal", taskOneID,
+				api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "24 Tasks", taskOneID),
+		Entry("UpdateGoalStatus", func() *harness {
+			_, err := h.service.UpdateGoalStatus(
+				ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "23 Goals", goalOneID),
+		Entry("AssignGoalToMe", func() *harness {
+			_, err := h.service.AssignGoalToMe(ctx, "personal", goalOneID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "23 Goals", goalOneID),
+		Entry("ClearGoalSession", func() *harness {
+			_, err := h.service.ClearGoalSession(ctx, "personal", goalTwoID)
+			Expect(err).NotTo(HaveOccurred())
+			return h
+		}, "23 Goals", goalTwoID),
+	)
+
+	// The eight synchronous sites run vault-cli work-on, complete and defer
+	// operations, which may write beyond the named item, so they keep the
+	// folder-level mark of the vault's tasks and goals keys.
+	DescribeTable("marks the vault's keys after a synchronous write",
 		func(run func() *harness) {
 			hh := run()
-			// The queued routes mark only once their consumer applies the
-			// write; the synchronous routes leave the queue idle, so this is
-			// a no-op for them.
+			// The synchronous routes leave the queue idle, so drain is a no-op.
 			hh.drain()
 			expectVaultMarked(hh.index, hh.dir)
+			ExpectWithOffset(1, hh.index.MarkFileDirtyCallCount()).To(Equal(0))
 		},
 		Entry("RunTask", func() *harness {
 			sh, _ := newStarterHarness()
@@ -1108,45 +1189,6 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 			Expect(err).NotTo(HaveOccurred())
 			return h
 		}),
-		Entry("AssignTaskToMe", func() *harness {
-			_, err := h.service.AssignTaskToMe(ctx, "personal", taskOneID)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("UpdateTaskPhase", func() *harness {
-			_, err := h.service.UpdateTaskPhase(
-				ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
-			)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("UpdateTaskFlag", func() *harness {
-			_, err := h.service.UpdateTaskFlag(
-				ctx, "personal", taskOneID, api.UpdateFlagRequest{},
-			)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("UpdateTaskStatus", func() *harness {
-			_, err := h.service.UpdateTaskStatus(
-				ctx, "personal", taskOneID, api.UpdateStatusRequest{Status: "backlog"},
-			)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("ClearTaskSession", func() *harness {
-			_, err := h.service.ClearTaskSession(ctx, "personal", taskTwoID)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("SetTaskSession", func() *harness {
-			_, err := h.service.SetTaskSession(
-				ctx, "personal", taskOneID,
-				api.UpdateSessionRequest{ClaudeSessionID: uuidTwo},
-			)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
 		Entry("RunGoal", func() *harness {
 			sh, _ := newStarterHarness()
 			_, err := sh.service.RunGoal(ctx, "personal", goalOneID)
@@ -1158,28 +1200,11 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 			Expect(err).NotTo(HaveOccurred())
 			return h
 		}),
-		Entry("UpdateGoalStatus", func() *harness {
-			_, err := h.service.UpdateGoalStatus(
-				ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
-			)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
 		Entry("ExecuteGoalCommand", func() *harness {
 			_, err := h.service.ExecuteGoalCommand(
 				ctx, "personal", goalOneID,
 				api.ExecuteCommandRequest{Command: "complete-goal"},
 			)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("AssignGoalToMe", func() *harness {
-			_, err := h.service.AssignGoalToMe(ctx, "personal", goalOneID)
-			Expect(err).NotTo(HaveOccurred())
-			return h
-		}),
-		Entry("ClearGoalSession", func() *harness {
-			_, err := h.service.ClearGoalSession(ctx, "personal", goalTwoID)
 			Expect(err).NotTo(HaveOccurred())
 			return h
 		}),
@@ -1193,7 +1218,7 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		h.publisher.PublishTaskUpdatedStub = func(context.Context, string, string) {
 			mu.Lock()
 			defer mu.Unlock()
-			marksAtPublish = h.index.MarkDirtyCallCount()
+			marksAtPublish = h.index.MarkFileDirtyCallCount()
 		}
 		_, err := h.service.UpdateTaskPhase(
 			ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
@@ -1212,7 +1237,7 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		h.publisher.PublishGoalUpdatedStub = func(context.Context, string, string) {
 			mu.Lock()
 			defer mu.Unlock()
-			marksAtPublish = h.index.MarkDirtyCallCount()
+			marksAtPublish = h.index.MarkFileDirtyCallCount()
 		}
 		_, err := h.service.UpdateGoalStatus(
 			ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
@@ -1237,33 +1262,33 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 	It("does not mark for JumpTask", func() {
 		Expect(h.service.JumpTask(ctx, "personal", taskTwoID, true)).To(Succeed())
 		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 
 	It("does not mark for ReloadConfig", func() {
 		_, err := h.service.ReloadConfig(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 
-	It("marks every key once on a single-vault reload", func() {
+	It("forces a full re-read once on a single-vault reload", func() {
 		_, err := h.service.ReloadCache(ctx, "personal")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(1))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(1))
 		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 
-	It("marks every key once on an all-vault reload", func() {
+	It("forces a full re-read once on an all-vault reload", func() {
 		_, err := h.service.ReloadCache(ctx, "")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(1))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(1))
 	})
 
 	It("does not mark on a 404 reload", func() {
 		_, err := h.service.ReloadCache(ctx, "nope")
 		Expect(httpStatus(err)).To(Equal(404))
-		Expect(h.index.MarkAllDirtyCallCount()).To(Equal(0))
+		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 })
 
