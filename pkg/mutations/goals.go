@@ -132,7 +132,8 @@ func (s *service) TakeOverGoal(
 	return response, nil
 }
 
-// UpdateGoalStatus updates a goal's status (drag-and-drop on the Goals view).
+// UpdateGoalStatus queues a goal's status update (drag-and-drop on the Goals
+// view). The route answers 202 before the vault is written.
 func (s *service) UpdateGoalStatus(
 	ctx context.Context, vault, goalID string, req api.UpdateStatusRequest,
 ) (api.StatusUpdateResponse, error) {
@@ -154,19 +155,19 @@ func (s *service) UpdateGoalStatus(
 	if !ok {
 		return api.StatusUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if setErr := set.GoalSet.Execute(
-		ctx, resolved.Path, goalID, "status", req.Status, reason, gate,
-	); setErr != nil {
-		return api.StatusUpdateResponse{}, newHTTPError(500, setErr.Error())
+	write := func(ctx context.Context) error {
+		if setErr := s.opsForVault(resolved).GoalSet.Execute(
+			ctx, resolved.Path, goalID, "status", req.Status, reason, gate,
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, goalID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
+	if err := s.enqueueWrite(
+		ctx, resolved, "goal", goalID, write, s.goalWritten(resolved, goalID),
+	); err != nil {
+		return api.StatusUpdateResponse{}, err
+	}
 	return api.StatusUpdateResponse{Status: "success", GoalID: goalID, NewStatus: req.Status}, nil
 }
 
@@ -214,7 +215,8 @@ func (s *service) ExecuteGoalCommand(
 	return api.GoalCommandResponse{Status: "success", GoalID: goalID, Command: req.Command}, nil
 }
 
-// AssignGoalToMe sets a goal's assignee to the configured current user.
+// AssignGoalToMe queues a goal's assignee write to the configured current user.
+// The route answers 202 before the vault is written.
 func (s *service) AssignGoalToMe(
 	ctx context.Context, vault, goalID string,
 ) (api.AssignResponse, error) {
@@ -237,23 +239,25 @@ func (s *service) AssignGoalToMe(
 	if !ok {
 		return api.AssignResponse{}, newHTTPError(404, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if setErr := set.GoalSet.Execute(
-		ctx, resolved.Path, goalID, "assignee", cfg.CurrentUser, "", "",
-	); setErr != nil {
-		return api.AssignResponse{}, newHTTPError(500, setErr.Error())
+	assignee := cfg.CurrentUser
+	write := func(ctx context.Context) error {
+		if setErr := s.opsForVault(resolved).GoalSet.Execute(
+			ctx, resolved.Path, goalID, "assignee", assignee, "", "",
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
+		return nil
 	}
-	s.deps.Cache.Invalidate(vault, goalID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
-	return api.AssignResponse{Status: "success", GoalID: goalID, Assignee: cfg.CurrentUser}, nil
+	if err := s.enqueueWrite(
+		ctx, resolved, "goal", goalID, write, s.goalWritten(resolved, goalID),
+	); err != nil {
+		return api.AssignResponse{}, err
+	}
+	return api.AssignResponse{Status: "success", GoalID: goalID, Assignee: assignee}, nil
 }
 
-// ClearGoalSession clears a goal's claude_session_id (Reset Session).
+// ClearGoalSession queues a clear of a goal's claude_session_id (Reset
+// Session). The route answers 202 before the vault is written.
 func (s *service) ClearGoalSession(
 	ctx context.Context, vault, goalID string,
 ) (api.SessionClearResponse, error) {
@@ -267,21 +271,22 @@ func (s *service) ClearGoalSession(
 	if !ok {
 		return api.SessionClearResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
-	set := s.opsForVault(resolved)
-	if clearErr := set.GoalClear.Execute(
-		ctx, resolved.Path, goalID, "claude_session_id",
-	); clearErr != nil {
-		return api.SessionClearResponse{}, newHTTPError(500, clearErr.Error())
+	write := func(ctx context.Context) error {
+		set := s.opsForVault(resolved)
+		if clearErr := set.GoalClear.Execute(
+			ctx, resolved.Path, goalID, "claude_session_id",
+		); clearErr != nil {
+			return newHTTPError(500, clearErr.Error())
+		}
+		// Best-effort: the id clear already succeeded, so a failure here
+		// self-heals on the next cleanup pass rather than failing the reset.
+		_ = set.GoalClear.Execute(ctx, resolved.Path, goalID, "claude_session_started")
+		return nil
 	}
-	// Best-effort: the id clear already succeeded, so a failure here self-heals
-	// on the next cleanup pass rather than failing the reset.
-	_ = set.GoalClear.Execute(ctx, resolved.Path, goalID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, goalID)
-	// Mark before publishing so a client reacting to the frame never re-fetches
-	// stale data; the deferred mark still covers error returns after a partial
-	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
-	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
+	if err := s.enqueueWrite(
+		ctx, resolved, "goal", goalID, write, s.goalWritten(resolved, goalID),
+	); err != nil {
+		return api.SessionClearResponse{}, err
+	}
 	return api.SessionClearResponse{Status: "success", GoalID: goalID}, nil
 }

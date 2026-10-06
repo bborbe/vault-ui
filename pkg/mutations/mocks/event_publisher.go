@@ -15,34 +15,49 @@ import (
 type EventPublisher struct {
 	PublishGoalUpdatedStub        func(context.Context, string, string)
 	publishGoalUpdatedMutex       sync.RWMutex
-	publishGoalUpdatedArgsForCall []struct {
-		arg1 context.Context
-		arg2 string
-		arg3 string
-	}
+	publishGoalUpdatedArgsForCall []EventPublisherPublishGoalUpdatedArgs
 	PublishTaskUpdatedStub        func(context.Context, string, string)
 	publishTaskUpdatedMutex       sync.RWMutex
-	publishTaskUpdatedArgsForCall []struct {
-		arg1 context.Context
-		arg2 string
-		arg3 string
-	}
-	invocations      map[string][][]interface{}
-	invocationsMutex sync.RWMutex
+	publishTaskUpdatedArgsForCall []EventPublisherPublishTaskUpdatedArgs
+	PublishWriteFailedStub        func(context.Context, string, string, string, string)
+	publishWriteFailedMutex       sync.RWMutex
+	publishWriteFailedArgsForCall []EventPublisherPublishWriteFailedArgs
+	invocations                   map[string][][]interface{}
+	callOrder                     []string
+	invocationsMutex              sync.RWMutex
+}
+
+// EventPublisherPublishGoalUpdatedArgs holds the arguments of one call to PublishGoalUpdated.
+type EventPublisherPublishGoalUpdatedArgs struct {
+	Arg1 context.Context
+	Arg2 string
+	Arg3 string
+}
+
+// EventPublisherPublishTaskUpdatedArgs holds the arguments of one call to PublishTaskUpdated.
+type EventPublisherPublishTaskUpdatedArgs struct {
+	Arg1 context.Context
+	Arg2 string
+	Arg3 string
+}
+
+// EventPublisherPublishWriteFailedArgs holds the arguments of one call to PublishWriteFailed.
+type EventPublisherPublishWriteFailedArgs struct {
+	Arg1 context.Context
+	Arg2 string
+	Arg3 string
+	Arg4 string
+	Arg5 string
 }
 
 func (fake *EventPublisher) PublishGoalUpdated(arg1 context.Context, arg2 string, arg3 string) {
 	fake.publishGoalUpdatedMutex.Lock()
-	fake.publishGoalUpdatedArgsForCall = append(fake.publishGoalUpdatedArgsForCall, struct {
-		arg1 context.Context
-		arg2 string
-		arg3 string
-	}{arg1, arg2, arg3})
+	fake.publishGoalUpdatedArgsForCall = append(fake.publishGoalUpdatedArgsForCall, EventPublisherPublishGoalUpdatedArgs{arg1, arg2, arg3})
 	stub := fake.PublishGoalUpdatedStub
 	fake.recordInvocation("PublishGoalUpdated", []interface{}{arg1, arg2, arg3})
 	fake.publishGoalUpdatedMutex.Unlock()
 	if stub != nil {
-		fake.PublishGoalUpdatedStub(arg1, arg2, arg3)
+		stub(arg1, arg2, arg3)
 	}
 }
 
@@ -62,21 +77,25 @@ func (fake *EventPublisher) PublishGoalUpdatedArgsForCall(i int) (context.Contex
 	fake.publishGoalUpdatedMutex.RLock()
 	defer fake.publishGoalUpdatedMutex.RUnlock()
 	argsForCall := fake.publishGoalUpdatedArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3
+}
+
+func (fake *EventPublisher) PublishGoalUpdatedArgs() []EventPublisherPublishGoalUpdatedArgs {
+	fake.publishGoalUpdatedMutex.RLock()
+	defer fake.publishGoalUpdatedMutex.RUnlock()
+	args := make([]EventPublisherPublishGoalUpdatedArgs, len(fake.publishGoalUpdatedArgsForCall))
+	copy(args, fake.publishGoalUpdatedArgsForCall)
+	return args
 }
 
 func (fake *EventPublisher) PublishTaskUpdated(arg1 context.Context, arg2 string, arg3 string) {
 	fake.publishTaskUpdatedMutex.Lock()
-	fake.publishTaskUpdatedArgsForCall = append(fake.publishTaskUpdatedArgsForCall, struct {
-		arg1 context.Context
-		arg2 string
-		arg3 string
-	}{arg1, arg2, arg3})
+	fake.publishTaskUpdatedArgsForCall = append(fake.publishTaskUpdatedArgsForCall, EventPublisherPublishTaskUpdatedArgs{arg1, arg2, arg3})
 	stub := fake.PublishTaskUpdatedStub
 	fake.recordInvocation("PublishTaskUpdated", []interface{}{arg1, arg2, arg3})
 	fake.publishTaskUpdatedMutex.Unlock()
 	if stub != nil {
-		fake.PublishTaskUpdatedStub(arg1, arg2, arg3)
+		stub(arg1, arg2, arg3)
 	}
 }
 
@@ -96,7 +115,53 @@ func (fake *EventPublisher) PublishTaskUpdatedArgsForCall(i int) (context.Contex
 	fake.publishTaskUpdatedMutex.RLock()
 	defer fake.publishTaskUpdatedMutex.RUnlock()
 	argsForCall := fake.publishTaskUpdatedArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3
+}
+
+func (fake *EventPublisher) PublishTaskUpdatedArgs() []EventPublisherPublishTaskUpdatedArgs {
+	fake.publishTaskUpdatedMutex.RLock()
+	defer fake.publishTaskUpdatedMutex.RUnlock()
+	args := make([]EventPublisherPublishTaskUpdatedArgs, len(fake.publishTaskUpdatedArgsForCall))
+	copy(args, fake.publishTaskUpdatedArgsForCall)
+	return args
+}
+
+func (fake *EventPublisher) PublishWriteFailed(arg1 context.Context, arg2 string, arg3 string, arg4 string, arg5 string) {
+	fake.publishWriteFailedMutex.Lock()
+	fake.publishWriteFailedArgsForCall = append(fake.publishWriteFailedArgsForCall, EventPublisherPublishWriteFailedArgs{arg1, arg2, arg3, arg4, arg5})
+	stub := fake.PublishWriteFailedStub
+	fake.recordInvocation("PublishWriteFailed", []interface{}{arg1, arg2, arg3, arg4, arg5})
+	fake.publishWriteFailedMutex.Unlock()
+	if stub != nil {
+		stub(arg1, arg2, arg3, arg4, arg5)
+	}
+}
+
+func (fake *EventPublisher) PublishWriteFailedCallCount() int {
+	fake.publishWriteFailedMutex.RLock()
+	defer fake.publishWriteFailedMutex.RUnlock()
+	return len(fake.publishWriteFailedArgsForCall)
+}
+
+func (fake *EventPublisher) PublishWriteFailedCalls(stub func(context.Context, string, string, string, string)) {
+	fake.publishWriteFailedMutex.Lock()
+	defer fake.publishWriteFailedMutex.Unlock()
+	fake.PublishWriteFailedStub = stub
+}
+
+func (fake *EventPublisher) PublishWriteFailedArgsForCall(i int) (context.Context, string, string, string, string) {
+	fake.publishWriteFailedMutex.RLock()
+	defer fake.publishWriteFailedMutex.RUnlock()
+	argsForCall := fake.publishWriteFailedArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3, argsForCall.Arg4, argsForCall.Arg5
+}
+
+func (fake *EventPublisher) PublishWriteFailedArgs() []EventPublisherPublishWriteFailedArgs {
+	fake.publishWriteFailedMutex.RLock()
+	defer fake.publishWriteFailedMutex.RUnlock()
+	args := make([]EventPublisherPublishWriteFailedArgs, len(fake.publishWriteFailedArgsForCall))
+	copy(args, fake.publishWriteFailedArgsForCall)
+	return args
 }
 
 func (fake *EventPublisher) Invocations() map[string][][]interface{} {
@@ -109,9 +174,18 @@ func (fake *EventPublisher) Invocations() map[string][][]interface{} {
 	return copiedInvocations
 }
 
+func (fake *EventPublisher) CallOrder() []string {
+	fake.invocationsMutex.RLock()
+	defer fake.invocationsMutex.RUnlock()
+	order := make([]string, len(fake.callOrder))
+	copy(order, fake.callOrder)
+	return order
+}
+
 func (fake *EventPublisher) recordInvocation(key string, args []interface{}) {
 	fake.invocationsMutex.Lock()
 	defer fake.invocationsMutex.Unlock()
+	fake.callOrder = append(fake.callOrder, key)
 	if fake.invocations == nil {
 		fake.invocations = map[string][][]interface{}{}
 	}

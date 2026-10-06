@@ -26,6 +26,22 @@ let startingGoals = new Set(); // Track goals currently being started (mirrors s
 
 const POLL_INTERVAL_MS = 60000; // Fallback polling every 60 seconds
 
+// Spec 025 — optimistic writes. A queued frontmatter write answers 202 with the
+// requested value; the board renders it at once and holds it as a pending
+// overlay until the item's own frame confirms it or a failed-write frame names
+// it. Echo window: after a write's own frame confirms it, watcher frames for the
+// same item are its own file change echoing back and are ignored for this long.
+// The echo trails the own frame by vault-cli's 100 ms watch debounce plus the
+// page-index refresh the watcher runs before broadcasting (docs/page-index.md).
+// Trade-offs: an echo later than this costs one extra, value-identical re-read;
+// a genuine external edit of the same item inside the window is picked up by
+// the next poll or unrelated frame instead. Not a setting — do not expose it.
+const OWN_WRITE_ECHO_WINDOW_MS = 3000;
+// Pending optimistic writes: key -> { kind, vault, id, fields, outstanding, expectsFrame }
+let pendingWrites = new Map();
+// key -> epoch ms until which watcher frames for that item are echo-suppressed
+let echoSuppressUntil = new Map();
+
 async function parseErrorResponse(response) {
     // Backend returns FastAPI HTTPException → {"detail": "..."} as application/json.
     // Try JSON first; fall back to text for non-JSON responses (proxy errors, network failures).
@@ -785,7 +801,8 @@ async function assignToMe(taskId, vault) {
             showToast(detail, true);
             return;
         }
-        await loadCurrentView();
+        const result = await response.json();
+        applyOptimisticWrite('task', vault, taskId, { assignee: result.assignee }, true);
     } catch (err) {
         console.error('Assign to me network error:', err);
         showToast(err.message || 'Network error — see console.', true);
@@ -804,7 +821,8 @@ async function assignGoalToMe(goalId, vault) {
             showToast(detail, true);
             return;
         }
-        await loadCurrentView();
+        const result = await response.json();
+        applyOptimisticWrite('goal', vault, goalId, { assignee: result.assignee }, true);
     } catch (err) {
         console.error('Assign goal to me network error:', err);
         showToast(err.message || 'Network error — see console.', true);
@@ -894,7 +912,7 @@ async function handleDrop(e) {
                 body: JSON.stringify(body),
             });
             if (!response.ok) throw new Error(await parseErrorResponse(response));
-            await loadCurrentView();
+            applyOptimisticWrite('task', task.vault, itemId, { phase: (await response.json()).phase }, true);
         } catch (error) {
             console.error('Failed to update task phase:', error);
             showToast(error.message, true);
@@ -914,7 +932,7 @@ async function handleDrop(e) {
                 body: JSON.stringify(body),
             });
             if (!response.ok) throw new Error(await parseErrorResponse(response));
-            await loadCurrentView();
+            applyOptimisticWrite('goal', goal.vault, itemId, { status: (await response.json()).new_status }, true);
         } catch (error) {
             console.error('Failed to update goal status:', error);
             showToast(error.message, true);
@@ -971,6 +989,9 @@ async function loadTasks() {
         tasks.forEach(task => {
             tasksCache[task.id] = task;
         });
+
+        // Hold pending optimistic writes across this refetch (spec 025).
+        overlayPendingWrites('task', tasksCache);
 
         renderTasks();
 
@@ -1075,6 +1096,9 @@ async function loadGoals() {
         goals.forEach(goal => {
             goalsCache[goal.id] = goal;
         });
+
+        // Hold pending optimistic writes across this refetch (spec 025).
+        overlayPendingWrites('goal', goalsCache);
 
         renderGoals();
     } catch (error) {
@@ -1310,6 +1334,113 @@ async function loadCurrentView() {
     } else {
         await loadTasks();
     }
+}
+
+// --- Spec 025: pending optimistic writes ----------------------------------
+
+function pendingWriteKey(kind, vault, id) {
+    return `${kind}\u0000${vault}\u0000${id}`;
+}
+
+// Render a queued write's value at once: record it as pending for the item,
+// apply it to the cache and re-render the active view from the caches (no
+// fetch). `expectsFrame` is true when the route publishes an own frame once the
+// write lands, false for the task session clear — that route publishes none and
+// is confirmed by a re-read instead.
+function applyOptimisticWrite(kind, vault, id, fields, expectsFrame) {
+    const key = pendingWriteKey(kind, vault, id);
+    let entry = pendingWrites.get(key);
+    if (!entry) {
+        entry = { kind, vault, id, fields: {}, outstanding: 0, expectsFrame: false };
+        pendingWrites.set(key, entry);
+    }
+    Object.assign(entry.fields, fields);
+    entry.outstanding += 1;
+    entry.expectsFrame = entry.expectsFrame || expectsFrame;
+
+    const cache = kind === 'goal' ? goalsCache : tasksCache;
+    const item = cache[id];
+    if (item && item.vault === vault) {
+        Object.assign(item, fields);
+    }
+
+    if (currentView === 'tasks') {
+        renderTasks();
+    } else if (currentView === 'goals') {
+        renderGoals();
+    }
+}
+
+// Re-apply the pending overlay to a freshly fetched cache so a refetch cannot
+// revert a value the server has not caught up with yet. An entry whose fields
+// already match the server value and that expects no frame (the task session
+// clear) has been confirmed by this read and is dropped.
+function overlayPendingWrites(kind, cache) {
+    pendingWrites.forEach((entry, key) => {
+        if (entry.kind !== kind) return;
+        const item = cache[entry.id];
+        if (!item || item.vault !== entry.vault) return;
+        const caughtUp = Object.keys(entry.fields).every(f => item[f] === entry.fields[f]);
+        if (caughtUp && !entry.expectsFrame) {
+            pendingWrites.delete(key);
+            return;
+        }
+        Object.assign(item, entry.fields);
+    });
+}
+
+// A failed queued write: drop the pending value so the card shows the file's
+// previous value again on the re-read, and name the item and the reason.
+function handleWriteFailed(data) {
+    const id = data.task_id;
+    const kind = data.item_kind || 'task';
+    const key = pendingWriteKey(kind, data.vault, id);
+    const entry = pendingWrites.get(key);
+    if (entry) {
+        entry.outstanding -= 1;
+        if (entry.outstanding <= 0) pendingWrites.delete(key);
+    }
+    echoSuppressUntil.delete(key);
+    showToast(`Could not save ${id}: ${data.reason}`, true);
+    loadCurrentView();
+}
+
+// Pending-write bookkeeping for one WebSocket frame. Deliberately runs before
+// the "vault not displayed" check: a write can be in flight while the operator
+// switches the vault filter, and dropping its frame there would leave the entry
+// (and its echo suppression) stuck for the session and hide a failure. Returns
+// true when the frame is fully handled and no dispatch should happen. Any
+// task_updated/goal_updated for the item counts as its own — a second client's
+// write confirms ours too.
+function consumePendingWriteFrame(type, kind, vault, id, data) {
+    if (type === 'write_failed') {
+        handleWriteFailed(data);
+        return true;
+    }
+    const key = pendingWriteKey(kind, vault, id);
+    if (type === 'task_updated' || type === 'goal_updated') {
+        const entry = pendingWrites.get(key);
+        if (!entry) return false;
+        entry.outstanding -= 1;
+        echoSuppressUntil.set(key, Date.now() + OWN_WRITE_ECHO_WINDOW_MS);
+        // A later write for this item is still queued and will confirm it.
+        if (entry.outstanding > 0) return true;
+        pendingWrites.delete(key);
+        // Fall through so the vault check and dispatch perform the single
+        // refetch that renders the confirmed value.
+        return false;
+    }
+    if (type !== 'deleted') {
+        const entry = pendingWrites.get(key);
+        const suppressedUntil = echoSuppressUntil.get(key);
+        const isEcho = (entry && entry.expectsFrame === true) ||
+            (suppressedUntil !== undefined && suppressedUntil > Date.now());
+        if (isEcho) {
+            console.log(`Ignoring ${type} frame for ${id} — own write echo`);
+            return true;
+        }
+    }
+    return false;
 }
 
 // ↻ Refresh: re-read the server's config (the vault-ui config file plus
@@ -1621,7 +1752,8 @@ async function toggleFlag(taskId, vault, current) {
         body: JSON.stringify({ flag: !current }),
     });
     if (response.ok) {
-        await loadCurrentView();
+        const result = await response.json();
+        applyOptimisticWrite('task', vault, taskId, { flag: result.flag }, true);
     } else {
         const err = await response.json().catch(() => ({}));
         alert(`Failed to update flag: ${err.detail || response.status}`);
@@ -2474,7 +2606,8 @@ async function patchStatus(kind, id, vault, status, successMsg, closeOut = null)
             throw new Error(await parseErrorResponse(response));
         }
         showToast(successMsg);
-        await loadCurrentView();
+        const result = await response.json();
+        applyOptimisticWrite(kind, vault, id, { status: result.new_status }, true);
     } catch (error) {
         console.error(`Failed to set ${kind} status to ${status}:`, error);
         showToast(error.message, true);
@@ -2504,10 +2637,10 @@ async function clearSession(kind, id) {
         if (!response.ok) {
             throw new Error(await parseErrorResponse(response));
         }
-        if (cache[id]) {
-            cache[id].claude_session_id = null;
-        }
-        await loadCurrentView();
+        // The task session-clear route publishes no frame, so its entry clears
+        // when a re-read shows the server caught up; the goal route publishes one.
+        applyOptimisticWrite(kind, item.vault, id,
+            { claude_session_id: null, claude_session_started: null }, kind === 'goal');
     } catch (error) {
         console.error(`Failed to clear ${kind} session:`, error);
         showToast(error.message, true);
@@ -2656,6 +2789,11 @@ function connectWebSocket() {
         // where the initial load has just fetched the same data.
         if (wsHasConnected) {
             console.log('WebSocket reconnected — re-fetching to catch up on missed events');
+            // Frames may have been missed while the socket was down, so a pending
+            // overlay could be stuck on a value the server never took. The
+            // catch-up read is authoritative — drop the overlay and re-read.
+            pendingWrites.clear();
+            echoSuppressUntil.clear();
             loadCurrentView();
         }
         wsHasConnected = true;
@@ -2695,6 +2833,9 @@ function handleTaskUpdate(data) {
         console.warn('WebSocket payload missing item_kind; defaulting to "task" (pre-prompt-3 backend?)');
         kind = 'task';
     }
+
+    // Optimistic-write bookkeeping runs for every vault, before the vault check.
+    if (consumePendingWriteFrame(type, kind, vault, id, data)) return;
 
     // Check if update is for a vault we're displaying
     const shouldUpdate = currentVault === null ||

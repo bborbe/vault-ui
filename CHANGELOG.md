@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Apply the board's frontmatter writes optimistically through an in-memory per-vault queue (`pkg/queue`): the nine frontmatter-writing routes (task phase/status/flag/assign-to-me/session set/session clear, goal status/assign-to-me/session clear) validate synchronously, enqueue one write and answer 202 with today's body; each vault's consumer applies its writes one at a time in submission order without blocking other vaults, and only after the file is written invalidates the status cache, marks the page index dirty and publishes the `task_updated`/`goal_updated` frame; a failed write publishes a new `write_failed` frame (`task_id`, `item_kind`, `vault`, `reason`) and nothing else. The process-spawning, jump and reload routes are unchanged.
+
 ## v0.82.0
 
 - feat: Keep the board's live-session state current from harness session-registry file events in a new `pkg/sessionstate` package — the registry ids are read once at startup, re-read on every fsnotify event under `~/.claude/sessions`, and re-read every `DefaultRescanInterval` (60 s) as the safety net for a missed event — so the Live badge and the jump control's availability follow file events instead of a timer; a real change pushes the existing watcher frame (two per configured vault, `task` and `goal`) to connected browsers so an idle board updates in under a second instead of waiting for its 60 s poll, `sessionSignals` reads the ids from that state instead of opening the registry directory per request while the per-request `ps` scan stays on the request path, and a failing or panicking event source is logged at `glog.V(2)` and swallowed so the rescan keeps the state current and the board keeps serving; `factory.CreateSessionStateWatcher` wires it into `main.go` and `docs/pane-resolution.md` records when a pane is resolved and how fresh session state is.

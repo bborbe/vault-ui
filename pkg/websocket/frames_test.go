@@ -61,6 +61,17 @@ var _ = Describe("Frames", func() {
 		})
 	})
 
+	Describe("WriteFailedFrame", func() {
+		It("carries task_id, item_kind, vault and reason in fixed order", func() {
+			Expect(string(websocket.WriteFailedFrame(
+				"personal", "task", "Task A", "permission denied",
+			))).To(Equal(
+				`{"type":"write_failed","task_id":"Task A","item_kind":"task",` +
+					`"vault":"personal","reason":"permission denied"}`,
+			))
+		})
+	})
+
 	Describe("GoalUpdatedFrame", func() {
 		It("carries goal_id and the goal item_kind", func() {
 			var frame map[string]string

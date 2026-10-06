@@ -2,8 +2,10 @@
 # Columns: NAME<TAB>METHOD<TAB>PATH (with query)<TAB>JSON BODY
 #
 # Each case is run against the Python backend and then, after the fixture vault
-# is reset to its pristine bytes, against the Go backend. The two statuses, the
-# two normalized bodies, and the two resulting vault trees must all match.
+# is reset to its pristine bytes, against the Go backend. The two normalized
+# bodies and the two resulting vault trees must match; statuses are not compared
+# because the Go backend answers 202 for queued writes (spec 026) and the Python
+# backend is superseded.
 task-flag-set	PATCH	/api/tasks/TaskOne/flag?vault=personal	{}
 task-flag-clear	PATCH	/api/tasks/TaskOne/flag?vault=personal	{"flag":false}
 task-phase	PATCH	/api/tasks/TaskOne/phase?vault=personal	{"phase":"execution"}

@@ -53,9 +53,10 @@ func execute(ctx context.Context) error {
 	// every vault behind the process-wide page index.
 	pageIndex := factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
 	sessionState := factory.CreateSessionState()
+	writeQueue := factory.CreateWriteQueue()
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, cache, paneResolver, launches, homeDir, readiness, manager, pageIndex,
-		sessionState,
+		sessionState, writeQueue,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -85,6 +86,7 @@ func execute(ctx context.Context) error {
 		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
 		factory.CreateSessionStateWatcher(loader, manager, sessionState, homeDir),
+		writeQueue.Consume,
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {

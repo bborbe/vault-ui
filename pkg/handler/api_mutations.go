@@ -213,7 +213,9 @@ func NewExecuteTaskCommandHandler(m mutations.Service) http.Handler {
 	})
 }
 
-// NewAssignTaskHandler returns the PATCH /api/tasks/{task_id}/assign-to-me handler.
+// NewAssignTaskHandler returns the PATCH /api/tasks/{task_id}/assign-to-me
+// handler. The write is queued, so the handler answers 202 with the requested
+// assignee.
 func NewAssignTaskHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -225,11 +227,12 @@ func NewAssignTaskHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
-// NewTaskPhaseHandler returns the PATCH /api/tasks/{task_id}/phase handler.
+// NewTaskPhaseHandler returns the PATCH /api/tasks/{task_id}/phase handler. The
+// write is queued, so the handler answers 202 with the requested phase.
 func NewTaskPhaseHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -245,11 +248,12 @@ func NewTaskPhaseHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
-// NewTaskFlagHandler returns the PATCH /api/tasks/{task_id}/flag handler.
+// NewTaskFlagHandler returns the PATCH /api/tasks/{task_id}/flag handler. The
+// write is queued, so the handler answers 202 with the requested flag value.
 func NewTaskFlagHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -265,11 +269,12 @@ func NewTaskFlagHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
 // NewTaskStatusHandler returns the PATCH /api/tasks/{task_id}/status handler.
+// The write is queued, so the handler answers 202 with the requested status.
 func NewTaskStatusHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -289,11 +294,12 @@ func NewTaskStatusHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
 // NewGoalStatusHandler returns the PATCH /api/goals/{goal_id}/status handler.
+// The write is queued, so the handler answers 202 with the requested status.
 func NewGoalStatusHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -313,7 +319,7 @@ func NewGoalStatusHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
@@ -337,7 +343,9 @@ func NewExecuteGoalCommandHandler(m mutations.Service) http.Handler {
 	})
 }
 
-// NewAssignGoalHandler returns the PATCH /api/goals/{goal_id}/assign-to-me handler.
+// NewAssignGoalHandler returns the PATCH /api/goals/{goal_id}/assign-to-me
+// handler. The write is queued, so the handler answers 202 with the requested
+// assignee.
 func NewAssignGoalHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -349,11 +357,13 @@ func NewAssignGoalHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
-// NewClearTaskSessionHandler returns the DELETE /api/tasks/{task_id}/session handler.
+// NewClearTaskSessionHandler returns the DELETE /api/tasks/{task_id}/session
+// handler. The write is queued, so the handler answers 202 with the requested
+// session clear.
 func NewClearTaskSessionHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -365,11 +375,13 @@ func NewClearTaskSessionHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
-// NewClearGoalSessionHandler returns the DELETE /api/goals/{goal_id}/session handler.
+// NewClearGoalSessionHandler returns the DELETE /api/goals/{goal_id}/session
+// handler. The write is queued, so the handler answers 202 with the requested
+// session clear.
 func NewClearGoalSessionHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -381,11 +393,13 @@ func NewClearGoalSessionHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 
-// NewSetTaskSessionHandler returns the PATCH /api/tasks/{task_id}/session handler.
+// NewSetTaskSessionHandler returns the PATCH /api/tasks/{task_id}/session
+// handler. The write is queued, so the handler answers 202 with the requested
+// session id.
 func NewSetTaskSessionHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
@@ -401,7 +415,7 @@ func NewSetTaskSessionHandler(m mutations.Service) http.Handler {
 			writeMutationError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeJSON(resp, http.StatusAccepted, result)
 	})
 }
 

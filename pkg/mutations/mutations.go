@@ -8,6 +8,13 @@
 // vault_ui.api.tasks write handlers — the same status codes, bodies, guards,
 // and vault-file side effects — so the frozen frontend behaves identically.
 //
+// The nine frontmatter-writing routes (task phase/status/flag/assign-to-me/
+// session set/session clear, goal status/assign-to-me/session clear) answer 202
+// instead of 200 (spec 025): they validate synchronously, enqueue one write on
+// the vault's queue, and answer with today's typed body carrying the requested
+// value. Every other status code, body and guard still mirrors the Python
+// handlers.
+//
 // All vault access goes through vault-cli's exported Go API (a library call);
 // no vault-cli subprocess is ever spawned.
 package mutations
@@ -16,6 +23,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/bborbe/errors"
+	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
@@ -24,6 +33,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sigterm"
@@ -47,11 +57,22 @@ func newHTTPError(status int, detail string) *HTTPError {
 }
 
 // EventPublisher announces a board mutation so the WebSocket layer can push a
-// refresh to connected clients. Prompt 3 supplies the connection-manager-backed
-// implementation; this prompt wires a no-op.
+// refresh to connected clients, and announces a failed queued write so the
+// board can revert. websocket.MutationPublisher satisfies it structurally.
+//
+//counterfeiter:generate -o ./mocks/event_publisher.go --fake-name EventPublisher . EventPublisher
 type EventPublisher interface {
 	PublishTaskUpdated(ctx context.Context, vault, taskID string)
 	PublishGoalUpdated(ctx context.Context, vault, goalID string)
+	PublishWriteFailed(ctx context.Context, vault, itemKind, itemID, reason string)
+}
+
+// WriteQueue accepts one vault write for asynchronous, per-vault FIFO
+// application. queue.Queue satisfies it.
+//
+//counterfeiter:generate -o ./mocks/write_queue.go --fake-name WriteQueue . WriteQueue
+type WriteQueue interface {
+	Enqueue(ctx context.Context, write queue.Write) error
 }
 
 // IndexInvalidator marks the read-side page index stale after a vault-ui write,
@@ -93,6 +114,7 @@ type Deps struct {
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
 	Index        IndexInvalidator
+	Queue        WriteQueue
 	Clock        libtime.CurrentDateTimeGetter
 	Scanner      session.ProcessScanner
 	Signaler     sigterm.Signaler
@@ -154,6 +176,83 @@ func (s *service) markVaultDirty(vault vaultconfig.Vault) {
 		pageindex.NewKey(vault.Path, vault.TasksFolder),
 		pageindex.NewKey(vault.Path, vault.GoalsFolder),
 	)
+}
+
+// enqueueWrite queues one frontmatter write on the vault's FIFO. write runs
+// the vault-cli calls; onSuccess runs the route's post-write side-effects.
+// Both run on the vault's queue consumer with the consumer's context — never
+// on the request goroutine and never with the request context. A failed (or
+// panicking) write publishes a write_failed frame and runs none of onSuccess.
+//
+// A write that fails after a partial file change is picked up by the file
+// watcher, which refreshes the page index on its own; the queue never retries.
+func (s *service) enqueueWrite(
+	ctx context.Context,
+	vault vaultconfig.Vault,
+	itemKind, itemID string,
+	write run.Func,
+	onSuccess func(ctx context.Context),
+) error {
+	if err := s.deps.Queue.Enqueue(ctx, queue.Write{
+		Vault:  vault.Name,
+		ItemID: itemID,
+		Apply: func(ctx context.Context) error {
+			if err := run.CatchPanic(write)(ctx); err != nil {
+				s.deps.Publisher.PublishWriteFailed(
+					ctx, vault.Name, itemKind, itemID, failureReason(err),
+				)
+				return errors.Wrapf(
+					ctx, err, "apply %s write %s in vault %s", itemKind, itemID, vault.Name,
+				)
+			}
+			onSuccess(ctx)
+			return nil
+		},
+	}); err != nil {
+		return errors.Wrapf(ctx, err, "enqueue %s write %s in vault %s", itemKind, itemID, vault.Name)
+	}
+	return nil
+}
+
+// failureReason is the human-readable reason a write_failed frame carries: an
+// HTTPError's Detail (the text today's synchronous route would have answered),
+// otherwise the error text.
+func failureReason(err error) string {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Detail
+	}
+	return err.Error()
+}
+
+// taskWritten is the post-write side-effect of a publishing task route, in
+// today's order: status cache, page-index dirty mark, then the frame.
+func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(context.Context) {
+	return func(ctx context.Context) {
+		s.deps.Cache.Invalidate(vault.Name, taskID)
+		s.markVaultDirty(vault)
+		s.deps.Publisher.PublishTaskUpdated(ctx, vault.Name, taskID)
+	}
+}
+
+// goalWritten is taskWritten for a publishing goal route.
+func (s *service) goalWritten(vault vaultconfig.Vault, goalID string) func(context.Context) {
+	return func(ctx context.Context) {
+		s.deps.Cache.Invalidate(vault.Name, goalID)
+		s.markVaultDirty(vault)
+		s.deps.Publisher.PublishGoalUpdated(ctx, vault.Name, goalID)
+	}
+}
+
+// itemWrittenSilently is the post-write side-effect of the task session
+// routes, which publish no frame today: status cache, then dirty mark.
+func (s *service) itemWrittenSilently(
+	vault vaultconfig.Vault, itemID string,
+) func(context.Context) {
+	return func(context.Context) {
+		s.deps.Cache.Invalidate(vault.Name, itemID)
+		s.markVaultDirty(vault)
+	}
 }
 
 // requireSafeID rejects an identifier beginning with '-' before any vault

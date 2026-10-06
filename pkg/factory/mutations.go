@@ -21,23 +21,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/sigterm"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
-	"github.com/bborbe/vault-ui/pkg/websocket"
 )
-
-// connectionEventPublisher announces board mutations to connected WebSocket
-// clients. The mutating handlers depend only on the mutations.EventPublisher
-// interface, so this is the single place that decides who hears about a change.
-type connectionEventPublisher struct {
-	manager websocket.ConnectionManager
-}
-
-func (p connectionEventPublisher) PublishTaskUpdated(_ context.Context, vault, taskID string) {
-	p.manager.Broadcast(websocket.TaskUpdatedFrame(vault, taskID))
-}
-
-func (p connectionEventPublisher) PublishGoalUpdated(_ context.Context, vault, goalID string) {
-	p.manager.Broadcast(websocket.GoalUpdatedFrame(vault, goalID))
-}
 
 // mutationConfigProvider resolves the merged vault config for the mutation
 // service. It never caches.
@@ -103,6 +87,7 @@ func CreateMutationService(
 	paneResolver mutations.PaneResolver,
 	publisher mutations.EventPublisher,
 	index mutations.IndexInvalidator,
+	writeQueue mutations.WriteQueue,
 ) mutations.Service {
 	return mutations.New(mutations.Deps{
 		Config:    &mutationConfigProvider{loader: loader, configPath: configPath},
@@ -112,6 +97,7 @@ func CreateMutationService(
 		Locks:     locks,
 		Publisher: publisher,
 		Index:     index,
+		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.NewPSScanner("-axww", "-o", "args="),
 		Signaler:  sigterm.NewProcessSignaler(),
