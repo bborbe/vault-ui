@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [027-incremental-page-index-updates]
+summary: Wired pkg/watchrefresh to per-file index updates with a stat-diff fallback (new EventFilename) and applied the spec's behavior-4 mark table at the 3 queued callbacks via the new IndexInvalidator.MarkFileDirty, plus tests for AC1/AC5(i)(ii)(iv)/AC7 and the docs, CHANGELOG and parity run
+execution_id: vault-ui-incremental-index-exec-142-spec-027-wiring-and-docs
+dark-factory-version: dev
 created: "2026-10-06T09:08:51Z"
 queued: "2026-10-06T09:33:58Z"
+started: "2026-10-06T11:01:17Z"
+completed: "2026-10-06T11:30:49Z"
 branch: dark-factory/incremental-page-index-updates
 ---
 

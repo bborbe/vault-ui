@@ -13,20 +13,29 @@ import (
 )
 
 type IndexInvalidator struct {
-	ForceReloadStub        func()
-	forceReloadMutex       sync.RWMutex
-	forceReloadArgsForCall []struct{}
-	MarkDirtyStub          func(...pageindex.Key)
-	markDirtyMutex         sync.RWMutex
-	markDirtyArgsForCall   []IndexInvalidatorMarkDirtyArgs
-	invocations            map[string][][]interface{}
-	callOrder              []string
-	invocationsMutex       sync.RWMutex
+	ForceReloadStub          func()
+	forceReloadMutex         sync.RWMutex
+	forceReloadArgsForCall   []struct{}
+	MarkDirtyStub            func(...pageindex.Key)
+	markDirtyMutex           sync.RWMutex
+	markDirtyArgsForCall     []IndexInvalidatorMarkDirtyArgs
+	MarkFileDirtyStub        func(pageindex.Key, string)
+	markFileDirtyMutex       sync.RWMutex
+	markFileDirtyArgsForCall []IndexInvalidatorMarkFileDirtyArgs
+	invocations              map[string][][]interface{}
+	callOrder                []string
+	invocationsMutex         sync.RWMutex
 }
 
 // IndexInvalidatorMarkDirtyArgs holds the arguments of one call to MarkDirty.
 type IndexInvalidatorMarkDirtyArgs struct {
 	Arg1 []pageindex.Key
+}
+
+// IndexInvalidatorMarkFileDirtyArgs holds the arguments of one call to MarkFileDirty.
+type IndexInvalidatorMarkFileDirtyArgs struct {
+	Arg1 pageindex.Key
+	Arg2 string
 }
 
 func (fake *IndexInvalidator) ForceReload() {
@@ -92,6 +101,44 @@ func (fake *IndexInvalidator) MarkDirtyArgs() []IndexInvalidatorMarkDirtyArgs {
 	defer fake.markDirtyMutex.RUnlock()
 	args := make([]IndexInvalidatorMarkDirtyArgs, len(fake.markDirtyArgsForCall))
 	copy(args, fake.markDirtyArgsForCall)
+	return args
+}
+
+func (fake *IndexInvalidator) MarkFileDirty(arg1 pageindex.Key, arg2 string) {
+	fake.markFileDirtyMutex.Lock()
+	fake.markFileDirtyArgsForCall = append(fake.markFileDirtyArgsForCall, IndexInvalidatorMarkFileDirtyArgs{arg1, arg2})
+	stub := fake.MarkFileDirtyStub
+	fake.recordInvocation("MarkFileDirty", []interface{}{arg1, arg2})
+	fake.markFileDirtyMutex.Unlock()
+	if stub != nil {
+		stub(arg1, arg2)
+	}
+}
+
+func (fake *IndexInvalidator) MarkFileDirtyCallCount() int {
+	fake.markFileDirtyMutex.RLock()
+	defer fake.markFileDirtyMutex.RUnlock()
+	return len(fake.markFileDirtyArgsForCall)
+}
+
+func (fake *IndexInvalidator) MarkFileDirtyCalls(stub func(pageindex.Key, string)) {
+	fake.markFileDirtyMutex.Lock()
+	defer fake.markFileDirtyMutex.Unlock()
+	fake.MarkFileDirtyStub = stub
+}
+
+func (fake *IndexInvalidator) MarkFileDirtyArgsForCall(i int) (pageindex.Key, string) {
+	fake.markFileDirtyMutex.RLock()
+	defer fake.markFileDirtyMutex.RUnlock()
+	argsForCall := fake.markFileDirtyArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2
+}
+
+func (fake *IndexInvalidator) MarkFileDirtyArgs() []IndexInvalidatorMarkFileDirtyArgs {
+	fake.markFileDirtyMutex.RLock()
+	defer fake.markFileDirtyMutex.RUnlock()
+	args := make([]IndexInvalidatorMarkFileDirtyArgs, len(fake.markFileDirtyArgsForCall))
+	copy(args, fake.markFileDirtyArgsForCall)
 	return args
 }
 

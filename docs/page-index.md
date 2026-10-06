@@ -18,31 +18,36 @@ readers share the same `*domain.Page` pointers read-only.
 - A warm read never touches disk. `ListPages` returns the published snapshot
   without any filesystem access.
 - An external edit becomes visible after the watcher's ~100 ms debounce plus one
-  re-read of that file.
+  re-read of that file. An event whose path is not a single plain filename
+  directly inside its folder costs one stat-diff of that folder instead.
 - A missed watcher event is repaired by the rescan within `RescanInterval`
   (50 s) plus the poll granularity plus one stat-diff — under 60 s normally. If
   a listing or a read hangs, each storage call is bounded by `rebuildTimeout`
   (2 min), so the worst case is the rescan interval plus that timeout. The 60 s
   ceiling holds for every change to a file's presence, size, modification time
   or status-change time.
-- Writes made through vault-ui are visible to the next read. The synchronous
-  writes — `Run*`, `TakeOver*` and both `execute-command` routes — still mark
-  their vault's tasks and goals keys stale before they return, including paths
-  that write before failing. The queued writes (see
-  [optimistic writes](optimistic-writes.md)) mark from the queue consumer, after
-  the file is written and immediately before their `Publish*Updated` frame, so a
-  client that re-fetches on the frame never sees stale data; a read in the
-  in-flight window returns the pre-write value, which the board's overlay hides.
-  `JumpTask` and `ReloadConfig` write nothing and mark nothing.
+- Writes made through vault-ui are visible to the next read. The queued writes
+  (see [optimistic writes](optimistic-writes.md)) mark one item's file from the
+  queue consumer, after the file is written and immediately before their
+  `Publish*Updated` frame, so a client that re-fetches on the frame never sees
+  stale data; a read in the in-flight window returns the pre-write value, which
+  the board's overlay hides. The eight synchronous sites — `Run*`, `TakeOver*`
+  and both `execute-command` routes — keep the folder-level mark of their
+  vault's tasks and goals keys, before they return, including paths that write
+  before failing. `JumpTask` and `ReloadConfig` write nothing and mark nothing.
 - The first read after a mark resolves it before serving: a per-file mark
   re-reads exactly the marked files, a folder-level mark runs one stat-diff, and
-  every concurrent reader waits on that same work. Marking a key the index has
-  never seen is a no-op: its first read builds it anyway.
+  every concurrent reader waits on that same work — a reader of a key with a
+  pending write mark does not return until the marked files have been re-read.
+  Marking a key the index has never seen is a no-op: its first read builds it
+  anyway.
 - An event-driven (`RefreshFile`) or rescan-driven (`Refresh`) read never blocks
   `ListPages`: a reader is served from the current snapshot immediately.
+- `POST /api/cache/reload` is the forced path: it ignores fingerprints, so the
+  next read of every key re-reads every file, regardless of its `vault`
+  parameter. It is the only path that does.
 - Topics folders are not watched. They refresh through the rescan loop and
-  `POST /api/cache/reload`, which forces a full re-read of every key regardless
-  of its `vault` parameter.
+  `POST /api/cache/reload`.
 - A failed listing keeps serving the previous snapshot and logs the error with
   the key; the mark stays pending, so the next read retries.
 - A process restart starts with an empty index. Cold reads wait for the startup
@@ -50,6 +55,14 @@ readers share the same `*domain.Page` pointers read-only.
 
 ## Incremental updates
 
+- A task or goal watcher event re-reads **only the file the event names** — the
+  file's base name inside the event's key folder — and lists nothing. The file's
+  current on-disk state decides the outcome whatever the event type says: present
+  and readable replaces or inserts its page at its filename-ordered position,
+  absent or unreadable removes it. An event whose path, relative to the key's
+  folder, is not a single plain filename ending in `.md` falls back to a
+  stat-diff of that key. Theme and objective events, and events for an unknown
+  vault, touch no key at all.
 - Every file read records a fingerprint — size, modification time and
   status-change time — taken from a stat that follows symlinks, including files
   that end up excluded. A symlinked page's fingerprint therefore tracks its
@@ -82,9 +95,11 @@ readers share the same `*domain.Page` pointers read-only.
   started after that event has been applied, so a client that re-fetches on the
   frame sees fresh data.
 - A file's page in a published snapshot always comes from the most recently started
-  read of that file; reads of different files never drop each other's results.
-  Concurrent work on one folder shares at most one in-flight read plus one queued
-  follow-up, so a burst collapses into that pair.
+  read of that file; reads of different files never drop each other's results. A
+  folder no longer keeps a single in-flight rebuild and a queued follow-up:
+  per-file reads are independent, so a burst of events for different files runs
+  its reads concurrently, and each event's frame is sent only after a snapshot
+  containing a read started after that event has been published.
 - There is no ordering guarantee across folders beyond vault-cli's own per-file
   delivery.
 - Theme and objective frames are unchanged. Frames originating from routes are

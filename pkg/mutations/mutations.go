@@ -78,13 +78,16 @@ type WriteQueue interface {
 // IndexInvalidator marks the read-side page index stale after a vault-ui write,
 // so the next list read re-reads what the write changed. MarkDirty marks whole
 // folders, whose next read compares fingerprints and re-reads only what
-// changed; ForceReload is the operator escape hatch behind the cache-reload
-// route. It deliberately exposes no page-content read method: mutations keep
-// reading vault files directly.
+// changed; MarkFileDirty marks one item's file when its id names an existing
+// file exactly and falls back to a folder-level mark otherwise; ForceReload is
+// the operator escape hatch behind the cache-reload route. It deliberately
+// exposes no page-content read method: mutations keep reading vault files
+// directly.
 //
 //counterfeiter:generate -o ./mocks/index_invalidator.go --fake-name IndexInvalidator . IndexInvalidator
 type IndexInvalidator interface {
 	MarkDirty(keys ...pageindex.Key)
+	MarkFileDirty(key pageindex.Key, name string)
 	ForceReload()
 }
 
@@ -229,11 +232,16 @@ func failureReason(err error) string {
 }
 
 // taskWritten is the post-write side-effect of a publishing task route, in
-// today's order: status cache, page-index dirty mark, then the frame.
+// today's order: status cache, page-index dirty mark, then the frame. The mark
+// is per-file: a queued write edits one item's frontmatter, so the index
+// re-reads only that item's file — or the whole folder when the id does not
+// name a file exactly.
 func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(context.Context) {
 	return func(ctx context.Context) {
 		s.deps.Cache.Invalidate(vault.Name, taskID)
-		s.markVaultDirty(vault)
+		s.deps.Index.MarkFileDirty(
+			pageindex.NewKey(vault.Path, vault.TasksFolder), taskID,
+		)
 		s.deps.Publisher.PublishTaskUpdated(ctx, vault.Name, taskID)
 	}
 }
@@ -242,19 +250,23 @@ func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(conte
 func (s *service) goalWritten(vault vaultconfig.Vault, goalID string) func(context.Context) {
 	return func(ctx context.Context) {
 		s.deps.Cache.Invalidate(vault.Name, goalID)
-		s.markVaultDirty(vault)
+		s.deps.Index.MarkFileDirty(
+			pageindex.NewKey(vault.Path, vault.GoalsFolder), goalID,
+		)
 		s.deps.Publisher.PublishGoalUpdated(ctx, vault.Name, goalID)
 	}
 }
 
 // itemWrittenSilently is the post-write side-effect of the task session
-// routes, which publish no frame today: status cache, then dirty mark.
+// routes, which publish no frame today: status cache, then per-file dirty mark.
 func (s *service) itemWrittenSilently(
 	vault vaultconfig.Vault, itemID string,
 ) func(context.Context) {
 	return func(context.Context) {
 		s.deps.Cache.Invalidate(vault.Name, itemID)
-		s.markVaultDirty(vault)
+		s.deps.Index.MarkFileDirty(
+			pageindex.NewKey(vault.Path, vault.TasksFolder), itemID,
+		)
 	}
 }
 

@@ -89,14 +89,22 @@ func indexLoader(vaults ...indexVault) (*mocks.Loader, string) {
 }
 
 // countingSeams counts reads and listings while delegating to the real disk
-// seams, so responses stay byte-identical.
+// seams, so responses stay byte-identical. Reads are counted per filename and
+// listings per key, so a test can tell a per-file update from a stat-diff.
 type countingSeams struct {
 	pageindex.PageReader
 	pageindex.DirectoryLister
 
 	mu        sync.Mutex
 	reads     int
+	readCalls []seamRead
 	listCalls [][2]string
+}
+
+// seamRead is one ReadPage call.
+type seamRead struct {
+	key      [2]string
+	filename string
 }
 
 func newCountingSeams() *countingSeams {
@@ -125,8 +133,46 @@ func (c *countingSeams) ReadPage(
 ) (*domain.Page, pageindex.FileFingerprint, error) {
 	c.mu.Lock()
 	c.reads++
+	c.readCalls = append(c.readCalls, seamRead{
+		key:      [2]string{vaultPath, pagesDir},
+		filename: filename,
+	})
 	c.mu.Unlock()
 	return c.PageReader.ReadPage(ctx, vaultPath, pagesDir, filename)
+}
+
+// reset clears the recorded reads and listings, so a fixture can count only
+// what the test's own requests caused.
+func (c *countingSeams) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reads = 0
+	c.readCalls = nil
+	c.listCalls = nil
+}
+
+// readCounts returns, per key and filename, the number of single-file reads.
+func (c *countingSeams) readCounts() map[[2]string]map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	counts := map[[2]string]map[string]int{}
+	for _, call := range c.readCalls {
+		if counts[call.key] == nil {
+			counts[call.key] = map[string]int{}
+		}
+		counts[call.key][call.filename]++
+	}
+	return counts
+}
+
+// readsFor returns how many times one file of one key was read.
+func (c *countingSeams) readsFor(key [2]string, filename string) int {
+	return c.readCounts()[key][filename]
+}
+
+// readsForKey returns every filename read for one key, with its count.
+func (c *countingSeams) readsForKey(key [2]string) map[string]int {
+	return c.readCounts()[key]
 }
 
 // listCounts returns the per-(vaultPath, pagesDir) listing count.

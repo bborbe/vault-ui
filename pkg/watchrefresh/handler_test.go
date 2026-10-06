@@ -71,16 +71,38 @@ var _ = Describe("EventKey", func() {
 	)
 })
 
+var _ = Describe("EventFilename", func() {
+	key := pageindex.NewKey("/vault/alpha", "24 Tasks")
+
+	DescribeTable(
+		"resolves the event's file within the key's folder",
+		func(path, expected string, ok bool) {
+			filename, resolved := watchrefresh.EventFilename(
+				ops.WatchEvent{Path: path}, key,
+			)
+			Expect(resolved).To(Equal(ok))
+			Expect(filename).To(Equal(expected))
+		},
+		Entry("plain file", "24 Tasks/One.md", "One.md", true),
+		Entry("nested path", "24 Tasks/sub/One.md", "", false),
+		Entry("parent traversal", "24 Tasks/../x.md", "", false),
+		Entry("another folder", "25 Goals/One.md", "", false),
+		Entry("non-markdown file", "24 Tasks/One.txt", "", false),
+		Entry("the folder itself", "24 Tasks", "", false),
+		Entry("empty path", "", "", false),
+	)
+})
+
 var _ = Describe("NewHandler", func() {
-	It("refreshes the event's key before broadcasting its frame", func() {
+	It("re-reads the event's single file before broadcasting its frame", func() {
 		pageIndex := &pageindexmocks.PageIndex{}
 		manager := &websocketmocks.WebsocketConnectionManager{}
 		var mu sync.Mutex
 		var order []string
-		pageIndex.RefreshStub = func(context.Context, pageindex.Key) error {
+		pageIndex.RefreshFileStub = func(context.Context, pageindex.Key, string) error {
 			mu.Lock()
 			defer mu.Unlock()
-			order = append(order, "refresh")
+			order = append(order, "refresh-file")
 			return nil
 		}
 		manager.BroadcastStub = func([]byte) {
@@ -91,30 +113,77 @@ var _ = Describe("NewHandler", func() {
 		handler := watchrefresh.NewHandler(
 			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
 		)
-		event := ops.WatchEvent{Event: "modified", Name: "One", Vault: "alpha", Type: "task"}
+		event := ops.WatchEvent{
+			Event: "modified", Name: "One", Vault: "alpha",
+			Path: "24 Tasks/One.md", Type: "task",
+		}
 
 		Expect(handler(event)).To(Succeed())
 
-		Expect(order).To(Equal([]string{"refresh", "broadcast"}))
-		Expect(pageIndex.RefreshCallCount()).To(Equal(1))
-		_, key := pageIndex.RefreshArgsForCall(0)
+		Expect(order).To(Equal([]string{"refresh-file", "broadcast"}))
+		Expect(pageIndex.RefreshFileCallCount()).To(Equal(1))
+		_, key, filename := pageIndex.RefreshFileArgsForCall(0)
 		Expect(key).To(Equal(pageindex.NewKey("/vault/alpha", "24 Tasks")))
+		Expect(filename).To(Equal("One.md"))
+		Expect(pageIndex.RefreshCallCount()).To(Equal(0))
 		Expect(manager.BroadcastCallCount()).To(Equal(1))
 		Expect(manager.BroadcastArgsForCall(0)).To(Equal(websocket.WatcherFrame(event)))
 	})
 
-	It("refreshes the goals key for a goal event", func() {
+	It("falls back to the folder refresh for a nested event path", func() {
+		pageIndex := &pageindexmocks.PageIndex{}
+		manager := &websocketmocks.WebsocketConnectionManager{}
+		handler := watchrefresh.NewHandler(
+			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+		)
+		event := ops.WatchEvent{
+			Event: "modified", Name: "One", Vault: "alpha",
+			Path: "24 Tasks/sub/One.md", Type: "task",
+		}
+
+		Expect(handler(event)).To(Succeed())
+
+		Expect(pageIndex.RefreshFileCallCount()).To(Equal(0))
+		Expect(pageIndex.RefreshCallCount()).To(Equal(1))
+		_, key := pageIndex.RefreshArgsForCall(0)
+		Expect(key).To(Equal(pageindex.NewKey("/vault/alpha", "24 Tasks")))
+		Expect(manager.BroadcastCallCount()).To(Equal(1))
+	})
+
+	It("re-reads the goals key's file for a goal event", func() {
 		pageIndex := &pageindexmocks.PageIndex{}
 		manager := &websocketmocks.WebsocketConnectionManager{}
 		handler := watchrefresh.NewHandler(
 			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
 		)
 
-		Expect(handler(ops.WatchEvent{Vault: "alpha", Type: "goal"})).To(Succeed())
+		Expect(handler(ops.WatchEvent{
+			Vault: "alpha", Path: "23 Goals/One.md", Type: "goal",
+		})).To(Succeed())
 
-		Expect(pageIndex.RefreshCallCount()).To(Equal(1))
-		_, key := pageIndex.RefreshArgsForCall(0)
+		Expect(pageIndex.RefreshFileCallCount()).To(Equal(1))
+		_, key, filename := pageIndex.RefreshFileArgsForCall(0)
 		Expect(key).To(Equal(pageindex.NewKey("/vault/alpha", "23 Goals")))
+		Expect(filename).To(Equal("One.md"))
+	})
+
+	It("drops the frame when the file refresh fails on shutdown", func() {
+		pageIndex := &pageindexmocks.PageIndex{}
+		manager := &websocketmocks.WebsocketConnectionManager{}
+		pageIndex.RefreshFileStub = func(context.Context, pageindex.Key, string) error {
+			return context.Canceled
+		}
+		handler := watchrefresh.NewHandler(
+			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+		)
+
+		Expect(handler(ops.WatchEvent{
+			Event: "modified", Name: "One", Vault: "alpha",
+			Path: "24 Tasks/One.md", Type: "task",
+		})).To(Succeed())
+
+		Expect(pageIndex.RefreshFileCallCount()).To(Equal(1))
+		Consistently(manager.BroadcastCallCount, 100*time.Millisecond).Should(Equal(0))
 	})
 
 	DescribeTable(

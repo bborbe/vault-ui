@@ -126,6 +126,7 @@ func newQueuedFixture() *queuedFixture {
 
 	f.index = &mocks.IndexInvalidator{}
 	f.index.MarkDirtyStub = func(...pageindex.Key) { f.appendEvent("mark") }
+	f.index.MarkFileDirtyStub = func(pageindex.Key, string) { f.appendEvent("mark") }
 
 	f.cache = &recordingCache{Cache: statuscache.NewCache(), f: f}
 
@@ -482,7 +483,7 @@ var _ = Describe("Queued frontmatter writes", func() {
 		).Code).To(Equal(http.StatusAccepted))
 
 		Expect(f.manager.BroadcastCallCount()).To(Equal(0))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
+		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 
 		f.releaseBlock()
@@ -495,11 +496,12 @@ var _ = Describe("Queued frontmatter writes", func() {
 			"item_kind": "task",
 			"vault":     "personal",
 		}))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(1))
-		Expect(f.index.MarkDirtyArgsForCall(0)).To(Equal([]pageindex.Key{
-			pageindex.NewKey(f.personalDir, qwTasksDir),
-			pageindex.NewKey(f.personalDir, qwGoalsDir),
-		}))
+		// A queued write marks one item's file, not the whole folder.
+		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(1))
+		markKey, markName := f.index.MarkFileDirtyArgsForCall(0)
+		Expect(markKey).To(Equal(pageindex.NewKey(f.personalDir, qwTasksDir)))
+		Expect(markName).To(Equal("TaskOne"))
+		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:personal:TaskOne")).To(Equal(1))
 		Expect(f.eventsSnapshot()).To(Equal([]string{
 			"invalidate:personal:TaskOne",
@@ -518,7 +520,7 @@ var _ = Describe("Queued frontmatter writes", func() {
 		).Code).To(Equal(http.StatusAccepted))
 
 		Expect(f.manager.BroadcastCallCount()).To(Equal(0))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
+		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 
 		f.releaseBlock()
@@ -531,6 +533,12 @@ var _ = Describe("Queued frontmatter writes", func() {
 			"item_kind": "goal",
 			"vault":     "personal",
 		}))
+		// A queued goal write marks the goal's own file in the goals key.
+		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(1))
+		markKey, markName := f.index.MarkFileDirtyArgsForCall(0)
+		Expect(markKey).To(Equal(pageindex.NewKey(f.personalDir, qwGoalsDir)))
+		Expect(markName).To(Equal("GoalOne"))
+		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:personal:GoalOne")).To(Equal(1))
 	})
 
@@ -557,6 +565,7 @@ var _ = Describe("Queued frontmatter writes", func() {
 		}))
 		Consistently(func() int { return f.broadcastsOfType("task_updated") }).
 			Should(Equal(0))
+		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
 		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 
@@ -596,6 +605,7 @@ var _ = Describe("Queued frontmatter writes", func() {
 		}))
 		Consistently(func() int { return f.broadcastsOfType("goal_updated") }).
 			Should(Equal(0))
+		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
 		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 	})
