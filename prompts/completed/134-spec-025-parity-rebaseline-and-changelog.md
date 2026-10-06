@@ -8,6 +8,7 @@ created: "2026-10-06T06:16:43Z"
 queued: "2026-10-06T06:48:20Z"
 started: "2026-10-06T08:09:36Z"
 completed: "2026-10-06T08:15:29Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/127
 branch: dark-factory/134-spec-025-parity-rebaseline-and-changelog
 ---
 
