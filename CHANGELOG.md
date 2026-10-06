@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Assert the deferred task's served values instead of its absence in the synchronous execute-command invalidation spec, so the assertion stops flipping with the wall clock — `defer-task` writes a date-only "tomorrow" that `parseDeferDate` reads as midnight UTC, so the deferred task falls inside the default 8h upcoming window (and is therefore listed, flagged `upcoming`) only before 16:00 UTC, which made `pkg/factory`'s suite fail every evening and left `make precommit` red on master across v0.84.0 and v0.84.1; the spec now reads with a one-week `upcoming_hours` window and asserts the row's `defer_date` and `upcoming` flag, which hold at any hour, while the mark and per-file re-read assertions are unchanged.
+
 ## v0.84.1
 
 - fix: Run WezTerm by its absolute app-bundle path when the pane resolver lists panes, so a jump finds the session's pane when the board runs under launchd — Go's exec looks a bare `wezterm` up on the board's own PATH, which launchd leaves without the bundle dir, so prepending the bundle to the child's PATH alone never found the binary and every jump from the deployed board answered 409 "no pane resolves for this session".
