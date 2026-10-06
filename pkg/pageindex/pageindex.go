@@ -95,9 +95,10 @@ func newBuild(startSeq uint64) *build {
 
 // entry is the per-key state.
 type entry struct {
-	snapshot    []*domain.Page
-	hasSnapshot bool
-	snapshotSeq uint64
+	snapshot     []*domain.Page
+	hasSnapshot  bool
+	snapshotSeq  uint64
+	fingerprints map[string]FileFingerprint
 
 	// requestSeq is bumped by every Refresh and every dirty mark.
 	requestSeq uint64
@@ -111,20 +112,23 @@ type entry struct {
 type pageIndex struct {
 	mu                    sync.Mutex
 	entries               map[Key]*entry
-	pageStorage           storage.PageStorage
+	reader                PageReader
+	lister                DirectoryLister
 	currentDateTimeGetter libtime.CurrentDateTimeGetter
 	waiter                libtime.WaiterDuration
 }
 
-// NewPageIndex creates an empty page index over the given storage.
+// NewPageIndex creates an empty page index over the given reader and lister.
 func NewPageIndex(
-	pageStorage storage.PageStorage,
+	reader PageReader,
+	lister DirectoryLister,
 	currentDateTimeGetter libtime.CurrentDateTimeGetter,
 	waiter libtime.WaiterDuration,
 ) PageIndex {
 	return &pageIndex{
 		entries:               map[Key]*entry{},
-		pageStorage:           pageStorage,
+		reader:                reader,
+		lister:                lister,
 		currentDateTimeGetter: currentDateTimeGetter,
 		waiter:                waiter,
 	}

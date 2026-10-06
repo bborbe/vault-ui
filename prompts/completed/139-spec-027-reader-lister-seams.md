@@ -1,14 +1,14 @@
 ---
-status: executing
+status: completed
 spec: [027-incremental-page-index-updates]
+summary: Added injectable PageReader/DirectoryLister seams to pkg/pageindex with linux/darwin stat fingerprints, moved the cold build onto them, and proved the snapshot deep-equals vault-cli's own folder listing.
 execution_id: vault-ui-incremental-index-exec-139-spec-027-reader-lister-seams
 dark-factory-version: dev
 created: "2026-10-06T09:08:51Z"
 queued: "2026-10-06T09:33:58Z"
 started: "2026-10-06T09:34:22Z"
-completed: "2026-10-06T09:33:59Z"
+completed: "2026-10-06T09:43:18Z"
 branch: dark-factory/incremental-page-index-updates
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/incremental-page-index-updates"; uncommitted changes: specs/in-progress/027-incremental-page-index-updates.md'
 ---
 
 # Read single page files through injectable reader and lister seams with fingerprints

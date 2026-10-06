@@ -12,12 +12,12 @@ import (
 	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/fdlimit"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
@@ -49,9 +49,13 @@ func execute(ctx context.Context) error {
 	paneResolver := factory.CreatePaneResolver(homeDir)
 	launches := launchregistry.NewRegistry()
 	manager := factory.CreateConnectionManager()
-	// ListPages ignores the storage config, so one shared page storage serves
-	// every vault behind the process-wide page index.
-	pageIndex := factory.CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
+	// The process-wide page index reads single page files through the
+	// production reader and lister seams, shared by every vault.
+	pageIndex := factory.CreatePageIndex(
+		pageindex.NewPageReader(),
+		pageindex.NewDirectoryLister(),
+		libtime.NewCurrentDateTime(),
+	)
 	sessionState := factory.CreateSessionState()
 	writeQueue := factory.CreateWriteQueue()
 	apiHandler := factory.CreateAPIHandler(

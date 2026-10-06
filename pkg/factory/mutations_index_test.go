@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	libtime "github.com/bborbe/time"
-	"github.com/bborbe/vault-cli/mocks"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -28,7 +27,7 @@ import (
 // can refresh a key.
 type ac5Fixture struct {
 	handler  http.Handler
-	fake     *mocks.PageStorage
+	seams    *countingSeams
 	vaultDir string
 	tasksKey [2]string
 	queue    queue.Queue
@@ -38,8 +37,8 @@ type ac5Fixture struct {
 func newAC5Fixture() *ac5Fixture {
 	loader, configPath, vaultDir := apiFixture()
 	writeFile(vaultDir, "24 Tasks/Task B.md", "---\nstatus: next\n---\n# Task B\n")
-	fake := countingPageStorage()
-	pageIndex := factory.CreatePageIndex(fake, libtime.NewCurrentDateTime())
+	seams := newCountingSeams()
+	pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
 	writeQueue := startWriteQueue()
 	handler := indexHandler(loader, configPath, pageIndex, writeQueue)
 	Expect(
@@ -47,7 +46,7 @@ func newAC5Fixture() *ac5Fixture {
 	).To(Succeed())
 	return &ac5Fixture{
 		handler:  handler,
-		fake:     fake,
+		seams:    seams,
 		vaultDir: vaultDir,
 		tasksKey: [2]string{vaultDir, "24 Tasks"},
 		queue:    writeQueue,
@@ -62,7 +61,7 @@ func (f *ac5Fixture) drain() {
 
 // tasksCalls returns the tasks-folder ListPages call count.
 func (f *ac5Fixture) tasksCalls() int {
-	return listPagesCounts(f.fake)[f.tasksKey]
+	return f.seams.listCounts()[f.tasksKey]
 }
 
 // request issues a request against the fixture handler and returns the recorder.

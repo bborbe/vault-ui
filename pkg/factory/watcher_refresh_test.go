@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,66 +46,139 @@ func (v refreshVault) key(dir string) pageindex.Key {
 	return pageindex.NewKey(v.path, dir)
 }
 
-// refreshCall records one storage call together with the content it captured
-// when the call started, before any gate blocked it.
+// refreshCall records one listing together with the content it captured when
+// the call started, before any gate blocked it.
 type refreshCall struct {
 	vaultPath string
 	pagesDir  string
-	content   []*domain.Page
 }
 
-// refreshStorage is a PageStorage fake serving test-controlled content per
-// (vaultPath, pagesDir) key. It records every call with the content it saw at
-// the call's start, and can block calls on per-call gates.
+// refreshFile is one page file of a test-controlled folder: its page plus the
+// version counter that changes whenever its content changes.
+type refreshFile struct {
+	name    string
+	page    *domain.Page
+	version int64
+}
+
+// refreshStorage serves test-controlled content per (vaultPath, pagesDir) key
+// through the reader and lister seams. It records every listing with the
+// content it saw at the listing's start, and can block listings on per-call
+// gates. ReadPage always serves the content captured by the most recent
+// ListFiles of that key, never the live content.
 type refreshStorage struct {
-	mu    sync.Mutex
-	pages map[[2]string][]*domain.Page
-	errs  map[[2]string]error
-	calls []refreshCall
-	gate  func(callIndex int) <-chan struct{}
+	mu       sync.Mutex
+	pages    map[[2]string][]*domain.Page
+	versions map[[2]string]map[string]int64
+	errs     map[[2]string]error
+	calls    []refreshCall
+	gate     func(callIndex int) <-chan struct{}
+	listed   map[[2]string][]refreshFile
 }
 
 func newRefreshStorage() *refreshStorage {
 	return &refreshStorage{
-		pages: map[[2]string][]*domain.Page{},
-		errs:  map[[2]string]error{},
+		pages:    map[[2]string][]*domain.Page{},
+		versions: map[[2]string]map[string]int64{},
+		errs:     map[[2]string]error{},
+		listed:   map[[2]string][]refreshFile{},
 	}
 }
 
-// fake returns the counterfeiter PageStorage delegating to this fake.
-func (s *refreshStorage) fake() *vaultmocks.PageStorage {
-	fake := &vaultmocks.PageStorage{}
-	fake.ListPagesStub = s.listPages
-	return fake
+// refreshFingerprint derives a file's fingerprint from its version counter, so
+// a content change always changes the fingerprint.
+func refreshFingerprint(version int64) pageindex.FileFingerprint {
+	return pageindex.FileFingerprint{
+		Size:    version,
+		ModTime: time.Unix(version, 0).UTC(),
+	}
 }
 
-func (s *refreshStorage) listPages(
+// ListFiles captures the key's current content, records the call and then
+// blocks on the call's gate, if any.
+func (s *refreshStorage) ListFiles(
 	_ context.Context,
 	vaultPath string,
 	pagesDir string,
-) ([]*domain.Page, error) {
+) ([]pageindex.FileEntry, error) {
 	key := [2]string{vaultPath, pagesDir}
 	s.mu.Lock()
 	index := len(s.calls)
-	content := s.pages[key]
+	live := s.pages[key]
 	err := s.errs[key]
-	s.calls = append(s.calls, refreshCall{
-		vaultPath: vaultPath, pagesDir: pagesDir, content: content,
-	})
+	captured := make([]refreshFile, 0, len(live))
+	for _, page := range live {
+		name := page.FileMetadata.Name
+		captured = append(captured, refreshFile{
+			name:    name,
+			page:    page,
+			version: s.versions[key][name],
+		})
+	}
+	s.listed[key] = captured
+	s.calls = append(s.calls, refreshCall{vaultPath: vaultPath, pagesDir: pagesDir})
 	gate := s.gate
 	s.mu.Unlock()
+
 	if gate != nil {
 		if ch := gate(index); ch != nil {
 			<-ch
 		}
 	}
-	return content, err
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]pageindex.FileEntry, 0, len(captured))
+	for _, file := range captured {
+		entries = append(entries, pageindex.FileEntry{
+			Name:        file.name + ".md",
+			Fingerprint: refreshFingerprint(file.version),
+		})
+	}
+	return entries, nil
+}
+
+// ReadPage serves the page captured by the most recent ListFiles of the key.
+func (s *refreshStorage) ReadPage(
+	_ context.Context,
+	vaultPath string,
+	pagesDir string,
+	filename string,
+) (*domain.Page, pageindex.FileFingerprint, error) {
+	key := [2]string{vaultPath, pagesDir}
+	name := strings.TrimSuffix(filename, ".md")
+	s.mu.Lock()
+	captured := s.listed[key]
+	s.mu.Unlock()
+	for _, file := range captured {
+		if file.name == name {
+			return file.page, refreshFingerprint(file.version), nil
+		}
+	}
+	return nil, pageindex.FileFingerprint{}, stderrors.New("page not listed: " + name)
 }
 
 func (s *refreshStorage) setPages(vaultPath, pagesDir string, pages ...*domain.Page) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pages[[2]string{vaultPath, pagesDir}] = pages
+	key := [2]string{vaultPath, pagesDir}
+	previous := map[string]*domain.Page{}
+	for _, page := range s.pages[key] {
+		previous[page.FileMetadata.Name] = page
+	}
+	versions := s.versions[key]
+	if versions == nil {
+		versions = map[string]int64{}
+		s.versions[key] = versions
+	}
+	for _, page := range pages {
+		name := page.FileMetadata.Name
+		if old, ok := previous[name]; !ok || old.Content != page.Content {
+			versions[name]++
+		}
+	}
+	s.pages[key] = pages
 }
 
 func (s *refreshStorage) setError(vaultPath, pagesDir string, err error) {
@@ -192,7 +266,7 @@ func newRefreshFixture() *refreshFixture {
 	loader.GetAllVaultsReturns(vaults, nil)
 
 	storage := newRefreshStorage()
-	index := factory.CreatePageIndex(storage.fake(), libtime.NewCurrentDateTime())
+	index := factory.CreatePageIndex(storage, storage, libtime.NewCurrentDateTime())
 
 	fixture := &refreshFixture{storage: storage, index: index, alpha: alpha, beta: beta}
 	fixture.manager = &websocketmocks.WebsocketConnectionManager{}

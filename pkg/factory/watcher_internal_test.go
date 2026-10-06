@@ -17,7 +17,6 @@ import (
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -26,7 +25,9 @@ import (
 // testPageIndex returns a real page index over empty storage, enough for the
 // watcher tests that only assert frame delivery and lifecycle.
 func testPageIndex() pageindex.PageIndex {
-	return CreatePageIndex(storage.NewPageStorage(nil), libtime.NewCurrentDateTime())
+	return CreatePageIndex(
+		pageindex.NewPageReader(), pageindex.NewDirectoryLister(), libtime.NewCurrentDateTime(),
+	)
 }
 
 // captureConn records frames written by the manager's write pump.

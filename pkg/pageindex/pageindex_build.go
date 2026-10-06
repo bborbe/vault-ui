@@ -113,13 +113,18 @@ func (p *pageIndex) queueFollowUpLocked(e *entry) *build {
 	return b
 }
 
-// execute runs the storage call and publishes its result. It runs on the
+// maxUnreadablePageWarnings is the number of per-file skip warnings a single
+// build emits before it stops naming files individually and prints one summary
+// line instead. It bounds a folder full of unreadable pages.
+const maxUnreadablePageWarnings = 10
+
+// execute runs the folder read and publishes its result. It runs on the
 // goroutine of the caller that owns the build and finishes even when that
 // caller's ctx is cancelled.
 func (p *pageIndex) execute(ctx context.Context, key Key, b *build) {
 	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rebuildTimeout)
 	defer cancel()
-	pages, err := p.pageStorage.ListPages(buildCtx, key.VaultPath, key.PagesDir)
+	pages, fingerprints, err := p.buildSnapshot(buildCtx, key)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -137,6 +142,7 @@ func (p *pageIndex) execute(ctx context.Context, key Key, b *build) {
 		e.snapshot = pages
 		e.hasSnapshot = true
 		e.snapshotSeq = b.startSeq
+		e.fingerprints = fingerprints
 	}
 	// Clearing the build and promoting the follow-up happen under one lock
 	// acquisition so no caller can slip a parallel build into the gap.
@@ -149,4 +155,55 @@ func (p *pageIndex) execute(ctx context.Context, key Key, b *build) {
 		close(next.started)
 	}
 	close(b.done)
+}
+
+// buildSnapshot lists the key's folder and reads each page file through the
+// reader seam. It returns the pages in listing order plus the fingerprint of
+// every entry, including the ones whose read failed.
+func (p *pageIndex) buildSnapshot(
+	ctx context.Context,
+	key Key,
+) ([]*domain.Page, map[string]FileFingerprint, error) {
+	entries, err := p.lister.ListFiles(ctx, key.VaultPath, key.PagesDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if entries == nil {
+		// A missing folder lists as nil, matching vault-cli's nil-vs-empty.
+		return nil, nil, nil
+	}
+
+	pages := make([]*domain.Page, 0, len(entries))
+	fingerprints := make(map[string]FileFingerprint, len(entries))
+	skipped := 0
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, errors.Wrap(ctx, err, "build page snapshot")
+		}
+		page, fingerprint, readErr := p.reader.ReadPage(
+			ctx,
+			key.VaultPath,
+			key.PagesDir,
+			entry.Name,
+		)
+		fingerprints[entry.Name] = fingerprint
+		if readErr != nil {
+			if skipped < maxUnreadablePageWarnings {
+				glog.Warningf(
+					"skipping unreadable page %q in %q/%q: %v",
+					entry.Name,
+					key.VaultPath,
+					key.PagesDir,
+					readErr,
+				)
+			}
+			skipped++
+			continue
+		}
+		pages = append(pages, page)
+	}
+	if skipped >= maxUnreadablePageWarnings {
+		glog.Warningf("skipping %d unreadable pages", skipped)
+	}
+	return pages, fingerprints, nil
 }

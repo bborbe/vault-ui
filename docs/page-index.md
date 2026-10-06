@@ -4,7 +4,10 @@
 read can be answered without opening a vault file. It implements vault-cli's
 `storage.PageStorage`, so it plugs in exactly where vault-cli reads a folder
 today: filtering, sorting and blocked-state logic stay in vault-cli's list
-operation and vault-ui never parses a page file itself.
+operation, and vault-ui reads single page files through its own reader seam,
+composed from vault-cli's exported `storage.ParseFrontmatterMap` and
+`domain.NewPage`, so a parsed page is identical to what vault-cli's folder
+listing returns.
 
 One immutable snapshot (`[]*domain.Page`) is held per key — a vault root plus a
 vault-relative pages dir. A published snapshot is never mutated; concurrent

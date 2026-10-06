@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- refactor: Read the page index's pages one file at a time through new injectable `pageindex.PageReader` and `pageindex.DirectoryLister` seams composed from vault-cli's exported `storage.ParseFrontmatterMap` and `domain.NewPage`, recording a size/modification-time/status-change-time fingerprint per file (platform stat fields, linux and darwin) that follows symlinks; the cold build now lists the folder and reads each entry through those seams instead of calling a folder-wide `storage.PageStorage`, still skipping a symlink out of the vault, a file without frontmatter and a file with invalid YAML with the same capped per-file warnings as vault-cli, and a new `pkg/pageindex/equivalence_test.go` proves the built snapshot `reflect.DeepEqual`s vault-cli's own `storage.PageStorage.ListPages` over a fixture holding awkward files (bare wikilink, no frontmatter, invalid YAML, non-markdown file, subdirectory, outside symlink, broken symlink, inside symlink, non-ASCII filename).
+
 ## v0.83.1
 
 - fix: Consume the board's own write's watcher echo once per item instead of suppressing watcher frames for a fixed 3 s window, so an echo arriving later than 3 s (~3.9 s observed on v0.83.0) no longer triggers an extra refetch; the next frame for the item is dispatched normally, and the expectation lapses after a 30 s ceiling when no echo arrives.
