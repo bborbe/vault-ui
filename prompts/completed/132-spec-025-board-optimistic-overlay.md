@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [025-optimistic-writes-through-a-per-vault-queue]
+execution_id: vault-ui-write-queue-exec-132-spec-025-board-optimistic-overlay
+dark-factory-version: dev
 created: "2026-10-06T06:49:18Z"
 queued: "2026-10-06T07:16:00Z"
+started: "2026-10-06T08:12:30Z"
+completed: "2026-10-06T08:21:51Z"
+branch: dark-factory/132-spec-025-board-optimistic-overlay
 ---
 
 # Board optimistic overlay: render queued writes at once, hold them across refetches, revert on failure
