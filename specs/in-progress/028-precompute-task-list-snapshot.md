@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-06T19:52:21Z"
 generating: "2026-10-06T20:15:36Z"
 prompted: "2026-10-06T20:47:14Z"
+verifying: "2026-10-06T21:46:26Z"
 branch: dark-factory/precompute-task-list-snapshot
 ---
 

@@ -8,6 +8,7 @@ created: "2026-10-06T20:28:50Z"
 queued: "2026-10-06T20:57:28Z"
 started: "2026-10-06T21:39:29Z"
 completed: "2026-10-06T21:46:25Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/138
 branch: dark-factory/precompute-task-list-snapshot
 ---
 
