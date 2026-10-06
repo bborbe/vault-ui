@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [025-lazy-pane-resolution-at-jump-time]
+summary: Replaced the python3 who-needs-me.py shell-out with a Go pane.Resolver that matches the harness session registry name against WezTerm pane titles through an injected process boundary, and rewired pkg/factory's composition root onto it.
+execution_id: vault-ui-lazy-pane-exec-130-spec-025-go-pane-resolver
+dark-factory-version: dev
 created: "2026-10-06T06:16:43Z"
 queued: "2026-10-06T06:48:20Z"
+started: "2026-10-06T07:36:32Z"
+completed: "2026-10-06T07:44:23Z"
+branch: dark-factory/130-spec-025-go-pane-resolver
 ---
 
 # Resolve a session's WezTerm pane in Go

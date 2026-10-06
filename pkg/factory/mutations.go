@@ -114,7 +114,7 @@ func CreateMutationService(
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.NewPSScanner("-axww", "-o", "args="),
 		Signaler:  sigterm.NewProcessSignaler(),
-		Pane:      paneResolver{homeDir: homeDir, interpreter: "python3"},
+		Pane:      CreatePaneResolver(homeDir),
 		Jump:      paneJumpClient{homeDir: homeDir},
 		HomeDir:   homeDir,
 		WatcherNames: func(ctx context.Context) []string {

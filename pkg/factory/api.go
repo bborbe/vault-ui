@@ -100,22 +100,15 @@ func (s sessionSignals) ResumeSessionIDs(ctx context.Context) []string {
 	return session.ParseLiveSessionIDs(output)
 }
 
-// paneResolver resolves a live session to its WezTerm pane via the
-// supervisor's who-needs-me.py.
-type paneResolver struct {
-	homeDir     string
-	pluginRoot  string
-	interpreter string
-}
-
-func (p paneResolver) Resolve(ctx context.Context, sessionID string) (string, bool) {
-	script := pane.WhoNeedsMePath(p.pluginRoot, p.homeDir)
-	env := pane.BuildSubprocessEnv(
-		os.Environ(), p.homeDir, pane.DefaultWeztermBundleDir, pane.PidAlive,
-	)
-	return pane.ResolvePaneID(
-		ctx, p.interpreter, script, sessionID, env, pane.DefaultResolveTimeout,
-	)
+// CreatePaneResolver returns the Go pane resolver: the session registry under
+// homeDir matched against the WezTerm pane titles.
+func CreatePaneResolver(homeDir string) pane.Resolver {
+	return pane.NewResolver(pane.ResolverParams{
+		HomeDir:     homeDir,
+		BundleDir:   pane.DefaultWeztermBundleDir,
+		RegistryDir: filepath.Join(homeDir, ".claude", "sessions"),
+		Timeout:     pane.DefaultResolveTimeout,
+	})
 }
 
 // CreateVaultUIConfigPath resolves vault-ui's config.yaml path, XDG-first.
@@ -157,7 +150,7 @@ func CreatePaneRefresher(homeDir string, cache panecache.Cache) run.Func {
 	return func(ctx context.Context) error {
 		return panecache.NewRefresher(panecache.RefreshParams{
 			Cache:          cache,
-			Resolver:       paneResolver{homeDir: homeDir, interpreter: "python3"},
+			Resolver:       CreatePaneResolver(homeDir),
 			LiveSessionIDs: func(ctx context.Context) []string { return liveSessionIDs(ctx, homeDir) },
 			Interval:       panecache.DefaultRefreshInterval,
 		}).RunLoop(ctx)

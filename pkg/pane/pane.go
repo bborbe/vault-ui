@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package pane reproduces the Python vault_ui.pane_resolver: it resolves a live
-// Claude session to its WezTerm pane and proxies a jump to that pane.
+// Package pane resolves a live Claude session to its WezTerm pane and proxies a
+// jump to that pane.
+//
+// A session's pane is resolved here, in Go: the harness session registry's
+// current name for the session is matched against the WezTerm pane titles, so no
+// Python interpreter and no helper script sit in the path.
 //
 // The board can tell that a session is live but cannot take the operator to it:
 // the fleet-jump server that activates a pane requires a shared credential, and
@@ -11,21 +15,17 @@
 // the credential is read from its 0600 file, handed to the jump server, and
 // never logged or returned to any caller that would expose it.
 //
-// Pane resolution belongs to the supervisor's own who-needs-me.py, so this
-// package shells out rather than re-implementing its resolution order. Every
-// function returns an expected absence (no token, no pane) rather than raising;
-// only PerformJump returns an error, so its caller can map a jump-server
-// failure to a status code.
+// Every function returns an expected absence (no token, no pane) rather than
+// raising; only PerformJump returns an error, so its caller can map a
+// jump-server failure to a status code.
 package pane
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,7 +39,7 @@ import (
 
 // Defaults carried by value, mirroring the Python module constants.
 const (
-	// DefaultResolveTimeout mirrors _RESOLVE_TIMEOUT_SECONDS.
+	// DefaultResolveTimeout bounds one `wezterm cli list` call.
 	DefaultResolveTimeout = 5 * time.Second
 	// DefaultJumpTimeout mirrors _JUMP_TIMEOUT_SECONDS.
 	DefaultJumpTimeout = 5 * time.Second
@@ -49,9 +49,6 @@ const (
 	// location of the wezterm executable.
 	DefaultWeztermBundleDir = "/Applications/WezTerm.app/Contents/MacOS"
 )
-
-// paneForPrefixLen is how many characters of the session id the helper accepts.
-const paneForPrefixLen = 8
 
 // Logger is this package's diagnostic sink.
 type Logger interface {
@@ -90,23 +87,6 @@ func logDebug(format string, args ...any) {
 // JumpTokenPath is the path of the shared fleet-jump credential under homeDir.
 func JumpTokenPath(homeDir string) string {
 	return filepath.Join(homeDir, ".claude", "secrets", "jump-token")
-}
-
-// WhoNeedsMePath resolves the pane-resolution script path: the pluginRoot prefix
-// wins when non-empty, else the default marketplace location under homeDir.
-func WhoNeedsMePath(pluginRoot, homeDir string) string {
-	if pluginRoot != "" {
-		return filepath.Join(pluginRoot, "scripts", "who-needs-me.py")
-	}
-	return filepath.Join(
-		homeDir,
-		".claude",
-		"plugins",
-		"marketplaces",
-		"claude-supervisor",
-		"scripts",
-		"who-needs-me.py",
-	)
 }
 
 // WeztermBinDir returns the WezTerm bundle dir when the wezterm binary exists in
@@ -218,58 +198,6 @@ func ReadJumpToken(path string) (string, bool) {
 		return "", false
 	}
 	return token, true
-}
-
-// ResolvePaneID runs `interpreter whoNeedsMePath --pane-for <first 8 chars of
-// sessionID>` with env, bounded by timeout. Returns ("", false) for every
-// failure: no session id, a spawn failure, a non-zero exit, empty output, or a
-// helper killed on timeout (the killed helper must not outlive the call).
-func ResolvePaneID(
-	ctx context.Context,
-	interpreter, whoNeedsMePath, sessionID string,
-	env []string,
-	timeout time.Duration,
-) (string, bool) {
-	if sessionID == "" {
-		return "", false
-	}
-
-	prefix := sessionID
-	if len(prefix) > paneForPrefixLen {
-		prefix = prefix[:paneForPrefixLen]
-	}
-
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// #nosec G204 -- argv from configuration, never a shell
-	cmd := exec.CommandContext(runCtx, interpreter, whoNeedsMePath, "--pane-for", prefix)
-	cmd.Env = env
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		if runCtx.Err() != nil {
-			logDebug("[PaneResolver] %s timed out for session %s", whoNeedsMePath, sessionID)
-			return "", false
-		}
-		logDebug(
-			"[PaneResolver] %s exited for session %s: %v: %s",
-			whoNeedsMePath,
-			sessionID,
-			err,
-			strings.TrimSpace(stderr.String()),
-		)
-		return "", false
-	}
-
-	paneID := strings.TrimSpace(stdout.String())
-	if paneID == "" {
-		return "", false
-	}
-	return paneID, true
 }
 
 // PerformJump asks the fleet-jump server to activate paneID. Both query values

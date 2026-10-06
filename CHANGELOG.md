@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Resolve a live Claude session's WezTerm pane in Go in a new `pkg/pane.Resolver`, which reads the harness session registry's current name for the session (`~/.claude/sessions/<pid>.json`) and matches it against the `wezterm cli list --format json` pane titles after stripping each side's leading status glyph, replacing the `python3 who-needs-me.py --pane-for <sid8>` shell-out and deleting `pane.ResolvePaneID` and `pane.WhoNeedsMePath`; the process boundary is an injected `ExecFunc` so no test spawns a subprocess, and an ambiguous, missing or unparsable match answers "no pane" rather than guessing. `factory.CreatePaneResolver` wires it into both the jump route and the pane refresher, so the seam's `Resolve(ctx, sessionID) (string, bool)` shape is unchanged for `pkg/board`, `pkg/panecache` and `pkg/mutations`.
+
 ## v0.81.0
 
 - feat: Add `pkg/pageindex`, a process-wide in-memory snapshot store of each vault folder's parsed pages that implements vault-cli's `storage.PageStorage`, with one immutable snapshot per `(vaultPath, pagesDir)` key, per-key shared builds so concurrent cold or dirty readers wait on a single `ListPages` call, dirty marks for write invalidation, event-triggered rebuilds that coalesce into one in-flight build plus one follow-up and signal completion only after a post-event swap, a clock-driven rescan loop bounded by `RescanInterval` (50 s), and retention of the previous snapshot on a failed rebuild; the staleness, frame-ordering and key-derivation rules are written down in `docs/page-index.md`.
