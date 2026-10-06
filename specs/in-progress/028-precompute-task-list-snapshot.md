@@ -1,5 +1,7 @@
 ---
-status: draft
+status: approved
+approved: "2026-10-06T19:52:21Z"
+branch: dark-factory/precompute-task-list-snapshot
 ---
 
 ## Summary
