@@ -31,6 +31,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
+	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
@@ -85,25 +86,6 @@ func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
 	return ops.NewTopicShowOperation(storage.NewTopicStorage(vault.StorageConfig()))
 }
 
-// sessionSignals reads the live session state and the live process table. The
-// registry ids come from the process-wide session-state store, which the
-// session-state watcher keeps current; the `ps` scan stays on the request path.
-type sessionSignals struct {
-	state sessionstate.State
-}
-
-func (s sessionSignals) RegistrySessionIDs(ctx context.Context) []string {
-	return s.state.RegistrySessionIDs(ctx)
-}
-
-func (s sessionSignals) ResumeSessionIDs(ctx context.Context) []string {
-	output, err := session.NewPSScanner("-axww", "-o", "args=")(ctx)
-	if err != nil {
-		return nil
-	}
-	return session.ParseLiveSessionIDs(output)
-}
-
 // CreatePaneResolver returns the Go pane resolver: the session registry under
 // homeDir matched against the WezTerm pane titles.
 func CreatePaneResolver(homeDir string) pane.Resolver {
@@ -153,17 +135,18 @@ func CreateAPIHandler(
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
 	pageIndex pageindex.PageIndex,
-	sessionState sessionstate.State,
+	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
 ) http.Handler {
 	service := board.New(board.Deps{
-		Vaults:  &vaultProvider{loader: loader, configPath: configPath},
-		Ops:     opsProvider{pageIndex: pageIndex},
-		Cache:   cache,
-		Launch:  launches,
-		Clock:   libtime.NewCurrentDateTime(),
-		Signals: sessionSignals{state: sessionState},
-		HomeDir: homeDir,
+		Vaults:   &vaultProvider{loader: loader, configPath: configPath},
+		Ops:      opsProvider{pageIndex: pageIndex},
+		Cache:    cache,
+		Launch:   launches,
+		Clock:    libtime.NewCurrentDateTime(),
+		Signals:  sessionSnapshot,
+		Sessions: sessionSnapshot,
+		HomeDir:  homeDir,
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
@@ -181,6 +164,18 @@ func CreateWriteQueue() queue.Queue {
 // CreateSessionState returns the process-wide live-session state the board reads.
 func CreateSessionState() sessionstate.State {
 	return sessionstate.NewState()
+}
+
+// CreateSessionSnapshot returns the process-wide session snapshot the board
+// reads session-derived fields from. Its Run must run in main's run group.
+func CreateSessionSnapshot(state sessionstate.State) sessionsnapshot.Snapshot {
+	return sessionsnapshot.NewSnapshot(sessionsnapshot.Params{
+		Registry: state.RegistrySessionIDs,
+		Scanner:  session.NewPSScanner("-axww", "-o", "args="),
+		Probe:    activity.TranscriptMtime,
+		Clock:    libtime.NewCurrentDateTime(),
+		Waiter:   libtime.NewWaiterDuration(),
+	})
 }
 
 // CreateSessionStateWatcher returns a run.Func that keeps state current from the

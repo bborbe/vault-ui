@@ -19,6 +19,7 @@ import (
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/bborbe/vault-cli/pkg/storage"
 
+	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -72,6 +73,12 @@ type SessionSignals interface {
 	ResumeSessionIDs(ctx context.Context) []string
 }
 
+// SessionProbe supplies the cached session-derived fields the board renders.
+// pkg/sessionsnapshot.Snapshot satisfies it.
+type SessionProbe interface {
+	TranscriptMtime(ctx context.Context, sessionID, projectDir, projectsRoot string) *libtime.DateTime
+}
+
 // Deps are the board's injected dependencies.
 type Deps struct {
 	Vaults  VaultsProvider
@@ -80,7 +87,10 @@ type Deps struct {
 	Launch  launchregistry.Registry
 	Clock   libtime.CurrentDateTimeGetter
 	Signals SessionSignals
-	HomeDir string
+	// Sessions supplies the session-derived fields the board renders. A nil
+	// value means the board probes directly (tests only).
+	Sessions SessionProbe
+	HomeDir  string
 }
 
 // Board is the read-only board service.
@@ -94,26 +104,38 @@ type Board interface {
 }
 
 type board struct {
-	vaults  VaultsProvider
-	ops     OpsProvider
-	cache   statuscache.Cache
-	launch  launchregistry.Registry
-	clock   libtime.CurrentDateTimeGetter
-	signals SessionSignals
-	homeDir string
+	vaults   VaultsProvider
+	ops      OpsProvider
+	cache    statuscache.Cache
+	launch   launchregistry.Registry
+	clock    libtime.CurrentDateTimeGetter
+	signals  SessionSignals
+	sessions SessionProbe
+	homeDir  string
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
 	return &board{
-		vaults:  deps.Vaults,
-		ops:     deps.Ops,
-		cache:   deps.Cache,
-		launch:  deps.Launch,
-		clock:   deps.Clock,
-		signals: deps.Signals,
-		homeDir: deps.HomeDir,
+		vaults:   deps.Vaults,
+		ops:      deps.Ops,
+		cache:    deps.Cache,
+		launch:   deps.Launch,
+		clock:    deps.Clock,
+		signals:  deps.Signals,
+		sessions: deps.Sessions,
+		homeDir:  deps.HomeDir,
 	}
+}
+
+// transcriptProbe returns the transcript probe the board classifies with. A nil
+// Sessions dependency keeps the direct-probe behaviour, so a board built
+// without a snapshot still works.
+func (b *board) transcriptProbe() activity.TranscriptMtimeGetter {
+	if b.sessions == nil {
+		return activity.TranscriptMtime
+	}
+	return b.sessions.TranscriptMtime
 }
 
 // TaskQuery is the parsed query for GET /api/tasks. Raw values keep the

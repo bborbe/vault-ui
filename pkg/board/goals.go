@@ -133,6 +133,7 @@ func (b *board) goalResponse(
 		LiveWindow:         session.DefaultLiveWindow,
 		ResumeSessionIDs:   resumeIDs,
 		RegistrySessionIDs: registryIDs,
+		TranscriptMtime:    b.transcriptProbe(),
 	})
 
 	return api.GoalResponse{
@@ -152,8 +153,9 @@ func (b *board) goalResponse(
 		Blocked:              len(blockers) > 0,
 		Blockers:             blockers,
 		Upcoming:             row.upcoming,
-		ActivityDate: dateTimeString(activity.ComputeActivityDate(
+		ActivityDate: dateTimeString(activity.ComputeActivityDateWith(
 			ctx,
+			b.transcriptProbe(),
 			parseDateTime(item.ModifiedDate),
 			item.ClaudeSessionID,
 			projectDir,

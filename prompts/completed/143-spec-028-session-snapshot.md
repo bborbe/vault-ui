@@ -1,11 +1,14 @@
 ---
-status: failed
+status: completed
 spec: [028-precompute-task-list-snapshot]
+summary: Added pkg/sessionsnapshot (60s timer-refreshed registry/ps/transcript-mtime cache), injected the transcript probe through activity/session/board, and wired it through the API factory and main so no request path spawns ps or probes a transcript.
+execution_id: vault-ui-precompute-task-list-exec-143-spec-028-session-snapshot
+dark-factory-version: v0.196.0
 created: "2026-10-06T20:28:50Z"
 queued: "2026-10-06T20:57:28Z"
-completed: "2026-10-06T20:57:30Z"
+started: "2026-10-06T20:58:04Z"
+completed: "2026-10-06T21:10:10Z"
 branch: dark-factory/precompute-task-list-snapshot
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/precompute-task-list-snapshot"; uncommitted changes: specs/in-progress/028-precompute-task-list-snapshot.md'
 ---
 
 # Add the process-wide session snapshot and read session-derived fields from it

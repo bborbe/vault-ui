@@ -144,6 +144,7 @@ func (b *board) tasksForVault(
 			LiveWindow:         session.DefaultLiveWindow,
 			ResumeSessionIDs:   resumeIDs,
 			RegistrySessionIDs: registryIDs,
+			TranscriptMtime:    b.transcriptProbe(),
 		})
 		rows[i].sessionState = sessionStatePtr(state)
 	}
@@ -271,8 +272,9 @@ func (b *board) taskResponse(
 		Vault:                vault.Name,
 		Goals:                goalsValue(item.Goals),
 		Flag:                 item.Flag,
-		ActivityDate: dateTimeString(activity.ComputeActivityDate(
+		ActivityDate: dateTimeString(activity.ComputeActivityDateWith(
 			ctx,
+			b.transcriptProbe(),
 			parseDateTime(item.ModifiedDate),
 			item.ClaudeSessionID,
 			projectDir,

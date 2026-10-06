@@ -77,6 +77,16 @@ func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string { return f.r
 
 func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string { return f.resume }
 
+// fakeProbe is the injected session probe: it returns a fixed mtime and never
+// touches the filesystem, so a spec can prove the board reads the probe.
+type fakeProbe struct {
+	mtime *libtime.DateTime
+}
+
+func (f fakeProbe) TranscriptMtime(_ context.Context, _, _, _ string) *libtime.DateTime {
+	return f.mtime
+}
+
 type fakeCache struct {
 	statuses map[string]string
 	started  map[string]string
@@ -116,12 +126,13 @@ func item(name string, mutate ...func(*ops.TaskListItem)) ops.TaskListItem {
 }
 
 type harness struct {
-	board   board.Board
-	list    *fakeList
-	show    *fakeShow
-	cache   fakeCache
-	signals fakeSignals
-	launch  launchregistry.Registry
+	board    board.Board
+	list     *fakeList
+	show     *fakeShow
+	cache    fakeCache
+	signals  fakeSignals
+	sessions fakeProbe
+	launch   launchregistry.Registry
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
@@ -139,12 +150,13 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 // fake and rebuild.
 func (h *harness) build() {
 	h.board = board.New(board.Deps{
-		Vaults:  fakeVaults{vaults: []board.Vault{vault}},
-		Ops:     fakeOps{list: *h.list, show: *h.show},
-		Cache:   h.cache,
-		Launch:  h.launch,
-		Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-		Signals: h.signals,
+		Vaults:   fakeVaults{vaults: []board.Vault{vault}},
+		Ops:      fakeOps{list: *h.list, show: *h.show},
+		Cache:    h.cache,
+		Launch:   h.launch,
+		Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+		Signals:  h.signals,
+		Sessions: h.sessions,
 	})
 }
 
@@ -339,17 +351,46 @@ var _ = Describe("ListTasks", func() {
 		}))
 		h.signals.registry = []string{"11111111-1111-1111-1111-111111111111"}
 		service := board.New(board.Deps{
-			Vaults:  fakeVaults{vaults: []board.Vault{vault}},
-			Ops:     fakeOps{list: *h.list, show: *h.show},
-			Cache:   h.cache,
-			Launch:  h.launch,
-			Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals: h.signals,
+			Vaults:   fakeVaults{vaults: []board.Vault{vault}},
+			Ops:      fakeOps{list: *h.list, show: *h.show},
+			Cache:    h.cache,
+			Launch:   h.launch,
+			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals:  h.signals,
+			Sessions: h.sessions,
 		})
 		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses[0].SessionState).NotTo(BeNil())
 		Expect(*responses[0].SessionState).To(Equal("live"))
+	})
+
+	It("classifies from the injected session probe, not the filesystem", func() {
+		h := newHarness(item("Probed", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = "22222222-2222-2222-2222-222222222222"
+		}))
+		// No transcript exists on disk anywhere; only the probe supplies one.
+		h.sessions = fakeProbe{mtime: libtime.DateTime(baseTime).UTC().Ptr()}
+		h.build()
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("live"))
+		Expect(responses[0].ActivityDate).NotTo(BeNil())
+	})
+
+	It("reads a missing transcript from the injected probe, not the filesystem", func() {
+		h := newHarness(item("Probed", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = "22222222-2222-2222-2222-222222222222"
+		}))
+		h.sessions = fakeProbe{mtime: nil}
+		h.build()
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("indeterminate"))
+		Expect(responses[0].ActivityDate).To(BeNil())
 	})
 
 	It("filters to live sessions only", func() {
@@ -489,12 +530,13 @@ var _ = Describe("ListTopics", func() {
 		noTopics := vault
 		noTopics.TopicsFolder = ""
 		service := board.New(board.Deps{
-			Vaults:  fakeVaults{vaults: []board.Vault{noTopics}},
-			Ops:     fakeOps{list: *h.list, show: *h.show},
-			Cache:   h.cache,
-			Launch:  h.launch,
-			Clock:   libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals: h.signals,
+			Vaults:   fakeVaults{vaults: []board.Vault{noTopics}},
+			Ops:      fakeOps{list: *h.list, show: *h.show},
+			Cache:    h.cache,
+			Launch:   h.launch,
+			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals:  h.signals,
+			Sessions: h.sessions,
 		})
 		responses, err := service.ListTopics(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())

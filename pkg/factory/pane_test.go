@@ -105,12 +105,14 @@ func paneHandler(
 	sessionState.Replace(activity.ReadRegistrySessionIDs(
 		context.Background(), filepath.Join(homeDir, ".claude", "sessions"),
 	))
+	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
+	Expect(sessionSnapshot.RefreshOnce(context.Background())).To(Succeed())
 
 	return factory.CreateAPIHandler(
 		loader, configPath, statuscache.NewCache(), paneResolver,
 		launchregistry.NewRegistry(), homeDir, readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
-		sessionState, startWriteQueue(),
+		sessionSnapshot, startWriteQueue(),
 	)
 }
 
