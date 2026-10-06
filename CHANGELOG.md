@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.84.1
 
 - fix: Run WezTerm by its absolute app-bundle path when the pane resolver lists panes, so a jump finds the session's pane when the board runs under launchd — Go's exec looks a bare `wezterm` up on the board's own PATH, which launchd leaves without the bundle dir, so prepending the bundle to the child's PATH alone never found the binary and every jump from the deployed board answered 409 "no pane resolves for this session".
 
