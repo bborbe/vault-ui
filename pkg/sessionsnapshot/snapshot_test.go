@@ -21,6 +21,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot/mocks"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -412,8 +413,16 @@ func newSnapshotBoard(snapshot sessionsnapshot.Snapshot) board.Board {
 		Clock:    fixedClock(),
 		Signals:  snapshot,
 		Sessions: snapshot,
+		Index:    staticIndex{},
 	})
 }
+
+// staticIndex is a page-index revision source that never moves: this board is
+// built fresh per spec, so the store's first read always builds and no read
+// rebuilds behind the spec's back.
+type staticIndex struct{}
+
+func (staticIndex) Revision(pageindex.Key) uint64 { return 0 }
 
 // classifyFirstTask lists the single fixture task and returns its rendered
 // session state.

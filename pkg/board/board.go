@@ -74,9 +74,12 @@ type SessionSignals interface {
 }
 
 // SessionProbe supplies the cached session-derived fields the board renders.
-// pkg/sessionsnapshot.Snapshot satisfies it.
+// pkg/sessionsnapshot.Snapshot satisfies it. Generation reports how many
+// refreshes have been published, which the task-list snapshot reads to detect
+// that a new session snapshot is available.
 type SessionProbe interface {
 	TranscriptMtime(ctx context.Context, sessionID, projectDir, projectsRoot string) *libtime.DateTime
+	Generation() uint64
 }
 
 // Deps are the board's injected dependencies.
@@ -90,7 +93,10 @@ type Deps struct {
 	// Sessions supplies the session-derived fields the board renders. A nil
 	// value means the board probes directly (tests only).
 	Sessions SessionProbe
-	HomeDir  string
+	// Index reports the page-index revision the task-list store rebuilds on.
+	// pageindex.PageIndex satisfies it.
+	Index   IndexRevisions
+	HomeDir string
 }
 
 // Board is the read-only board service.
@@ -112,11 +118,12 @@ type board struct {
 	signals  SessionSignals
 	sessions SessionProbe
 	homeDir  string
+	snapshot *taskSnapshotStore
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
-	return &board{
+	b := &board{
 		vaults:   deps.Vaults,
 		ops:      deps.Ops,
 		cache:    deps.Cache,
@@ -126,6 +133,12 @@ func New(deps Deps) Board {
 		sessions: deps.Sessions,
 		homeDir:  deps.HomeDir,
 	}
+	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
+		Build:       b.buildTaskRows,
+		Revisions:   deps.Index,
+		Generations: deps.Sessions,
+	})
+	return b
 }
 
 // transcriptProbe returns the transcript probe the board classifies with. A nil

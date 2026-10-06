@@ -40,7 +40,10 @@ type taskRow struct {
 	sessionState      *string
 }
 
-// ListTasks reproduces GET /api/tasks.
+// ListTasks reproduces GET /api/tasks from the precomputed task-list snapshot.
+// The request path performs no vault read, no transcript probe and no process
+// spawn: it applies the query filters and the time-dependent visibility rules to
+// the already-built rows and renders them.
 func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskResponse, error) {
 	all, err := b.vaults.Vaults(ctx)
 	if err != nil {
@@ -49,6 +52,10 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 	selected := b.selectVaults(all, query.Vaults)
 
 	statusFilter := flattenFilter(query.Statuses)
+	effectiveStatus := statusFilter
+	if effectiveStatus == nil {
+		effectiveStatus = defaultStatuses
+	}
 	phaseFilter := flattenFilter(query.Phases)
 	assigneeFilter := flattenAssigneeFilter(query.Assignees)
 	goalFilter := flattenFilter(query.Goals)
@@ -57,19 +64,38 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 	cutoff := now.Add(time.Duration(query.UpcomingHours) * time.Hour)
 	lookback := now.Add(-LookbackHours * time.Hour)
 
-	registryIDs := b.signals.RegistrySessionIDs(ctx)
-	resumeIDs := b.signals.ResumeSessionIDs(ctx)
-
 	responses := make([]api.TaskResponse, 0, len(selected))
 	for _, vault := range selected {
-		rows, rowErr := b.tasksForVault(
-			ctx, vault, statusFilter, phaseFilter, assigneeFilter, goalFilter,
-			now, cutoff, lookback, registryIDs, resumeIDs,
-		)
-		if rowErr != nil {
-			return nil, rowErr
+		rows, snapshotErr := b.snapshot.List(ctx, vault)
+		if snapshotErr != nil {
+			return nil, snapshotErr
 		}
-		responses = append(responses, rows...)
+		for _, row := range rows {
+			if !hasString(effectiveStatus, row.item.Status) {
+				continue
+			}
+			if !phaseMatches(row.item.Phase, phaseFilter) {
+				continue
+			}
+			if !assigneeMatches(row.item.Assignee, assigneeFilter) {
+				continue
+			}
+			if !goalMatches(goalsValue(row.item.Goals), goalFilter) {
+				continue
+			}
+			visibleTask, visible, visibleErr := b.visibleRow(ctx, row.item, now, cutoff, lookback)
+			if visibleErr != nil {
+				return nil, errors.Wrapf(ctx, visibleErr, "resolve visibility for %s", row.item.Name)
+			}
+			if !visible {
+				continue
+			}
+			visibleTask.blockers = row.blockers
+			visibleTask.blocked = row.blocked
+			visibleTask.started = row.started
+			visibleTask.sessionState = row.sessionState
+			responses = append(responses, b.taskResponse(vault, visibleTask, row.activityDate))
+		}
 	}
 
 	if query.SessionLive {
@@ -84,18 +110,11 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 	return responses, nil
 }
 
-func (b *board) tasksForVault(
-	ctx context.Context,
-	vault Vault,
-	statusFilter, phaseFilter, assigneeFilter, goalFilter []string,
-	now, cutoff, lookback time.Time,
-	registryIDs, resumeIDs []string,
-) ([]api.TaskResponse, error) {
-	effectiveStatus := statusFilter
-	if effectiveStatus == nil {
-		effectiveStatus = defaultStatuses
-	}
-
+// buildTaskRows lists the vault's tasks and precomputes every field that needs
+// I/O: the uncompleted blockers, the blocked flag, the session-started marker,
+// the classified session state and the activity date. It applies none of the
+// request-time filters, so one build serves every query.
+func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotRow, error) {
 	items, err := b.ops.List(vault).Execute(
 		ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
 	)
@@ -103,41 +122,17 @@ func (b *board) tasksForVault(
 		return nil, errors.Wrapf(ctx, err, "list tasks for vault %s", vault.Name)
 	}
 
-	rows := make([]taskRow, 0, len(items))
-	for _, item := range items {
-		if !hasString(effectiveStatus, item.Status) {
-			continue
-		}
-		if !phaseMatches(item.Phase, phaseFilter) {
-			continue
-		}
-		if !assigneeMatches(item.Assignee, assigneeFilter) {
-			continue
-		}
-		if !goalMatches(goalsValue(item.Goals), goalFilter) {
-			continue
-		}
-		row, visible, rowErr := b.visibleRow(ctx, item, now, cutoff, lookback)
-		if rowErr != nil {
-			return nil, errors.Wrapf(ctx, rowErr, "resolve visibility for %s", item.Name)
-		}
-		if visible {
-			rows = append(rows, row)
-		}
-	}
-
-	for i := range rows {
-		rows[i].blockers = b.uncompletedBlockers(vault.Name, rows[i].item.BlockedBy)
-		rows[i].blocked = len(rows[i].blockers) > 0
-		rows[i].started = b.sessionStarted(vault.Name, rows[i].item.Name)
-	}
-
 	projectDir := cleanup.DeriveClaudeProjectDir(b.homeDir, vault.Path, vault.SessionProjectDir)
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
-	for i := range rows {
+	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	resumeIDs := b.signals.ResumeSessionIDs(ctx)
+
+	rows := make([]taskSnapshotRow, 0, len(items))
+	for _, item := range items {
+		blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
 		state := session.ClassifySessionState(ctx, session.ClassifyParams{
-			SessionID:          rows[i].item.ClaudeSessionID,
+			SessionID:          item.ClaudeSessionID,
 			ProjectDir:         projectDir,
 			ProjectsRoot:       projectsRoot,
 			Now:                b.clock.Now().UTC(),
@@ -146,17 +141,24 @@ func (b *board) tasksForVault(
 			RegistrySessionIDs: registryIDs,
 			TranscriptMtime:    b.transcriptProbe(),
 		})
-		rows[i].sessionState = sessionStatePtr(state)
+		rows = append(rows, taskSnapshotRow{
+			item:         item,
+			vault:        vault,
+			blockers:     blockers,
+			blocked:      len(blockers) > 0,
+			started:      b.sessionStarted(vault.Name, item.Name),
+			sessionState: sessionStatePtr(state),
+			activityDate: activity.ComputeActivityDateWith(
+				ctx,
+				b.transcriptProbe(),
+				parseDateTime(item.ModifiedDate),
+				item.ClaudeSessionID,
+				projectDir,
+				projectsRoot,
+			),
+		})
 	}
-
-	responses := make([]api.TaskResponse, 0, len(rows))
-	for i := range rows {
-		responses = append(
-			responses,
-			b.taskResponse(ctx, vault, rows[i], projectDir, projectsRoot),
-		)
-	}
-	return responses, nil
+	return rows, nil
 }
 
 // visibleRow applies the completed/deferred visibility rules, returning the row
@@ -222,11 +224,12 @@ func (b *board) sessionStarted(vaultName, itemID string) *string {
 	return nil
 }
 
+// taskResponse renders one visible row. activityDate is the precomputed
+// transcript-aware activity date, so the request path never probes.
 func (b *board) taskResponse(
-	ctx context.Context,
 	vault Vault,
 	row taskRow,
-	projectDir, projectsRoot string,
+	activityDate *libtime.DateTime,
 ) api.TaskResponse {
 	item := row.item
 
@@ -272,15 +275,8 @@ func (b *board) taskResponse(
 		Vault:                vault.Name,
 		Goals:                goalsValue(item.Goals),
 		Flag:                 item.Flag,
-		ActivityDate: dateTimeString(activity.ComputeActivityDateWith(
-			ctx,
-			b.transcriptProbe(),
-			parseDateTime(item.ModifiedDate),
-			item.ClaudeSessionID,
-			projectDir,
-			projectsRoot,
-		)),
-		SessionState: row.sessionState,
+		ActivityDate:         dateTimeString(activityDate),
+		SessionState:         row.sessionState,
 	}
 }
 

@@ -146,6 +146,7 @@ func CreateAPIHandler(
 		Clock:    libtime.NewCurrentDateTime(),
 		Signals:  sessionSnapshot,
 		Sessions: sessionSnapshot,
+		Index:    pageIndex,
 		HomeDir:  homeDir,
 	})
 	mutationsService := CreateMutationService(
