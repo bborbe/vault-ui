@@ -138,7 +138,17 @@ func TestCreateWatcherBroadcastsChanges(t *testing.T) {
 	pumpCtx, pumpCancel := context.WithCancel(context.Background())
 	defer pumpCancel()
 	go func() { _ = manager.Pump(pumpCtx, client) }()
-	go func() { _ = CreateWatcher(loader, manager, testPageIndex(), ops.NewWatchOperation())(ctx) }()
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		_ = CreateWatcher(loader, manager, testPageIndex(), ops.NewWatchOperation())(ctx)
+	}()
+	// Stop the watcher and wait for it before the test returns, so its
+	// fsnotify goroutine cannot outlive the test and race later suites.
+	defer func() {
+		cancel()
+		<-watcherDone
+	}()
 
 	// Give the watcher time to register the directory.
 	time.Sleep(500 * time.Millisecond)
@@ -197,7 +207,17 @@ func TestCreateWatcherReadsOnlyTheEventFile(t *testing.T) {
 	pumpCtx, pumpCancel := context.WithCancel(context.Background())
 	defer pumpCancel()
 	go func() { _ = manager.Pump(pumpCtx, client) }()
-	go func() { _ = CreateWatcher(loader, manager, index, ops.NewWatchOperation())(ctx) }()
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		_ = CreateWatcher(loader, manager, index, ops.NewWatchOperation())(ctx)
+	}()
+	// Stop the watcher and wait for it before the test returns, so its
+	// fsnotify goroutine cannot outlive the test and race later suites.
+	defer func() {
+		cancel()
+		<-watcherDone
+	}()
 
 	// Give the watcher time to register the directory.
 	time.Sleep(500 * time.Millisecond)
