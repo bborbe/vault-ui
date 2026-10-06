@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.83.1
 
 - fix: Consume the board's own write's watcher echo once per item instead of suppressing watcher frames for a fixed 3 s window, so an echo arriving later than 3 s (~3.9 s observed on v0.83.0) no longer triggers an extra refetch; the next frame for the item is dispatched normally, and the expectation lapses after a 30 s ceiling when no echo arrives.
 
