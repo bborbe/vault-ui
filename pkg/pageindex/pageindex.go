@@ -94,6 +94,10 @@ type PageIndex interface {
 	// file, whatever the fingerprints say. It is the only path that ignores
 	// fingerprints.
 	ForceReload()
+	// Revision reports a per-key value that advances whenever the key's page
+	// snapshot is published or marked stale. A derived snapshot reads it to
+	// detect that its page input changed. An unknown key reports 0.
+	Revision(key Key) uint64
 	// Rescan refreshes every known key once per RescanInterval until ctx is done.
 	Rescan(ctx context.Context) error
 }
@@ -186,6 +190,11 @@ type entry struct {
 	// writeMarked holds, per base filename, the requestSeq at which the file was
 	// marked for a per-file re-read. An entry is taken out when its read starts.
 	writeMarked map[string]uint64
+
+	// revision advances whenever this key's page input can have changed: a mark
+	// at folder or file level, a forced reload, or a published snapshot. A
+	// derived snapshot polls it to detect that its page input changed.
+	revision uint64
 
 	inflight *build
 	followUp *build
@@ -292,6 +301,7 @@ func (p *pageIndex) MarkDirty(keys ...Key) {
 		if e, ok := p.entries[key]; ok {
 			e.requestSeq++
 			e.dirtySeq = e.requestSeq
+			e.revision++
 		}
 	}
 }
@@ -331,6 +341,7 @@ func (p *pageIndex) MarkFileDirty(key Key, name string) {
 	e = p.entryLocked(key)
 	e.requestSeq++
 	e.writeMarked[filename] = e.requestSeq
+	e.revision++
 }
 
 // ForceReload marks every known key so the next read of each re-reads every
@@ -341,7 +352,21 @@ func (p *pageIndex) ForceReload() {
 	for _, e := range p.entries {
 		e.requestSeq++
 		e.reloadSeq = e.requestSeq
+		e.revision++
 	}
+}
+
+// Revision reports the key's revision: a value that advances whenever the
+// key's page snapshot is published or marked stale. An unknown key reports 0.
+func (p *pageIndex) Revision(key Key) uint64 {
+	key = NewKey(key.VaultPath, key.PagesDir)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.entries[key]
+	if !ok {
+		return 0
+	}
+	return e.revision
 }
 
 // Rescan refreshes every known key once per RescanInterval until ctx is done.

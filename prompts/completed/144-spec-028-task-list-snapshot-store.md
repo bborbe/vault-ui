@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [028-precompute-task-list-snapshot]
+summary: Added a per-key Revision to pkg/pageindex (advancing on every mark and publication) and pkg/board's atomically-published, single-flight, timeout-bounded taskSnapshotStore with 19 new specs covering cold build, cold-read sharing, revision/generation invalidation, failed-rebuild retention, racing invalidation, atomicity and bounded builds.
+execution_id: vault-ui-precompute-task-list-exec-144-spec-028-task-list-snapshot-store
+dark-factory-version: v0.196.0
 created: "2026-10-06T20:28:50Z"
 queued: "2026-10-06T20:57:28Z"
+started: "2026-10-06T21:10:20Z"
+completed: "2026-10-06T21:23:42Z"
 branch: dark-factory/precompute-task-list-snapshot
 ---
 
