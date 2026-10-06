@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [025-lazy-pane-resolution-at-jump-time]
+summary: 'Re-baselined the parity harness for the intentionally dropped jump_pane field, moved the cutover runbook''s static-tree regression guard off the pinned 798d901 SHA, and recorded the change under ## Unreleased.'
+execution_id: vault-ui-lazy-pane-exec-134-spec-025-parity-rebaseline-and-changelog
+dark-factory-version: dev
 created: "2026-10-06T06:16:43Z"
 queued: "2026-10-06T06:48:20Z"
+started: "2026-10-06T08:09:36Z"
+completed: "2026-10-06T08:15:29Z"
+branch: dark-factory/134-spec-025-parity-rebaseline-and-changelog
 ---
 
 # Re-baseline the parity harness and record the change

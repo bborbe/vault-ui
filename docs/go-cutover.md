@@ -11,10 +11,11 @@ every service restart, plist edit and tool reinstall out of `prompts/`.
 
 Parity is proven before you start — `make parity` compares the Go and Python backends
 across all 25 routes, the error shapes, the write path and the WebSocket frames, and
-last passed at **`798d901`**. This runbook is about the switch, not about
-re-establishing that. If step 1 pulls code that moves the Go backend past `798d901`,
-the claim no longer covers what you are deploying — re-run `make parity` (in the
-container; see § Known limits).
+was last re-established when spec 025 moved the frontend and the task-list body
+(lazy pane resolution). This runbook is about the switch, not about re-establishing
+that. If step 1 pulls code that moves the Go backend or the static tree past what
+parity last covered, the claim no longer covers what you are deploying — re-run
+`make parity` (in the container; see § Known limits).
 
 The executable blocks assume the repo is at `~/Documents/workspaces/vault-ui` and the Go
 binary at `~/Documents/workspaces/go/bin/vault-ui`; substitute your own paths if your
@@ -225,12 +226,22 @@ that branch's work and reports a false alarm.
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git fetch origin
-git diff --stat 798d901 origin/master -- src/vault_ui/static/
+# The static tree intentionally changed with lazy pane resolution (spec 025), so the
+# parity baseline for the frontend moved with it. Resolve that baseline as the commit
+# that removed the frontend's `jump_pane` read — a fixed point: `-S` only matches
+# commits that change the token's count in app.js, and it stays at zero afterwards
+# (tests/test_jump_control.py forbids it anywhere in app.js):
+BASELINE=$(git log --format=%h -1 -S'jump_pane' origin/master -- src/vault_ui/static/app.js)
+git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 ```
 
-Prints nothing. The frontend is frozen, and this compares the parity baseline against
-what you are about to deploy, so a change merged into the static tree since `798d901`
-shows up here.
+Prints nothing. The frontend changed once, deliberately, with lazy pane resolution, and
+this guard derives its baseline from the commit that removed the frontend's `jump_pane`
+read, so it keeps meaning "nothing has changed the static tree since parity was last
+re-established" — a change merged into the static tree since then shows up here. That
+commit is the baseline rather than simply the last commit that touched `app.js` because
+the latter would re-anchor on every later frontend change, so the guard could never
+report one.
 
 Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
 work: step 1's `git pull` has already brought any merged change in, so that comparison
