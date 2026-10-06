@@ -1,5 +1,5 @@
 ---
-status: failed
+status: approved
 spec: [027-incremental-page-index-updates]
 created: "2026-10-06T09:08:51Z"
 queued: "2026-10-06T09:33:58Z"
