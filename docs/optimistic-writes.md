@@ -79,12 +79,18 @@ again.
 The 202 body is applied to the card immediately and held as pending, per item.
 A refetch (a poll, or an unrelated frame in the same vault) overlays the pending
 values instead of reverting them. The item's own frame clears the entry with
-exactly one re-read; watcher frames for that item are treated as the echo and
-ignored while it is pending and for `OWN_WRITE_ECHO_WINDOW_MS` after
-confirmation. A `write_failed` frame clears the entry, shows an error toast and
-re-reads, so the card returns to its previous value. The task session-clear entry
-(publishes no frame) clears when a re-read shows the server caught up. A
-WebSocket reconnect discards all pending state before its catch-up read.
+exactly one re-read; watcher frames for that item are ignored while it is
+pending. After the own frame confirms it, the first non-`deleted` watcher frame
+for that item is treated as the echo, ignored once and the expectation is
+consumed, so any later frame is dispatched normally; the expectation lapses after
+`OWN_WRITE_ECHO_CEILING_MS` (30 s) if no echo arrives. The trade-off: a genuine
+external edit of that item inside the ceiling, when no echo came, is picked up by
+the next poll or an unrelated frame instead. A `write_failed` frame clears the
+entry, shows an error toast and re-reads, so the card returns to its previous
+value, and drops the echo expectation. The task session-clear entry (publishes no
+frame) clears when a re-read shows the server caught up. A WebSocket reconnect
+also drops the echo expectation and discards all pending state before its
+catch-up read.
 
 ## Parity amendment
 

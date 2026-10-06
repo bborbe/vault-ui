@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Consume the board's own write's watcher echo once per item instead of suppressing watcher frames for a fixed 3 s window, so an echo arriving later than 3 s (~3.9 s observed on v0.83.0) no longer triggers an extra refetch; the next frame for the item is dispatched normally, and the expectation lapses after a 30 s ceiling when no echo arrives.
+
 ## v0.83.0
 
 - feat: Apply the board's frontmatter writes optimistically through an in-memory per-vault queue (`pkg/queue`): the nine frontmatter-writing routes (task phase/status/flag/assign-to-me/session set/session clear, goal status/assign-to-me/session clear) validate synchronously, enqueue one write and answer 202 with today's body; each vault's consumer applies its writes one at a time in submission order without blocking other vaults, and only after the file is written invalidates the status cache, marks the page index dirty and publishes the `task_updated`/`goal_updated` frame; a failed write publishes a new `write_failed` frame (`task_id`, `item_kind`, `vault`, `reason`) and nothing else. The process-spawning, jump and reload routes are unchanged.

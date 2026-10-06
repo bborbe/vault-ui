@@ -1,7 +1,13 @@
 ---
-status: approved
+status: completed
+summary: Replaced the board's fixed 3 s own-write echo suppression window with a one-shot per-item marker bounded by a 30 s ceiling, so a late watcher echo is consumed regardless of latency while the next frame for the item dispatches normally.
+execution_id: vault-ui-echo-fix-exec-139-fix-own-write-echo-dedupe
+dark-factory-version: dev
 created: "2026-10-06T09:09:17Z"
 queued: "2026-10-06T09:13:51Z"
+started: "2026-10-06T09:15:10Z"
+completed: "2026-10-06T09:22:11Z"
+branch: dark-factory/139-fix-own-write-echo-dedupe
 ---
 
 # Consume the own-write echo once per item instead of suppressing it for a fixed window
