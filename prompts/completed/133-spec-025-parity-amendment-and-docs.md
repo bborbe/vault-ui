@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [025-optimistic-writes-through-a-per-vault-queue]
+summary: Dropped only the mutation status comparison from scripts/parity/parity.sh, made the mutation file-tree comparison wait (via a shared trees_match comparator) for the queued Go write, updated the parity header/comment/mutations.txt wording, and wrote docs/optimistic-writes.md plus minimal corrections to docs/page-index.md
+execution_id: vault-ui-write-queue-exec-133-spec-025-parity-amendment-and-docs
+dark-factory-version: dev
 created: "2026-10-06T06:49:18Z"
 queued: "2026-10-06T07:16:00Z"
+started: "2026-10-06T08:21:58Z"
+completed: "2026-10-06T08:28:56Z"
+branch: dark-factory/133-spec-025-parity-amendment-and-docs
 ---
 
 # Amend the parity harness for 202 writes and document optimistic writes

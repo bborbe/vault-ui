@@ -2,10 +2,12 @@
 #
 # Parity harness: boots the Go backend and the Python backend side by side
 # against a disposable fixture vault and compares their responses. Any
-# divergence — a route absent, a status difference, a non-empty normalized body
-# diff, a static-hash difference, a traversal probe returning 200, or a
-# divergent WebSocket frame — makes the script exit non-zero with a diagnostic
-# naming the mismatched route or case.
+# divergence — a route absent, a read-path status difference, a non-empty
+# normalized body diff, a static-hash difference, a traversal probe returning
+# 200, or a divergent WebSocket frame — makes the script exit non-zero with a
+# diagnostic naming the mismatched route or case. Mutation statuses are not
+# compared: the Python backend is superseded and answers 200 where the Go
+# backend answers 202 for the queued writes (spec 025).
 #
 # Environment overrides (used by the self-test):
 #   PARITY_ROUTES      route table (default scripts/parity/routes.txt)
@@ -344,6 +346,12 @@ snapshot_vault() {
     -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})/TIMESTAMP/g'
 }
 
+# trees_match is the single comparator for two snapshotted vault trees. The
+# mutation loop both waits on it and reports on it, so any normalization of the
+# comparison must live here — a wait and a final check that disagree would make
+# every such case time out and then pass silently.
+trees_match() { diff -rq "$1" "$2" >/dev/null; }
+
 # normalize_frames reads a JSONL frame file, one normalized frame per line.
 normalize_frames() {
   local file="$1" line
@@ -461,7 +469,9 @@ while IFS=$'\t' read -r name pathq; do
 done <"$ERRORS_FILE"
 
 # Mutation cases: reset, run against Python, reset, run against Go, compare the
-# status, the normalized body, and the resulting vault-file tree.
+# normalized body and the resulting vault-file tree. Statuses are not compared
+# (spec 025): the Python backend is superseded and answers 200 where the Go
+# backend answers 202 for the queued writes.
 mutations_total=0
 mutations_matched=0
 while IFS=$'\t' read -r name method path body norm; do
@@ -481,16 +491,27 @@ while IFS=$'\t' read -r name method path body norm; do
     -X "$method" -H 'Content-Type: application/json' --data "$body" \
     "${GO_BASE}${path}" 2>/dev/null || true)"
   snapshot_vault "$WORK/go.tree"
-
-  if [[ "$py_status" != "$go_status" ]]; then
-    diagnostics+=("mutation mismatch ${name} (status): python=${py_status} go=${go_status}")
-    continue
+  # The Python backend is superseded (spec 025) and answers 200 where the Go
+  # backend answers 202 for the nine queued writes, so mutation statuses are
+  # not compared; the body and file-tree comparisons below still are.
+  if [[ "$go_status" == "202" ]]; then
+    # The Go backend answers 202 before its per-vault queue writes the file
+    # (spec 025). Poll until the tree matches Python's or 5 s pass, then take
+    # one more snapshot after a short settle so a late divergent write is
+    # still caught by the diff below.
+    for _ in $(seq 1 50); do
+      if trees_match "$WORK/py.tree" "$WORK/go.tree"; then break; fi
+      sleep 0.1
+      snapshot_vault "$WORK/go.tree"
+    done
+    sleep 0.3
+    snapshot_vault "$WORK/go.tree"
   fi
   if ! diff -q <(normalize_mutation "$WORK/py.mut" "$norm") <(normalize_mutation "$WORK/go.mut" "$norm") >/dev/null; then
     diagnostics+=("mutation mismatch ${name} (body): $(diff <(normalize_mutation "$WORK/py.mut" "$norm") <(normalize_mutation "$WORK/go.mut" "$norm") 2>/dev/null | tr '\n' ' ' | cut -c1-300 || true)")
     continue
   fi
-  if ! diff -rq "$WORK/py.tree" "$WORK/go.tree" >/dev/null; then
+  if ! trees_match "$WORK/py.tree" "$WORK/go.tree"; then
     diagnostics+=("mutation mismatch ${name} (files): $(diff -r "$WORK/py.tree" "$WORK/go.tree" 2>/dev/null | tr '\n' ' ' | cut -c1-400 || true)")
     continue
   fi

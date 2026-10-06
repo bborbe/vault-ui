@@ -20,13 +20,15 @@ readers share the same `*domain.Page` pointers read-only.
   (50 s) plus the poll granularity plus one rebuild — under 60 s normally. If a
   rebuild hangs, each storage call is bounded by `rebuildTimeout` (2 min), so the
   worst case is the rescan interval plus that timeout.
-- Writes made through vault-ui are visible to the next read. Every vault-writing
-  mutation marks its vault's tasks and goals keys dirty before it returns: the
-  publishing mutations, the non-publishing `Run*`/`TakeOver*` and session
-  writes, and paths that write before failing. The publishing mutations also
-  mark immediately before their `Publish*Updated` frame, so a client that
-  re-fetches on the frame never sees stale data. `JumpTask` and `ReloadConfig`
-  write nothing and mark nothing.
+- Writes made through vault-ui are visible to the next read. The synchronous
+  writes — `Run*`, `TakeOver*` and both `execute-command` routes — still mark
+  their vault's tasks and goals keys dirty before they return, including paths
+  that write before failing. The nine queued writes (see
+  [optimistic writes](optimistic-writes.md)) mark from the queue consumer, after
+  the file is written and immediately before their `Publish*Updated` frame, so a
+  client that re-fetches on the frame never sees stale data; a read in the
+  in-flight window returns the pre-write value, which the board's overlay hides.
+  `JumpTask` and `ReloadConfig` write nothing and mark nothing.
 - The first read of a dirty key performs one shared rebuild that every
   concurrent reader waits on. Marking a key the index has never seen is a no-op:
   its first read builds it anyway.
@@ -47,7 +49,10 @@ readers share the same `*domain.Page` pointers read-only.
   follow-up; a burst of events collapses into that pair.
 - There is no ordering guarantee across folders beyond vault-cli's own per-file
   delivery.
-- Theme and objective frames, and frames originating from routes, are unchanged.
+- Theme and objective frames are unchanged. Frames originating from routes are
+  unchanged in content; the nine queued writes' frames are published by the
+  vault's queue consumer after the file is written (see
+  [optimistic writes](optimistic-writes.md)).
 - The rescan never sends frames.
 
 ## Key derivation
