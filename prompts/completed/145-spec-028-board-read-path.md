@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [028-precompute-task-list-snapshot]
+summary: Rewrote ListTasks to serve /api/tasks from the precomputed task-list snapshot built by buildTaskRows, wired Deps.Index, and added warm-read, read-your-writes, watcher-ordering and session-refresh tests
+execution_id: vault-ui-precompute-task-list-exec-145-spec-028-board-read-path
+dark-factory-version: v0.196.0
 created: "2026-10-06T20:28:50Z"
 queued: "2026-10-06T20:57:28Z"
+started: "2026-10-06T21:23:47Z"
+completed: "2026-10-06T21:39:24Z"
 branch: dark-factory/precompute-task-list-snapshot
 ---
 
