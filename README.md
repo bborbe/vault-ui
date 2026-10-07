@@ -92,6 +92,15 @@ a matching `claude` process is alive; `indeterminate` when a session id is set
 but no transcript can be found; `quiet` when a transcript exists but is stale
 and no process matches; and `null` for a task with no `claude_session_id`.
 
+Each task also carries `open_questions`: the items of its `Open Questions`
+section in section order, each `{index, text}`. A task with no such section
+carries `[]`, never `null`. Answered items are **included**, not filtered out —
+the section is the source of truth for what the task is waiting on, and the UI
+is better placed to decide what an already-answered item means; only the item's
+answer is withheld, so `text` is the question alone. `open_questions` is a
+Go-only field: the superseded Python backend does not emit it, and the parity
+harness strips it from both sides before comparing.
+
 ### `GET /api/topics`
 
 Lists a vault's topics.

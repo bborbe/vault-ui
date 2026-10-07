@@ -41,10 +41,13 @@ vault. Durable persistence is the separate Bolt-snapshot task.
 The checks that stay on the request path are the ones whose bodies are part of
 the parity contract: request validation (missing vault, malformed body and an
 out-of-enum status answer the FastAPI 422 shape), an unknown vault, a
-dash-prefixed id, a missing close-out reason, an unset current user, and the two
-existing pre-write reads — assign-to-me's task-existence check (404) and
-set-session's different-session overwrite check (409). Everything else — the
-vault-cli write and the post-write side-effects — moves to the consumer.
+dash-prefixed id, a missing close-out reason, an unset current user, and the
+three pre-write reads — assign-to-me's task-existence check (404),
+set-session's different-session overwrite check (409), and the phase route's
+owner check for the todo → planning move (400, so an operator who is about to
+approve an ownerless task is told before the request is accepted rather than
+through an asynchronous `write_failed` frame). Everything else — the vault-cli
+write and the post-write side-effects — moves to the consumer.
 
 ## Frame timing
 

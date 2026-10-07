@@ -21,6 +21,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
@@ -80,7 +81,10 @@ type Deps struct {
 	Launch  launchregistry.Registry
 	Clock   libtime.CurrentDateTimeGetter
 	Signals SessionSignals
-	HomeDir string
+	// PageIndex serves a vault's task pages, which the board reads for the one
+	// derived field its list rows do not carry: a task's Open Questions section.
+	PageIndex pageindex.PageIndex
+	HomeDir   string
 }
 
 // Board is the read-only board service.
@@ -94,25 +98,27 @@ type Board interface {
 }
 
 type board struct {
-	vaults  VaultsProvider
-	ops     OpsProvider
-	cache   statuscache.Cache
-	launch  launchregistry.Registry
-	clock   libtime.CurrentDateTimeGetter
-	signals SessionSignals
-	homeDir string
+	vaults    VaultsProvider
+	ops       OpsProvider
+	cache     statuscache.Cache
+	launch    launchregistry.Registry
+	clock     libtime.CurrentDateTimeGetter
+	signals   SessionSignals
+	pageIndex pageindex.PageIndex
+	homeDir   string
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
 	return &board{
-		vaults:  deps.Vaults,
-		ops:     deps.Ops,
-		cache:   deps.Cache,
-		launch:  deps.Launch,
-		clock:   deps.Clock,
-		signals: deps.Signals,
-		homeDir: deps.HomeDir,
+		vaults:    deps.Vaults,
+		ops:       deps.Ops,
+		cache:     deps.Cache,
+		launch:    deps.Launch,
+		clock:     deps.Clock,
+		signals:   deps.Signals,
+		pageIndex: deps.PageIndex,
+		homeDir:   deps.HomeDir,
 	}
 }
 
