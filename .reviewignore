@@ -5,3 +5,7 @@
 # dark-factory pipeline's own audit, not the PR reviewer)
 prompts/
 specs/
+
+# counterfeiter-generated mocks — machine-written, so no reviewer reads them
+# line by line. 50 of 58 sibling repos already skip these.
+mocks/
