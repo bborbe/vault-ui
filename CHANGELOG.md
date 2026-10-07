@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.84.2
 
 - chore: Skip counterfeiter-generated `mocks/` in the PR reviewer's size gate, so machine-written fakes stop counting toward the park threshold — 50 of the 58 sibling repos already exclude them.
 
