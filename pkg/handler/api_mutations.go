@@ -16,15 +16,11 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/bborbe/vault-cli/pkg/domain"
+	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 )
-
-// answerDelimiter is vault-cli's storage.AnswerDelimiter, the separator its
-// answer operation writes between a question and its answer. An answer
-// containing it would make the written line ambiguous.
-const answerDelimiter = " → **"
 
 // statusEnum is the canonical status allowlist (UpdateStatusRequest). The order
 // and text are the contract of the FastAPI 422 body.
@@ -118,7 +114,7 @@ func unrecordableAnswerReason(answer string) string {
 	for _, bad := range []struct{ seq, why string }{
 		{"\n", "contains a line break"},
 		{"\r", "contains a line break"},
-		{answerDelimiter, "contains the question/answer delimiter"},
+		{storage.AnswerDelimiter, "contains the question/answer delimiter"},
 		{"**", "contains **, which closes the emphasis it is written in"},
 	} {
 		if strings.Contains(answer, bad.seq) {

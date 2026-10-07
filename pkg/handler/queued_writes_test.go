@@ -203,6 +203,15 @@ func newQueuedFixture() *queuedFixture {
 	}
 
 	approve := &vcmocks.TaskApproveOperation{}
+	approve.ExecuteStub = func(
+		ctx context.Context,
+		vaultPath, taskName, vaultName, approvedBy, assignee, currentUser string,
+	) (ops.MutationResult, error) {
+		if err := f.apply("Approve", vaultPath, taskName, "approve", approvedBy); err != nil {
+			return ops.MutationResult{}, err
+		}
+		return ops.MutationResult{Success: true, Name: taskName}, nil
+	}
 
 	f.queue = queue.NewQueue()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -681,6 +690,9 @@ var _ = Describe("Queued frontmatter writes", func() {
 		// The recorded value carries the decoded index and answer, so a mistyped
 		// json tag (which would leave Answers nil) fails this assertion.
 		Expect(f.appliedValuesIn(f.personalDir, "answer")).To(Equal([]string{"1=yes"}))
+		// The approval is asserted too: without this, a regression that dropped
+		// the set.Approve.Execute call would still pass on the answer alone.
+		Expect(f.appliedValuesIn(f.personalDir, "approve")).To(Equal([]string{"operator"}))
 	})
 
 	DescribeTable("AC1 negative control — validation answers synchronously and enqueues nothing",
