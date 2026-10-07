@@ -16,6 +16,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -91,7 +92,7 @@ func paneHandler(
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	pageIndex := factory.CreatePageIndex(
-		pageindex.NewPageReader(), pageindex.NewDirectoryLister(),
+		pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
 		libtime.NewCurrentDateTime(),
 	)
 	Expect(

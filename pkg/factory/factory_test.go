@@ -20,6 +20,7 @@ import (
 	vaultmocks "github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -224,7 +225,7 @@ var _ = Describe("CreateHTTPServer", func() {
 				Name: "personal", Path: vaultDir, TasksDir: "24 Tasks",
 			}}
 			index := factory.CreatePageIndex(
-				pageindex.NewPageReader(), pageindex.NewDirectoryLister(),
+				pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
 				libtime.NewCurrentDateTime(),
 			)
 			key := pageindex.NewKey(vaultDir, "24 Tasks")

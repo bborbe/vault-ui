@@ -12,6 +12,7 @@ import (
 	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
@@ -52,7 +53,7 @@ func execute(ctx context.Context) error {
 	// The process-wide page index reads single page files through the
 	// production reader and lister seams, shared by every vault.
 	pageIndex := factory.CreatePageIndex(
-		pageindex.NewPageReader(),
+		pageindex.NewPageReader(storage.NewPageStorage(nil)),
 		pageindex.NewDirectoryLister(),
 		libtime.NewCurrentDateTime(),
 	)

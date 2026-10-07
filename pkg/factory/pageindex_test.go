@@ -16,6 +16,7 @@ import (
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/domain"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -109,7 +110,7 @@ type seamRead struct {
 
 func newCountingSeams() *countingSeams {
 	return &countingSeams{
-		PageReader:      pageindex.NewPageReader(),
+		PageReader:      pageindex.NewPageReader(storage.NewPageStorage(nil)),
 		DirectoryLister: pageindex.NewDirectoryLister(),
 	}
 }
