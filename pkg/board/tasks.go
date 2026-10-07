@@ -178,6 +178,11 @@ func (b *board) openQuestionsByTask(
 	ctx context.Context, vault Vault,
 ) map[string][]domain.OpenQuestion {
 	byName := map[string][]domain.OpenQuestion{}
+	if b.pageIndex == nil {
+		// A board built without a page index carries no open questions, on the
+		// same terms as any other failure here: degrade, never fail the read.
+		return byName
+	}
 	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.TasksFolder)
 	if err != nil {
 		glog.Warningf("list pages for open questions in vault %s: %v", vault.Name, err)
