@@ -192,25 +192,40 @@ func homeDir() string {
 // away. That preserves the property TranscriptMtime's own comment protects — a
 // cache must never keep a dead session looking fresh.
 type TranscriptIndex struct {
-	byFilename map[string]string
+	// byFilename holds every match for a filename, in listing order, because
+	// the glob this replaces returned every match and stat'd each in turn: a
+	// first copy that is unreadable or deleted between the listing and the
+	// lookup fell through to a later project directory. Keeping only the first
+	// would report such a session absent where the old code found it.
+	byFilename map[string][]string
 }
 
 // NewTranscriptIndex lists projectsRoot once. It never returns nil, so a caller
 // can carry the result without a nil check on every lookup; a root that cannot
 // be listed yields an empty index, which reports every session absent — the same
 // answer filepath.Glob gives for an unreadable root.
-func NewTranscriptIndex(projectsRoot string) *TranscriptIndex {
-	index := &TranscriptIndex{byFilename: map[string]string{}}
+//
+// Entries are walked in name order and so are the files inside each, which is
+// the order Glob produced after sorting its matches.
+func NewTranscriptIndex(ctx context.Context, projectsRoot string) *TranscriptIndex {
+	index := &TranscriptIndex{byFilename: map[string][]string{}}
 	entries, err := os.ReadDir(projectsRoot)
 	if err != nil {
 		glog.V(4).Infof("[Activity] Cannot list %s: %v", projectsRoot, err)
 		return index
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+		if err := ctx.Err(); err != nil {
+			return index
 		}
 		dir := filepath.Join(projectsRoot, entry.Name())
+		// Stat rather than DirEntry.IsDir: that reports false for a symlink,
+		// and Glob followed symlinked project directories — it recurses over
+		// readDirNames, which returns every entry name regardless of type. A
+		// skipped symlink would silently read its sessions as absent.
+		if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
+			continue
+		}
 		files, readErr := os.ReadDir(dir)
 		if readErr != nil {
 			// An unreadable project directory is an expected absence, not an
@@ -219,12 +234,10 @@ func NewTranscriptIndex(projectsRoot string) *TranscriptIndex {
 			continue
 		}
 		for _, file := range files {
-			// First match wins, matching Glob's sorted-match order, so a
-			// session present in two project directories resolves to the same
-			// one it did before.
-			if _, exists := index.byFilename[file.Name()]; !exists {
-				index.byFilename[file.Name()] = filepath.Join(dir, file.Name())
-			}
+			index.byFilename[file.Name()] = append(
+				index.byFilename[file.Name()],
+				filepath.Join(dir, file.Name()),
+			)
 		}
 	}
 	return index
@@ -233,7 +246,10 @@ func NewTranscriptIndex(projectsRoot string) *TranscriptIndex {
 // Mtime returns the transcript's mtime, preferring projectDir and otherwise
 // resolving the session id through the index. It returns nil for a blank or
 // unknown session id, exactly as TranscriptMtime does.
-func (i *TranscriptIndex) Mtime(sessionID, projectDir string) *libtime.DateTime {
+func (i *TranscriptIndex) Mtime(
+	ctx context.Context,
+	sessionID, projectDir string,
+) *libtime.DateTime {
 	if sessionID == "" {
 		return nil
 	}
@@ -244,11 +260,15 @@ func (i *TranscriptIndex) Mtime(sessionID, projectDir string) *libtime.DateTime 
 	if i == nil {
 		return nil
 	}
-	path, ok := i.byFilename[filename]
-	if !ok {
-		return nil
+	for _, path := range i.byFilename[filename] {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
+		if found := mtimeOrNone(path); found != nil {
+			return found
+		}
 	}
-	return mtimeOrNone(path)
+	return nil
 }
 
 func mtimeOrNone(path string) *libtime.DateTime {

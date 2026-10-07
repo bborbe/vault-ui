@@ -174,9 +174,15 @@ func CreateSessionSnapshot(state sessionstate.State) sessionsnapshot.Snapshot {
 	return sessionsnapshot.NewSnapshot(sessionsnapshot.Params{
 		Registry: state.RegistrySessionIDs,
 		Scanner:  session.NewPSScanner("-axww", "-o", "args="),
-		Probe:    activity.TranscriptMtime,
-		Clock:    libtime.NewCurrentDateTime(),
-		Waiter:   libtime.NewWaiterDuration(),
+		// Probe is deliberately left nil. A nil probe selects the snapshot's own
+		// per-epoch listing of the projects root, which is the whole point: the
+		// board's per-session resolution used to run a filepath.Glob that
+		// re-read that root, and every directory under it, once per session —
+		// measured at 81 % of the process's CPU. Injecting
+		// activity.TranscriptMtime here silently restores exactly that cost,
+		// because a non-nil probe takes precedence over the index.
+		Clock:  libtime.NewCurrentDateTime(),
+		Waiter: libtime.NewWaiterDuration(),
 	})
 }
 

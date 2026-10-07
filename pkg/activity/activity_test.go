@@ -172,40 +172,83 @@ var _ = Describe("Activity", func() {
 	})
 
 	Describe("TranscriptIndex", func() {
+		// missingDir is a projectDir with no transcript, so a lookup falls
+		// through to the index rather than resolving on the direct stat.
+		missingDir := func() string { return filepath.Join(tmp, "no-such-project") }
+
 		It("resolves the same mtime as TranscriptMtime, including from another project dir", func() {
 			writeTranscript(projectDir, sessionID, time.Minute)
-			elsewhere := filepath.Join(projects, "-elsewhere")
 
-			direct := activity.TranscriptMtime(ctx, sessionID, elsewhere, projects)
+			direct := activity.TranscriptMtime(ctx, sessionID, missingDir(), projects)
 			Expect(direct).NotTo(BeNil())
 
-			Expect(activity.NewTranscriptIndex(projects).Mtime(sessionID, elsewhere)).To(Equal(direct))
+			Expect(
+				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, missingDir()),
+			).To(Equal(direct))
 		})
 
 		It("reports an unknown session absent, exactly as the glob fallback does", func() {
 			writeTranscript(projectDir, sessionID, time.Minute)
 			unknown := "11111111-1111-1111-1111-111111111111"
 
-			Expect(activity.NewTranscriptIndex(projects).Mtime(unknown, projectDir)).To(BeNil())
-			Expect(activity.TranscriptMtime(ctx, unknown, projectDir, projects)).To(BeNil())
+			Expect(
+				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, unknown, missingDir()),
+			).To(BeNil())
+			Expect(activity.TranscriptMtime(ctx, unknown, missingDir(), projects)).To(BeNil())
 		})
 
 		It("returns nil for a blank session id", func() {
-			Expect(activity.NewTranscriptIndex(projects).Mtime("", projectDir)).To(BeNil())
+			Expect(activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, "", projectDir)).To(BeNil())
 		})
 
-		It("prefers projectDir over the index, as TranscriptMtime does", func() {
+		It("prefers projectDir and pins the mtime it prefers", func() {
 			writeTranscript(projectDir, sessionID, time.Hour)
 			writeTranscript(filepath.Join(projects, "-elsewhere"), sessionID, time.Minute)
 
-			Expect(activity.NewTranscriptIndex(projects).Mtime(sessionID, projectDir)).To(Equal(
-				activity.TranscriptMtime(ctx, sessionID, projectDir, projects),
+			// A concrete expectation rather than equality with TranscriptMtime:
+			// two equally-wrong answers would otherwise agree with each other.
+			Expect(
+				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, projectDir),
+			).To(Equal(libtime.DateTime(baseTime.Add(-time.Hour)).UTC().Ptr()))
+		})
+
+		It("resolves a session in two project dirs to the lexicographically first, as the glob did", func() {
+			// "-aaa" sorts before "-vault", so Glob's sorted match order picked
+			// it; the index walks directories in the same order.
+			writeTranscript(filepath.Join(projects, "-aaa"), sessionID, time.Hour)
+			writeTranscript(projectDir, sessionID, time.Minute)
+
+			Expect(
+				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, missingDir()),
+			).To(Equal(libtime.DateTime(baseTime.Add(-time.Hour)).UTC().Ptr()))
+		})
+
+		It("follows a symlinked project directory, as the glob did", func() {
+			real := filepath.Join(tmp, "real-project-dir")
+			writeTranscript(real, sessionID, time.Minute)
+			Expect(os.MkdirAll(projects, 0o750)).To(Succeed())
+			Expect(os.Symlink(real, filepath.Join(projects, "linked"))).To(Succeed())
+
+			indexed := activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, missingDir())
+			Expect(indexed).NotTo(BeNil())
+			Expect(indexed).To(Equal(
+				activity.TranscriptMtime(ctx, sessionID, missingDir(), projects),
 			))
 		})
 
 		It("answers from an empty index when the root cannot be listed", func() {
-			index := activity.NewTranscriptIndex(filepath.Join(tmp, "does-not-exist"))
-			Expect(index.Mtime(sessionID, projectDir)).To(BeNil())
+			index := activity.NewTranscriptIndex(ctx, filepath.Join(tmp, "does-not-exist"))
+			Expect(index.Mtime(ctx, sessionID, projectDir)).To(BeNil())
+		})
+
+		It("stops listing when the context is cancelled", func() {
+			writeTranscript(projectDir, sessionID, time.Minute)
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+
+			Expect(
+				activity.NewTranscriptIndex(cancelled, projects).Mtime(cancelled, sessionID, missingDir()),
+			).To(BeNil())
 		})
 	})
 
