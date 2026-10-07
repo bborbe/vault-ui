@@ -4,12 +4,17 @@
 
 // Package api holds the wire request and response types for the vault-ui HTTP
 // API. The JSON field names are the contract the frozen frontend depends on and
-// must match the Python models in src/vault_ui/api/models.py exactly.
+// match the Python models in src/vault_ui/api/models.py, except for the
+// deliberate Go-only additions named below. The Python backend is superseded
+// and cannot emit those, so scripts/parity/parity.sh's normalize() strips each
+// from both sides before comparing the two bodies.
 //
 // Nullability is load-bearing: a Python field that is None serializes as JSON
 // null, so nullable fields use pointer types and nullable lists stay nil so
 // encoding/json emits null rather than [].
 package api
+
+import "github.com/bborbe/vault-cli/pkg/domain"
 
 // VaultResponse is one configured vault.
 type VaultResponse struct {
@@ -55,6 +60,10 @@ type TaskResponse struct {
 	Flag                 bool     `json:"flag"`
 	ActivityDate         *string  `json:"activity_date"`
 	SessionState         *string  `json:"session_state"`
+	// OpenQuestions is the task's Open Questions section, in section order. It is
+	// Go-only (see the package doc) and always non-nil, so it serialises as []
+	// rather than null and a task with no such section still carries the key.
+	OpenQuestions []domain.OpenQuestion `json:"open_questions"`
 }
 
 // GoalResponse is the wire shape of a goal card.

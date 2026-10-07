@@ -269,11 +269,11 @@ var _ = Describe("API factory", func() {
 })
 
 var _ = Describe("vault-cli pin", func() {
-	It("requires v0.159.0 and never replaces it", func() {
+	It("requires v0.163.0 and never replaces it", func() {
 		content, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
 		Expect(err).NotTo(HaveOccurred())
 		text := string(content)
-		Expect(text).To(ContainSubstring("github.com/bborbe/vault-cli v0.159.0"))
+		Expect(text).To(ContainSubstring("github.com/bborbe/vault-cli v0.163.0"))
 		for _, line := range strings.Split(text, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "replace") {
