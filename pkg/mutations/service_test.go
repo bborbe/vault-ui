@@ -14,6 +14,7 @@ import (
 
 	libtime "github.com/bborbe/time"
 	vcmocks "github.com/bborbe/vault-cli/mocks"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
@@ -241,6 +242,7 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 			FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, publisher, vault.Name, vault.TasksFolder),
 			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, clock, func() string { return uuidTwo }, nil, nil),
 			Approve:          ops.NewTaskApproveOperation(taskStore, clock),
+			Answer:           ops.NewTaskAnswerOperation(taskStore),
 			Defer:            ops.NewDeferOperation(taskStore, dailyStore, clock),
 			Complete:         ops.NewCompleteOperation(taskStore, dailyStore, clock, ops.NewInteractionCounter("", "")),
 			GoalSet:          ops.NewGoalSetOperation(goalStore),
@@ -274,6 +276,7 @@ func opsFactoryWithStarter(
 			FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, ops.NewEscalationPublisher("", "", nil), vault.Name, vault.TasksFolder),
 			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, clock, func() string { return uuidTwo }, starter, resumer),
 			Approve:          ops.NewTaskApproveOperation(taskStore, clock),
+			Answer:           ops.NewTaskAnswerOperation(taskStore),
 			GoalSet:          ops.NewGoalSetOperation(goalStore),
 			GoalClear:        ops.NewGoalClearOperation(goalStore),
 			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, starter, resumer),
@@ -1484,6 +1487,18 @@ func (h *harness) writeTodoTask(name, frontmatter string) {
 	)
 }
 
+// writeTodoTaskWithQuestions puts a todo task carrying a real Open Questions
+// section into the vault, so an answer can be recorded against its items.
+// writeTodoTask writes no body at all, which leaves the answer operation with
+// no item to address.
+func (h *harness) writeTodoTaskWithQuestions(name, frontmatter string, items ...string) {
+	content := "---\n" + frontmatter + "\n---\n\n# " + name + "\n\n## Open Questions\n\n"
+	for _, item := range items {
+		content += "- " + item + "\n"
+	}
+	writeFile(filepath.Join(h.dir, "24 Tasks", name+".md"), content)
+}
+
 var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 	var h *harness
 	var ctx context.Context
@@ -1514,6 +1529,86 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(content).To(ContainSubstring("assignee: alice"))
 		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
 		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
+	})
+
+	It("records the answers the approval carries", func() {
+		h.writeTodoTaskWithQuestions(
+			"Inbox", "status: todo\nphase: todo\nassignee: alice",
+			"Which database?", "Which region?",
+		)
+
+		result, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{
+				Phase:   "planning",
+				Answers: []domain.OpenAnswer{{Index: 1, Answer: "Postgres"}},
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Phase).To(Equal("planning"))
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("- Which database? → **Postgres**"))
+		// The item the operator did not answer is left byte-identical.
+		Expect(content).To(ContainSubstring("- Which region?"))
+		Expect(content).NotTo(ContainSubstring("Which region? → **"))
+		// The approval ran too, in the same move.
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: next"))
+		Expect(content).To(ContainSubstring("approved_by: operator"))
+		Expect(content).To(ContainSubstring("approved_at:"))
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
+	})
+
+	It("approves a todo task carrying no answers and writes no answer", func() {
+		h.writeTodoTaskWithQuestions(
+			"Inbox", "status: todo\nphase: todo\nassignee: alice", "Which database?",
+		)
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("approved_by: operator"))
+		Expect(content).NotTo(ContainSubstring(" → **"))
+	})
+
+	It("400s answers carried by a non-planning phase and enqueues no write", func() {
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{
+				Phase:   "execution",
+				Answers: []domain.OpenAnswer{{Index: 1, Answer: "yes"}},
+			},
+		)
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(err.Error()).To(ContainSubstring("discards them"))
+
+		h.drain()
+		Expect(h.readTask("Inbox")).To(ContainSubstring("phase: todo"))
+		Expect(h.readTask("Inbox")).NotTo(ContainSubstring(" → **"))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+	})
+
+	It("400s answers for a task that is not at todo", func() {
+		// TaskOne is at phase planning, so the approval branch cannot run.
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", taskOneID, api.UpdatePhaseRequest{
+				Phase:   "planning",
+				Answers: []domain.OpenAnswer{{Index: 1, Answer: "yes"}},
+			},
+		)
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(err.Error()).To(ContainSubstring("is at phase planning"))
+
+		h.drain()
+		Expect(h.readTask(taskOneID)).NotTo(ContainSubstring(" → **"))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
 	})
 
 	It("resolves an unassigned todo task's owner from the configured current user", func() {
@@ -1588,6 +1683,8 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 			Expect(content).To(ContainSubstring("phase: " + phase))
 			Expect(content).NotTo(ContainSubstring("approved_by"))
 			Expect(content).NotTo(ContainSubstring("approved_at"))
+			// No answers were carried, so the old path writes none.
+			Expect(content).NotTo(ContainSubstring(" → **"))
 		},
 		Entry("execution", "execution"),
 		Entry("ai_review", "ai_review"),
@@ -1602,5 +1699,115 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(err).NotTo(HaveOccurred())
 		h.drain()
 		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+	})
+})
+
+var _ = Describe("UpdateTaskPhase answer ordering", func() {
+	var h *harness
+	var ctx context.Context
+
+	BeforeEach(func() {
+		h = newHarness()
+		ctx = context.Background()
+	})
+
+	// newService wires a service over fakes sharing the harness's queue, in the
+	// shape of the SetTaskSession spy. newHarnessWith uses the real opsFactory,
+	// so it cannot carry a spy.
+	newService := func(
+		show *vcmocks.ShowOperation,
+		answer *vcmocks.TaskAnswerOperation,
+		approve *vcmocks.TaskApproveOperation,
+	) mutations.Service {
+		return mutations.New(mutations.Deps{
+			Config: configProvider{cfg: h.cfgPtr},
+			Ops: func(vaultconfig.Vault) vaultui.OpSet {
+				return vaultui.OpSet{Show: show, Answer: answer, Approve: approve}
+			},
+			Cache:     h.cache,
+			Launch:    h.launch,
+			Locks:     sessionlock.NewRegistry(),
+			Publisher: h.publisher,
+			Index:     h.index,
+			Queue:     h.queue,
+			Clock:     libtime.NewCurrentDateTime(),
+			HomeDir:   h.dir,
+		})
+	}
+
+	// spyShow returns a todo task, so the guard lets the approval branch run.
+	spyShow := func() *vcmocks.ShowOperation {
+		show := &vcmocks.ShowOperation{}
+		show.ExecuteStub = func(
+			_ context.Context, _, _, taskName string,
+		) (ops.TaskDetail, error) {
+			return ops.TaskDetail{Name: taskName, Phase: "todo"}, nil
+		}
+		return show
+	}
+
+	It("calls Answer before Approve", func() {
+		var order []string
+		answer := &vcmocks.TaskAnswerOperation{}
+		answer.ExecuteStub = func(
+			_ context.Context, _, _, _ string, _ []domain.OpenAnswer,
+		) (ops.MutationResult, error) {
+			order = append(order, "answer")
+			return ops.MutationResult{Success: true}, nil
+		}
+		approve := &vcmocks.TaskApproveOperation{}
+		approve.ExecuteStub = func(
+			_ context.Context, _, _, _, _, _, _ string,
+		) (ops.MutationResult, error) {
+			order = append(order, "approve")
+			return ops.MutationResult{Success: true}, nil
+		}
+		service := newService(spyShow(), answer, approve)
+
+		_, err := service.UpdateTaskPhase(
+			ctx, "personal", taskOneID, api.UpdatePhaseRequest{
+				Phase:   "planning",
+				Answers: []domain.OpenAnswer{{Index: 1, Answer: "yes"}},
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		Expect(order).To(Equal([]string{"answer", "approve"}))
+	})
+
+	It("skips the approval when recording the answers fails", func() {
+		answer := &vcmocks.TaskAnswerOperation{}
+		answer.ExecuteReturns(ops.MutationResult{}, errors.New("no such question"))
+		approve := &vcmocks.TaskApproveOperation{}
+		service := newService(spyShow(), answer, approve)
+
+		_, err := service.UpdateTaskPhase(
+			ctx, "personal", taskOneID, api.UpdatePhaseRequest{
+				Phase:   "planning",
+				Answers: []domain.OpenAnswer{{Index: 9, Answer: "yes"}},
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		Expect(approve.ExecuteCallCount()).To(Equal(0))
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+		_, _, _, _, reason := h.publisher.PublishWriteFailedArgsForCall(0)
+		Expect(reason).To(ContainSubstring("no such question"))
+	})
+
+	It("skips the answer write when no answers are carried", func() {
+		answer := &vcmocks.TaskAnswerOperation{}
+		approve := &vcmocks.TaskApproveOperation{}
+		service := newService(spyShow(), answer, approve)
+
+		_, err := service.UpdateTaskPhase(
+			ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		Expect(answer.ExecuteCallCount()).To(Equal(0))
+		Expect(approve.ExecuteCallCount()).To(Equal(1))
 	})
 })

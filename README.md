@@ -101,6 +101,30 @@ answer is withheld, so `text` is the question alone. `open_questions` is a
 Go-only field: the superseded Python backend does not emit it, and the parity
 harness strips it from both sides before comparing.
 
+### `PATCH /api/tasks/{id}/phase`
+
+Moves a task to `phase` and mirrors its `status`. The body carries `phase`
+(required), `reason` and `gate_successor` (both optional, used by the closing
+phases), and `answers` (optional). The write is queued, so the route answers
+**202** before the vault file is touched.
+
+`answers` is an optional array of `{index, answer}` pairs recording the
+operator's answers to the task's `Open Questions` section, where `index` is the
+1-based position of the item in that section. It is only meaningful on the
+`todo` → `planning` move, which is the operator's approval: the answers are
+written **before** the approval, so a failure leaves the task at `todo` with its
+answers recorded — recoverable by dragging the card again, because an answer
+replaces the previous one rather than adding a second — instead of approved with
+its questions unanswered. A request carrying answers for any other move is
+refused with HTTP 400 rather than silently discarding them, and an answer the
+one-line format cannot carry — a non-positive or repeated index, an empty
+answer, or one containing a line break, the ` → **` delimiter or `**` — is
+refused with HTTP 422 before the request is accepted.
+
+`answers` is a **Go-only request field**, like `open_questions` is a Go-only
+response field: the superseded Python backend never emits it and ignores it on
+the way in. Because it is request-only it needs no parity normalization.
+
 ### `GET /api/topics`
 
 Lists a vault's topics.

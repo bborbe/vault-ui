@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bborbe/vault-cli/pkg/domain"
+
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
@@ -453,14 +455,14 @@ func (s *service) UpdateTaskPhase(
 	if !ok {
 		return api.PhaseUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	if guard := s.approveOwnerGuard(ctx, resolved, taskID, req.Phase); guard != nil {
+	if guard := s.approveOwnerGuard(ctx, resolved, taskID, req.Phase, req.Answers); guard != nil {
 		return api.PhaseUpdateResponse{}, guard
 	}
 	write := func(ctx context.Context) error {
 		set := s.opsForVault(resolved)
 		task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 		if showErr == nil && req.Phase == "planning" && task.Phase == "todo" {
-			return s.approveTask(ctx, resolved, set, taskID)
+			return s.approveTask(ctx, resolved, set, taskID, req.Answers)
 		}
 		if setErr := set.FrontmatterSet.Execute(
 			ctx, resolved.Path, taskID, "phase", req.Phase, "", "", "", false,
@@ -507,15 +509,30 @@ func (s *service) UpdateTaskPhase(
 // A todo task that already carries an approval record is refused by the
 // operation; that case is not worth a request-path read, so it surfaces as an
 // asynchronous write_failed frame.
+//
+// Answers, when present, are recorded before the approval. That order is
+// deliberate: if the approval then fails, the task stays at todo with its
+// answers recorded — recoverable by dragging the card again, because the answer
+// operation replaces an existing answer rather than duplicating it — whereas
+// approving first and failing to write the answers would leave a task approved
+// with its questions unanswered and nothing prompting a retry.
 func (s *service) approveTask(
 	ctx context.Context,
 	resolved vaultconfig.Vault,
 	set vaultui.OpSet,
 	taskID string,
+	answers []domain.OpenAnswer,
 ) error {
 	cfg, err := s.deps.Config.Load(ctx)
 	if err != nil {
 		return newHTTPError(500, err.Error())
+	}
+	if len(answers) > 0 {
+		if _, answerErr := set.Answer.Execute(
+			ctx, resolved.Path, taskID, resolved.Name, answers,
+		); answerErr != nil {
+			return newHTTPError(500, answerErr.Error())
+		}
 	}
 	if _, approveErr := set.Approve.Execute(
 		ctx, resolved.Path, taskID, resolved.Name, "operator", "", cfg.CurrentUser,
@@ -535,19 +552,43 @@ func (s *service) approveTask(
 // current_user configured, keeps today's behaviour. A read that fails (an
 // unknown task) is not a guard either: that request keeps today's 202 plus the
 // queued write's write_failed frame.
+//
+// It is also where a request carrying answers is refused when the move cannot
+// record them: only the todo → planning approval writes answers, so answering
+// 202 for any other request would tell the operator their answers were accepted
+// while they were discarded.
+//
+// An answer naming an index the task has no item for is deliberately NOT
+// checked here — the operation's own bound stays the single source of truth for
+// it, so it surfaces as an asynchronous write_failed frame.
 func (s *service) approveOwnerGuard(
 	ctx context.Context,
 	resolved vaultconfig.Vault,
 	taskID, phase string,
+	answers []domain.OpenAnswer,
 ) *HTTPError {
+	if len(answers) > 0 && phase != "planning" {
+		return newHTTPError(
+			400,
+			"answers can only be recorded by the todo → planning approval; phase "+
+				phase+" discards them",
+		)
+	}
 	if phase != "planning" {
 		return nil
 	}
 	task, showErr := s.opsForVault(resolved).Show.Execute(
 		ctx, resolved.Path, resolved.Name, taskID,
 	)
-	if showErr != nil || task.Phase != "todo" {
+	if showErr != nil {
 		return nil
+	}
+	if len(answers) > 0 && task.Phase != "todo" {
+		return newHTTPError(
+			400,
+			"answers can only be recorded by the todo → planning approval; task "+
+				taskID+" is at phase "+task.Phase,
+		)
 	}
 	cfg, err := s.deps.Config.Load(ctx)
 	if err != nil {

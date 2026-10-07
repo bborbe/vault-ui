@@ -13,12 +13,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing/fstest"
 
 	libtime "github.com/bborbe/time"
 	vcmocks "github.com/bborbe/vault-cli/mocks"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
@@ -91,6 +93,7 @@ type queuedFixture struct {
 
 	showErr       error
 	showSessionID string
+	showPhase     string
 	setFailKey    string
 	setFailErr    error
 	setPanicKey   string
@@ -137,7 +140,9 @@ func newQueuedFixture() *queuedFixture {
 		if f.showErr != nil {
 			return ops.TaskDetail{}, f.showErr
 		}
-		return ops.TaskDetail{Name: taskName, ClaudeSessionID: f.showSessionID}, nil
+		return ops.TaskDetail{
+			Name: taskName, Phase: f.showPhase, ClaudeSessionID: f.showSessionID,
+		}, nil
 	}
 
 	set := &vcmocks.FrontmatterSetOperation{}
@@ -179,6 +184,35 @@ func newQueuedFixture() *queuedFixture {
 		return f.apply("GoalClear", vaultPath, item, key, "")
 	}
 
+	// Answer records each answer so a request carrying answers can be asserted
+	// against the queued write; its index is folded into the recorded value so a
+	// mistyped json tag cannot pass silently.
+	answer := &vcmocks.TaskAnswerOperation{}
+	answer.ExecuteStub = func(
+		_ context.Context, vaultPath, taskName, _ string, answers []domain.OpenAnswer,
+	) (ops.MutationResult, error) {
+		for _, item := range answers {
+			if err := f.apply(
+				"Answer", vaultPath, taskName, "answer",
+				strconv.Itoa(item.Index)+"="+item.Answer,
+			); err != nil {
+				return ops.MutationResult{}, err
+			}
+		}
+		return ops.MutationResult{Success: true, Name: taskName}, nil
+	}
+
+	approve := &vcmocks.TaskApproveOperation{}
+	approve.ExecuteStub = func(
+		ctx context.Context,
+		vaultPath, taskName, vaultName, approvedBy, assignee, currentUser string,
+	) (ops.MutationResult, error) {
+		if err := f.apply("Approve", vaultPath, taskName, "approve", approvedBy); err != nil {
+			return ops.MutationResult{}, err
+		}
+		return ops.MutationResult{Success: true, Name: taskName}, nil
+	}
+
 	f.queue = queue.NewQueue()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -200,6 +234,8 @@ func newQueuedFixture() *queuedFixture {
 				Show:             show,
 				FrontmatterSet:   set,
 				FrontmatterClear: clear,
+				Answer:           answer,
+				Approve:          approve,
 				GoalSet:          goalSet,
 				GoalClear:        goalClear,
 			}
@@ -637,6 +673,28 @@ var _ = Describe("Queued frontmatter writes", func() {
 		Eventually(f.manager.BroadcastCallCount).Should(Equal(2))
 	})
 
+	It("decodes and queues the answers a todo → planning move carries", func() {
+		f := newQueuedFixture()
+		f.showPhase = "todo"
+
+		recorder := f.do(
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"yes"}]}`,
+		)
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		Expect(recorder.Body.String()).To(MatchJSON(
+			`{"status":"success","task_id":"TaskOne","phase":"planning"}`,
+		))
+
+		f.drain("personal")
+		// The recorded value carries the decoded index and answer, so a mistyped
+		// json tag (which would leave Answers nil) fails this assertion.
+		Expect(f.appliedValuesIn(f.personalDir, "answer")).To(Equal([]string{"1=yes"}))
+		// The approval is asserted too: without this, a regression that dropped
+		// the set.Approve.Execute call would still pass on the answer alone.
+		Expect(f.appliedValuesIn(f.personalDir, "approve")).To(Equal([]string{"operator"}))
+	})
+
 	DescribeTable("AC1 negative control — validation answers synchronously and enqueues nothing",
 		func(setup func(*queuedFixture), method, target, body string, want int, detail string) {
 			f := newQueuedFixture()
@@ -678,6 +736,39 @@ var _ = Describe("Queued frontmatter writes", func() {
 			http.MethodPatch, "/api/tasks/TaskOne/session?vault=personal",
 			`{"claude_session_id":"`+qwSessionID+`"}`,
 			http.StatusConflict, "already holds session"),
+		Entry("answer with a non-positive index", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":0,"answer":"yes"}]}`,
+			http.StatusUnprocessableEntity, "question index 0 is not a positive position"),
+		Entry("answer with a blank text", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"   "}]}`,
+			http.StatusUnprocessableEntity, "the answer to question 1 is empty"),
+		Entry("answer naming the same index twice", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"a"},{"index":1,"answer":"b"}]}`,
+			http.StatusUnprocessableEntity, "question 1 is answered more than once"),
+		Entry("answer containing a newline", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"a\nb"}]}`,
+			http.StatusUnprocessableEntity, "contains a line break"),
+		Entry("answer containing the question/answer delimiter", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"a → **b"}]}`,
+			http.StatusUnprocessableEntity, "contains the question/answer delimiter"),
+		Entry("answer containing markdown bold", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"a**b"}]}`,
+			http.StatusUnprocessableEntity, "contains **"),
+		Entry("answers for a task that is not at todo",
+			func(f *queuedFixture) { f.showPhase = "planning" },
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"planning","answers":[{"index":1,"answer":"yes"}]}`,
+			http.StatusBadRequest, "is at phase planning"),
+		Entry("answers on a non-planning phase", nil,
+			http.MethodPatch, "/api/tasks/TaskOne/phase?vault=personal",
+			`{"phase":"execution","answers":[{"index":1,"answer":"yes"}]}`,
+			http.StatusBadRequest, "discards them"),
 	)
 })
 
