@@ -631,6 +631,34 @@ var _ = Describe("ListTasks snapshot", func() {
 		Expect(second).To(HaveLen(1))
 		Expect(second[0].SessionState).NotTo(BeNil())
 		Expect(*second[0].SessionState).To(Equal("live"))
+
+		// The session-derived field moved, but the vault was NOT listed again.
+		// A session refresh re-derives only the session-dependent fields
+		// against the rows already held; the vault list, the blockers and the
+		// Open Questions sections are page-derived and cannot have changed, so
+		// re-listing here would repeat work that nothing invalidated. That
+		// repeat is what this assertion pins out — it is the cost the split
+		// invalidation exists to remove.
+		Expect(h.counter.get()).To(Equal(1))
+	})
+
+	It("re-lists the vault when the page revision moves, not when only the session does", func() {
+		h := newHarness(item("Either"))
+
+		_, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.counter.get()).To(Equal(1))
+
+		// Session-only move: re-derived, not re-listed.
+		h.sessions.bumpGeneration()
+		_, err = h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.counter.get()).To(Equal(1))
+
+		// Page move: a full rebuild, which does re-list.
+		h.index.bump()
+		_, err = h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
 		Expect(h.counter.get()).To(Equal(2))
 	})
 })
