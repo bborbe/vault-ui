@@ -8,7 +8,7 @@ require (
 	github.com/bborbe/log v1.7.1
 	github.com/bborbe/run v1.11.0
 	github.com/bborbe/time v1.27.14
-	github.com/bborbe/vault-cli v0.159.0
+	github.com/bborbe/vault-cli v0.163.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/golang/glog v1.2.5
 	github.com/google/uuid v1.6.0

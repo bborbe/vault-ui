@@ -913,8 +913,24 @@ async function handleDrop(e) {
         // Dropping into the Done column is a completed-targeting close-out —
         // reason-free (abort-only contract); the PATCH body carries no
         // close-out fields.
+        //
+        // Moving a task from todo into Planning is not a plain phase write: it
+        // is the operator's approval, and it may carry answers to whatever the
+        // task is waiting on. Ask first; a cancel returns before any request,
+        // so the file stays byte-identical.
+        let answers = [];
+        if (targetKey === 'planning' && task.phase === 'todo') {
+            const approval = await askApprove(task);
+            if (approval === null) {
+                return;
+            }
+            answers = approval.answers;
+        }
         try {
             const body = { phase: targetKey };
+            if (answers.length > 0) {
+                body.answers = answers;
+            }
             const response = await fetch(`/api/tasks/${itemId}/phase?vault=${encodeURIComponent(task.vault)}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -2194,6 +2210,77 @@ function askCloseOut(kind, verb) {
 
     modal.classList.remove('hidden');
     reasonInput.focus();
+
+    return new Promise((resolve) => {
+        resolvePromise = resolve;
+    });
+}
+
+// Open the approve modal for a task being moved into Planning; resolve with
+// { answers } on Approve, or null when the operator cancels — a cancel must
+// leave the task file byte-identical, so it returns before any request.
+//
+// One labelled field per open question, built from the task's own
+// open_questions, so a task with none shows no fields and a task with two
+// shows exactly two. Only the fields the operator actually filled are sent:
+// the answer operation refuses an empty answer, and a blank field means "no
+// answer for this one", not "answer with nothing".
+function askApprove(task) {
+    const modal = document.getElementById('approve-modal');
+    const form = document.getElementById('approve-form');
+    const prompt = document.getElementById('approve-prompt');
+    const confirmBtn = document.getElementById('approve-confirm-btn');
+    const cancelBtn = document.getElementById('approve-cancel-btn');
+
+    const questions = Array.isArray(task.open_questions) ? task.open_questions : [];
+
+    form.textContent = '';
+    prompt.textContent = questions.length === 0
+        ? 'Approving this task moves it to Planning. It has no open questions.'
+        : 'Approving this task moves it to Planning. Answer what it is waiting on, or leave a field blank.';
+
+    const inputs = questions.map((question) => {
+        const label = document.createElement('label');
+        label.setAttribute('for', `approve-answer-${question.index}`);
+        label.textContent = question.text;
+
+        const input = document.createElement('textarea');
+        input.id = `approve-answer-${question.index}`;
+        input.rows = 2;
+        input.dataset.testid = 'approve-question';
+        input.dataset.index = String(question.index);
+
+        form.appendChild(label);
+        form.appendChild(input);
+        return input;
+    });
+
+    let resolvePromise;
+    const teardown = () => {
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', onCancel);
+    };
+    const onConfirm = () => {
+        const answers = inputs
+            .filter((input) => input.value.trim())
+            .map((input) => ({ index: Number(input.dataset.index), answer: input.value.trim() }));
+        teardown();
+        modal.classList.add('hidden');
+        resolvePromise({ answers });
+    };
+    const onCancel = () => {
+        teardown();
+        modal.classList.add('hidden');
+        resolvePromise(null);
+    };
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+
+    modal.classList.remove('hidden');
+    if (inputs.length > 0) {
+        inputs[0].focus();
+    }
 
     return new Promise((resolve) => {
         resolvePromise = resolve;

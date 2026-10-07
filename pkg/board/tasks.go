@@ -11,7 +11,10 @@ import (
 
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
+	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -149,14 +152,81 @@ func (b *board) tasksForVault(
 		rows[i].sessionState = sessionStatePtr(state)
 	}
 
+	openQuestions := b.openQuestionsByTask(ctx, vault)
+
 	responses := make([]api.TaskResponse, 0, len(rows))
 	for i := range rows {
 		responses = append(
 			responses,
-			b.taskResponse(ctx, vault, rows[i], projectDir, projectsRoot),
+			b.taskResponse(ctx, vault, rows[i], projectDir, projectsRoot, openQuestions),
 		)
 	}
 	return responses, nil
+}
+
+// openQuestionsByTask returns each task page's Open Questions, keyed by the
+// page's file name. It is one ListPages per vault — never one per task, which
+// would put a vault walk on the board's hottest path. That listing is the same
+// snapshot opsProvider.List already takes (pkg/factory/api.go builds it as
+// ops.NewListOperation(p.pageIndex)), so it costs no extra I/O: the board is
+// not reading pages for the first time, it is reading the snapshot a second
+// time for a field the list rows do not carry.
+//
+// A failure is not fatal to a board read: it is logged and every task carries
+// an empty list rather than the whole task list failing.
+func (b *board) openQuestionsByTask(
+	ctx context.Context, vault Vault,
+) map[string][]domain.OpenQuestion {
+	byName := map[string][]domain.OpenQuestion{}
+	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.TasksFolder)
+	if err != nil {
+		glog.Warningf("list pages for open questions in vault %s: %v", vault.Name, err)
+		return byName
+	}
+	for _, page := range pages {
+		select {
+		case <-ctx.Done():
+			// The caller is gone: stop rather than warn once per remaining page.
+			return byName
+		default:
+		}
+		items, parseErr := storage.ParseOpenQuestions(ctx, page.Content.String())
+		if parseErr != nil {
+			glog.Warningf(
+				"parse open questions of %s in vault %s: %v",
+				page.FileMetadata.Name,
+				vault.Name,
+				parseErr,
+			)
+			continue
+		}
+		// Marker and Line are parse bookkeeping for a rewriter, so only the
+		// question and its position go on the wire. An already-answered item's
+		// Answer is deliberately not exposed, and answered items are included
+		// rather than filtered out: the section is the source of truth for what
+		// the task is waiting on, and a UI is better placed to decide what an
+		// already-answered item means.
+		questions := make([]domain.OpenQuestion, 0, len(items))
+		for _, item := range items {
+			questions = append(questions, domain.OpenQuestion{
+				Index: item.Index,
+				Text:  item.Question,
+			})
+		}
+		byName[page.FileMetadata.Name] = questions
+	}
+	return byName
+}
+
+// openQuestionsFor returns the task's open questions, never nil, so the field
+// serialises as [] rather than null.
+func openQuestionsFor(
+	byName map[string][]domain.OpenQuestion, name string,
+) []domain.OpenQuestion {
+	if questions, ok := byName[name]; ok && questions != nil {
+		return questions
+	}
+	return []domain.OpenQuestion{}
 }
 
 // visibleRow applies the completed/deferred visibility rules, returning the row
@@ -227,6 +297,7 @@ func (b *board) taskResponse(
 	vault Vault,
 	row taskRow,
 	projectDir, projectsRoot string,
+	openQuestions map[string][]domain.OpenQuestion,
 ) api.TaskResponse {
 	item := row.item
 
@@ -280,7 +351,8 @@ func (b *board) taskResponse(
 			projectDir,
 			projectsRoot,
 		)),
-		SessionState: row.sessionState,
+		SessionState:  row.sessionState,
+		OpenQuestions: openQuestionsFor(openQuestions, item.Name),
 	}
 }
 

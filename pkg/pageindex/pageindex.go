@@ -252,6 +252,38 @@ func (p *pageIndex) ListPages(
 	return pages, nil
 }
 
+// ReadPage returns one page of the key's folder by its bare base name, without
+// the ".md" suffix — the value ListPages reports as the page's name.
+//
+// It serves the in-memory snapshot when that snapshot holds a page whose file
+// name matches, and otherwise falls through to the PageReader seam. Unlike
+// ListPages it reads only that one file and it fails when the file is missing
+// or unparseable rather than skipping it: a caller naming one page must be told
+// it is absent, not handed an empty result.
+func (p *pageIndex) ReadPage(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+	name string,
+) (*domain.Page, error) {
+	if !validFileMarkName(name) {
+		return nil, errors.Errorf(ctx, "invalid page name %q", name)
+	}
+	key := NewKey(vaultPath, pagesDir)
+	if pages, ok := p.snapshot(key); ok {
+		if page := findSnapshotPage(pages, name); page != nil {
+			return page, nil
+		}
+	}
+	// The seam's fourth argument is a filename including the ".md" suffix, which
+	// is the opposite of this method's bare base name.
+	page, _, err := p.reader.ReadPage(ctx, vaultPath, pagesDir, name+".md")
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "read page %s", name)
+	}
+	return page, nil
+}
+
 // Build warms the given keys concurrently. A per-key failure is logged and does
 // not fail the build; only a cancelled ctx makes Build return an error.
 func (p *pageIndex) Build(ctx context.Context, keys []Key) error {
@@ -435,13 +467,19 @@ func validFileMarkName(name string) bool {
 		!strings.ContainsRune(name, '/')
 }
 
+// findSnapshotPage returns the snapshot's page whose file name equals name
+// byte-for-byte, or nil when the snapshot holds none.
+func findSnapshotPage(pages []*domain.Page, name string) *domain.Page {
+	for _, page := range pages {
+		if page.FileMetadata.Name == name {
+			return page
+		}
+	}
+	return nil
+}
+
 // snapshotHasName reports whether the snapshot holds a page whose file name
 // equals name byte-for-byte.
 func snapshotHasName(pages []*domain.Page, name string) bool {
-	for _, page := range pages {
-		if page.FileMetadata.Name == name {
-			return true
-		}
-	}
-	return false
+	return findSnapshotPage(pages, name) != nil
 }
