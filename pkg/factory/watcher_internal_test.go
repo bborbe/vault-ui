@@ -18,6 +18,7 @@ import (
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -27,7 +28,9 @@ import (
 // watcher tests that only assert frame delivery and lifecycle.
 func testPageIndex() pageindex.PageIndex {
 	return CreatePageIndex(
-		pageindex.NewPageReader(), pageindex.NewDirectoryLister(), libtime.NewCurrentDateTime(),
+		pageindex.NewPageReader(storage.NewPageStorage(nil)),
+		pageindex.NewDirectoryLister(),
+		libtime.NewCurrentDateTime(),
 	)
 }
 
@@ -45,7 +48,7 @@ type countingSeams struct {
 
 func newCountingSeams() *countingSeams {
 	return &countingSeams{
-		PageReader:      pageindex.NewPageReader(),
+		PageReader:      pageindex.NewPageReader(storage.NewPageStorage(nil)),
 		DirectoryLister: pageindex.NewDirectoryLister(),
 	}
 }

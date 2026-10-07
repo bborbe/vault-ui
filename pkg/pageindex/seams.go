@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bborbe/vault-cli/pkg/domain"
+	"github.com/bborbe/vault-cli/pkg/storage"
 )
 
 // FileFingerprint is the pre-read stat of one page file. Size, ModTime and
@@ -50,8 +51,8 @@ type DirectoryLister interface {
 }
 
 // NewPageReader returns the production single-file reader.
-func NewPageReader() PageReader {
-	return &pageReader{}
+func NewPageReader(pages storage.PageStorage) PageReader {
+	return &pageReader{pages: pages}
 }
 
 // NewDirectoryLister returns the production directory lister.

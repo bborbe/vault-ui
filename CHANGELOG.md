@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- refactor: Read the page index's single page files through vault-cli's `storage.PageStorage.ReadPage` instead of a local re-implementation, so one parse path and one symlink-out-of-vault guard serve both the index and vault-cli's folder listing; the per-file fingerprint the stat-diff uses is still taken here before the read.
+
 ## v0.87.1
 
 - fix: Re-derive only the session-dependent fields when the session snapshot refreshes, instead of rebuilding every task row from the vault — the task-list store invalidated its whole published list on either of its two input axes, so a session-generation move (once per 60 s `SessionRefreshInterval`) re-listed the vault and re-parsed every page's Open Questions section even though neither can move with a session snapshot (measured on the deployed board: ~26 % CPU sustained across a 42 s window, a full ~800-row rebuild per minute on an idle vault, which is what kept board CPU above the 5 % bar in 2–3 of every 6 ten-second windows); a generation-only move now recomputes the classified session state, the activity date and the session-started marker against the rows already held and publishes a new slice, while a page-index revision move still rebuilds from the vault, so the board keeps its freshness guarantee — `session.ClassifySessionState` reads `live` while a transcript is inside the five-minute window, so the session state is time-dependent and must keep being re-derived on the 60 s tick — and drops the per-row page work nothing invalidated.

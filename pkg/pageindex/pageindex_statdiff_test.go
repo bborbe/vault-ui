@@ -15,6 +15,7 @@ import (
 
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -129,7 +130,7 @@ type realIndex struct {
 }
 
 func newRealIndex() *realIndex {
-	reader := &recordingReader{inner: pageindex.NewPageReader()}
+	reader := &recordingReader{inner: pageindex.NewPageReader(storage.NewPageStorage(nil))}
 	lister := &recordingLister{inner: pageindex.NewDirectoryLister()}
 	warns := &warnSink{}
 	clock := libtime.NewCurrentDateTime()
