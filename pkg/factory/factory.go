@@ -7,6 +7,7 @@ package factory
 import (
 	"context"
 	"net/http"
+	_ "net/http/pprof" // registers the /debug/pprof/ handlers on http.DefaultServeMux
 	"time"
 
 	libhttp "github.com/bborbe/http"
@@ -102,6 +103,14 @@ func CreateHTTPServer(listen string, readiness vaultui.Readiness) run.Func {
 		router.Path("/healthz").Handler(CreateHealthzHandler())
 		router.Path("/readiness").Handler(CreateReadinessHandler(readiness))
 		router.Path("/metrics").Handler(promhttp.Handler())
+		// The Go runtime's own profiling handlers, on the admin port only —
+		// never the board port. net/http/pprof registers itself on
+		// http.DefaultServeMux, so mounting that mux under the canonical
+		// prefix exposes /debug/pprof/{profile,heap,goroutine,trace,…} here
+		// and nowhere else. This is the attribution tool: `sample` does not
+		// resolve Go frames in this binary and the board had no profiler, so
+		// a periodic CPU cost could be seen but not located.
+		router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
 		router.Path("/setloglevel/{level}").
 			Handler(log.NewSetLoglevelHandler(ctx, log.NewLogLevelSetter(2, 5*time.Minute)))
 		router.Path("/gc").Handler(libhttp.NewGarbageCollectorHandler())
