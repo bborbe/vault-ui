@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/session"
 )
 
@@ -134,6 +135,65 @@ var _ = Describe("ClassifySessionState", func() {
 			LiveWindow:       session.DefaultLiveWindow,
 			ResumeSessionIDs: []string{},
 		})).To(Equal(session.SessionStateQuiet))
+	})
+
+	Describe("the injected transcript probe", func() {
+		probeReturning := func(value *libtime.DateTime) activity.TranscriptMtimeGetter {
+			return func(_ context.Context, _, _, _ string) *libtime.DateTime { return value }
+		}
+
+		It("drives the live outcome without a real transcript file", func() {
+			fresh := libtime.DateTime(baseTime.Add(-30 * time.Second)).UTC()
+
+			Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+				SessionID:       sessionID,
+				ProjectDir:      projectDir,
+				ProjectsRoot:    projects,
+				Now:             nowUTC(),
+				LiveWindow:      session.DefaultLiveWindow,
+				TranscriptMtime: probeReturning(fresh.Ptr()),
+			})).To(Equal(session.SessionStateLive))
+		})
+
+		It("drives the quiet outcome without a real transcript file", func() {
+			stale := libtime.DateTime(baseTime.Add(-3 * time.Hour)).UTC()
+
+			Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+				SessionID:       sessionID,
+				ProjectDir:      projectDir,
+				ProjectsRoot:    projects,
+				Now:             nowUTC(),
+				LiveWindow:      session.DefaultLiveWindow,
+				TranscriptMtime: probeReturning(stale.Ptr()),
+			})).To(Equal(session.SessionStateQuiet))
+		})
+
+		It("beats the filesystem when it reports no transcript", func() {
+			// A fresh transcript exists on disk; the injected probe says
+			// otherwise, and the probe is authoritative.
+			writeTranscript(projectDir, sessionID, 30*time.Second)
+
+			Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+				SessionID:       sessionID,
+				ProjectDir:      projectDir,
+				ProjectsRoot:    projects,
+				Now:             nowUTC(),
+				LiveWindow:      session.DefaultLiveWindow,
+				TranscriptMtime: probeReturning(nil),
+			})).To(Equal(session.SessionStateIndeterminate))
+		})
+
+		It("keeps today's behaviour when no probe is injected", func() {
+			writeTranscript(projectDir, sessionID, 30*time.Second)
+
+			Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+				SessionID:    sessionID,
+				ProjectDir:   projectDir,
+				ProjectsRoot: projects,
+				Now:          nowUTC(),
+				LiveWindow:   session.DefaultLiveWindow,
+			})).To(Equal(session.SessionStateLive))
+		})
 	})
 
 	It("classifies a session with no transcript as indeterminate", func() {

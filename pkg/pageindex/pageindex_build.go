@@ -299,6 +299,7 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	e.fingerprints = fingerprints
 	if !e.hasSnapshot || !samePages(e.snapshot, pages) {
 		e.snapshot = pages
+		e.revision++
 		b.pages = pages
 	} else {
 		b.pages = e.snapshot

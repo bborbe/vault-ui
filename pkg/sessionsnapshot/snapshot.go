@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Benjamin Borbe All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package sessionsnapshot holds the session-liveness inputs the board renders
+// in memory: the live session-registry ids, the live `--resume`/`--session-id`
+// ids, and a per-refresh cache of session transcript modification times.
+//
+// A read never spawns a process and never reads the registry directory. The
+// `ps` scan runs once per refresh on a fixed interval of at least 60 s, and the
+// transcript probe runs at most once per session per refresh window, so no
+// request path pays for either.
+//
+// The classification contract itself (the four outcomes, the fixed signal
+// order, the five-minute window) is unchanged and lives in pkg/session,
+// documented in docs/liveness-classification.md. Only the source of the two
+// inputs changes.
+package sessionsnapshot
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/bborbe/errors"
+	libtime "github.com/bborbe/time"
+	"github.com/golang/glog"
+
+	"github.com/bborbe/vault-ui/pkg/activity"
+	"github.com/bborbe/vault-ui/pkg/session"
+)
+
+// SessionRefreshInterval is how often the session snapshot re-reads the session
+// inputs. It is deliberately at least 60 s: this is the only timer the spec
+// adds, and the goal forbids a tight refresher.
+const SessionRefreshInterval = 60 * time.Second
+
+//counterfeiter:generate -o ./mocks/session-snapshot.go --fake-name Snapshot . Snapshot
+
+// Snapshot is the process-wide, timer-refreshed view of the session-liveness
+// inputs. A read never spawns a process and never reads the registry directory.
+type Snapshot interface {
+	// RegistrySessionIDs returns the live registry session ids from the last
+	// successful refresh. Never nil.
+	RegistrySessionIDs(ctx context.Context) []string
+	// ResumeSessionIDs returns the live --resume/--session-id ids from the last
+	// successful refresh. Never nil.
+	ResumeSessionIDs(ctx context.Context) []string
+	// TranscriptMtime returns the cached transcript mtime for the session,
+	// probing at most once per session per refresh window. It returns nil for a
+	// missing or blank session id and for a transcript that cannot be found,
+	// exactly as activity.TranscriptMtime does.
+	TranscriptMtime(ctx context.Context, sessionID, projectDir, projectsRoot string) *libtime.DateTime
+	// Generation advances by one on every successful refresh; it is how a
+	// consumer detects that a new session snapshot is available.
+	Generation() uint64
+	// RefreshOnce performs one refresh and returns the first error. A failed
+	// refresh keeps the previous values.
+	RefreshOnce(ctx context.Context) error
+	// Run refreshes once, then once per Interval until ctx is done. It returns
+	// nil on cancellation.
+	Run(ctx context.Context) error
+}
+
+// Params carries the snapshot's injectable dependencies.
+type Params struct {
+	// Registry returns the live registry session ids. It never errors.
+	Registry func(ctx context.Context) []string
+	// Scanner produces fresh `ps` output; one scan runs per refresh.
+	Scanner session.ProcessScanner
+	// Probe returns a session transcript's mtime. Nil means
+	// activity.TranscriptMtime.
+	Probe activity.TranscriptMtimeGetter
+	// Clock is the injected clock; never read the wall clock.
+	Clock libtime.CurrentDateTimeGetter
+	// Waiter is the injected sleeper, so a test drives the interval. There is
+	// no interval knob: SessionRefreshInterval is the only period.
+	Waiter libtime.WaiterDuration
+}
+
+// NewSnapshot creates an empty snapshot. Call RefreshOnce or Run before serving.
+func NewSnapshot(params Params) Snapshot {
+	return &snapshot{
+		params:      params,
+		registryIDs: []string{},
+		resumeIDs:   []string{},
+		transcripts: map[transcriptKey]transcriptEntry{},
+	}
+}
+
+// transcriptKey identifies one cached transcript verdict: the same session id
+// under a different project directory or projects root is a different path.
+type transcriptKey struct {
+	sessionID    string
+	projectDir   string
+	projectsRoot string
+}
+
+// transcriptEntry is one cached transcript verdict with the instant it was
+// probed, so a verdict is discarded once a later refresh has been published.
+type transcriptEntry struct {
+	probedAt libtime.DateTime
+	mtime    *libtime.DateTime
+}
+
+type snapshot struct {
+	params Params
+
+	mu          sync.Mutex
+	registryIDs []string
+	resumeIDs   []string
+	refreshedAt *libtime.DateTime
+	generation  uint64
+	transcripts map[transcriptKey]transcriptEntry
+}
+
+// RegistrySessionIDs returns a copy of the last successful refresh's registry
+// ids. The result is never nil and never aliases the internal slice.
+func (s *snapshot) RegistrySessionIDs(_ context.Context) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string{}, s.registryIDs...)
+}
+
+// ResumeSessionIDs returns a copy of the last successful refresh's resume ids.
+// The result is never nil and never aliases the internal slice.
+func (s *snapshot) ResumeSessionIDs(_ context.Context) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string{}, s.resumeIDs...)
+}
+
+// Generation returns the number of successful refreshes so far.
+func (s *snapshot) Generation() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
+}
+
+// TranscriptMtime returns the transcript mtime for the session, served from the
+// cache while the cached verdict is still inside the current refresh window.
+//
+// A nil result is cached too, so an absent transcript is probed once per
+// window, not once per call. The mutex is never held across the probe: two
+// concurrent first lookups for the same session in one window may both probe,
+// which is harmless and bounded.
+func (s *snapshot) TranscriptMtime(
+	ctx context.Context,
+	sessionID, projectDir, projectsRoot string,
+) *libtime.DateTime {
+	if sessionID == "" {
+		return nil
+	}
+
+	key := transcriptKey{
+		sessionID:    sessionID,
+		projectDir:   projectDir,
+		projectsRoot: projectsRoot,
+	}
+
+	s.mu.Lock()
+	if entry, ok := s.transcripts[key]; ok &&
+		s.refreshedAt != nil && !entry.probedAt.Before(*s.refreshedAt) {
+		value := entry.mtime
+		s.mu.Unlock()
+		return value
+	}
+	s.mu.Unlock()
+
+	probe := s.params.Probe
+	if probe == nil {
+		probe = activity.TranscriptMtime
+	}
+	value := probe(ctx, sessionID, projectDir, projectsRoot)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transcripts[key] = transcriptEntry{probedAt: s.params.Clock.Now(), mtime: value}
+	return value
+}
+
+// RefreshOnce runs one `ps` scan and one registry read and swaps both in
+// atomically, advancing Generation. A scan failure keeps the previous values
+// and returns the wrapped error without swapping.
+func (s *snapshot) RefreshOnce(ctx context.Context) error {
+	output, err := s.params.Scanner(ctx)
+	if err != nil {
+		glog.Errorf(
+			"[SessionSnapshot] refresh failed (interval %v): %v",
+			SessionRefreshInterval,
+			err,
+		)
+		return errors.Wrap(ctx, err, "refresh session snapshot")
+	}
+	resumeIDs := session.ParseLiveSessionIDs(output)
+	registryIDs := s.params.Registry(ctx)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registryIDs = append([]string{}, registryIDs...)
+	s.resumeIDs = append([]string{}, resumeIDs...)
+	s.refreshedAt = s.params.Clock.Now().Ptr()
+	s.generation++
+	return nil
+}

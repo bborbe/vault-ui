@@ -83,6 +83,7 @@ func (p *pageIndex) applyFileReadLocked(
 	previous, known := e.fingerprints[filename]
 	e.fileReadSeq[filename] = seq
 	e.snapshot = splicePage(e.snapshot, filename, page)
+	e.revision++
 	e.fingerprints[filename] = fingerprint
 	if readErr == nil {
 		return

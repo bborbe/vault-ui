@@ -59,6 +59,13 @@ func TranscriptMtime(ctx context.Context, sessionID, projectDir, projectsRoot st
 	return nil
 }
 
+// TranscriptMtimeGetter returns a session transcript's mtime, or nil when the
+// transcript is absent. activity.TranscriptMtime is the default implementation.
+type TranscriptMtimeGetter func(
+	ctx context.Context,
+	sessionID, projectDir, projectsRoot string,
+) *libtime.DateTime
+
 // ComputeActivityDate returns the newer of the task-file mtime and the transcript
 // mtime; nil only when both signals are absent. A nil modifiedDate is an absent
 // task-file mtime.
@@ -67,11 +74,28 @@ func ComputeActivityDate(
 	modifiedDate *libtime.DateTime,
 	sessionID, projectDir, projectsRoot string,
 ) *libtime.DateTime {
+	return ComputeActivityDateWith(
+		ctx, TranscriptMtime, modifiedDate, sessionID, projectDir, projectsRoot,
+	)
+}
+
+// ComputeActivityDateWith is ComputeActivityDate with an injected transcript
+// probe, so a caller can supply a cached probe instead of touching the
+// filesystem. A nil probe means TranscriptMtime.
+func ComputeActivityDateWith(
+	ctx context.Context,
+	probe TranscriptMtimeGetter,
+	modifiedDate *libtime.DateTime,
+	sessionID, projectDir, projectsRoot string,
+) *libtime.DateTime {
 	candidates := make([]libtime.DateTime, 0, 2)
 	if modifiedDate != nil {
 		candidates = append(candidates, modifiedDate.UTC())
 	}
-	if transcript := TranscriptMtime(ctx, sessionID, projectDir, projectsRoot); transcript != nil {
+	if probe == nil {
+		probe = TranscriptMtime
+	}
+	if transcript := probe(ctx, sessionID, projectDir, projectsRoot); transcript != nil {
 		candidates = append(candidates, *transcript)
 	}
 	if len(candidates) == 0 {

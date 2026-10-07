@@ -72,7 +72,7 @@ func newTestAPIHandlerWithManager(
 			pageindex.NewPageReader(), pageindex.NewDirectoryLister(),
 			libtime.NewCurrentDateTime(),
 		),
-		factory.CreateSessionState(),
+		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		startWriteQueue(),
 	)
 }

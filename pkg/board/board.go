@@ -19,6 +19,7 @@ import (
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/bborbe/vault-cli/pkg/storage"
 
+	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
@@ -73,6 +74,15 @@ type SessionSignals interface {
 	ResumeSessionIDs(ctx context.Context) []string
 }
 
+// SessionProbe supplies the cached session-derived fields the board renders.
+// pkg/sessionsnapshot.Snapshot satisfies it. Generation reports how many
+// refreshes have been published, which the task-list snapshot reads to detect
+// that a new session snapshot is available.
+type SessionProbe interface {
+	TranscriptMtime(ctx context.Context, sessionID, projectDir, projectsRoot string) *libtime.DateTime
+	Generation() uint64
+}
+
 // Deps are the board's injected dependencies.
 type Deps struct {
 	Vaults  VaultsProvider
@@ -81,6 +91,12 @@ type Deps struct {
 	Launch  launchregistry.Registry
 	Clock   libtime.CurrentDateTimeGetter
 	Signals SessionSignals
+	// Sessions supplies the session-derived fields the board renders. A nil
+	// value means the board probes directly (tests only).
+	Sessions SessionProbe
+	// Index reports the page-index revision the task-list store rebuilds on.
+	// pageindex.PageIndex satisfies it.
+	Index IndexRevisions
 	// PageIndex serves a vault's task pages, which the board reads for the one
 	// derived field its list rows do not carry: a task's Open Questions section.
 	PageIndex pageindex.PageIndex
@@ -104,22 +120,41 @@ type board struct {
 	launch    launchregistry.Registry
 	clock     libtime.CurrentDateTimeGetter
 	signals   SessionSignals
+	sessions  SessionProbe
 	pageIndex pageindex.PageIndex
 	homeDir   string
+	snapshot  *taskSnapshotStore
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
-	return &board{
+	b := &board{
 		vaults:    deps.Vaults,
 		ops:       deps.Ops,
 		cache:     deps.Cache,
 		launch:    deps.Launch,
 		clock:     deps.Clock,
 		signals:   deps.Signals,
+		sessions:  deps.Sessions,
 		pageIndex: deps.PageIndex,
 		homeDir:   deps.HomeDir,
 	}
+	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
+		Build:       b.buildTaskRows,
+		Revisions:   deps.Index,
+		Generations: deps.Sessions,
+	})
+	return b
+}
+
+// transcriptProbe returns the transcript probe the board classifies with. A nil
+// Sessions dependency keeps the direct-probe behaviour, so a board built
+// without a snapshot still works.
+func (b *board) transcriptProbe() activity.TranscriptMtimeGetter {
+	if b.sessions == nil {
+		return activity.TranscriptMtime
+	}
+	return b.sessions.TranscriptMtime
 }
 
 // TaskQuery is the parsed query for GET /api/tasks. Raw values keep the

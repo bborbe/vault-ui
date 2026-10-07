@@ -57,10 +57,11 @@ func execute(ctx context.Context) error {
 		libtime.NewCurrentDateTime(),
 	)
 	sessionState := factory.CreateSessionState()
+	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	writeQueue := factory.CreateWriteQueue()
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, cache, paneResolver, launches, homeDir, readiness, manager, pageIndex,
-		sessionState, writeQueue,
+		sessionSnapshot, writeQueue,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -90,6 +91,7 @@ func execute(ctx context.Context) error {
 		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
 		factory.CreateSessionStateWatcher(loader, manager, sessionState, homeDir),
+		sessionSnapshot.Run,
 		writeQueue.Consume,
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),

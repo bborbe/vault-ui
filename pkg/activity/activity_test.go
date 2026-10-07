@@ -171,6 +171,60 @@ var _ = Describe("Activity", func() {
 		Expect(result.Equal(modified)).To(BeTrue())
 	})
 
+	Describe("ComputeActivityDateWith", func() {
+		probeReturning := func(value *libtime.DateTime) activity.TranscriptMtimeGetter {
+			return func(_ context.Context, _, _, _ string) *libtime.DateTime { return value }
+		}
+
+		It("uses the injected probe instead of the filesystem", func() {
+			// No transcript exists on disk; only the probe supplies an mtime.
+			probed := libtime.DateTime(baseTime.Add(-time.Minute)).UTC()
+			modified := libtime.DateTime(baseTime.Add(-2 * time.Hour)).UTC()
+
+			result := activity.ComputeActivityDateWith(
+				ctx, probeReturning(probed.Ptr()), modified.Ptr(), sessionID, projectDir, transcripts,
+			)
+
+			Expect(result).NotTo(BeNil())
+			Expect(result.Equal(probed)).To(BeTrue())
+		})
+
+		It("returns the newer of the task mtime and the probed mtime", func() {
+			probed := libtime.DateTime(baseTime.Add(-2 * time.Hour)).UTC()
+			modified := libtime.DateTime(baseTime.Add(-time.Minute)).UTC()
+
+			result := activity.ComputeActivityDateWith(
+				ctx, probeReturning(probed.Ptr()), modified.Ptr(), sessionID, projectDir, transcripts,
+			)
+
+			Expect(result).NotTo(BeNil())
+			Expect(result.Equal(modified)).To(BeTrue())
+		})
+
+		It("treats a nil probe as TranscriptMtime", func() {
+			writeTranscript(projectDir, sessionID, 30*time.Second)
+			staleFile := libtime.DateTime(baseTime.Add(-4 * time.Hour)).UTC()
+
+			result := activity.ComputeActivityDateWith(
+				ctx, nil, staleFile.Ptr(), sessionID, projectDir, transcripts,
+			)
+
+			Expect(result).NotTo(BeNil())
+			Expect(result.Time()).To(BeTemporally("~", baseTime.Add(-30*time.Second), time.Second))
+		})
+
+		It("leaves ComputeActivityDate equal to the injected default", func() {
+			writeTranscript(projectDir, sessionID, 3*time.Hour)
+			modified := libtime.DateTime(baseTime.Add(-30 * time.Minute)).UTC()
+
+			Expect(
+				activity.ComputeActivityDate(ctx, modified.Ptr(), sessionID, projectDir, transcripts),
+			).To(Equal(activity.ComputeActivityDateWith(
+				ctx, activity.TranscriptMtime, modified.Ptr(), sessionID, projectDir, transcripts,
+			)))
+		})
+	})
+
 	Describe("ReadRegistrySessionIDs", func() {
 		It("returns the session ids", func() {
 			registryRoot := filepath.Join(tmp, "sessions")

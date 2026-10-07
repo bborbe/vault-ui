@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	libtime "github.com/bborbe/time"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
 )
 
@@ -32,9 +34,29 @@ func (f fakeVaults) Vaults(_ context.Context) ([]board.Vault, error) {
 	return f.vaults, f.err
 }
 
+// listCounter counts the vault-cli list walks the board runs. It is shared by
+// pointer, so a value copy of fakeList still increments the same counter.
+type listCounter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *listCounter) inc() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n++
+}
+
+func (c *listCounter) get() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
 type fakeList struct {
-	items map[string][]ops.TaskListItem
-	err   error
+	items   map[string][]ops.TaskListItem
+	err     error
+	counter *listCounter
 }
 
 func (f fakeList) Execute(
@@ -44,6 +66,9 @@ func (f fakeList) Execute(
 	_ bool,
 	_, _ string,
 ) ([]ops.TaskListItem, error) {
+	if f.counter != nil {
+		f.counter.inc()
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -79,6 +104,61 @@ type fakeSignals struct {
 func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string { return f.registry }
 
 func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string { return f.resume }
+
+// fakeProbe is the injected session probe: it returns a fixed mtime and never
+// touches the filesystem, so a spec can prove the board reads the probe. Its
+// generation is a settable counter, so a spec can simulate a session refresh.
+type fakeProbe struct {
+	mu         sync.Mutex
+	mtime      *libtime.DateTime
+	generation uint64
+}
+
+func (f *fakeProbe) TranscriptMtime(_ context.Context, _, _, _ string) *libtime.DateTime {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mtime
+}
+
+func (f *fakeProbe) Generation() uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.generation
+}
+
+// setMtime swaps the probe's transcript mtime.
+func (f *fakeProbe) setMtime(value *libtime.DateTime) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mtime = value
+}
+
+// bumpGeneration advances the probe's generation, the effect of a session
+// snapshot refresh.
+func (f *fakeProbe) bumpGeneration() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.generation++
+}
+
+// fakeIndex is the injected page-index revision source: a settable counter
+// behind a mutex. bump simulates a write mark or a watcher publication.
+type fakeIndex struct {
+	mu    sync.Mutex
+	value uint64
+}
+
+func (f *fakeIndex) Revision(pageindex.Key) uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.value
+}
+
+func (f *fakeIndex) bump() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.value++
+}
 
 type fakeCache struct {
 	statuses map[string]string
@@ -119,24 +199,38 @@ func item(name string, mutate ...func(*ops.TaskListItem)) ops.TaskListItem {
 }
 
 type harness struct {
-	board   board.Board
-	list    *fakeList
-	show    *fakeShow
-	cache   fakeCache
-	signals fakeSignals
-	launch  launchregistry.Registry
-	index   *pageindexmocks.PageIndex
+	board     board.Board
+	list      *fakeList
+	show      *fakeShow
+	cache     fakeCache
+	signals   fakeSignals
+	sessions  *fakeProbe
+	index     *fakeIndex
+	pageIndex *pageindexmocks.PageIndex
+	counter   *listCounter
+	launch    launchregistry.Registry
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
-	list := &fakeList{items: map[string][]ops.TaskListItem{"24 Tasks": entries}}
+	counter := &listCounter{}
+	list := &fakeList{
+		items:   map[string][]ops.TaskListItem{"24 Tasks": entries},
+		counter: counter,
+	}
 	show := &fakeShow{}
 	cache := fakeCache{statuses: map[string]string{}, started: map[string]string{}}
 	signals := fakeSignals{}
 	launch := launchregistry.NewRegistry()
-	index := &pageindexmocks.PageIndex{}
 	h := &harness{
-		list: list, show: show, cache: cache, signals: signals, launch: launch, index: index,
+		list:      list,
+		show:      show,
+		cache:     cache,
+		signals:   signals,
+		sessions:  &fakeProbe{},
+		index:     &fakeIndex{},
+		pageIndex: &pageindexmocks.PageIndex{},
+		counter:   counter,
+		launch:    launch,
 	}
 	h.build()
 	return h
@@ -162,7 +256,9 @@ func (h *harness) build() {
 		Launch:    h.launch,
 		Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 		Signals:   h.signals,
-		PageIndex: h.index,
+		Sessions:  h.sessions,
+		Index:     h.index,
+		PageIndex: h.pageIndex,
 	})
 }
 
@@ -363,12 +459,42 @@ var _ = Describe("ListTasks", func() {
 			Launch:    h.launch,
 			Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 			Signals:   h.signals,
-			PageIndex: h.index,
+			Sessions:  h.sessions,
+			Index:     h.index,
+			PageIndex: h.pageIndex,
 		})
 		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses[0].SessionState).NotTo(BeNil())
 		Expect(*responses[0].SessionState).To(Equal("live"))
+	})
+
+	It("classifies from the injected session probe, not the filesystem", func() {
+		h := newHarness(item("Probed", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = "22222222-2222-2222-2222-222222222222"
+		}))
+		// No transcript exists on disk anywhere; only the probe supplies one.
+		h.sessions = &fakeProbe{mtime: libtime.DateTime(baseTime).UTC().Ptr()}
+		h.build()
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("live"))
+		Expect(responses[0].ActivityDate).NotTo(BeNil())
+	})
+
+	It("reads a missing transcript from the injected probe, not the filesystem", func() {
+		h := newHarness(item("Probed", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = "22222222-2222-2222-2222-222222222222"
+		}))
+		h.sessions = &fakeProbe{mtime: nil}
+		h.build()
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("indeterminate"))
+		Expect(responses[0].ActivityDate).To(BeNil())
 	})
 
 	It("filters to live sessions only", func() {
@@ -423,6 +549,89 @@ var _ = Describe("ListTasks", func() {
 		h.build()
 		_, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).To(HaveOccurred())
+	})
+})
+
+var _ = Describe("ListTasks snapshot", func() {
+	It("DB1: serves a warm read without a second vault list walk", func() {
+		h := newHarness(item("Task"))
+
+		first, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).To(HaveLen(1))
+		// The first request pays for exactly one build, and that build is the
+		// only vault-cli list walk.
+		Expect(h.counter.get()).To(Equal(1))
+
+		second, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second).To(Equal(first))
+		// The warm read adds no list walk.
+		Expect(h.counter.get()).To(Equal(1))
+	})
+
+	It("DB7: sees a write through the next read once the revision moves", func() {
+		h := newHarness(item("Before"))
+		first, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).To(HaveLen(1))
+		Expect(first[0].ID).To(Equal("Before"))
+		Expect(h.counter.get()).To(Equal(1))
+
+		// The write path marks the page index dirty before publishing its frame;
+		// the mark advances the revision the store rebuilds on, and the rebuild's
+		// list walk resolves the mark before reading.
+		h.list.items["24 Tasks"] = []ops.TaskListItem{item("After")}
+		h.index.bump()
+
+		second, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second).To(HaveLen(1))
+		Expect(second[0].ID).To(Equal("After"))
+		Expect(h.counter.get()).To(Equal(2))
+	})
+
+	It("AC7: rebuilds after a watcher publication and not otherwise", func() {
+		h := newHarness(item("Task"))
+		_, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.counter.get()).To(Equal(1))
+
+		// A read that moves nothing serves the published rows unchanged.
+		_, err = h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.counter.get()).To(Equal(1))
+
+		// A watcher's RefreshFile publishes a page snapshot, which moves the
+		// revision; the next read rebuilds.
+		h.index.bump()
+		_, err = h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.counter.get()).To(Equal(2))
+	})
+
+	It("rebuilds when the session snapshot refreshes and renders the new state", func() {
+		h := newHarness(item("Probed", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = "22222222-2222-2222-2222-222222222222"
+		}))
+
+		first, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).To(HaveLen(1))
+		Expect(first[0].SessionState).NotTo(BeNil())
+		Expect(*first[0].SessionState).To(Equal("indeterminate"))
+		Expect(h.counter.get()).To(Equal(1))
+
+		// The session snapshot refreshes: a transcript now exists.
+		h.sessions.setMtime(libtime.DateTime(baseTime).UTC().Ptr())
+		h.sessions.bumpGeneration()
+
+		second, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second).To(HaveLen(1))
+		Expect(second[0].SessionState).NotTo(BeNil())
+		Expect(*second[0].SessionState).To(Equal("live"))
+		Expect(h.counter.get()).To(Equal(2))
 	})
 })
 
@@ -514,7 +723,9 @@ var _ = Describe("ListTopics", func() {
 			Launch:    h.launch,
 			Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 			Signals:   h.signals,
-			PageIndex: h.index,
+			Sessions:  h.sessions,
+			Index:     h.index,
+			PageIndex: h.pageIndex,
 		})
 		responses, err := service.ListTopics(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -634,7 +845,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("serialises [] for a task with no Open Questions section", func() {
 		h := newHarness(item("TaskOne"))
-		h.index.ListPagesReturns(
+		h.pageIndex.ListPagesReturns(
 			[]*domain.Page{page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n")}, nil,
 		)
 
@@ -651,7 +862,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("maps the parsed section items in section order", func() {
 		h := newHarness(item("TaskOne"))
-		h.index.ListPagesReturns([]*domain.Page{page("TaskOne", questions)}, nil)
+		h.pageIndex.ListPagesReturns([]*domain.Page{page("TaskOne", questions)}, nil)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -673,17 +884,17 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("lists the vault's pages once, not once per task", func() {
 		h := newHarness(item("One"), item("Two"), item("Three"))
-		h.index.ListPagesReturns([]*domain.Page{page("One", questions)}, nil)
+		h.pageIndex.ListPagesReturns([]*domain.Page{page("One", questions)}, nil)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(3))
-		Expect(h.index.ListPagesCallCount()).To(Equal(1))
+		Expect(h.pageIndex.ListPagesCallCount()).To(Equal(1))
 	})
 
 	It("carries an empty list rather than failing when the pages cannot be listed", func() {
 		h := newHarness(item("TaskOne"))
-		h.index.ListPagesReturns(nil, errors.New("boom"))
+		h.pageIndex.ListPagesReturns(nil, errors.New("boom"))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())

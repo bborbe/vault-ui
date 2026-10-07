@@ -97,6 +97,20 @@ func (f *ac5Fixture) listTasks() []api.TaskResponse {
 	return tasks
 }
 
+// listTasksWide reads GET /api/tasks with a one-week upcoming window, so a task
+// deferred to "tomorrow" is in scope at any wall-clock time. The default 8h
+// window covers it only before 16:00 UTC, because defer-task writes a date-only
+// value that parseDeferDate reads as midnight UTC.
+func (f *ac5Fixture) listTasksWide() []api.TaskResponse {
+	recorder := f.request(
+		http.MethodGet, "/api/tasks?vault=personal&upcoming_hours=168", "",
+	)
+	ExpectWithOffset(1, recorder.Code).To(Equal(http.StatusOK))
+	var tasks []api.TaskResponse
+	ExpectWithOffset(1, json.Unmarshal(recorder.Body.Bytes(), &tasks)).To(Succeed())
+	return tasks
+}
+
 // listTaskBodies issues two concurrent GET /api/tasks and returns their bodies,
 // so a test can prove two readers share one re-read.
 func (f *ac5Fixture) listTaskBodies() []string {
@@ -230,16 +244,21 @@ var _ = Describe("Page index write invalidation", func() {
 		// The synchronous site marks folder-level; marking alone reads nothing.
 		Expect(f.seams.readCount()).To(Equal(beforeReads))
 
-		tasks := f.listTasks()
+		tasks := f.listTasksWide()
 		// Evidence: exactly one stat-diff listing, and only the file whose
 		// fingerprint changed is re-read.
 		Expect(f.tasksCalls()).To(Equal(beforeLists + 1))
 		Expect(f.tasksReads()).To(Equal(map[string]int{"Task A.md": 1}))
 
 		// The read served the post-write value: the deferred task now carries a
-		// defer date, so the default list no longer shows it while the untouched
-		// task stays.
-		Expect(taskIDs(tasks)).NotTo(ContainElement("Task A"))
+		// defer date and is flagged upcoming, while the untouched task stays.
+		// Asserted on the served values rather than on list membership — under
+		// the default 8h window a task deferred to "tomorrow" is present or
+		// absent depending on the wall-clock time of day, so an absence
+		// assertion would flip with the clock rather than with the code.
+		deferred := findTask(tasks, "Task A")
+		Expect(deferred.DeferDate).NotTo(BeNil())
+		Expect(deferred.Upcoming).To(BeTrue())
 		Expect(taskIDs(tasks)).To(ContainElement("Task B"))
 	})
 

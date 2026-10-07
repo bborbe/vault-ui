@@ -26,6 +26,11 @@ type ClassifyParams struct {
 	LiveWindow         time.Duration
 	ResumeSessionIDs   []string
 	RegistrySessionIDs []string
+
+	// TranscriptMtime probes the session transcript; nil means
+	// activity.TranscriptMtime. The board passes its cached probe so a request
+	// never touches the filesystem.
+	TranscriptMtime activity.TranscriptMtimeGetter
 }
 
 // ClassifySessionState reproduces src/vault_ui/activity.py classify_session_state.
@@ -43,7 +48,11 @@ func ClassifySessionState(ctx context.Context, params ClassifyParams) SessionSta
 		return SessionStateLive
 	}
 
-	mtime := activity.TranscriptMtime(ctx, params.SessionID, params.ProjectDir, params.ProjectsRoot)
+	probe := params.TranscriptMtime
+	if probe == nil {
+		probe = activity.TranscriptMtime
+	}
+	mtime := probe(ctx, params.SessionID, params.ProjectDir, params.ProjectsRoot)
 	if mtime == nil {
 		return SessionStateIndeterminate
 	}
