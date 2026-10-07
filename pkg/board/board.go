@@ -141,6 +141,7 @@ func New(deps Deps) Board {
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,
+		Refresh:     b.refreshTaskRows,
 		Revisions:   deps.Index,
 		Generations: deps.Sessions,
 	})

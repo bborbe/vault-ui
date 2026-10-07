@@ -171,6 +171,61 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 	return rows, nil
 }
 
+// refreshTaskRows re-derives the session-dependent fields of rows that were
+// already built, so a session-snapshot move does not pay for the page-derived
+// work a second time.
+//
+// Three fields can move with the session snapshot and nothing else does: the
+// classified session state and the activity date, which read the transcript
+// probe and the live id sets, and the session-started marker, which is what the
+// old unconditional rebuild refreshed on every tick. The vault list, the
+// blockers and the Open Questions sections are page-derived and are carried
+// over untouched — re-deriving those is what made a session move cost as much
+// as a page move.
+//
+// It returns a new slice: the rows it is given are shared with every reader, so
+// each is copied before a field is written.
+func (b *board) refreshTaskRows(
+	ctx context.Context,
+	vault Vault,
+	rows []taskSnapshotRow,
+) ([]taskSnapshotRow, error) {
+	projectDir := cleanup.DeriveClaudeProjectDir(b.homeDir, vault.Path, vault.SessionProjectDir)
+	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
+
+	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	resumeIDs := b.signals.ResumeSessionIDs(ctx)
+
+	refreshed := make([]taskSnapshotRow, len(rows))
+	copy(refreshed, rows)
+	for i := range refreshed {
+		item := refreshed[i].item
+		refreshed[i].started = b.sessionStarted(vault.Name, item.Name)
+		refreshed[i].sessionState = sessionStatePtr(session.ClassifySessionState(
+			ctx,
+			session.ClassifyParams{
+				SessionID:          item.ClaudeSessionID,
+				ProjectDir:         projectDir,
+				ProjectsRoot:       projectsRoot,
+				Now:                b.clock.Now().UTC(),
+				LiveWindow:         session.DefaultLiveWindow,
+				ResumeSessionIDs:   resumeIDs,
+				RegistrySessionIDs: registryIDs,
+				TranscriptMtime:    b.transcriptProbe(),
+			},
+		))
+		refreshed[i].activityDate = activity.ComputeActivityDateWith(
+			ctx,
+			b.transcriptProbe(),
+			parseDateTime(item.ModifiedDate),
+			item.ClaudeSessionID,
+			projectDir,
+			projectsRoot,
+		)
+	}
+	return refreshed, nil
+}
+
 // openQuestionsByTask returns each task page's Open Questions, keyed by the
 // page's file name. It is one ListPages per vault — never one per task, which
 // would put a vault walk on the board's hottest path. That listing is the same

@@ -53,9 +53,29 @@ type generationSource interface {
 // store mutex and under its own bounded context.
 type taskSnapshotBuildFunc func(ctx context.Context, vault Vault) ([]taskSnapshotRow, error)
 
+// taskSnapshotRefreshFunc re-derives the fields that depend on the session
+// snapshot, against rows that were already built. It runs off the store mutex
+// and under its own bounded context, like Build.
+//
+// A session-snapshot move changes only the session-derived fields, so
+// re-deriving those is enough: the vault list, the blockers and the Open
+// Questions sections are page-derived and are unchanged by a session refresh.
+// Rebuilding them anyway is what made a session move as expensive as a page
+// move — the classified session state and the activity date are the whole of
+// what actually moved.
+type taskSnapshotRefreshFunc func(
+	ctx context.Context,
+	vault Vault,
+	rows []taskSnapshotRow,
+) ([]taskSnapshotRow, error)
+
 // taskSnapshotParams carries the store's injectable dependencies.
 type taskSnapshotParams struct {
-	Build       taskSnapshotBuildFunc
+	Build taskSnapshotBuildFunc
+	// Refresh re-derives only the session-derived fields of rows already built.
+	// A nil value means every invalidation takes the full build path, which is
+	// correct but pays the page-derived work again on a session move.
+	Refresh     taskSnapshotRefreshFunc
 	Revisions   IndexRevisions
 	Generations generationSource
 	// Timeout bounds one build; a non-positive value falls back to
@@ -70,6 +90,7 @@ type taskSnapshotStore struct {
 	mu          sync.Mutex
 	entries     map[pageindex.Key]*taskSnapshotEntry
 	build       taskSnapshotBuildFunc
+	refresh     taskSnapshotRefreshFunc
 	revisions   IndexRevisions
 	generations generationSource
 	timeout     time.Duration
@@ -92,9 +113,12 @@ type taskSnapshotEntry struct {
 type taskSnapshotBuild struct {
 	startRevision   uint64
 	startGeneration uint64
-	done            chan struct{}
-	rows            []taskSnapshotRow
-	err             error
+	// refreshOnly records that only the session generation moved, so the held
+	// rows can be re-derived instead of rebuilt from the vault.
+	refreshOnly bool
+	done        chan struct{}
+	rows        []taskSnapshotRow
+	err         error
 }
 
 // newTaskSnapshotStore creates an empty store. It starts empty and builds on
@@ -107,28 +131,32 @@ func newTaskSnapshotStore(params taskSnapshotParams) *taskSnapshotStore {
 	return &taskSnapshotStore{
 		entries:     map[pageindex.Key]*taskSnapshotEntry{},
 		build:       params.Build,
+		refresh:     params.Refresh,
 		revisions:   params.Revisions,
 		generations: params.Generations,
 		timeout:     timeout,
 	}
 }
 
-// List returns the key's published rows. It rebuilds them when the page-index
-// revision or the session generation moved since the published rows were
-// built, and otherwise does no work at all.
+// List returns the key's published rows.
 //
-// A caller that arrives while a build is in flight waits on that same build
-// rather than starting a second one. The returned slice is shared with every
-// other reader and must be treated as read-only.
+// A page-index revision move rebuilds them from the vault. A session-generation
+// move re-derives only the session-dependent fields against the rows already
+// held, because those are the whole of what a session snapshot can change: the
+// vault list, the blockers and the Open Questions sections are page-derived and
+// do not move with it. Either way a caller that arrives while work is in flight
+// waits on that same work rather than starting a second one, and the returned
+// slice is shared with every other reader and must be treated as read-only.
 func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapshotRow, error) {
 	key := pageindex.NewKey(vault.Path, vault.TasksFolder)
 	for {
 		s.mu.Lock()
 		e := s.entryLocked(key)
+		revision := s.revisions.Revision(key)
 		generation := s.generations.Generation()
-		if e.hasSnapshot &&
-			s.revisions.Revision(key) == e.pageRevision &&
-			generation == e.sessionGeneration {
+		pageMoved := !e.hasSnapshot || revision != e.pageRevision
+		sessionMoved := !e.hasSnapshot || generation != e.sessionGeneration
+		if !pageMoved && !sessionMoved {
 			rows := e.rows
 			s.mu.Unlock()
 			return rows, nil
@@ -154,9 +182,13 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 			continue
 		}
 		b := &taskSnapshotBuild{
-			startRevision:   s.revisions.Revision(key),
+			startRevision:   revision,
 			startGeneration: generation,
-			done:            make(chan struct{}),
+			// Only the session generation moved, so the held rows can be
+			// re-derived instead of rebuilt. A nil Refresh falls back to the
+			// full build: correct, but it repeats the page-derived work.
+			refreshOnly: !pageMoved && sessionMoved && s.refresh != nil,
+			done:        make(chan struct{}),
 		}
 		e.inflight = b
 		s.mu.Unlock()
@@ -186,7 +218,20 @@ func (s *taskSnapshotStore) runBuild(
 ) ([]taskSnapshotRow, error) {
 	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.timeout)
 	defer cancel()
-	rows, buildErr := s.build(buildCtx, vault)
+
+	var rows []taskSnapshotRow
+	var buildErr error
+	if b.refreshOnly {
+		// The held rows are read under the mutex and never mutated: Refresh
+		// returns a new slice and copies each row before touching a field, so
+		// the slice a concurrent reader is holding stays intact.
+		s.mu.Lock()
+		held := s.entryLocked(key).rows
+		s.mu.Unlock()
+		rows, buildErr = s.refresh(buildCtx, vault, held)
+	} else {
+		rows, buildErr = s.build(buildCtx, vault)
+	}
 
 	s.mu.Lock()
 	e := s.entryLocked(key)
