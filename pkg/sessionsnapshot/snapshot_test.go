@@ -249,9 +249,10 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(running.Run(ctx)).To(Succeed())
 
 		// One initial refresh plus one per successful wait, and the third wait
-		// reports cancellation.
+		// reports cancellation. The scan count is AC8's evidence. Generation is
+		// deliberately not used as a refresh counter here: it counts published
+		// *changes*, so three identical refreshes leave it at 1.
 		Expect(scanner.callCount()).To(Equal(3))
-		Expect(running.Generation()).To(Equal(uint64(3)))
 
 		calls, durations := waiter.observed()
 		Expect(calls).To(Equal(3))
@@ -284,16 +285,35 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(snapshot.Generation()).To(Equal(before))
 	})
 
-	It("advances Generation by one per successful refresh only", func() {
+	// Generation counts published-state *changes*, not refreshes. Its one
+	// reader invalidates its derived work on a generation move, so advancing it
+	// on every tick would make that reader redo the whole of that work once per
+	// SessionRefreshInterval with nothing new to show for it.
+	It("advances Generation only when a refresh publishes a different set", func() {
 		Expect(snapshot.Generation()).To(Equal(uint64(0)))
+
+		// The first refresh publishes the initial set.
 		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 		Expect(snapshot.Generation()).To(Equal(uint64(1)))
+
+		// A refresh that publishes the same ids leaves it alone.
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.Generation()).To(Equal(uint64(1)))
+
+		// A changed resume set moves it.
+		scanner.output = psLine(otherID)
 		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 		Expect(snapshot.Generation()).To(Equal(uint64(2)))
 
+		// A changed registry set moves it too.
+		registry.ids = []string{liveSessionID}
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.Generation()).To(Equal(uint64(3)))
+
+		// A failed refresh publishes nothing, so it does not move.
 		scanner.err = errors.New("boom")
 		Expect(snapshot.RefreshOnce(ctx)).NotTo(Succeed())
-		Expect(snapshot.Generation()).To(Equal(uint64(2)))
+		Expect(snapshot.Generation()).To(Equal(uint64(3)))
 	})
 
 	Describe("TranscriptMtime", func() {

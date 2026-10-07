@@ -19,6 +19,7 @@ package sessionsnapshot
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -51,8 +52,11 @@ type Snapshot interface {
 	// missing or blank session id and for a transcript that cannot be found,
 	// exactly as activity.TranscriptMtime does.
 	TranscriptMtime(ctx context.Context, sessionID, projectDir, projectsRoot string) *libtime.DateTime
-	// Generation advances by one on every successful refresh; it is how a
-	// consumer detects that a new session snapshot is available.
+	// Generation advances only when a refresh publishes different ids; it is
+	// how a consumer detects that the session snapshot actually changed. It is
+	// deliberately not a refresh counter: a consumer invalidates its derived
+	// work on a generation move, so advancing on every tick would make that
+	// work run once per interval with nothing to show for it.
 	Generation() uint64
 	// RefreshOnce performs one refresh and returns the first error. A failed
 	// refresh keeps the previous values.
@@ -130,7 +134,9 @@ func (s *snapshot) ResumeSessionIDs(_ context.Context) []string {
 	return append([]string{}, s.resumeIDs...)
 }
 
-// Generation returns the number of successful refreshes so far.
+// Generation returns the number of published-state changes so far, which is at
+// most the number of successful refreshes: a refresh that publishes the same
+// ids leaves it where it was.
 func (s *snapshot) Generation() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,8 +186,15 @@ func (s *snapshot) TranscriptMtime(
 }
 
 // RefreshOnce runs one `ps` scan and one registry read and swaps both in
-// atomically, advancing Generation. A scan failure keeps the previous values
-// and returns the wrapped error without swapping.
+// atomically, advancing Generation only when the published ids actually
+// changed. A scan failure keeps the previous values and returns the wrapped
+// error without swapping.
+//
+// The generation advances on a real change, never merely because a tick fired.
+// Its one reader invalidates its derived work on a generation move, so bumping
+// it unconditionally makes that reader redo the whole of that work once per
+// SessionRefreshInterval even on a board where nothing changed — measured as a
+// full task-list rebuild every 60 s, which is the cost this avoids.
 func (s *snapshot) RefreshOnce(ctx context.Context) error {
 	output, err := s.params.Scanner(ctx)
 	if err != nil {
@@ -197,9 +210,13 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	changed := !slices.Equal(s.resumeIDs, resumeIDs) ||
+		!slices.Equal(s.registryIDs, registryIDs)
 	s.registryIDs = append([]string{}, registryIDs...)
 	s.resumeIDs = append([]string{}, resumeIDs...)
 	s.refreshedAt = s.params.Clock.Now().Ptr()
-	s.generation++
+	if changed {
+		s.generation++
+	}
 	return nil
 }
