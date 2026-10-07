@@ -6,16 +6,19 @@ package board_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
 	libtime "github.com/bborbe/time"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
 )
 
 var baseTime = time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
@@ -133,6 +136,7 @@ type harness struct {
 	signals  fakeSignals
 	sessions fakeProbe
 	launch   launchregistry.Registry
+	index    *pageindexmocks.PageIndex
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
@@ -141,22 +145,36 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 	cache := fakeCache{statuses: map[string]string{}, started: map[string]string{}}
 	signals := fakeSignals{}
 	launch := launchregistry.NewRegistry()
-	h := &harness{list: list, show: show, cache: cache, signals: signals, launch: launch}
+	index := &pageindexmocks.PageIndex{}
+	h := &harness{
+		list: list, show: show, cache: cache, signals: signals, launch: launch, index: index,
+	}
 	h.build()
 	return h
+}
+
+// page builds one in-memory vault page with real markdown content, so the
+// board's open-questions read runs storage.ParseOpenQuestions against it.
+func page(name, content string) *domain.Page {
+	return domain.NewPage(
+		map[string]any{"status": "todo"},
+		domain.FileMetadata{Name: name},
+		domain.Content(content),
+	)
 }
 
 // build (re)constructs the board from the current fakes, so a test can mutate a
 // fake and rebuild.
 func (h *harness) build() {
 	h.board = board.New(board.Deps{
-		Vaults:   fakeVaults{vaults: []board.Vault{vault}},
-		Ops:      fakeOps{list: *h.list, show: *h.show},
-		Cache:    h.cache,
-		Launch:   h.launch,
-		Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-		Signals:  h.signals,
-		Sessions: h.sessions,
+		Vaults:    fakeVaults{vaults: []board.Vault{vault}},
+		Ops:       fakeOps{list: *h.list, show: *h.show},
+		Cache:     h.cache,
+		Launch:    h.launch,
+		Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+		Signals:   h.signals,
+		Sessions:  h.sessions,
+		PageIndex: h.index,
 	})
 }
 
@@ -351,13 +369,14 @@ var _ = Describe("ListTasks", func() {
 		}))
 		h.signals.registry = []string{"11111111-1111-1111-1111-111111111111"}
 		service := board.New(board.Deps{
-			Vaults:   fakeVaults{vaults: []board.Vault{vault}},
-			Ops:      fakeOps{list: *h.list, show: *h.show},
-			Cache:    h.cache,
-			Launch:   h.launch,
-			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals:  h.signals,
-			Sessions: h.sessions,
+			Vaults:    fakeVaults{vaults: []board.Vault{vault}},
+			Ops:       fakeOps{list: *h.list, show: *h.show},
+			Cache:     h.cache,
+			Launch:    h.launch,
+			Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals:   h.signals,
+			Sessions:  h.sessions,
+			PageIndex: h.index,
 		})
 		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -530,13 +549,14 @@ var _ = Describe("ListTopics", func() {
 		noTopics := vault
 		noTopics.TopicsFolder = ""
 		service := board.New(board.Deps{
-			Vaults:   fakeVaults{vaults: []board.Vault{noTopics}},
-			Ops:      fakeOps{list: *h.list, show: *h.show},
-			Cache:    h.cache,
-			Launch:   h.launch,
-			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals:  h.signals,
-			Sessions: h.sessions,
+			Vaults:    fakeVaults{vaults: []board.Vault{noTopics}},
+			Ops:       fakeOps{list: *h.list, show: *h.show},
+			Cache:     h.cache,
+			Launch:    h.launch,
+			Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals:   h.signals,
+			Sessions:  h.sessions,
+			PageIndex: h.index,
 		})
 		responses, err := service.ListTopics(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -635,5 +655,81 @@ var _ = Describe("ListAssignees", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(response.Named).To(Equal([]string{"Alice", "bob"}))
 		Expect(response.HasUnassigned).To(BeTrue())
+	})
+})
+
+var _ = Describe("ListTasks open_questions", func() {
+	// questions is a real Open Questions section, so the assertions below are
+	// made against storage.ParseOpenQuestions rather than against a hand-built
+	// slice the test itself typed.
+	const questions = `# Task One
+
+## Open Questions
+
+- Which vault?
+- Answered already → **personal**
+
+## Notes
+
+- not a question
+`
+
+	It("serialises [] for a task with no Open Questions section", func() {
+		h := newHarness(item("TaskOne"))
+		h.index.ListPagesReturns(
+			[]*domain.Page{page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n")}, nil,
+		)
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].OpenQuestions).NotTo(BeNil())
+		Expect(responses[0].OpenQuestions).To(BeEmpty())
+
+		encoded, err := json.Marshal(responses[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"open_questions":[]`))
+	})
+
+	It("maps the parsed section items in section order", func() {
+		h := newHarness(item("TaskOne"))
+		h.index.ListPagesReturns([]*domain.Page{page("TaskOne", questions)}, nil)
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		// Marker and Line are dropped, and the answered item is included with
+		// its question text — its answer is deliberately not exposed.
+		Expect(responses[0].OpenQuestions).To(Equal([]domain.OpenQuestion{
+			{Index: 1, Text: "Which vault?"},
+			{Index: 2, Text: "Answered already"},
+		}))
+
+		encoded, err := json.Marshal(responses[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(
+			`"open_questions":[{"index":1,"text":"Which vault?"},` +
+				`{"index":2,"text":"Answered already"}]`,
+		))
+	})
+
+	It("lists the vault's pages once, not once per task", func() {
+		h := newHarness(item("One"), item("Two"), item("Three"))
+		h.index.ListPagesReturns([]*domain.Page{page("One", questions)}, nil)
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(3))
+		Expect(h.index.ListPagesCallCount()).To(Equal(1))
+	})
+
+	It("carries an empty list rather than failing when the pages cannot be listed", func() {
+		h := newHarness(item("TaskOne"))
+		h.index.ListPagesReturns(nil, errors.New("boom"))
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].OpenQuestions).To(BeEmpty())
 	})
 })
