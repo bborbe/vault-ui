@@ -7,6 +7,7 @@ created: "2026-10-07T09:42:10Z"
 queued: "2026-10-07T09:42:10Z"
 started: "2026-10-07T09:42:37Z"
 completed: "2026-10-07T09:49:39Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/146
 branch: dark-factory/144-approve-modal-answers
 ---
 
