@@ -191,6 +191,10 @@ func homeDir() string {
 // appears or disappears is picked up at the next listing instead of being cached
 // away. That preserves the property TranscriptMtime's own comment protects — a
 // cache must never keep a dead session looking fresh.
+// transcriptSuffix is the extension a session transcript carries. Only these
+// are indexed or looked up, so the constant is the single place the two agree.
+const transcriptSuffix = ".jsonl"
+
 type TranscriptIndex struct {
 	// byFilename holds every match for a filename, in listing order, because
 	// the glob this replaces returned every match and stat'd each in turn: a
@@ -200,23 +204,35 @@ type TranscriptIndex struct {
 	byFilename map[string][]string
 }
 
-// NewTranscriptIndex lists projectsRoot once. It never returns nil, so a caller
-// can carry the result without a nil check on every lookup; a root that cannot
-// be listed yields an empty index, which reports every session absent — the same
-// answer filepath.Glob gives for an unreadable root.
+// NewTranscriptIndex lists projectsRoot once. It never returns a nil index, so a
+// caller can carry the result without a nil check on every lookup; a root that
+// cannot be listed yields an empty index, which reports every session absent —
+// the same answer filepath.Glob gives for an unreadable root.
+//
+// The second result reports whether the listing completed. It is false when the
+// context was cancelled part-way, and the returned index is then a prefix of the
+// real one: usable for the lookups in flight, but it must not be cached. A
+// truncated listing reads every session it did not reach as absent, so a caller
+// that keeps it — as the board's per-epoch cache does — would misreport those
+// sessions for as long as it holds it, and one cancelled request is enough.
 //
 // Entries are walked in name order and so are the files inside each, which is
 // the order Glob produced after sorting its matches.
-func NewTranscriptIndex(ctx context.Context, projectsRoot string) *TranscriptIndex {
+func NewTranscriptIndex(
+	ctx context.Context,
+	projectsRoot string,
+) (*TranscriptIndex, bool) {
 	index := &TranscriptIndex{byFilename: map[string][]string{}}
 	entries, err := os.ReadDir(projectsRoot)
 	if err != nil {
 		glog.V(4).Infof("[Activity] Cannot list %s: %v", projectsRoot, err)
-		return index
+		// An unreadable root is a complete listing of nothing, not a truncation:
+		// it is the same answer Glob gives, and caching it is correct.
+		return index, true
 	}
 	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return index
+		if ctx.Err() != nil {
+			return index, false
 		}
 		dir := filepath.Join(projectsRoot, entry.Name())
 		// Stat rather than DirEntry.IsDir: that reports false for a symlink,
@@ -234,13 +250,22 @@ func NewTranscriptIndex(ctx context.Context, projectsRoot string) *TranscriptInd
 			continue
 		}
 		for _, file := range files {
-			index.byFilename[file.Name()] = append(
-				index.byFilename[file.Name()],
-				filepath.Join(dir, file.Name()),
-			)
+			// The innermost loop is the hottest one — paying it once per epoch
+			// is what the index exists for — so it carries the check too: a
+			// single project directory can hold enough entries to matter.
+			if ctx.Err() != nil {
+				return index, false
+			}
+			name := file.Name()
+			// Only transcripts are ever looked up, so the rest are dead weight
+			// in both the map and the build.
+			if !strings.HasSuffix(name, transcriptSuffix) {
+				continue
+			}
+			index.byFilename[name] = append(index.byFilename[name], filepath.Join(dir, name))
 		}
 	}
-	return index
+	return index, true
 }
 
 // Mtime returns the transcript's mtime, preferring projectDir and otherwise

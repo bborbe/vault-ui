@@ -176,6 +176,15 @@ var _ = Describe("Activity", func() {
 		// through to the index rather than resolving on the direct stat.
 		missingDir := func() string { return filepath.Join(tmp, "no-such-project") }
 
+		// index builds a listing the spec expects to have completed, so a spec
+		// that accidentally exercises the abandoned path fails loudly instead
+		// of quietly asserting against a truncated index.
+		index := func() *activity.TranscriptIndex {
+			built, complete := activity.NewTranscriptIndex(ctx, projects)
+			Expect(complete).To(BeTrue())
+			return built
+		}
+
 		It("resolves the same mtime as TranscriptMtime, including from another project dir", func() {
 			writeTranscript(projectDir, sessionID, time.Minute)
 
@@ -183,7 +192,7 @@ var _ = Describe("Activity", func() {
 			Expect(direct).NotTo(BeNil())
 
 			Expect(
-				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, missingDir()),
+				index().Mtime(ctx, sessionID, missingDir()),
 			).To(Equal(direct))
 		})
 
@@ -192,13 +201,13 @@ var _ = Describe("Activity", func() {
 			unknown := "11111111-1111-1111-1111-111111111111"
 
 			Expect(
-				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, unknown, missingDir()),
+				index().Mtime(ctx, unknown, missingDir()),
 			).To(BeNil())
 			Expect(activity.TranscriptMtime(ctx, unknown, missingDir(), projects)).To(BeNil())
 		})
 
 		It("returns nil for a blank session id", func() {
-			Expect(activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, "", projectDir)).To(BeNil())
+			Expect(index().Mtime(ctx, "", projectDir)).To(BeNil())
 		})
 
 		It("prefers projectDir and pins the mtime it prefers", func() {
@@ -208,7 +217,7 @@ var _ = Describe("Activity", func() {
 			// A concrete expectation rather than equality with TranscriptMtime:
 			// two equally-wrong answers would otherwise agree with each other.
 			Expect(
-				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, projectDir),
+				index().Mtime(ctx, sessionID, projectDir),
 			).To(Equal(libtime.DateTime(baseTime.Add(-time.Hour)).UTC().Ptr()))
 		})
 
@@ -219,7 +228,7 @@ var _ = Describe("Activity", func() {
 			writeTranscript(projectDir, sessionID, time.Minute)
 
 			Expect(
-				activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, missingDir()),
+				index().Mtime(ctx, sessionID, missingDir()),
 			).To(Equal(libtime.DateTime(baseTime.Add(-time.Hour)).UTC().Ptr()))
 		})
 
@@ -229,7 +238,7 @@ var _ = Describe("Activity", func() {
 			Expect(os.MkdirAll(projects, 0o750)).To(Succeed())
 			Expect(os.Symlink(real, filepath.Join(projects, "linked"))).To(Succeed())
 
-			indexed := activity.NewTranscriptIndex(ctx, projects).Mtime(ctx, sessionID, missingDir())
+			indexed := index().Mtime(ctx, sessionID, missingDir())
 			Expect(indexed).NotTo(BeNil())
 			Expect(indexed).To(Equal(
 				activity.TranscriptMtime(ctx, sessionID, missingDir(), projects),
@@ -237,18 +246,20 @@ var _ = Describe("Activity", func() {
 		})
 
 		It("answers from an empty index when the root cannot be listed", func() {
-			index := activity.NewTranscriptIndex(ctx, filepath.Join(tmp, "does-not-exist"))
-			Expect(index.Mtime(ctx, sessionID, projectDir)).To(BeNil())
+			built, complete := activity.NewTranscriptIndex(ctx, filepath.Join(tmp, "does-not-exist"))
+			Expect(complete).To(BeTrue(), "an unreadable root is a complete listing of nothing")
+			Expect(built.Mtime(ctx, sessionID, projectDir)).To(BeNil())
 		})
 
-		It("stops listing when the context is cancelled", func() {
+		It("reports an abandoned listing incomplete, not as a full one", func() {
 			writeTranscript(projectDir, sessionID, time.Minute)
 			cancelled, cancel := context.WithCancel(ctx)
 			cancel()
 
-			Expect(
-				activity.NewTranscriptIndex(cancelled, projects).Mtime(cancelled, sessionID, missingDir()),
-			).To(BeNil())
+			built, complete := activity.NewTranscriptIndex(cancelled, projects)
+			Expect(complete).To(BeFalse(),
+				"a caller that caches this listing would misreport every session it did not reach")
+			Expect(built.Mtime(cancelled, sessionID, missingDir())).To(BeNil())
 		})
 	})
 

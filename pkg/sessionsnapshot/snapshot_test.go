@@ -411,6 +411,37 @@ var _ = Describe("SessionSnapshot", func() {
 			Expect(bare.RefreshOnce(ctx)).To(Succeed())
 			Expect(bare.TranscriptMtime(ctx, otherID, missing, root)).NotTo(BeNil())
 		})
+
+		It("does not cache a listing abandoned by a cancelled request", func() {
+			tmp := GinkgoT().TempDir()
+			root := filepath.Join(tmp, "projects")
+			Expect(os.MkdirAll(filepath.Join(root, "-vault"), 0o750)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(root, "-vault", liveSessionID+".jsonl"), []byte("{}\n"), 0o600,
+			)).To(Succeed())
+			missing := filepath.Join(tmp, "no-such-project")
+
+			bare := sessionsnapshot.NewSnapshot(sessionsnapshot.Params{
+				Registry: registry.Get,
+				Scanner:  scanner.Scan,
+				Clock:    fixedClock(),
+			})
+			Expect(bare.RefreshOnce(ctx)).To(Succeed())
+
+			// A request cancelled while the listing is being built. This is
+			// reachable in production: /api/goals passes a cancellable
+			// per-request context straight down to the probe, unlike /api/tasks,
+			// whose build detaches cancellation.
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+			Expect(bare.TranscriptMtime(cancelled, otherID, missing, root)).To(BeNil())
+
+			// A later live request must still resolve. A different session id,
+			// so the per-session verdict cache cannot mask the index: if the
+			// truncated listing had been published for the epoch, this lookup
+			// would take the cached path and report a present session absent.
+			Expect(bare.TranscriptMtime(ctx, liveSessionID, missing, root)).NotTo(BeNil())
+		})
 	})
 
 	// AC5 (container proxy): a refresh re-reads the live set, and a board built

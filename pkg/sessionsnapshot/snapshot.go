@@ -226,19 +226,32 @@ func (s *snapshot) indexedMtime(
 		return index.Mtime(ctx, sessionID, projectDir)
 	}
 
-	built := activity.NewTranscriptIndex(ctx, root)
+	built, complete := activity.NewTranscriptIndex(ctx, root)
 
 	s.mu.Lock()
 	switch {
-	case s.indices == set:
-		// Still the same epoch: publish the listing for its remaining lookups.
-		set.byRoot[root] = built
-	case s.indices.byRoot[root] != nil:
+	case s.indices != set:
 		// A refresh swapped the set while this listing was being built. That
 		// listing predates the refresh, so publishing it would serve stale
 		// verdicts for the whole new epoch — the very thing the reset exists to
-		// prevent. Use whatever the new epoch has already built, if anything.
-		built = s.indices.byRoot[root]
+		// prevent. Use whatever the new epoch has already built; when it has
+		// nothing yet, this one call still answers from the pre-refresh listing
+		// rather than rebuilding, which is bounded to a single lookup.
+		if existing := s.indices.byRoot[root]; existing != nil {
+			built = existing
+		}
+	case !complete:
+		// The listing was abandoned part-way. Serve it for this call, but do
+		// not publish it: a truncated listing reads every session it did not
+		// reach as absent, and the snapshot is process-wide, so caching one
+		// would misreport those sessions for every caller until the next
+		// refresh. A single cancelled request is enough to cause it — /api/goals
+		// passes a cancellable per-request context straight down to the probe,
+		// unlike /api/tasks, whose build detaches cancellation.
+	default:
+		// Complete, and still the same epoch: publish it for the rest of the
+		// epoch's lookups, which is what makes them a map hit.
+		set.byRoot[root] = built
 	}
 	s.mu.Unlock()
 
