@@ -183,6 +183,12 @@ func (b *board) openQuestionsByTask(
 		return byName
 	}
 	for _, page := range pages {
+		select {
+		case <-ctx.Done():
+			// The caller is gone: stop rather than warn once per remaining page.
+			return byName
+		default:
+		}
 		items, parseErr := storage.ParseOpenQuestions(ctx, page.Content.String())
 		if parseErr != nil {
 			glog.Warningf(
