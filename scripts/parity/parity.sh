@@ -307,12 +307,18 @@ normalize() {
   # `jump_pane` is intentionally absent from the Go backend's task responses
   # (spec 025 — a session's pane is resolved when the jump control is clicked,
   # never on a list read). The Python reference still emits it, so it is removed
-  # from BOTH sides before comparison. Every other key stays compared: widening
-  # this filter would silently drop the safety net for the routes this change
-  # does not touch.
+  # from BOTH sides before comparison.
+  #
+  # `open_questions` is likewise Go-only: the task payload carries the task's
+  # Open Questions section so a UI can ask for answers to whatever the task is
+  # waiting on, and the superseded Python backend cannot be updated to emit it.
+  # It is removed from BOTH sides for the same reason.
+  #
+  # Every other key stays compared: widening this filter would silently drop the
+  # safety net for the routes this change does not touch.
   jq -S 'if type == "array"
-         then map(if type == "object" then del(.jump_pane) else . end)
-         elif type == "object" then del(.jump_pane)
+         then map(if type == "object" then del(.jump_pane, .open_questions) else . end)
+         elif type == "object" then del(.jump_pane, .open_questions)
          else . end' "$1" 2>/dev/null || cat "$1"
 }
 

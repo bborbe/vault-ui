@@ -133,6 +133,19 @@
         </div>
     </div>
 
+    <!-- Approve Modal -->
+    <div id="approve-modal" class="modal hidden" data-testid="approve-modal">
+        <div class="modal-content">
+            <h2 id="approve-title">Approve Task</h2>
+            <p id="approve-prompt">Approving this task moves it to Planning.</p>
+            <div class="reason-form" id="approve-form"></div>
+            <div class="modal-buttons">
+                <button id="approve-cancel-btn" data-testid="approve-cancel">Cancel</button>
+                <button id="approve-confirm-btn" data-testid="approve-confirm">Approve</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Take-Over Confirm Modal -->
     <div id="takeover-modal" class="modal hidden">
         <div class="modal-content">
@@ -159,6 +172,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=2026-10-06-own-write-echo-once"></script>
+    <script src="app.js?v=2026-10-07-approve-modal"></script>
 </body>
 </html>
