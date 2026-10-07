@@ -7,6 +7,7 @@ created: "2026-10-07T05:48:53Z"
 queued: "2026-10-07T05:48:53Z"
 started: "2026-10-07T05:49:57Z"
 completed: "2026-10-07T06:00:46Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/144
 branch: dark-factory/143-approve-modal-backend
 ---
 
