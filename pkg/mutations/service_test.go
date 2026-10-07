@@ -1475,3 +1475,132 @@ var _ = Describe("SetTaskSession queued write failures", func() {
 		Expect(writeFailedReason()).To(Equal("boom"))
 	})
 })
+
+// writeTodoTask puts a task waiting in the approval inbox into the vault.
+func (h *harness) writeTodoTask(name, frontmatter string) {
+	writeFile(
+		filepath.Join(h.dir, "24 Tasks", name+".md"),
+		"---\n"+frontmatter+"\n---\n\n# "+name+"\n",
+	)
+}
+
+var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
+	var h *harness
+	var ctx context.Context
+
+	BeforeEach(func() {
+		h = newHarness()
+		ctx = context.Background()
+	})
+
+	It("approves a todo task instead of writing the phase and status by hand", func() {
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice")
+
+		result, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Phase).To(Equal("planning"))
+		h.drain()
+
+		// status is next, not in_progress: in_progress is the write that removes
+		// a freshly approved row from the ready-to-start bucket.
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: next"))
+		Expect(content).To(ContainSubstring("approved_by: operator"))
+		Expect(content).To(ContainSubstring("approved_at:"))
+		// The task's own assignee is the owner, so no assignee write happens.
+		Expect(content).To(ContainSubstring("assignee: alice"))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
+	})
+
+	It("resolves an unassigned todo task's owner from the configured current user", func() {
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		Expect(h.readTask("Inbox")).To(ContainSubstring("assignee: fixtureuser"))
+	})
+
+	It("400s an ownerless todo task on the request path and enqueues no write", func() {
+		h.cfgPtr.CurrentUser = ""
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(err.Error()).To(ContainSubstring("current_user is not configured"))
+
+		h.drain()
+		Expect(h.readTask("Inbox")).NotTo(ContainSubstring("approved_by"))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
+		Expect(h.index.MarkFileDirtyCallCount()).To(Equal(0))
+	})
+
+	It("leaves a todo task's existing approval record to fail asynchronously", func() {
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice\napproved_by: someone")
+
+		// The request is accepted: an existing approval record is not worth a
+		// request-path read, so the refusal arrives as a write_failed frame.
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+		_, _, itemKind, itemID, reason := h.publisher.PublishWriteFailedArgsForCall(0)
+		Expect(itemKind).To(Equal("task"))
+		Expect(itemID).To(Equal("Inbox"))
+		Expect(reason).To(ContainSubstring("approved_by"))
+	})
+
+	It("takes the old path for a planning request on a task already past todo", func() {
+		// TaskOne is at phase planning, so this is not an approval.
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		content := h.readTask(taskOneID)
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: in_progress"))
+		Expect(content).NotTo(ContainSubstring("approved_by"))
+	})
+
+	DescribeTable("leaves every other transition on the old path",
+		func(phase string) {
+			h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice")
+
+			_, err := h.service.UpdateTaskPhase(
+				ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: phase},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			h.drain()
+			content := h.readTask("Inbox")
+			Expect(content).To(ContainSubstring("phase: " + phase))
+			Expect(content).NotTo(ContainSubstring("approved_by"))
+			Expect(content).NotTo(ContainSubstring("approved_at"))
+		},
+		Entry("execution", "execution"),
+		Entry("ai_review", "ai_review"),
+		Entry("done", "done"),
+	)
+
+	It("400s a planning request on a missing task only through the queued write", func() {
+		// A request-path read that fails leaves today's behaviour untouched.
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Missing", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
+	})
+})

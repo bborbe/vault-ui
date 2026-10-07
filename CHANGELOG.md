@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Route the board's todo → planning phase move through vault-cli's approval command — `UpdateTaskPhase` reads the task's current phase and, when a `planning` request names a task waiting at `todo`, calls `set.Approve.Execute` instead of writing `phase` and `status` itself, so the move records `phase: planning`, `status: next`, `approved_by` and `approved_at` in the one write the Start button already uses (writing `in_progress` there would have removed a freshly approved row from the manager sweep's ready-to-start bucket), while a request-path owner check answers 400 for an ownerless todo task before the request is accepted and every other transition keeps the existing `FrontmatterSet` path; `TaskResponse` gains a Go-only `open_questions` field carrying the task's `Open Questions` section items (parsed by vault-cli's `storage.ParseOpenQuestions` from one `PageIndex.ListPages` per vault, answered items included, `[]` rather than `null` when absent) for a UI to ask for answers to whatever a task is waiting on, `board.Deps` gains the `PageIndex`, `github.com/bborbe/vault-cli` is bumped to v0.163.0 (whose widened `storage.PageStorage` the new `pageindex.PageIndex.ReadPage` satisfies: it serves a page from the in-memory snapshot and otherwise falls through to the `PageReader` seam with `name+".md"`, failing rather than skipping a missing page), `scripts/parity/parity.sh`'s `normalize()` deletes `open_questions` from both sides as it already does `jump_pane`, and `README.md` documents the new field.
+- fix: Stop the board's Open Questions scan as soon as the request is cancelled, rather than parsing every remaining page and logging a warning for each — a cancelled board read now returns the partial map instead of walking the rest of the vault.
+
 ## v0.84.2
 
 - chore: Skip counterfeiter-generated `mocks/` in the PR reviewer's size gate, so machine-written fakes stop counting toward the park threshold — 50 of the 58 sibling repos already exclude them.

@@ -439,6 +439,10 @@ func (s *service) AssignTaskToMe(
 
 // UpdateTaskPhase queues a task's phase update, then its status to match. The
 // route answers 202 before the vault is written.
+//
+// The one exception is the todo → planning move, which is the operator's
+// approval and has its own command: it runs set.Approve instead of writing
+// phase and status by hand.
 func (s *service) UpdateTaskPhase(
 	ctx context.Context, vault, taskID string, req api.UpdatePhaseRequest,
 ) (api.PhaseUpdateResponse, error) {
@@ -449,8 +453,15 @@ func (s *service) UpdateTaskPhase(
 	if !ok {
 		return api.PhaseUpdateResponse{}, newHTTPError(400, unknownVault(vault))
 	}
+	if guard := s.approveOwnerGuard(ctx, resolved, taskID, req.Phase); guard != nil {
+		return api.PhaseUpdateResponse{}, guard
+	}
 	write := func(ctx context.Context) error {
 		set := s.opsForVault(resolved)
+		task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
+		if showErr == nil && req.Phase == "planning" && task.Phase == "todo" {
+			return s.approveTask(ctx, resolved, set, taskID)
+		}
 		if setErr := set.FrontmatterSet.Execute(
 			ctx, resolved.Path, taskID, "phase", req.Phase, "", "", "", false,
 		); setErr != nil {
@@ -461,9 +472,7 @@ func (s *service) UpdateTaskPhase(
 			newStatus = "completed"
 		} else {
 			currentStatus := ""
-			if task, showErr := set.Show.Execute(
-				ctx, resolved.Path, resolved.Name, taskID,
-			); showErr == nil {
+			if showErr == nil {
 				currentStatus = task.Status
 			}
 			if currentStatus != "hold" {
@@ -485,6 +494,72 @@ func (s *service) UpdateTaskPhase(
 		return api.PhaseUpdateResponse{}, err
 	}
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
+}
+
+// approveTask runs the operator's approval for a task waiting in the inbox,
+// with the same seven arguments RunTask passes. Approve owns all four keys in
+// one write — phase: planning, status: next, approved_by and approved_at — so
+// this branch writes neither phase nor status itself: setting the phase
+// alongside it would race the approval's own write, and the caller's status
+// logic would overwrite "next" with "in_progress", which is the write that
+// removes a freshly approved row from the ready-to-start bucket.
+//
+// A todo task that already carries an approval record is refused by the
+// operation; that case is not worth a request-path read, so it surfaces as an
+// asynchronous write_failed frame.
+func (s *service) approveTask(
+	ctx context.Context,
+	resolved vaultconfig.Vault,
+	set vaultui.OpSet,
+	taskID string,
+) error {
+	cfg, err := s.deps.Config.Load(ctx)
+	if err != nil {
+		return newHTTPError(500, err.Error())
+	}
+	if _, approveErr := set.Approve.Execute(
+		ctx, resolved.Path, taskID, resolved.Name, "operator", "", cfg.CurrentUser,
+	); approveErr != nil {
+		return newHTTPError(500, approveErr.Error())
+	}
+	return nil
+}
+
+// approveOwnerGuard answers 400 when a todo → planning request names no owner,
+// so the operator is told before the request is accepted instead of through an
+// asynchronous write_failed frame: Approve refuses an ownerless task, and this
+// closure runs on the write queue.
+//
+// It reads the task on the request path to decide, and applies only to the
+// todo → planning move — every other transition, and every vault with no
+// current_user configured, keeps today's behaviour. A read that fails (an
+// unknown task) is not a guard either: that request keeps today's 202 plus the
+// queued write's write_failed frame.
+func (s *service) approveOwnerGuard(
+	ctx context.Context,
+	resolved vaultconfig.Vault,
+	taskID, phase string,
+) *HTTPError {
+	if phase != "planning" {
+		return nil
+	}
+	task, showErr := s.opsForVault(resolved).Show.Execute(
+		ctx, resolved.Path, resolved.Name, taskID,
+	)
+	if showErr != nil || task.Phase != "todo" {
+		return nil
+	}
+	cfg, err := s.deps.Config.Load(ctx)
+	if err != nil {
+		return nil
+	}
+	if task.Assignee != "" || cfg.CurrentUser != "" {
+		return nil
+	}
+	return newHTTPError(
+		400,
+		"current_user is not configured and the task has no assignee; cannot approve task",
+	)
 }
 
 // UpdateTaskFlag queues a set or clear of a task's flag (picked-for-today
