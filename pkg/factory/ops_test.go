@@ -120,6 +120,8 @@ var _ = Describe("CreateOpSet", func() {
 		Expect(set.FrontmatterSet).NotTo(BeNil())
 		Expect(set.FrontmatterClear).NotTo(BeNil())
 		Expect(set.WorkOn).NotTo(BeNil())
+		Expect(set.Approve).NotTo(BeNil())
+		Expect(set.Answer).NotTo(BeNil())
 		Expect(set.Defer).NotTo(BeNil())
 		Expect(set.Complete).NotTo(BeNil())
 		Expect(set.GoalSet).NotTo(BeNil())
