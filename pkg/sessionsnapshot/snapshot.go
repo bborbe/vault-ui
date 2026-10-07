@@ -85,6 +85,7 @@ func NewSnapshot(params Params) Snapshot {
 		registryIDs: []string{},
 		resumeIDs:   []string{},
 		transcripts: map[transcriptKey]transcriptEntry{},
+		indices:     map[string]*activity.TranscriptIndex{},
 	}
 }
 
@@ -112,6 +113,11 @@ type snapshot struct {
 	refreshedAt *libtime.DateTime
 	generation  uint64
 	transcripts map[transcriptKey]transcriptEntry
+	// indices holds one listing of each projects root, built on first use and
+	// dropped with the epoch. Resolving a session through it costs a map hit and
+	// one stat, where activity.TranscriptMtime's filepath.Glob fallback re-reads
+	// the whole projects root — and every directory under it — per call.
+	indices map[string]*activity.TranscriptIndex
 }
 
 // RegistrySessionIDs returns a copy of the last successful refresh's registry
@@ -167,16 +173,47 @@ func (s *snapshot) TranscriptMtime(
 	}
 	s.mu.Unlock()
 
-	probe := s.params.Probe
-	if probe == nil {
-		probe = activity.TranscriptMtime
+	var value *libtime.DateTime
+	if probe := s.params.Probe; probe != nil {
+		value = probe(ctx, sessionID, projectDir, projectsRoot)
+	} else {
+		value = s.indexedMtime(sessionID, projectDir, projectsRoot)
 	}
-	value := probe(ctx, sessionID, projectDir, projectsRoot)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.transcripts[key] = transcriptEntry{probedAt: s.params.Clock.Now(), mtime: value}
 	return value
+}
+
+// indexedMtime resolves a transcript through the epoch's listing of the projects
+// root, building that listing on first use. It is the default probe, used when no
+// probe is injected.
+//
+// The listing is built outside the mutex, so two concurrent first lookups for one
+// root may both build it; both are equivalent and the second publish wins, which
+// is the same bounded duplication TranscriptMtime's own comment accepts.
+func (s *snapshot) indexedMtime(sessionID, projectDir, projectsRoot string) *libtime.DateTime {
+	root := projectsRoot
+	if root == "" {
+		root = activity.DefaultProjectsRoot()
+	}
+
+	s.mu.Lock()
+	index, ok := s.indices[root]
+	s.mu.Unlock()
+	if !ok {
+		index = activity.NewTranscriptIndex(root)
+		s.mu.Lock()
+		if s.indices == nil {
+			// RefreshOnce replaces the map; a snapshot built before this field
+			// existed still needs one.
+			s.indices = map[string]*activity.TranscriptIndex{}
+		}
+		s.indices[root] = index
+		s.mu.Unlock()
+	}
+	return index.Mtime(sessionID, projectDir)
 }
 
 // RefreshOnce runs one `ps` scan and one registry read and swaps both in
@@ -200,6 +237,10 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 	s.registryIDs = append([]string{}, registryIDs...)
 	s.resumeIDs = append([]string{}, resumeIDs...)
 	s.refreshedAt = s.params.Clock.Now().Ptr()
+	// The projects-root listings belong to the epoch that just ended: a
+	// transcript that appeared or vanished must be seen, not served from a
+	// listing taken before the refresh.
+	s.indices = map[string]*activity.TranscriptIndex{}
 	s.generation++
 	return nil
 }

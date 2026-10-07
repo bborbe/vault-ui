@@ -171,6 +171,44 @@ var _ = Describe("Activity", func() {
 		Expect(result.Equal(modified)).To(BeTrue())
 	})
 
+	Describe("TranscriptIndex", func() {
+		It("resolves the same mtime as TranscriptMtime, including from another project dir", func() {
+			writeTranscript(projectDir, sessionID, time.Minute)
+			elsewhere := filepath.Join(projects, "-elsewhere")
+
+			direct := activity.TranscriptMtime(ctx, sessionID, elsewhere, projects)
+			Expect(direct).NotTo(BeNil())
+
+			Expect(activity.NewTranscriptIndex(projects).Mtime(sessionID, elsewhere)).To(Equal(direct))
+		})
+
+		It("reports an unknown session absent, exactly as the glob fallback does", func() {
+			writeTranscript(projectDir, sessionID, time.Minute)
+			unknown := "11111111-1111-1111-1111-111111111111"
+
+			Expect(activity.NewTranscriptIndex(projects).Mtime(unknown, projectDir)).To(BeNil())
+			Expect(activity.TranscriptMtime(ctx, unknown, projectDir, projects)).To(BeNil())
+		})
+
+		It("returns nil for a blank session id", func() {
+			Expect(activity.NewTranscriptIndex(projects).Mtime("", projectDir)).To(BeNil())
+		})
+
+		It("prefers projectDir over the index, as TranscriptMtime does", func() {
+			writeTranscript(projectDir, sessionID, time.Hour)
+			writeTranscript(filepath.Join(projects, "-elsewhere"), sessionID, time.Minute)
+
+			Expect(activity.NewTranscriptIndex(projects).Mtime(sessionID, projectDir)).To(Equal(
+				activity.TranscriptMtime(ctx, sessionID, projectDir, projects),
+			))
+		})
+
+		It("answers from an empty index when the root cannot be listed", func() {
+			index := activity.NewTranscriptIndex(filepath.Join(tmp, "does-not-exist"))
+			Expect(index.Mtime(sessionID, projectDir)).To(BeNil())
+		})
+	})
+
 	Describe("ComputeActivityDateWith", func() {
 		probeReturning := func(value *libtime.DateTime) activity.TranscriptMtimeGetter {
 			return func(_ context.Context, _, _, _ string) *libtime.DateTime { return value }

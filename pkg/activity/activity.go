@@ -177,6 +177,80 @@ func homeDir() string {
 	return home
 }
 
+// TranscriptIndex resolves a session transcript from one listing of the
+// projects root.
+//
+// filepath.Glob re-reads that root — and every project directory under it — on
+// each call, so a caller asking about N sessions pays for the same listing N
+// times. On the board that was measured at 81 % of the process's CPU. The index
+// pays for the listing once and answers each lookup with a map hit and a single
+// stat.
+//
+// It is deliberately epoch-scoped rather than long-lived: the caller builds one,
+// resolves the sessions it is working on, and drops it, so a transcript that
+// appears or disappears is picked up at the next listing instead of being cached
+// away. That preserves the property TranscriptMtime's own comment protects — a
+// cache must never keep a dead session looking fresh.
+type TranscriptIndex struct {
+	byFilename map[string]string
+}
+
+// NewTranscriptIndex lists projectsRoot once. It never returns nil, so a caller
+// can carry the result without a nil check on every lookup; a root that cannot
+// be listed yields an empty index, which reports every session absent — the same
+// answer filepath.Glob gives for an unreadable root.
+func NewTranscriptIndex(projectsRoot string) *TranscriptIndex {
+	index := &TranscriptIndex{byFilename: map[string]string{}}
+	entries, err := os.ReadDir(projectsRoot)
+	if err != nil {
+		glog.V(4).Infof("[Activity] Cannot list %s: %v", projectsRoot, err)
+		return index
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(projectsRoot, entry.Name())
+		files, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			// An unreadable project directory is an expected absence, not an
+			// error: it is the same miss filepath.Glob reports by matching
+			// nothing inside it.
+			continue
+		}
+		for _, file := range files {
+			// First match wins, matching Glob's sorted-match order, so a
+			// session present in two project directories resolves to the same
+			// one it did before.
+			if _, exists := index.byFilename[file.Name()]; !exists {
+				index.byFilename[file.Name()] = filepath.Join(dir, file.Name())
+			}
+		}
+	}
+	return index
+}
+
+// Mtime returns the transcript's mtime, preferring projectDir and otherwise
+// resolving the session id through the index. It returns nil for a blank or
+// unknown session id, exactly as TranscriptMtime does.
+func (i *TranscriptIndex) Mtime(sessionID, projectDir string) *libtime.DateTime {
+	if sessionID == "" {
+		return nil
+	}
+	filename := sessionID + ".jsonl"
+	if direct := mtimeOrNone(filepath.Join(projectDir, filename)); direct != nil {
+		return direct
+	}
+	if i == nil {
+		return nil
+	}
+	path, ok := i.byFilename[filename]
+	if !ok {
+		return nil
+	}
+	return mtimeOrNone(path)
+}
+
 func mtimeOrNone(path string) *libtime.DateTime {
 	info, err := os.Stat(path)
 	if err != nil {
