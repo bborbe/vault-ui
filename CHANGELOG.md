@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.87.2
 
 - refactor: Read the page index's single page files through vault-cli's `storage.PageStorage.ReadPage` instead of a local re-implementation, so one parse path and one symlink-out-of-vault guard serve both the index and vault-cli's folder listing; the per-file fingerprint the stat-diff uses is still taken here before the read.
 
