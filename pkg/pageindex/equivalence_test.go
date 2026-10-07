@@ -78,7 +78,7 @@ func indexedNames(pages []*domain.Page) []string {
 // newEquivalenceIndex builds the index over the production reader and lister.
 func newEquivalenceIndex() pageindex.PageIndex {
 	return pageindex.NewPageIndex(
-		pageindex.NewPageReader(),
+		pageindex.NewPageReader(storage.NewPageStorage(nil)),
 		pageindex.NewDirectoryLister(),
 		libtime.NewCurrentDateTime(),
 		libtime.NewWaiterDuration(),

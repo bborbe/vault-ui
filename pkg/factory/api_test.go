@@ -17,6 +17,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	gws "github.com/gorilla/websocket"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -69,7 +70,7 @@ func newTestAPIHandlerWithManager(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), tempDir(), readiness, manager,
 		factory.CreatePageIndex(
-			pageindex.NewPageReader(), pageindex.NewDirectoryLister(),
+			pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
 			libtime.NewCurrentDateTime(),
 		),
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
