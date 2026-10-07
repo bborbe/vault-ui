@@ -4,6 +4,8 @@
 
 package api
 
+import "github.com/bborbe/vault-cli/pkg/domain"
+
 // UpdateFlagRequest is the body of PATCH /api/tasks/{id}/flag. The flag
 // defaults to true when the body omits it, matching the Python
 // `flag: bool = True` model, so a nil Flag means "true".
@@ -11,11 +13,16 @@ type UpdateFlagRequest struct {
 	Flag *bool `json:"flag"`
 }
 
-// UpdatePhaseRequest is the body of PATCH /api/tasks/{id}/phase.
+// UpdatePhaseRequest is the body of PATCH /api/tasks/{id}/phase. Answers is a
+// Go-only field carrying the operator's answers to the task's Open Questions
+// section; it is recorded only by the todo → planning move, which is the
+// approval. A missing or null key decodes to a nil slice, so an empty Answers
+// keeps the pre-existing behaviour exactly.
 type UpdatePhaseRequest struct {
-	Phase         string  `json:"phase"`
-	Reason        *string `json:"reason"`
-	GateSuccessor *string `json:"gate_successor"`
+	Phase         string              `json:"phase"`
+	Reason        *string             `json:"reason"`
+	GateSuccessor *string             `json:"gate_successor"`
+	Answers       []domain.OpenAnswer `json:"answers"`
 }
 
 // UpdateStatusRequest is the body of PATCH /api/tasks/{id}/status and

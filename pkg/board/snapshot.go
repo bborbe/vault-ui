@@ -11,6 +11,7 @@ import (
 
 	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/golang/glog"
 
@@ -26,13 +27,14 @@ const snapshotBuildTimeout = 2 * time.Minute
 // `now` (upcoming, recently_completed, the recently-completed phase override)
 // are NOT precomputed; the read path applies them.
 type taskSnapshotRow struct {
-	item         ops.TaskListItem
-	vault        Vault
-	blockers     []string
-	blocked      bool
-	started      *string
-	sessionState *string
-	activityDate *libtime.DateTime
+	item          ops.TaskListItem
+	vault         Vault
+	blockers      []string
+	blocked       bool
+	started       *string
+	sessionState  *string
+	activityDate  *libtime.DateTime
+	openQuestions []domain.OpenQuestion
 }
 
 // IndexRevisions reports a per-key value that advances when the key's page

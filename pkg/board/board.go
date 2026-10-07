@@ -22,6 +22,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
@@ -95,8 +96,11 @@ type Deps struct {
 	Sessions SessionProbe
 	// Index reports the page-index revision the task-list store rebuilds on.
 	// pageindex.PageIndex satisfies it.
-	Index   IndexRevisions
-	HomeDir string
+	Index IndexRevisions
+	// PageIndex serves a vault's task pages, which the board reads for the one
+	// derived field its list rows do not carry: a task's Open Questions section.
+	PageIndex pageindex.PageIndex
+	HomeDir   string
 }
 
 // Board is the read-only board service.
@@ -110,28 +114,30 @@ type Board interface {
 }
 
 type board struct {
-	vaults   VaultsProvider
-	ops      OpsProvider
-	cache    statuscache.Cache
-	launch   launchregistry.Registry
-	clock    libtime.CurrentDateTimeGetter
-	signals  SessionSignals
-	sessions SessionProbe
-	homeDir  string
-	snapshot *taskSnapshotStore
+	vaults    VaultsProvider
+	ops       OpsProvider
+	cache     statuscache.Cache
+	launch    launchregistry.Registry
+	clock     libtime.CurrentDateTimeGetter
+	signals   SessionSignals
+	sessions  SessionProbe
+	pageIndex pageindex.PageIndex
+	homeDir   string
+	snapshot  *taskSnapshotStore
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
 	b := &board{
-		vaults:   deps.Vaults,
-		ops:      deps.Ops,
-		cache:    deps.Cache,
-		launch:   deps.Launch,
-		clock:    deps.Clock,
-		signals:  deps.Signals,
-		sessions: deps.Sessions,
-		homeDir:  deps.HomeDir,
+		vaults:    deps.Vaults,
+		ops:       deps.Ops,
+		cache:     deps.Cache,
+		launch:    deps.Launch,
+		clock:     deps.Clock,
+		signals:   deps.Signals,
+		sessions:  deps.Sessions,
+		pageIndex: deps.PageIndex,
+		homeDir:   deps.HomeDir,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,

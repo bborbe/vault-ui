@@ -139,15 +139,16 @@ func CreateAPIHandler(
 	writeQueue queue.Queue,
 ) http.Handler {
 	service := board.New(board.Deps{
-		Vaults:   &vaultProvider{loader: loader, configPath: configPath},
-		Ops:      opsProvider{pageIndex: pageIndex},
-		Cache:    cache,
-		Launch:   launches,
-		Clock:    libtime.NewCurrentDateTime(),
-		Signals:  sessionSnapshot,
-		Sessions: sessionSnapshot,
-		Index:    pageIndex,
-		HomeDir:  homeDir,
+		Vaults:    &vaultProvider{loader: loader, configPath: configPath},
+		Ops:       opsProvider{pageIndex: pageIndex},
+		Cache:     cache,
+		Launch:    launches,
+		Clock:     libtime.NewCurrentDateTime(),
+		Signals:   sessionSnapshot,
+		Sessions:  sessionSnapshot,
+		Index:     pageIndex,
+		PageIndex: pageIndex,
+		HomeDir:   homeDir,
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
