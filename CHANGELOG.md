@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.86.0
 
 - feat: Carry the approve modal's answers through the board's todo → planning phase route — `UpdatePhaseRequest` gains an optional Go-only `answers` array of `{index, answer}` pairs and `OpSet` gains `Answer ops.TaskAnswerOperation`, and `approveTask` records them through `set.Answer.Execute` **before** `set.Approve.Execute`, so a failed approval leaves the task at `todo` with its answers recorded (the operation replaces an answer rather than duplicating it, so dragging again converges) instead of approved with its questions unanswered; the handler refuses a malformed answer — a non-positive or repeated index, an empty answer, or one containing a line break, the ` → **` delimiter or `**` — with the FastAPI 422 shape before the request is accepted, and `approveOwnerGuard` refuses with 400 any request carrying answers that only the todo → planning move can record (any non-`planning` phase, and a `planning` request against a task not at `todo`), while an empty or absent `answers` keeps today's behaviour exactly; `README.md` documents the new key and `docs/optimistic-writes.md` records both new request-path checks.
 - feat: Open an approve modal when a task card is dragged from Todo into Planning — the modal reuses the Abort modal's styling, renders one labelled field per item in the task's `Open Questions` section (and none at all for a task without one), and sends the filled answers with the same phase request; Cancel returns before any request is sent, so the task file stays byte-identical.
