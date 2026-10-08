@@ -67,10 +67,14 @@ type OpsProvider interface {
 }
 
 // SessionSignals supplies the two per-request liveness signals that are not
-// derivable from the vault: the Claude session registry ids and the live
-// `--resume`/`--session-id` process ids.
+// derivable from the vault: the live session ids from the attention store and
+// the live `--resume`/`--session-id` process ids.
 type SessionSignals interface {
 	RegistrySessionIDs(ctx context.Context) []string
+	// LiveIDsKnown reports whether RegistrySessionIDs is authoritative. It is
+	// false when the attention store could not be reached, which the board
+	// passes to the classifier as "cannot tell" rather than "nothing is live".
+	LiveIDsKnown() bool
 	ResumeSessionIDs(ctx context.Context) []string
 }
 

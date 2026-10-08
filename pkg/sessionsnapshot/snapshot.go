@@ -3,8 +3,9 @@
 // license that can be found in the LICENSE file.
 
 // Package sessionsnapshot holds the session-liveness inputs the board renders
-// in memory: the live session-registry ids, the live `--resume`/`--session-id`
-// ids, and a per-refresh cache of session transcript modification times.
+// in memory: the live session ids from the attention store, the live
+// `--resume`/`--session-id` ids, and a per-refresh cache of session transcript
+// modification times.
 //
 // A read never spawns a process and never reads the registry directory. The
 // `ps` scan runs once per refresh on a fixed interval of at least 60 s, and the
@@ -40,9 +41,14 @@ const SessionRefreshInterval = 60 * time.Second
 // Snapshot is the process-wide, timer-refreshed view of the session-liveness
 // inputs. A read never spawns a process and never reads the registry directory.
 type Snapshot interface {
-	// RegistrySessionIDs returns the live registry session ids from the last
-	// successful refresh. Never nil.
+	// RegistrySessionIDs returns the live session ids from the last refresh.
+	// They come from the attention store (pkg/heartbeat), never from the harness
+	// session registry directory. Never nil.
 	RegistrySessionIDs(ctx context.Context) []string
+	// LiveIDsKnown reports whether RegistrySessionIDs is authoritative. It is
+	// false when the last refresh could not reach the store — "cannot tell",
+	// which the board must not read as "nothing is live".
+	LiveIDsKnown() bool
 	// ResumeSessionIDs returns the live --resume/--session-id ids from the last
 	// successful refresh. Never nil.
 	ResumeSessionIDs(ctx context.Context) []string
@@ -64,8 +70,10 @@ type Snapshot interface {
 
 // Params carries the snapshot's injectable dependencies.
 type Params struct {
-	// Registry returns the live registry session ids. It never errors.
-	Registry func(ctx context.Context) []string
+	// Registry returns the live session ids and whether the source answered. A
+	// false second result is "cannot tell" (an unreachable attention store): the
+	// previous ids are kept and marked unknown rather than cleared.
+	Registry func(ctx context.Context) ([]string, bool)
 	// Scanner produces fresh `ps` output; one scan runs per refresh.
 	Scanner session.ProcessScanner
 	// Probe returns a session transcript's mtime. Nil selects the snapshot's own
@@ -86,6 +94,7 @@ func NewSnapshot(params Params) Snapshot {
 	return &snapshot{
 		params:      params,
 		registryIDs: []string{},
+		liveKnown:   true,
 		resumeIDs:   []string{},
 		transcripts: map[transcriptKey]transcriptEntry{},
 		indices:     newTranscriptIndexSet(),
@@ -112,6 +121,7 @@ type snapshot struct {
 
 	mu          sync.Mutex
 	registryIDs []string
+	liveKnown   bool
 	resumeIDs   []string
 	refreshedAt *libtime.DateTime
 	generation  uint64
@@ -136,12 +146,19 @@ func newTranscriptIndexSet() *transcriptIndexSet {
 	return &transcriptIndexSet{byRoot: map[string]*activity.TranscriptIndex{}}
 }
 
-// RegistrySessionIDs returns a copy of the last successful refresh's registry
-// ids. The result is never nil and never aliases the internal slice.
+// RegistrySessionIDs returns a copy of the last refresh's live session ids. The
+// result is never nil and never aliases the internal slice.
 func (s *snapshot) RegistrySessionIDs(_ context.Context) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string{}, s.registryIDs...)
+}
+
+// LiveIDsKnown reports whether the last refresh's ids are authoritative.
+func (s *snapshot) LiveIDsKnown() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.liveKnown
 }
 
 // ResumeSessionIDs returns a copy of the last successful refresh's resume ids.
@@ -258,9 +275,11 @@ func (s *snapshot) indexedMtime(
 	return built.Mtime(ctx, sessionID, projectDir)
 }
 
-// RefreshOnce runs one `ps` scan and one registry read and swaps both in
+// RefreshOnce runs one `ps` scan and one live-id read and swaps both in
 // atomically, advancing Generation. A scan failure keeps the previous values
-// and returns the wrapped error without swapping.
+// and returns the wrapped error without swapping. A live-id read that cannot
+// reach the store keeps the previous ids, marks them unknown and still swaps
+// the resume ids: "cannot tell" must not be served as "nothing is live".
 func (s *snapshot) RefreshOnce(ctx context.Context) error {
 	output, err := s.params.Scanner(ctx)
 	if err != nil {
@@ -272,11 +291,14 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 		return errors.Wrap(ctx, err, "refresh session snapshot")
 	}
 	resumeIDs := session.ParseLiveSessionIDs(output)
-	registryIDs := s.params.Registry(ctx)
+	registryIDs, liveKnown := s.params.Registry(ctx)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.registryIDs = append([]string{}, registryIDs...)
+	if liveKnown {
+		s.registryIDs = append([]string{}, registryIDs...)
+	}
+	s.liveKnown = liveKnown
 	s.resumeIDs = append([]string{}, resumeIDs...)
 	s.refreshedAt = s.params.Clock.Now().Ptr()
 	// The projects-root listings belong to the epoch that just ended: a

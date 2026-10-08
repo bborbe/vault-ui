@@ -99,9 +99,14 @@ func (f fakeOps) TopicShow(_ board.Vault) ops.EntityShowOperation { return f.sho
 type fakeSignals struct {
 	registry []string
 	resume   []string
+	// unknown is "cannot tell": the live-id source could not be reached. It is
+	// the negative so the zero value keeps the pre-existing, known behaviour.
+	unknown bool
 }
 
 func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string { return f.registry }
+
+func (f fakeSignals) LiveIDsKnown() bool { return !f.unknown }
 
 func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string { return f.resume }
 

@@ -38,12 +38,14 @@ func (b *board) ListGoals(ctx context.Context, query GoalQuery) ([]api.GoalRespo
 	cutoff := now.Add(time.Duration(query.UpcomingHours) * time.Hour)
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	liveIDsUnknown := !b.signals.LiveIDsKnown()
 	resumeIDs := b.signals.ResumeSessionIDs(ctx)
 
 	responses := make([]api.GoalResponse, 0, len(selected))
 	for _, vault := range selected {
 		rows, rowErr := b.goalsForVault(
-			ctx, vault, statusFilter, assigneeFilter, now, cutoff, registryIDs, resumeIDs,
+			ctx, vault, statusFilter, assigneeFilter, now, cutoff,
+			registryIDs, resumeIDs, liveIDsUnknown,
 		)
 		if rowErr != nil {
 			return nil, rowErr
@@ -64,6 +66,7 @@ func (b *board) goalsForVault(
 	statusFilter, assigneeFilter []string,
 	now, cutoff time.Time,
 	registryIDs, resumeIDs []string,
+	liveIDsUnknown bool,
 ) ([]api.GoalResponse, error) {
 	items, err := b.ops.List(vault).Execute(
 		ctx, vault.Path, vault.Name, vault.GoalsFolder, nil, true, "", "",
@@ -105,7 +108,8 @@ func (b *board) goalsForVault(
 	responses := make([]api.GoalResponse, 0, len(rows))
 	for _, row := range rows {
 		responses = append(responses, b.goalResponse(
-			ctx, vault, row, goalsFolder, projectDir, projectsRoot, registryIDs, resumeIDs,
+			ctx, vault, row, goalsFolder, projectDir, projectsRoot,
+			registryIDs, resumeIDs, liveIDsUnknown,
 		))
 	}
 	return responses, nil
@@ -117,6 +121,7 @@ func (b *board) goalResponse(
 	row goalRow,
 	goalsFolder, projectDir, projectsRoot string,
 	registryIDs, resumeIDs []string,
+	liveIDsUnknown bool,
 ) api.GoalResponse {
 	item := row.item
 
@@ -133,6 +138,7 @@ func (b *board) goalResponse(
 		LiveWindow:         session.DefaultLiveWindow,
 		ResumeSessionIDs:   resumeIDs,
 		RegistrySessionIDs: registryIDs,
+		LiveIDsUnknown:     liveIDsUnknown,
 		TranscriptMtime:    b.transcriptProbe(),
 	})
 

@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from vault_ui.activity import (
     classify_session_state,
     compute_activity_date,
-    read_registry_session_ids,
+    read_live_session_ids,
     terminate_launch_process,
     terminate_resumed_session,
 )
@@ -657,6 +657,7 @@ async def _process_vault(
     lookback: datetime,
     vault_task_cache: dict[str, tuple[float, float, list[Task]]],
     registry_session_ids: set[str],
+    live_ids_known: bool,
 ) -> list[TaskResponse]:
     client = get_vault_cli_client_for_vault(vault_name)
     vault_config = get_vault_config(vault_name)
@@ -785,7 +786,10 @@ async def _process_vault(
     )
     session_states = {
         task.id: classify_session_state(
-            task.claude_session_id, project_dir, registry_session_ids=registry_session_ids
+            task.claude_session_id,
+            project_dir,
+            registry_session_ids=registry_session_ids,
+            live_ids_known=live_ids_known,
         )
         for task in tasks
     }
@@ -876,11 +880,13 @@ async def list_tasks(
     vault_task_cache: dict[str, tuple[float, float, list[Task]]] = (
         request.app.state.vault_task_cache
     )
-    # Read the harness's session registry ONCE per request, not per card — the
-    # board lists hundreds of cards and each would otherwise re-read every
-    # registry file. Uncached by design: a worker that exits must flip to quiet
-    # on the next request without a server restart.
-    registry_session_ids = read_registry_session_ids()
+    # Read the attention store's live set ONCE per request, not per card — the
+    # board lists hundreds of cards and each would otherwise make its own request.
+    # Uncached by design: a session the store stops listing must flip to quiet on
+    # the next request without a server restart. ``live_ids_known`` is False when
+    # the store could not be reached, which the classifier reads as "cannot tell"
+    # rather than "nothing is live".
+    registry_session_ids, live_ids_known = read_live_session_ids()
     results = await asyncio.gather(
         *[
             _process_vault(
@@ -894,6 +900,7 @@ async def list_tasks(
                 lookback,
                 vault_task_cache,
                 registry_session_ids,
+                live_ids_known,
             )
             for vault_name in vault_names
         ],
@@ -930,6 +937,7 @@ def _goal_to_response(
     claude_session_started: str | None = None,
     upcoming: bool = False,
     blockers: list[str] | None = None,
+    live_ids_known: bool = True,
 ) -> GoalResponse:
     """Convert Goal to GoalResponse.
 
@@ -964,6 +972,7 @@ def _goal_to_response(
         goal.claude_session_id,
         derive_claude_project_dir(vault_config.vault_path, vault_config.session_project_dir),
         registry_session_ids=registry_session_ids,
+        live_ids_known=live_ids_known,
     )
 
     return GoalResponse(
@@ -996,6 +1005,7 @@ async def _process_goal_vault(
     now: datetime,
     cutoff: datetime,
     registry_session_ids: set[str],
+    live_ids_known: bool,
 ) -> list[GoalResponse]:
     """Fetch and filter goals for one vault (parallel to _process_vault).
 
@@ -1085,6 +1095,7 @@ async def _process_goal_vault(
             g,
             vault_config,
             registry_session_ids,
+            live_ids_known=live_ids_known,
             claude_session_started=(
                 None
                 if registry.state(vault_config.name, g.id) == FINISHED
@@ -1129,8 +1140,9 @@ async def list_goals(
     vault_goal_cache: dict[str, tuple[float, float, list[Goal]]] = (
         request.app.state.vault_goal_cache
     )
-    # Read once per request, same as list_tasks — never per card.
-    registry_session_ids = read_registry_session_ids()
+    # Read once per request, same as list_tasks — never per card. ``live_ids_known``
+    # is False when the store could not be reached ("cannot tell").
+    registry_session_ids, live_ids_known = read_live_session_ids()
     results = await asyncio.gather(
         *[
             _process_goal_vault(
@@ -1141,6 +1153,7 @@ async def list_goals(
                 now,
                 cutoff,
                 registry_session_ids,
+                live_ids_known,
             )
             for vault_name in vault_names
         ],

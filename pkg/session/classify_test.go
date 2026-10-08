@@ -249,6 +249,51 @@ var _ = Describe("ClassifySessionState", func() {
 		})).To(Equal(session.SessionStateQuiet))
 	})
 
+	It("reads an unknown live-id source with a stale transcript as indeterminate", func() {
+		writeTranscript(projectDir, sessionID, 3*time.Hour)
+
+		Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+			SessionID:          sessionID,
+			ProjectDir:         projectDir,
+			ProjectsRoot:       projects,
+			Now:                nowUTC(),
+			LiveWindow:         session.DefaultLiveWindow,
+			ResumeSessionIDs:   []string{},
+			RegistrySessionIDs: []string{},
+			LiveIDsUnknown:     true,
+		})).To(Equal(session.SessionStateIndeterminate))
+	})
+
+	It("keeps a fresh transcript live even when the live-id source is unknown", func() {
+		writeTranscript(projectDir, sessionID, 30*time.Second)
+
+		Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+			SessionID:          sessionID,
+			ProjectDir:         projectDir,
+			ProjectsRoot:       projects,
+			Now:                nowUTC(),
+			LiveWindow:         session.DefaultLiveWindow,
+			ResumeSessionIDs:   []string{},
+			RegistrySessionIDs: []string{},
+			LiveIDsUnknown:     true,
+		})).To(Equal(session.SessionStateLive))
+	})
+
+	It("still reads a listed session live when the source is unknown", func() {
+		writeTranscript(projectDir, sessionID, 3*time.Hour)
+
+		Expect(session.ClassifySessionState(ctx, session.ClassifyParams{
+			SessionID:          sessionID,
+			ProjectDir:         projectDir,
+			ProjectsRoot:       projects,
+			Now:                nowUTC(),
+			LiveWindow:         session.DefaultLiveWindow,
+			ResumeSessionIDs:   []string{},
+			RegistrySessionIDs: []string{sessionID},
+			LiveIDsUnknown:     true,
+		})).To(Equal(session.SessionStateLive))
+	})
+
 	It("matches the transcript/ps model when the registry is absent", func() {
 		writeTranscript(projectDir, sessionID, 3*time.Hour)
 		writeTranscript(projectDir, freshID, 30*time.Second)

@@ -20,6 +20,8 @@ import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
+from urllib.request import urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -59,58 +61,75 @@ def _claude_projects_root() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
-def _claude_sessions_root() -> Path:
-    """The harness's own session registry — one ``<pid>.json`` per running session.
+# The attention store is the liveness source every reader shares. Its base URL
+# comes from ATTENTION_STORE_URL, and it computes the liveness window itself
+# (``live``) rather than leaving each reader to recompute it from ``age_seconds``.
+_ATTENTION_STORE_URL_ENV = "ATTENTION_STORE_URL"
+_DEFAULT_ATTENTION_STORE_URL = "http://localhost:18080"
 
-    Anchored on ``Path.home()`` so a test can point it at a tmp directory, the
-    same seam ``_claude_projects_root`` provides for the transcript root. This
-    is the on-disk registry the Claude Code harness maintains; it is unrelated
-    to ``launch_registry`` / ``session_lock_registry``, which are in-memory and
-    process-local.
+# Bound one heartbeat request: the store is a local endpoint, so a request that
+# outlives this is a hung store, not a slow one.
+_ATTENTION_STORE_TIMEOUT_SECONDS = 5.0
+
+
+def _attention_store_url(store_url: str | None = None) -> str:
+    """The attention store's base URL, from ``ATTENTION_STORE_URL``."""
+    url = store_url if store_url is not None else os.environ.get(_ATTENTION_STORE_URL_ENV, "")
+    return (url or _DEFAULT_ATTENTION_STORE_URL).rstrip("/")
+
+
+def _heartbeat_payload(url: str) -> list[dict[str, Any]]:
+    """One session-heartbeat GET, decoded. Raises OSError/ValueError on failure.
+
+    The transport is a module-level seam so a test can serve a canned payload
+    without a listening server: both ``classify_session_state`` here and the
+    request path in ``api/tasks.py`` go through this one function.
     """
-    return Path.home() / ".claude" / "sessions"
+    with urlopen(url, timeout=_ATTENTION_STORE_TIMEOUT_SECONDS) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("session-heartbeat payload is not a list")
+    return payload
 
 
-def read_registry_session_ids(root: Path | None = None) -> set[str]:
-    """The ``sessionId`` of every entry in the Claude session registry.
+def read_live_session_ids(store_url: str | None = None) -> tuple[set[str], bool]:
+    """The attention store's live session ids, and whether the store answered.
 
-    The harness writes one ``<pid>.json`` per live Claude Code session while it
-    runs, so the file's presence is the harness's own record that a session is
-    alive — the signal transcript recency cannot give, because an open-but-idle
-    session stops writing its transcript while its process stays up.
+    The store is the liveness source, not the harness session registry under
+    ``~/.claude/sessions``: that directory only sees sessions started on this
+    host, while the store also carries the heartbeats a cluster session posts
+    and computes the liveness window itself.
 
-    Never raises: a missing or unreadable directory, an unreadable file, and a
-    file whose contents are not valid JSON each contribute nothing, and a file
-    whose JSON parses but carries no ``sessionId`` is skipped. Only the ids that
-    were readable are returned.
+    Returns ``(ids, known)``. ``known`` is False when the store could not be
+    reached — "cannot tell", which a caller must never read as "nothing is
+    live": a session that is live but idle (no transcript write for five minutes
+    and no ``--resume`` flag) would otherwise read quiet and the wall would offer
+    a Resume. A store that answers returns ``(ids, True)``, and ``ids`` may be
+    empty.
 
     Deliberately uncached — the caller reads it once per request, and a cache
-    would keep a registry-live session rendering live after its process exits.
+    would keep a session rendering live after the store stopped listing it.
 
     Args:
-        root: Registry directory. Defaults to ``_claude_sessions_root()``; the
-            parameter exists so tests can point it at a tmp directory.
+        store_url: Base URL. Defaults to ``ATTENTION_STORE_URL`` (or
+            ``http://localhost:18080``); the parameter exists so a test can point
+            it at a stub server.
     """
-    if root is None:
-        root = _claude_sessions_root()
-
-    ids: set[str] = set()
+    url = _attention_store_url(store_url) + "/api/1.0/session-heartbeat"
     try:
-        paths = list(root.glob("*.json"))
-    except OSError as e:
-        logger.debug("[Activity] Cannot read session registry %s: %s", root, e)
-        return ids
+        payload = _heartbeat_payload(url)
+    except (OSError, ValueError) as e:
+        # OSError covers a transport failure and a non-2xx status (HTTPError and
+        # URLError both subclass it); ValueError covers an unparseable body.
+        logger.debug("[Activity] Cannot reach attention store at %s: %s", url, e)
+        return set(), False
 
-    for path in paths:
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as e:
-            logger.debug("[Activity] Cannot read session registry entry %s: %s", path, e)
-            continue
-        session_id = data.get("sessionId") if isinstance(data, dict) else None
-        if session_id:
-            ids.add(session_id)
-    return ids
+    ids = {
+        row["session_id"]
+        for row in payload
+        if isinstance(row, dict) and row.get("live") and row.get("session_id")
+    }
+    return ids, True
 
 
 def _mtime_or_none(path: Path) -> datetime | None:
@@ -450,44 +469,49 @@ def classify_session_state(
     now: datetime | None = None,
     resume_session_ids: set[str] | None = None,
     registry_session_ids: set[str] | None = None,
+    live_ids_known: bool = True,
 ) -> str | None:
     """Classify the Claude session a task/goal card refers to.
 
     Returns one of:
 
     - ``None`` — no ``claude_session_id``; a human task, nothing to classify.
-    - ``"live"`` — the harness's session registry lists this session, OR the
+    - ``"live"`` — the attention store lists this session live, OR the
       transcript was written within ``LIVE_WINDOW``, OR the transcript is stale
       but a ``claude --resume <uuid>`` or ``claude --session-id <uuid>`` process
       for this session is alive on this host. Any one of the three means a
       session is running right now and the wall must not offer Resume.
-    - ``"quiet"`` — none of the three signals fires: no registry entry, a
-      transcript exists and is older than ``LIVE_WINDOW``, and no live
+    - ``"quiet"`` — none of the three signals fires: the store does not list the
+      session, a transcript exists and is older than ``LIVE_WINDOW``, and no live
       ``--resume``/``--session-id`` process matches; the session ended and
       Resume is safe (vault-cli's flock releases on process death).
-    - ``"indeterminate"`` — a session id is set but no transcript can be found;
-      the session cannot be proven dead (manual terminal ``/resume`` in another
-      cwd, a cloud/container session, an entity-name session the resolver can't
-      match). Do not offer a Resume we cannot honor.
+    - ``"indeterminate"`` — a session id is set but no transcript can be found,
+      OR the attention store could not be reached (``live_ids_known`` is False);
+      the session cannot be proven dead. Do not offer a Resume we cannot honor.
 
-    Liveness is the session registry, plus transcript recency, plus a
+    Liveness is the attention store's live set, plus transcript recency, plus a
     ``--resume``/``--session-id`` process cross-check. The task file mtime alone
     is never a liveness signal — it moves when a human edits the file and says
-    nothing about whether a Claude session runs. The registry is authoritative
-    and is checked first: the harness itself knows the session is running, so an
-    alive-but-idle worker — no transcript write for five minutes and no resume
-    flag on its command line — reads live rather than quiet, and a session whose
-    transcript is not on this host reads live rather than indeterminate. The
-    ``ps`` cross-check covers the remaining gap: a session launched via
+    nothing about whether a Claude session runs. The store is authoritative and
+    is checked first: it knows the session is running, so an alive-but-idle
+    worker — no transcript write for five minutes and no resume flag on its
+    command line — reads live rather than quiet, and a session whose transcript
+    is not on this host reads live rather than indeterminate. The ``ps``
+    cross-check covers the remaining gap: a session launched via
     ``cc-personal --resume <id>`` or a headless ``--session-id <uuid>`` launch
     keeps its process alive while its transcript stops being written, so recency
     alone would wrongly read it as quiet and the wall would offer a corrupting
     Resume.
+
+    ``registry_session_ids`` is the store's live set, read once per request by
+    the caller; ``live_ids_known`` is False when that read could not reach the
+    store, which turns what would be ``quiet`` into ``indeterminate`` rather than
+    offering a Resume for a session the store might have listed live.
     """
     if not session_id:
         return None
     if registry_session_ids is None:
-        registry_session_ids = read_registry_session_ids()
+        registry_session_ids, live_ids_known = read_live_session_ids()
     if session_id in registry_session_ids:
         return "live"
     mtime = transcript_mtime(session_id, project_dir, projects_root)
@@ -500,4 +524,10 @@ def classify_session_state(
         return "live"
     if resume_session_ids is None:
         resume_session_ids = _cached_live_session_ids()
-    return "live" if session_id in resume_session_ids else "quiet"
+    if session_id in resume_session_ids:
+        return "live"
+    if not live_ids_known:
+        # "Cannot tell" is not "dead": the store could not be reached, so an
+        # idle session it would have listed live must not read quiet.
+        return "indeterminate"
+    return "quiet"
