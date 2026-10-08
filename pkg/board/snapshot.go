@@ -37,10 +37,24 @@ type taskSnapshotRow struct {
 	openQuestions []domain.OpenQuestion
 }
 
-// IndexRevisions reports a per-key value that advances when the key's page
-// snapshot is published or marked stale. pageindex.PageIndex satisfies it.
+// IndexRevisions is the page index as the board's task-list store reads it: the
+// per-key revision, which of the key's pages moved since a revision, and the
+// key's current pages. pageindex.PageIndex satisfies it.
+//
+// It is deliberately narrow. A rebuild reads Revision to detect that its page
+// input moved, ChangedPagesSince to bound which rows moved, and ListPages to
+// re-derive those rows from the pages the index already holds. It exposes no
+// write, no mark and no directory listing.
 type IndexRevisions interface {
 	Revision(key pageindex.Key) uint64
+	// ChangedPagesSince returns the names of the pages whose parsed form changed
+	// in the key's publications and marks after revision, each with its ".md"
+	// suffix, or ok == false when the key cannot bound the set.
+	ChangedPagesSince(key pageindex.Key, revision uint64) (names []string, ok bool)
+	// ListPages returns the key's current pages, resolving any pending write
+	// mark first, so a row patch reads the pages the index already holds rather
+	// than the vault.
+	ListPages(ctx context.Context, vaultPath string, pagesDir string) ([]*domain.Page, error)
 }
 
 // generationSource reports a value that advances when a new session snapshot is
@@ -69,13 +83,31 @@ type taskSnapshotRefreshFunc func(
 	rows []taskSnapshotRow,
 ) ([]taskSnapshotRow, error)
 
+// taskSnapshotPatchFunc re-derives only the rows whose pages the page index
+// reports as changed, against the rows already built. It runs off the store
+// mutex and under its own bounded context, like Build.
+//
+// names are the changed pages' base filenames including their ".md" suffix, as
+// ChangedPagesSince reports them. It returns a new slice: the rows it is given
+// are shared with every reader and are never mutated.
+type taskSnapshotPatchFunc func(
+	ctx context.Context,
+	vault Vault,
+	rows []taskSnapshotRow,
+	names []string,
+) ([]taskSnapshotRow, error)
+
 // taskSnapshotParams carries the store's injectable dependencies.
 type taskSnapshotParams struct {
 	Build taskSnapshotBuildFunc
 	// Refresh re-derives only the session-derived fields of rows already built.
 	// A nil value means every invalidation takes the full build path, which is
 	// correct but pays the page-derived work again on a session move.
-	Refresh     taskSnapshotRefreshFunc
+	Refresh taskSnapshotRefreshFunc
+	// Patch re-derives only the rows whose pages changed, when a page-index
+	// revision move can be attributed to a bounded set of single files. A nil
+	// value means every page move takes the full build path.
+	Patch       taskSnapshotPatchFunc
 	Revisions   IndexRevisions
 	Generations generationSource
 	// Timeout bounds one build; a non-positive value falls back to
@@ -91,6 +123,7 @@ type taskSnapshotStore struct {
 	entries     map[pageindex.Key]*taskSnapshotEntry
 	build       taskSnapshotBuildFunc
 	refresh     taskSnapshotRefreshFunc
+	patch       taskSnapshotPatchFunc
 	revisions   IndexRevisions
 	generations generationSource
 	timeout     time.Duration
@@ -116,9 +149,15 @@ type taskSnapshotBuild struct {
 	// refreshOnly records that only the session generation moved, so the held
 	// rows can be re-derived instead of rebuilt from the vault.
 	refreshOnly bool
-	done        chan struct{}
-	rows        []taskSnapshotRow
-	err         error
+	// patchOnly records that only the page revision moved and the changed set is
+	// known, so the named rows can be re-derived instead of rebuilt.
+	patchOnly bool
+	// changed names the pages a patch re-derives, as base filenames including
+	// their ".md" suffix. It is set only when patchOnly is set.
+	changed []string
+	done    chan struct{}
+	rows    []taskSnapshotRow
+	err     error
 }
 
 // newTaskSnapshotStore creates an empty store. It starts empty and builds on
@@ -132,6 +171,7 @@ func newTaskSnapshotStore(params taskSnapshotParams) *taskSnapshotStore {
 		entries:     map[pageindex.Key]*taskSnapshotEntry{},
 		build:       params.Build,
 		refresh:     params.Refresh,
+		patch:       params.Patch,
 		revisions:   params.Revisions,
 		generations: params.Generations,
 		timeout:     timeout,
@@ -140,13 +180,17 @@ func newTaskSnapshotStore(params taskSnapshotParams) *taskSnapshotStore {
 
 // List returns the key's published rows.
 //
-// A page-index revision move rebuilds them from the vault. A session-generation
-// move re-derives only the session-dependent fields against the rows already
-// held, because those are the whole of what a session snapshot can change: the
-// vault list, the blockers and the Open Questions sections are page-derived and
-// do not move with it. Either way a caller that arrives while work is in flight
-// waits on that same work rather than starting a second one, and the returned
-// slice is shared with every other reader and must be treated as read-only.
+// A page-index revision move rebuilds them from the vault, or — when the move
+// can be attributed to a bounded set of single files — re-derives only those
+// rows from the pages the index already holds. A session-generation move
+// re-derives only the session-dependent fields against the rows already held,
+// because those are the whole of what a session snapshot can change: the vault
+// list, the blockers and the Open Questions sections are page-derived and do not
+// move with it. A move of both at once takes the full build, since a row patch
+// would publish session fields from before the session snapshot moved. Either
+// way a caller that arrives while work is in flight waits on that same work
+// rather than starting a second one, and the returned slice is shared with every
+// other reader and must be treated as read-only.
 func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapshotRow, error) {
 	key := pageindex.NewKey(vault.Path, vault.TasksFolder)
 	for {
@@ -181,14 +225,32 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 			// The build may have been invalidated while it ran: re-evaluate.
 			continue
 		}
+		// The cheaper kinds are chosen top-down and each carries the qualifier
+		// that keeps it honest. A page move that can be attributed to a bounded
+		// set of single files is a row patch; a session-only move is a refresh;
+		// both moved at once is neither — a patch on a both-moved key would
+		// publish stale session fields — so the key rebuilds in full.
+		//
+		// A cold key has pageMoved and sessionMoved both set, so it never
+		// reaches either cheaper kind: e.pageRevision is meaningless until a
+		// snapshot has been built.
+		refreshOnly := !pageMoved && sessionMoved && s.refresh != nil
+		var changed []string
+		patchOnly := false
+		if pageMoved && !sessionMoved && s.patch != nil {
+			names, ok := s.revisions.ChangedPagesSince(key, e.pageRevision)
+			if ok {
+				patchOnly = true
+				changed = names
+			}
+		}
 		b := &taskSnapshotBuild{
 			startRevision:   revision,
 			startGeneration: generation,
-			// Only the session generation moved, so the held rows can be
-			// re-derived instead of rebuilt. A nil Refresh falls back to the
-			// full build: correct, but it repeats the page-derived work.
-			refreshOnly: !pageMoved && sessionMoved && s.refresh != nil,
-			done:        make(chan struct{}),
+			refreshOnly:     refreshOnly,
+			patchOnly:       patchOnly,
+			changed:         changed,
+			done:            make(chan struct{}),
 		}
 		e.inflight = b
 		s.mu.Unlock()
@@ -221,7 +283,16 @@ func (s *taskSnapshotStore) runBuild(
 
 	var rows []taskSnapshotRow
 	var buildErr error
-	if b.refreshOnly {
+	switch {
+	case b.patchOnly:
+		// The held rows are read under the mutex and never mutated: Patch splices
+		// the changed rows into a copy of them, so the slice a concurrent reader
+		// is holding stays intact.
+		s.mu.Lock()
+		held := s.entryLocked(key).rows
+		s.mu.Unlock()
+		rows, buildErr = s.patch(buildCtx, vault, held, b.changed)
+	case b.refreshOnly:
 		// The held rows are read under the mutex and never mutated: Refresh
 		// returns a new slice and copies each row before touching a field, so
 		// the slice a concurrent reader is holding stays intact.
@@ -229,7 +300,7 @@ func (s *taskSnapshotStore) runBuild(
 		held := s.entryLocked(key).rows
 		s.mu.Unlock()
 		rows, buildErr = s.refresh(buildCtx, vault, held)
-	} else {
+	default:
 		rows, buildErr = s.build(buildCtx, vault)
 	}
 

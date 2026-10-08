@@ -1,7 +1,13 @@
 ---
-status: approved
+status: completed
+summary: Added pageindex.ChangedPagesSince and a third task-list rebuild kind that re-derives only the changed rows from the pages the index holds, with tests, docs and changelog
+execution_id: vault-ui-write-echo-exec-148-incremental-task-list-row-rebuild
+dark-factory-version: v0.196.0
 created: "2026-10-08T14:44:26Z"
 queued: "2026-10-08T14:44:26Z"
+started: "2026-10-08T14:51:20Z"
+completed: "2026-10-08T15:22:35Z"
+branch: dark-factory/148-incremental-task-list-row-rebuild
 ---
 
 # Rebuild only the marked rows on a single-file write
