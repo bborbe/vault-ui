@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.89.1
 
 - test: Redirect both the user-cache environment variables in the page-index store spec that opens the default store, so the spec no longer assumes Linux's `XDG_CACHE_HOME` redirect and stops failing `make precommit` on darwin, where `os.UserCacheDir()` reads `HOME` and the spec compared the store path against the temp directory it had set; the expected path now comes from a fresh `os.UserCacheDir()` call taken after the redirect.
 
