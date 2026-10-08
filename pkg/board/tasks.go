@@ -226,6 +226,180 @@ func (b *board) refreshTaskRows(
 	return refreshed, nil
 }
 
+// patchTaskRows re-derives only the rows whose pages the page index reports as
+// changed, so a per-file write mark costs a bounded set of row derivations
+// instead of a vault-wide rebuild.
+//
+// names are the changed pages' base filenames including their ".md" suffix. The
+// pages come from the page index, whose read resolves any pending write mark, so
+// a row is derived from the page the write produced rather than the one the
+// snapshot held before it. The session-derived fields — the classified session
+// state, the activity date and the session-started marker — are carried over
+// from the held row: the store only takes this path when the session generation
+// has not moved, so those values are already the current generation's.
+//
+// It returns a new slice. The rows it is given are shared with every reader, so
+// each is copied before a field is written, and a row that is replaced is
+// replaced whole rather than mutated.
+//
+// Anything this path cannot derive without data it does not already hold — a
+// page with no held row, whose session-derived fields would need a process spawn
+// and a transcript probe to recompute — falls back to the full build for the
+// whole key rather than fetching it.
+func (b *board) patchTaskRows(
+	ctx context.Context,
+	vault Vault,
+	rows []taskSnapshotRow,
+	names []string,
+) ([]taskSnapshotRow, error) {
+	pages, err := b.index.ListPages(ctx, vault.Path, vault.TasksFolder)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "list task pages for vault %s", vault.Name)
+	}
+
+	byName := make(map[string]*domain.Page, len(pages))
+	for _, page := range pages {
+		byName[page.FileMetadata.Name+".md"] = page
+	}
+	held := make(map[string]int, len(rows))
+	for i, row := range rows {
+		held[row.item.Name+".md"] = i
+	}
+
+	changed := make([]*domain.Page, 0, len(names))
+	var dropped []int
+	for _, name := range names {
+		page, present := byName[name]
+		at, wasHeld := held[name]
+		switch {
+		case present && wasHeld:
+			changed = append(changed, page)
+		case present:
+			// A page with no held row carries no session data to reuse.
+			return b.buildTaskRows(ctx, vault)
+		case wasHeld:
+			dropped = append(dropped, at)
+		}
+	}
+
+	items, err := ops.NewListOperation(&changedPages{pages: changed}).Execute(
+		ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
+	)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "derive changed task rows for vault %s", vault.Name)
+	}
+	itemByName := make(map[string]ops.TaskListItem, len(items))
+	for _, item := range items {
+		itemByName[item.Name] = item
+	}
+
+	patched := make([]taskSnapshotRow, len(rows))
+	copy(patched, rows)
+	for _, page := range changed {
+		name := page.FileMetadata.Name
+		item, ok := itemByName[name]
+		if !ok {
+			// The list operation dropped the page the snapshot holds.
+			return b.buildTaskRows(ctx, vault)
+		}
+		at := held[name+".md"]
+		blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+		questions, questionsErr := pageOpenQuestions(ctx, page)
+		if questionsErr != nil {
+			glog.Warningf(
+				"parse open questions of %s in vault %s: %v",
+				name,
+				vault.Name,
+				questionsErr,
+			)
+			questions = []domain.OpenQuestion{}
+		}
+		patched[at] = taskSnapshotRow{
+			item:          item,
+			vault:         vault,
+			blockers:      blockers,
+			blocked:       len(blockers) > 0,
+			started:       rows[at].started,
+			sessionState:  rows[at].sessionState,
+			activityDate:  rows[at].activityDate,
+			openQuestions: questions,
+		}
+	}
+	if len(dropped) > 0 {
+		patched = withoutRows(patched, dropped)
+	}
+	return patched, nil
+}
+
+// withoutRows returns rows with the given positions removed, in a new slice.
+func withoutRows(rows []taskSnapshotRow, dropped []int) []taskSnapshotRow {
+	removed := make(map[int]bool, len(dropped))
+	for _, at := range dropped {
+		removed[at] = true
+	}
+	kept := make([]taskSnapshotRow, 0, len(rows)-len(dropped))
+	for i, row := range rows {
+		if removed[i] {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	return kept
+}
+
+// changedPages is the storage.PageStorage the row patch runs vault-cli's list
+// operation over. It serves only the pages whose files changed, so the item
+// construction, the filtering and the sorting stay vault-cli's and stay bounded
+// to the changed set: the patch never lists the folder and never walks the
+// vault.
+type changedPages struct {
+	pages []*domain.Page
+}
+
+// ListPages returns the changed pages.
+func (c *changedPages) ListPages(
+	_ context.Context, _, _ string,
+) ([]*domain.Page, error) {
+	return c.pages, nil
+}
+
+// ReadPage returns the changed page with the given bare base name. The list
+// operation never calls it, so a miss is a programming error rather than a
+// reachable state.
+func (c *changedPages) ReadPage(
+	ctx context.Context, _, _, name string,
+) (*domain.Page, error) {
+	for _, page := range c.pages {
+		if page.FileMetadata.Name == name {
+			return page, nil
+		}
+	}
+	return nil, errors.Errorf(ctx, "page %q is not in the changed set", name)
+}
+
+// pageOpenQuestions returns one page's Open Questions in the wire shape the
+// board exposes, never nil.
+func pageOpenQuestions(ctx context.Context, page *domain.Page) ([]domain.OpenQuestion, error) {
+	items, err := storage.ParseOpenQuestions(ctx, page.Content.String())
+	if err != nil {
+		return nil, err
+	}
+	// Marker and Line are parse bookkeeping for a rewriter, so only the
+	// question and its position go on the wire. An already-answered item's
+	// Answer is deliberately not exposed, and answered items are included
+	// rather than filtered out: the section is the source of truth for what
+	// the task is waiting on, and a UI is better placed to decide what an
+	// already-answered item means.
+	questions := make([]domain.OpenQuestion, 0, len(items))
+	for _, item := range items {
+		questions = append(questions, domain.OpenQuestion{
+			Index: item.Index,
+			Text:  item.Question,
+		})
+	}
+	return questions, nil
+}
+
 // openQuestionsByTask returns each task page's Open Questions, keyed by the
 // page's file name. It is one ListPages per vault — never one per task, which
 // would put a vault walk on the board's hottest path. That listing is the same
@@ -257,7 +431,7 @@ func (b *board) openQuestionsByTask(
 			return byName
 		default:
 		}
-		items, parseErr := storage.ParseOpenQuestions(ctx, page.Content.String())
+		questions, parseErr := pageOpenQuestions(ctx, page)
 		if parseErr != nil {
 			glog.Warningf(
 				"parse open questions of %s in vault %s: %v",
@@ -266,19 +440,6 @@ func (b *board) openQuestionsByTask(
 				parseErr,
 			)
 			continue
-		}
-		// Marker and Line are parse bookkeeping for a rewriter, so only the
-		// question and its position go on the wire. An already-answered item's
-		// Answer is deliberately not exposed, and answered items are included
-		// rather than filtered out: the section is the source of truth for what
-		// the task is waiting on, and a UI is better placed to decide what an
-		// already-answered item means.
-		questions := make([]domain.OpenQuestion, 0, len(items))
-		for _, item := range items {
-			questions = append(questions, domain.OpenQuestion{
-				Index: item.Index,
-				Text:  item.Question,
-			})
 		}
 		byName[page.FileMetadata.Name] = questions
 	}

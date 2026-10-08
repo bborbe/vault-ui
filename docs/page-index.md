@@ -29,9 +29,27 @@ derived from the page snapshot and the session snapshot; it is never a field on
   before an invalidation does not clear it: the build records the revision and
   the generation it saw at build start, so a racing invalidation leaves the entry
   dirty and the next read rebuilds.
+- **Row patch.** A rebuild may re-derive a bounded set of rows instead of all of
+  them. When only the page revision moved, the page index can name the pages
+  whose parsed form changed — a per-file write mark, a single-file watcher read,
+  or a stat-diff's re-reads and drops — and the rebuild re-derives exactly those
+  rows from the pages the index already holds, reusing the session-derived fields
+  of the rows already published. It performs no vault list, no vault-wide page
+  scan and no process spawn; the one page-index read it makes resolves any
+  pending write mark, which is the same resolution the full rebuild's list walk
+  performs. A page with no row already published cannot be re-derived this way,
+  so the whole key rebuilds in full rather than fetching what is missing.
+- **Bounded or full.** A rebuild that cannot bound the changed set — a
+  folder-level mark (the eight synchronous sites keep theirs), a forced reload, a
+  revision the key has since advanced past, or a move of the page revision and
+  the session generation at once — still rebuilds in full. A patch is never
+  chosen on a both-moved key, which would publish stale session fields.
 - **Atomic swap.** A rebuild produces a complete new row list and swaps it in
   atomically; a reader concurrent with a rebuild sees either the whole previous
-  list or the whole new one, never a mixture.
+  list or the whole new one, never a mixture. A row patch is no exception: it
+  splices the changed rows into a copy of the published list and swaps that copy
+  in by the same assignment, so a reader holding the previous list never observes
+  a changed row.
 - **Cold-read sharing.** Two concurrent first reads of a key with no snapshot
   share exactly one build; every waiter observes its result.
 - **Failed rebuild.** A failed rebuild keeps serving the previous snapshot and

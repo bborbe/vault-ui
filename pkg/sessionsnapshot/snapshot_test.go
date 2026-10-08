@@ -14,6 +14,7 @@ import (
 	"time"
 
 	libtime "github.com/bborbe/time"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo/v2"
@@ -488,10 +489,19 @@ func newSnapshotBoard(snapshot sessionsnapshot.Snapshot) board.Board {
 
 // staticIndex is a page-index revision source that never moves: this board is
 // built fresh per spec, so the store's first read always builds and no read
-// rebuilds behind the spec's back.
+// rebuilds behind the spec's back. It cannot bound a changed set and holds no
+// pages, so every read takes the full build.
 type staticIndex struct{}
 
 func (staticIndex) Revision(pageindex.Key) uint64 { return 0 }
+
+func (staticIndex) ChangedPagesSince(pageindex.Key, uint64) ([]string, bool) {
+	return nil, false
+}
+
+func (staticIndex) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+	return nil, nil
+}
 
 // classifyFirstTask lists the single fixture task and returns its rendered
 // session state.
