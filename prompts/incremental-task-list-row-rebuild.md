@@ -17,6 +17,7 @@ status: draft
   a mixture; the published list is still never mutated in place
 - Two concurrent readers still share exactly one rebuild
 - The existing session-only refresh path is unchanged
+- The changelog and the page-index doc describe the finished behaviour
 </summary>
 
 <objective>
@@ -28,7 +29,9 @@ the rebuild above it discards it and re-reads the vault.
 </objective>
 
 <context>
-Read `CLAUDE.md` for project conventions, then read these before writing anything:
+Read `CLAUDE.md` at the repo root if present (it is absent in this checkout — it is
+gitignored) and `docs/dod.md` (the Definition of Done the validation step checks),
+then read these before writing anything:
 
 - `docs/page-index.md` — the acceptance contract. Read § "Task-list snapshot" and
   § "Incremental updates" in full. This change must not weaken any statement in
@@ -40,14 +43,23 @@ Read `CLAUDE.md` for project conventions, then read these before writing anythin
 - `pkg/board/snapshot.go` — `taskSnapshotStore`, `taskSnapshotStore.List`,
   `taskSnapshotBuild`, `taskSnapshotParams`, `IndexRevisions`, `generationSource`.
   The `refreshOnly` field on `taskSnapshotBuild` is the existing exemplar for
-  "a cheaper rebuild kind".
+  "a cheaper rebuild kind", and its guard
+  (`refreshOnly: !pageMoved && sessionMoved && s.refresh != nil`) is the exemplar
+  for how a cheaper kind is selected.
 - `pkg/board/tasks.go` — `buildTaskRows` (the expensive full path) and
   `refreshTaskRows` (the session-only path).
 - `pkg/board/board.go` — `newTaskSnapshotStore`, where the two funcs are wired.
 - `pkg/pageindex/pageindex.go` — `Revision`, `MarkFileDirty`, `MarkDirty`, `Key`,
   `NewKey`, and the `writeMarked` / `requestSeq` bookkeeping inside `MarkFileDirty`.
+  Note that `writeMarked` is keyed by `filename := stripped + ".md"`.
 - `pkg/mutations/mutations.go` — `taskWritten`, which calls `MarkFileDirty` for the
   queued writes. This is the caller whose mark must become cheap to honour.
+
+Coding guides are available in the container at
+`/home/node/.claude/plugins/marketplaces/coding/docs/` — read
+`go-testing-guide.md` for the Ginkgo/Gomega style, `go-error-wrapping-guide.md`
+for the `github.com/bborbe/errors` convention, and
+`go-context-cancellation-in-loops.md` for the cancellation rule.
 </context>
 
 <requirements>
@@ -56,9 +68,11 @@ Read `CLAUDE.md` for project conventions, then read these before writing anythin
 
    ```go
    // ChangedPagesSince returns the names of the pages whose parsed form changed in
-   // key's publications and marks after revision. ok is false when the key cannot
-   // bound the set — a folder-level mark, a forced reload, an unknown key, or a
-   // revision the key has since advanced past.
+   // key's publications and marks after revision. Each name is a base filename
+   // WITH its ".md" suffix, matching the page index's write-mark and snapshot
+   // naming. ok is false when the key cannot bound the set — a folder-level mark,
+   // a forced reload, an unknown key, or a revision the key has since advanced
+   // past.
    ChangedPagesSince(key Key, revision uint64) (names []string, ok bool)
    ```
 
@@ -70,14 +84,22 @@ Read `CLAUDE.md` for project conventions, then read these before writing anythin
    `pkg/board/board.go` next to `Revisions`.
 
 2. Teach `taskSnapshotStore.List` in `pkg/board/snapshot.go` a third rebuild kind.
-   Extend `taskSnapshotBuild` the way `refreshOnly` already extends it — a field
-   naming the changed pages, set only when the page revision moved *and*
-   `ChangedPagesSince` returned `ok`. Selection order in `List`:
+   Extend `taskSnapshotParams` with a patch func beside `Build` and `Refresh`,
+   and `taskSnapshotBuild` with a field naming the changed pages — the way
+   `refreshOnly` already extends it. Selection order in `List`, evaluated
+   top-down, with **both-moved tested first**:
 
-   - page revision moved and the changed set is known → **row patch**
-   - page revision moved and the set is not known → full `build` (today's path)
+   - both the page revision and the session generation moved → full `build`
+   - the page revision moved, the session generation did **not**, and the changed
+     set is known → **row patch**
+   - the page revision moved, the session generation did **not**, and the changed
+     set is not known → full `build` (today's path)
    - only the session generation moved → `refreshOnly` (unchanged)
-   - both moved → full `build`
+
+   The patch branch carries the same `!sessionMoved` qualifier that `refreshOnly`
+   carries in the other direction. A patch chosen on a both-moved key would
+   publish stale session fields; that is the one ordering mistake this
+   requirement exists to prevent.
 
    `refreshOnly` keeps its current meaning and its current code path.
 
@@ -111,21 +133,37 @@ Read `CLAUDE.md` for project conventions, then read these before writing anythin
 7. Tests, in the package that owns each behaviour, following the existing Ginkgo
    style in `pkg/board/snapshot_internal_test.go` and `pkg/pageindex/`:
 
-   - a `pkg/pageindex` table test for `ChangedPagesSince`: a per-file mark returns
-     exactly that name with `ok == true`; a folder-level mark, a forced reload, an
-     unknown key and a stale revision each return `ok == false`
-   - a `pkg/board` test that publishes a snapshot with a **counting** build func
-     (the existing `Build` seam), applies a per-file `MarkFileDirty`, and asserts
-     the next `List` (a) returns the updated row, (b) does **not** increment the
-     build counter, and (c) leaves the previously returned slice's contents
-     unchanged — the atomic-swap invariant
+   - a `pkg/pageindex` table test (`DescribeTable` / `Entry`) for
+     `ChangedPagesSince`: a per-file mark returns exactly that one name **with its
+     `.md` suffix** and `ok == true`; a folder-level mark, a forced reload, an
+     unknown key and a stale revision each return `ok == false`. The suffix is
+     part of the contract and this test is what pins it — the board-side tests
+     drive a fake and would not catch a `.md` / no-`.md` mismatch.
+   - a `pkg/board` test that publishes a snapshot with a **counting** `Build`
+     func (the existing seam), advances the fake revisions so `ChangedPagesSince`
+     reports one name, and asserts the next `List` (a) returns the updated row,
+     (b) does **not** increment the build counter, and (c) leaves the previously
+     returned slice's contents unchanged — the atomic-swap invariant.
+   - a `pkg/board` test that injects **counting** `Ops`, `Signals` and `PageIndex`
+     seams and asserts that a patch-path `List` calls none of them. The `Build`
+     counter alone does not observe this: a patch that re-called
+     `RegistrySessionIDs`, `ResumeSessionIDs` or a vault-wide `ListPages` would
+     still leave `Build` at 0 while violating requirement 3. This is the test that
+     makes requirement 3 checkable rather than asserted.
    - a `pkg/board` test that a folder-level mark still increments the build
      counter, and one that a session-generation-only move still takes
-     `refreshOnly` without incrementing it
+     `refreshOnly` without incrementing it.
+   - a `pkg/board` test that a **both-moved** key takes the full build, not the
+     patch — the ordering rule in requirement 2.
 
    These tests assert the *mechanism* (which path ran, and what work it did), not
    a wall-clock duration — a latency assertion would be flaky and is not what this
    prompt is verified by.
+
+8. Add a `CHANGELOG.md` bullet under `## Unreleased` describing the row-patch
+   rebuild path (`docs/dod.md` requires it). The file currently has no
+   `## Unreleased` heading — create it above `## v0.88.0`. Do not edit any other
+   section.
 </requirements>
 
 <constraints>
@@ -147,9 +185,26 @@ Read `CLAUDE.md` for project conventions, then read these before writing anythin
 </constraints>
 
 <verification>
-Run `ROOTDIR=/workspace make precommit` — must pass.
+Run `make precommit` — must pass. (`ROOTDIR` is not read by this repo's Makefile,
+so a `ROOTDIR=/workspace` prefix is inert. `hideGit: true` is set, so `.git` is
+masked; `make precommit` runs no `go build` of the main package, so it needs no
+`-buildvcs=false`.)
 
-Then, before finishing, re-run that command and confirm it passes, and walk each
-numbered requirement above against the change: state for each one what in the
-diff satisfies it, and name any requirement you did not meet.
+Run `make parity` — must pass. This change touches the `/api/tasks` read path, and
+the Go-vs-Python parity lock is not part of `make precommit`.
+
+New code needs ≥ 80% statement coverage (`docs/dod.md`). Check it with:
+
+```
+go test -race -coverprofile=/tmp/rowpatch.cover ./pkg/board/... ./pkg/pageindex/... && go tool cover -func=/tmp/rowpatch.cover | awk '/^total:/ { f=1; sub("%", "", $3); print "coverage " $3 "%"; if ($3 + 0 < 80) exit 1 } END { if (!f) exit 1 }'
+```
+
+Must print the coverage and exit 0.
+
+If `make precommit` fails, STOP and report `"status":"failed"` with the exact
+failing command and its output.
+
+Then, before finishing, re-run `make precommit` and confirm it passes, and walk
+each numbered requirement above against the change: state for each one what in
+the diff satisfies it, and name any requirement you did not meet.
 </verification>
