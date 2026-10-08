@@ -6,21 +6,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_claude_sessions_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the Claude session registry root at an empty tmp dir for every test.
+def _hermetic_attention_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the attention store's heartbeat read at an empty, answered payload.
 
-    ``classify_session_state`` consults ``~/.claude/sessions/`` when no
-    ``registry_session_ids`` is injected. Without this, a test asserting a fixed
-    outcome for a hardcoded UUID (e.g. ``test_classify_stale_transcript_without_
-    process_is_quiet``) would flip to ``live`` on any host whose registry happens
-    to carry that id — the suite would pass on the machine that wrote it and fail
-    elsewhere. Tests that need registry entries point this same seam at their own
-    directory.
+    ``classify_session_state`` and the request path both read the store's live
+    set when no ``registry_session_ids`` is injected. Without this, a test
+    asserting a fixed outcome for a hardcoded UUID (e.g. ``test_classify_stale_
+    transcript_without_process_is_quiet``) would flip to ``live`` on any host
+    whose store happens to list that id, and every test would make a real HTTP
+    request to ``localhost:18080``. Tests that need live ids point this same seam
+    at their own payload.
     """
-    monkeypatch.setattr(
-        "vault_ui.activity._claude_sessions_root",
-        lambda: tmp_path / "claude-sessions",
-    )
+    monkeypatch.setattr("vault_ui.activity._heartbeat_payload", lambda _url: [])
 
 
 @pytest.fixture

@@ -66,15 +66,17 @@ func (s *countingScanner) callCount() int {
 	return s.calls
 }
 
-// countingRegistry counts registry reads and returns a settable set.
+// countingRegistry counts live-id reads and returns a settable set. A set
+// unknown is "cannot tell": the store could not be reached.
 type countingRegistry struct {
-	ids   []string
-	calls int
+	ids     []string
+	unknown bool
+	calls   int
 }
 
-func (r *countingRegistry) Get(_ context.Context) []string {
+func (r *countingRegistry) Get(_ context.Context) ([]string, bool) {
 	r.calls++
-	return r.ids
+	return r.ids, !r.unknown
 }
 
 // countingProbe counts transcript probes and returns a settable mtime.
@@ -201,6 +203,25 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(snapshot.Generation()).To(Equal(uint64(1)))
 	})
 
+	It("keeps the last known ids and reports them unknown when the store cannot be reached", func() {
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.LiveIDsKnown()).To(BeTrue())
+
+		registry.unknown = true
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+
+		// "Cannot tell" is not "nothing is live": the ids survive so an
+		// already-live session never flips to Resume.
+		Expect(snapshot.RegistrySessionIDs(ctx)).To(Equal([]string{otherID}))
+		Expect(snapshot.LiveIDsKnown()).To(BeFalse())
+
+		registry.unknown = false
+		registry.ids = []string{otherID, liveSessionID}
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.LiveIDsKnown()).To(BeTrue())
+		Expect(snapshot.RegistrySessionIDs(ctx)).To(ConsistOf(otherID, liveSessionID))
+	})
+
 	It("returns non-nil, non-aliasing slices", func() {
 		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 
@@ -218,6 +239,7 @@ var _ = Describe("SessionSnapshot", func() {
 	It("returns empty slices, never nil, before the first refresh", func() {
 		Expect(snapshot.RegistrySessionIDs(ctx)).NotTo(BeNil())
 		Expect(snapshot.RegistrySessionIDs(ctx)).To(BeEmpty())
+		Expect(snapshot.LiveIDsKnown()).To(BeTrue(), "empty before the first read is not 'cannot tell'")
 		Expect(snapshot.ResumeSessionIDs(ctx)).NotTo(BeNil())
 		Expect(snapshot.ResumeSessionIDs(ctx)).To(BeEmpty())
 		Expect(snapshot.Generation()).To(Equal(uint64(0)))

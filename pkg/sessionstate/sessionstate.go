@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package sessionstate keeps the harness session registry's live session ids in
-// memory so the board can answer a read without opening the registry directory.
+// Package sessionstate keeps the live session ids in memory so the board can
+// answer a read without calling the attention store.
 //
-// The state is read once at startup, re-read on every file event under the
-// registry directory, and re-read every DefaultRescanInterval as the safety net
-// for a missed event. Only the freshness mechanism lives here: the liveness
-// classification contract (the four outcomes, the signal order, the five-minute
-// window) is unchanged and lives in pkg/session, documented in
-// docs/liveness-classification.md.
+// The ids come from the attention-controller's session-heartbeat endpoint
+// (pkg/heartbeat), not from the harness session registry under
+// `~/.claude/sessions`: the store is the single source every liveness reader
+// shares, and it carries the heartbeats a cluster session posts, which that
+// directory never sees.
+//
+// The state is read once at startup and re-read every DefaultRescanInterval
+// afterwards. A read that cannot reach the store does not clear the ids — it
+// keeps the last known set and marks it no longer authoritative, so a caller can
+// tell "no live sessions" (an answered store) from "cannot tell" (an unreachable
+// one). Only the freshness mechanism lives here: the liveness classification
+// contract (the four outcomes, the signal order, the five-minute window) is
+// unchanged and lives in pkg/session, documented in docs/liveness-classification.md.
 //
 // See docs/pane-resolution.md for the staleness bounds and the refresh frames a
 // change pushes to connected browsers.
@@ -21,33 +28,39 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/bborbe/errors"
-	"github.com/bborbe/run"
-	"github.com/fsnotify/fsnotify"
-	"github.com/golang/glog"
 )
 
-// DefaultRescanInterval is the safety-net rescan period for a missed file event.
+// DefaultRescanInterval is the period between two reads of the live-id source.
 const DefaultRescanInterval = 60 * time.Second
 
-// State is the in-memory set of live registry session ids. It is safe for
-// concurrent readers.
+// State is the in-memory set of live session ids. It is safe for concurrent
+// readers.
 type State interface {
 	// RegistrySessionIDs returns the live session ids currently known.
 	RegistrySessionIDs(ctx context.Context) []string
-	// Replace atomically swaps the whole set and reports whether it changed.
+	// LiveIDsKnown reports whether those ids are authoritative. It is false
+	// after a read that could not reach the store — "cannot tell", which a
+	// caller must not read as "nothing is live". It starts true (an empty set is
+	// the honest answer before the first read).
+	LiveIDsKnown() bool
+	// Replace atomically swaps the whole set, marks it authoritative and reports
+	// whether the stored state changed — the ids or the authoritative flag.
 	Replace(ids []string) bool
+	// MarkUnknown records that the live-id source could not be read. The last
+	// known ids are kept and stop being authoritative. It reports whether the
+	// known flag changed.
+	MarkUnknown() bool
 }
 
-// NewState creates an empty State.
+// NewState creates an empty, authoritative State.
 func NewState() State {
-	return &state{ids: []string{}}
+	return &state{ids: []string{}, known: true}
 }
 
 type state struct {
-	mu  sync.RWMutex
-	ids []string
+	mu    sync.RWMutex
+	ids   []string
+	known bool
 }
 
 // RegistrySessionIDs returns a copy of the current set. The result is never nil
@@ -58,17 +71,39 @@ func (s *state) RegistrySessionIDs(_ context.Context) []string {
 	return append([]string{}, s.ids...)
 }
 
-// Replace swaps the whole set and reports whether it changed. The comparison is
-// order-insensitive, duplicates are dropped and empty ids are ignored.
+// LiveIDsKnown reports whether the current set is authoritative.
+func (s *state) LiveIDsKnown() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.known
+}
+
+// Replace swaps the whole set and reports whether the stored state changed — the
+// ids or the authoritative flag. The comparison is order-insensitive, duplicates
+// are dropped and empty ids are ignored. A swap always marks the set
+// authoritative again: a successful read is what clears a previous MarkUnknown,
+// and that transition alone is worth a refresh frame.
 func (s *state) Replace(ids []string) bool {
 	normalized := normalize(ids)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if slices.Equal(s.ids, normalized) {
+	changed := !s.known || !slices.Equal(s.ids, normalized)
+	s.ids = normalized
+	s.known = true
+	return changed
+}
+
+// MarkUnknown keeps the last known ids and clears the authoritative flag. It
+// reports whether the flag changed, so a caller pushes a refresh only on the
+// transition into the unknown state.
+func (s *state) MarkUnknown() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.known {
 		return false
 	}
-	s.ids = normalized
+	s.known = false
 	return true
 }
 
@@ -90,65 +125,21 @@ func normalize(ids []string) []string {
 	return normalized
 }
 
-// Source signals that a watched directory may have changed.
-type Source interface {
-	// Watch calls changed once per change under dir, until ctx is cancelled.
-	// It returns nil on cancellation and an error otherwise.
-	Watch(ctx context.Context, dir string, changed func()) error
-}
-
-// NewFSNotifySource returns the fsnotify-backed Source.
-func NewFSNotifySource() Source {
-	return &fsNotifySource{}
-}
-
-type fsNotifySource struct{}
-
-// Watch mirrors the select loop of vault-cli's watch operation: ctx.Done ends
-// the watch with nil, a closed channel ends it with nil, and an error on the
-// error channel is logged and the loop keeps going.
-func (s *fsNotifySource) Watch(ctx context.Context, dir string, changed func()) error {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return errors.Wrap(ctx, err, "create session registry watcher")
-	}
-	defer func() { _ = watcher.Close() }()
-
-	// A missing directory is not fatal: the caller logs this and the rescan
-	// keeps the state current until the directory reappears.
-	if addErr := watcher.Add(dir); addErr != nil {
-		return errors.Wrapf(ctx, addErr, "watch session registry %s", dir)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case watchErr, ok := <-watcher.Errors:
-			if !ok {
-				return nil
-			}
-			glog.V(2).Infof("session registry watch error for %s: %v", dir, watchErr)
-		case _, ok := <-watcher.Events:
-			if !ok {
-				return nil
-			}
-			changed()
-		}
-	}
-}
-
 // WatchParams carries the watcher's injectable dependencies.
 type WatchParams struct {
-	Dir      string
-	State    State
-	Source   Source
-	Read     func(ctx context.Context, dir string) []string
-	Changed  func()
+	State State
+	// Read returns the live session ids and whether the source answered. A false
+	// second result is "cannot tell" (an unreachable store), never "nothing is
+	// live".
+	Read func(ctx context.Context) ([]string, bool)
+	// Changed is called when the stored set — or its authoritative flag — moves.
+	Changed func()
+	// Interval is the period between two reads. A non-positive value falls back
+	// to DefaultRescanInterval.
 	Interval time.Duration
 }
 
-// Watcher keeps State current from the registry directory.
+// Watcher keeps State current from the live-id source.
 type Watcher interface {
 	Run(ctx context.Context) error
 }
@@ -166,61 +157,57 @@ func NewWatcher(params WatchParams) Watcher {
 type watcher struct {
 	params   WatchParams
 	interval time.Duration
-
-	// applyMu serialises the file-event path and the rescan path. Without it a
-	// rescan whose read began before a file event can Replace after the event's
-	// fresher read and revert the state to a stale set for up to Interval — a
-	// logic race the race detector cannot see.
-	applyMu sync.Mutex
 }
 
-// Run performs the initial read, then keeps the state current from file events
-// and from a periodic rescan until ctx is cancelled.
+// Run performs the initial read, then re-reads once per interval until ctx is
+// cancelled.
 //
-// A failing or panicking Source must not take the board down: the watch error
-// is logged at V(2) and swallowed, so the rescan keeps the state current and
-// the board keeps serving. The detection is that V(2) line.
+// The initial read seeds the state without pushing a refresh: only a later
+// change is worth a frame.
+//
+// A read that cannot reach the store is not fatal and never clears the ids: the
+// state keeps the last known set and is marked unknown, and the loop retries on
+// the next tick. The board reads that flag so an unreachable store renders
+// "cannot tell" rather than a Resume.
 func (w *watcher) Run(ctx context.Context) error {
-	// The initial read is not an event: it seeds the state without pushing a
-	// refresh frame. Only a later change is worth a broadcast.
-	w.params.State.Replace(w.params.Read(ctx, w.params.Dir))
+	w.seed(ctx)
 
-	watchFunc := func(ctx context.Context) error {
-		err := w.params.Source.Watch(ctx, w.params.Dir, func() { w.apply(ctx) })
-		if err != nil {
-			glog.V(2).Infof("session registry watch on %s stopped: %v", w.params.Dir, err)
-		}
-		return nil
-	}
+	timer := time.NewTimer(w.interval)
+	defer timer.Stop()
 
-	rescanFunc := func(ctx context.Context) error {
-		timer := time.NewTimer(w.interval)
-		defer timer.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-timer.C:
-				w.apply(ctx)
-				timer.Reset(w.interval)
-			}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timer.C:
+			w.apply(ctx)
+			timer.Reset(w.interval)
 		}
 	}
-
-	return run.CancelOnFirstErrorWait(
-		ctx,
-		run.SkipErrors(run.CatchPanic(watchFunc)),
-		rescanFunc,
-	)
 }
 
-// apply re-reads the registry and swaps the state, pushing a refresh only when
-// the live set actually changed so a no-op rescan does not broadcast.
-func (w *watcher) apply(ctx context.Context) {
-	w.applyMu.Lock()
-	defer w.applyMu.Unlock()
+// seed performs the initial read without pushing a refresh frame.
+func (w *watcher) seed(ctx context.Context) {
+	ids, known := w.params.Read(ctx)
+	if !known {
+		w.params.State.MarkUnknown()
+		return
+	}
+	w.params.State.Replace(ids)
+}
 
-	if w.params.State.Replace(w.params.Read(ctx, w.params.Dir)) {
+// apply re-reads the source and swaps the state, pushing a refresh only when the
+// stored set or its authoritative flag actually moved, so a no-op poll does not
+// broadcast.
+func (w *watcher) apply(ctx context.Context) {
+	ids, known := w.params.Read(ctx)
+	if !known {
+		if w.params.State.MarkUnknown() {
+			w.params.Changed()
+		}
+		return
+	}
+	if w.params.State.Replace(ids) {
 		w.params.Changed()
 	}
 }

@@ -2,7 +2,6 @@
 
 import asyncio
 import itertools
-import json
 import logging
 import os
 import shlex
@@ -390,35 +389,23 @@ def _session_live_client(
     tasks: list[Task],
     registry_session_ids: set[str],
 ) -> MagicMock:
-    """Build a mocked client whose tasks classify against a tmp session registry.
+    """Build a mocked client whose tasks classify against a stubbed attention store.
 
-    Both Claude roots are pinned at tmp dirs so nothing reaches the real
-    ``~/.claude/``: ``_claude_sessions_root`` carries the registry entries and
-    ``_claude_projects_root`` is empty, so a task's state is decided purely by
-    whether its id is in ``registry_session_ids``.
+    The store payload lists exactly ``registry_session_ids`` as live, and the
+    transcript projects root is pinned at an empty tmp dir, so a task's state is
+    decided purely by whether its id is in that set.
     """
     client = _make_vault_client(tasks)
-
-    registry_root = tmp_path / "claude-sessions"
-    registry_root.mkdir(parents=True, exist_ok=True)
-    for index, session_id in enumerate(sorted(registry_session_ids)):
-        (registry_root / f"{40000 + index}.json").write_text(
-            json.dumps(
-                {
-                    "pid": 40000 + index,
-                    "sessionId": session_id,
-                    "cwd": str(tmp_path),
-                    "status": "idle",
-                    "name": "some task",
-                    "startedAt": "2026-09-30T10:00:00.000Z",
-                }
-            )
-        )
 
     projects_root = tmp_path / "claude-projects"
     projects_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("vault_ui.activity._claude_sessions_root", lambda: registry_root)
+    monkeypatch.setattr(
+        "vault_ui.activity._heartbeat_payload",
+        lambda _url: [
+            {"session_id": session_id, "live": True} for session_id in sorted(registry_session_ids)
+        ],
+    )
     monkeypatch.setattr("vault_ui.activity._claude_projects_root", lambda: projects_root)
     return client
 

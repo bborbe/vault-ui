@@ -15,9 +15,9 @@ import (
 )
 
 // ClassifyParams carries one classification request. ResumeSessionIDs and
-// RegistrySessionIDs are computed by the caller (from ProcessTable and
-// activity.ReadRegistrySessionIDs); ClassifySessionState performs no ps scan and
-// no registry read itself.
+// RegistrySessionIDs are computed by the caller (from the attention store's
+// session-heartbeat endpoint and ProcessTable); ClassifySessionState performs no
+// ps scan and no store call itself.
 type ClassifyParams struct {
 	SessionID          string
 	ProjectDir         string
@@ -27,6 +27,14 @@ type ClassifyParams struct {
 	ResumeSessionIDs   []string
 	RegistrySessionIDs []string
 
+	// LiveIDsUnknown is true when the live-id source could not be read (an
+	// unreachable attention store). The registry signal is then "cannot tell",
+	// never "nothing is live": a session that is neither transcript-fresh nor
+	// resume-pinned reads indeterminate rather than quiet, so the wall never
+	// offers a Resume it cannot honor. It is deliberately a negative flag so the
+	// zero value keeps the pre-existing, source-known behaviour.
+	LiveIDsUnknown bool
+
 	// TranscriptMtime probes the session transcript; nil means
 	// activity.TranscriptMtime. The board passes its cached probe so a request
 	// never touches the filesystem.
@@ -35,11 +43,11 @@ type ClassifyParams struct {
 
 // ClassifySessionState reproduces src/vault_ui/activity.py classify_session_state.
 //
-// The three signals are checked in a fixed order: the harness session registry
-// first (authoritative), then transcript recency within LiveWindow, then a live
-// `--resume`/`--session-id` process cross-check. The task-file mtime is never a
-// liveness signal. A session id with a transcript that cannot be found reads
-// indeterminate, never quiet.
+// The three signals are checked in a fixed order: the attention store's live
+// session ids first (authoritative), then transcript recency within LiveWindow,
+// then a live `--resume`/`--session-id` process cross-check. The task-file mtime
+// is never a liveness signal. A session id with a transcript that cannot be
+// found reads indeterminate, never quiet.
 func ClassifySessionState(ctx context.Context, params ClassifyParams) SessionState {
 	if params.SessionID == "" {
 		return SessionStateNone
@@ -64,6 +72,12 @@ func ClassifySessionState(ctx context.Context, params ClassifyParams) SessionSta
 
 	if slices.Contains(params.ResumeSessionIDs, params.SessionID) {
 		return SessionStateLive
+	}
+	if params.LiveIDsUnknown {
+		// The live-id source could not be read, so "not live" cannot be
+		// concluded: an idle session the store would have listed live must not
+		// read quiet, which would offer a Resume.
+		return SessionStateIndeterminate
 	}
 	return SessionStateQuiet
 }

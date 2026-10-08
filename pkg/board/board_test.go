@@ -124,6 +124,9 @@ func (c *seamCounter) get() int {
 type fakeSignals struct {
 	registry []string
 	resume   []string
+	// unknown is "cannot tell": the live-id source could not be reached. It is
+	// the negative so the zero value keeps the pre-existing, known behaviour.
+	unknown bool
 
 	registryCalls *seamCounter
 	resumeCalls   *seamCounter
@@ -133,6 +136,8 @@ func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string {
 	f.registryCalls.inc()
 	return f.registry
 }
+
+func (f fakeSignals) LiveIDsKnown() bool { return !f.unknown }
 
 func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string {
 	f.resumeCalls.inc()

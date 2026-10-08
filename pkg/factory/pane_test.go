@@ -21,7 +21,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
-	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
@@ -45,8 +44,8 @@ func (r *recordingPaneResolver) Resolve(_ context.Context, sessionID string) (st
 	return pane, ok
 }
 
-// paneFixture builds a vault holding one live task plus a home directory whose
-// session registry names that task, so the board classifies it "live".
+// paneFixture builds a vault holding one live task, so the board classifies it
+// "live" once the attention store's live set is seeded into the session state.
 func paneFixture() (config.Loader, string, string, string) {
 	vaultDir := tempDir()
 	Expect(os.MkdirAll(filepath.Join(vaultDir, "24 Tasks"), 0750)).To(Succeed())
@@ -61,14 +60,6 @@ func paneFixture() (config.Loader, string, string, string) {
 	Expect(os.WriteFile(configPath, []byte("host: 127.0.0.1\n"), 0600)).To(Succeed())
 
 	homeDir := tempDir()
-	Expect(
-		os.MkdirAll(filepath.Join(homeDir, ".claude", "sessions"), 0750),
-	).To(Succeed())
-	Expect(os.WriteFile(
-		filepath.Join(homeDir, ".claude", "sessions", "1.json"),
-		[]byte(`{"sessionId":"`+liveSessionID+`","name":"LiveTask"}`),
-		0600,
-	)).To(Succeed())
 
 	loader := &mocks.Loader{}
 	loader.GetAllVaultsReturns([]*config.Vault{{
@@ -100,12 +91,10 @@ func paneHandler(
 	).To(Succeed())
 
 	// The board reads the live set from the session state, which production
-	// keeps current with the session-state watcher. Seed it from the fixture's
-	// registry directory so the fixture's registry entry stays load-bearing.
+	// keeps current from the attention store with the session-state watcher.
+	// Seed it directly so the fixture's session id stays load-bearing.
 	sessionState := factory.CreateSessionState()
-	sessionState.Replace(activity.ReadRegistrySessionIDs(
-		context.Background(), filepath.Join(homeDir, ".claude", "sessions"),
-	))
+	sessionState.Replace([]string{liveSessionID})
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	Expect(sessionSnapshot.RefreshOnce(context.Background())).To(Succeed())
 

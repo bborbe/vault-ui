@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/bborbe/errors"
 	libhttp "github.com/bborbe/http"
@@ -21,9 +22,9 @@ import (
 	"github.com/golang/glog"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
-	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
@@ -88,6 +89,11 @@ func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
 
 // CreatePaneResolver returns the Go pane resolver: the session registry under
 // homeDir matched against the WezTerm pane titles.
+//
+// The registry is read here for the session NAME — the bridge from a session id
+// to the WezTerm pane title it runs under — never to decide liveness. That
+// decision is the board's, and it reads the attention store (CreateHeartbeatStore).
+// The store carries no session name, so this site keeps the registry directory.
 func CreatePaneResolver(homeDir string) pane.Resolver {
 	return pane.NewResolver(pane.ResolverParams{
 		HomeDir:     homeDir,
@@ -95,6 +101,13 @@ func CreatePaneResolver(homeDir string) pane.Resolver {
 		RegistryDir: filepath.Join(homeDir, ".claude", "sessions"),
 		Timeout:     pane.DefaultResolveTimeout,
 	})
+}
+
+// CreateHeartbeatStore returns the attention-controller session-heartbeat store
+// the board's liveness reads come from. The base URL comes from
+// ATTENTION_STORE_URL, defaulting to heartbeat.DefaultBaseURL.
+func CreateHeartbeatStore() heartbeat.Store {
+	return heartbeat.NewStore(os.Getenv("ATTENTION_STORE_URL"), nil)
 }
 
 // CreateVaultUIConfigPath resolves vault-ui's config.yaml path, XDG-first.
@@ -172,8 +185,10 @@ func CreateSessionState() sessionstate.State {
 // reads session-derived fields from. Its Run must run in main's run group.
 func CreateSessionSnapshot(state sessionstate.State) sessionsnapshot.Snapshot {
 	return sessionsnapshot.NewSnapshot(sessionsnapshot.Params{
-		Registry: state.RegistrySessionIDs,
-		Scanner:  session.NewPSScanner("-axww", "-o", "args="),
+		Registry: func(ctx context.Context) ([]string, bool) {
+			return state.RegistrySessionIDs(ctx), state.LiveIDsKnown()
+		},
+		Scanner: session.NewPSScanner("-axww", "-o", "args="),
 		// Probe is deliberately left nil. A nil probe selects the snapshot's own
 		// per-epoch listing of the projects root, which is the whole point: the
 		// board's per-session resolution used to run a filepath.Glob that
@@ -187,14 +202,19 @@ func CreateSessionSnapshot(state sessionstate.State) sessionsnapshot.Snapshot {
 }
 
 // CreateSessionStateWatcher returns a run.Func that keeps state current from the
-// harness session registry and pushes a board refresh whenever the live set
-// changes. The initial read pushes nothing: only a later change is worth a
-// frame.
+// attention store and pushes a board refresh whenever the live set — or its
+// authoritative flag — changes. The initial read pushes nothing: only a later
+// change is worth a frame.
+//
+// interval is the poll period between two reads; a non-positive value falls back
+// to sessionstate.DefaultRescanInterval. It is a parameter so a test can drive
+// the poll without waiting a minute.
 func CreateSessionStateWatcher(
 	loader config.Loader,
 	manager websocket.ConnectionManager,
 	state sessionstate.State,
-	homeDir string,
+	store heartbeat.Store,
+	interval time.Duration,
 ) run.Func {
 	return func(ctx context.Context) error {
 		vaults, err := loader.GetAllVaults(ctx)
@@ -204,12 +224,10 @@ func CreateSessionStateWatcher(
 		names := sessionStateVaultNames(vaults)
 		glog.V(2).Infof("starting session state watcher for %d vaults", len(names))
 		return sessionstate.NewWatcher(sessionstate.WatchParams{
-			Dir:      filepath.Join(homeDir, ".claude", "sessions"),
 			State:    state,
-			Source:   sessionstate.NewFSNotifySource(),
-			Read:     activity.ReadRegistrySessionIDs,
+			Read:     store.LiveSessionIDs,
 			Changed:  sessionRefreshBroadcaster(manager, names),
-			Interval: sessionstate.DefaultRescanInterval,
+			Interval: interval,
 		}).Run(ctx)
 	}
 }

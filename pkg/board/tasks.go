@@ -131,6 +131,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	liveIDsUnknown := !b.signals.LiveIDsKnown()
 	resumeIDs := b.signals.ResumeSessionIDs(ctx)
 
 	// One ListPages for the whole vault, attached to the rows so the request
@@ -148,6 +149,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 			LiveWindow:         session.DefaultLiveWindow,
 			ResumeSessionIDs:   resumeIDs,
 			RegistrySessionIDs: registryIDs,
+			LiveIDsUnknown:     liveIDsUnknown,
 			TranscriptMtime:    b.transcriptProbe(),
 		})
 		rows = append(rows, taskSnapshotRow{
@@ -194,6 +196,7 @@ func (b *board) refreshTaskRows(
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	liveIDsUnknown := !b.signals.LiveIDsKnown()
 	resumeIDs := b.signals.ResumeSessionIDs(ctx)
 
 	refreshed := make([]taskSnapshotRow, len(rows))
@@ -211,6 +214,7 @@ func (b *board) refreshTaskRows(
 				LiveWindow:         session.DefaultLiveWindow,
 				ResumeSessionIDs:   resumeIDs,
 				RegistrySessionIDs: registryIDs,
+				LiveIDsUnknown:     liveIDsUnknown,
 				TranscriptMtime:    b.transcriptProbe(),
 			},
 		))

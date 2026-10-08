@@ -19,6 +19,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/fdlimit"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
@@ -61,6 +62,7 @@ func execute(ctx context.Context) error {
 	)
 	sessionState := factory.CreateSessionState()
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
+	heartbeatStore := factory.CreateHeartbeatStore()
 	writeQueue := factory.CreateWriteQueue()
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, cache, paneResolver, launches, homeDir, readiness, manager, pageIndex,
@@ -93,7 +95,9 @@ func execute(ctx context.Context) error {
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
 		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
-		factory.CreateSessionStateWatcher(loader, manager, sessionState, homeDir),
+		factory.CreateSessionStateWatcher(
+			loader, manager, sessionState, heartbeatStore, sessionstate.DefaultRescanInterval,
+		),
 		sessionSnapshot.Run,
 		writeQueue.Consume,
 		factory.CreateHTTPServer(adminListen, readiness),
