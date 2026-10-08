@@ -129,4 +129,45 @@ var _ = Describe("ChangedPagesSince", func() {
 		Expect(ok).To(BeFalse())
 		Expect(names).To(BeEmpty())
 	})
+
+	It("reports unknown after a cold build publishes the whole snapshot", func() {
+		// A key's first publication is the whole snapshot, so a caller holding the
+		// revision from before it (0, the value an unknown key reports) cannot be
+		// told a bounded set of rows moved.
+		index, _ := build()
+		names, ok := index.ChangedPagesSince(key, 0)
+		Expect(ok).To(BeFalse())
+		Expect(names).To(BeEmpty())
+	})
+
+	It("reports unknown after a hydrate publishes the whole snapshot", func() {
+		// The store-backed hydrate is also a first publication, but it seeds the
+		// stored pages as its stat-diff baseline, so its delta names only the files
+		// it re-read and never the pages it carried forward. It must not claim a
+		// bound the cold path refuses: both first publications are unbounded.
+		storeVaultDir := newStoreVault(3)
+		storeKey := pageindex.NewKey(storeVaultDir, equivalenceFolder)
+		store := newHydrationStore(GinkgoT())
+		populateStore(ctx, store, storeKey, storeVaultDir, equivalenceFolder)
+
+		settle()
+		writeFixtureFile(
+			storeVaultDir,
+			"Page01.md",
+			"---\ntitle: Page01\n---\n# Page01 v2\n",
+		)
+
+		start := newStoreStart(store)
+		pages, err := start.index.ListPages(ctx, storeVaultDir, equivalenceFolder)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pages).To(HaveLen(3))
+		// The hydrate re-read exactly the one changed file, so the delta it would
+		// have reported is a partial set — the under-reporting case, not an empty
+		// one.
+		Expect(start.reader.Names()).To(Equal([]string{"Page01.md"}))
+
+		names, ok := start.index.ChangedPagesSince(storeKey, 0)
+		Expect(ok).To(BeFalse())
+		Expect(names).To(BeEmpty())
+	})
 })
