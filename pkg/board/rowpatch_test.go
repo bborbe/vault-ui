@@ -12,8 +12,21 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
 )
+
+// taskByID returns the response for one task id, failing the spec when it is
+// absent so an assertion never reads a zero value by accident.
+func taskByID(responses []api.TaskResponse, id string) api.TaskResponse {
+	for _, response := range responses {
+		if response.ID == id {
+			return response
+		}
+	}
+	Fail("task " + id + " is not in the response")
+	return api.TaskResponse{}
+}
 
 // pageStatus builds one in-memory vault page carrying a status, so the board's
 // row patch can be seen to re-derive the row from the page the index holds.
@@ -154,5 +167,60 @@ var _ = Describe("row patch", func() {
 		Expect(patched).To(HaveLen(1))
 		Expect(patched[0].OpenQuestions).To(HaveLen(1))
 		Expect(patched[0].OpenQuestions[0].Text).To(Equal("Which vault?"))
+	})
+
+	It("recomputes a dependent row's blockers when its blocker's page changes", func() {
+		h := newHarness(
+			item("Alpha"),
+			item("Beta", func(i *ops.TaskListItem) { i.BlockedBy = []string{"[[Alpha]]"} }),
+		)
+		// Beta is blocked by Alpha while Alpha is still open.
+		h.cache.statuses["Alpha"] = "in_progress"
+		h.index.setPages(pageStatus("Alpha", "in_progress"), pageStatus("Beta", "todo"))
+
+		built, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(taskByID(built, "Beta").Blocked).To(BeTrue())
+		Expect(taskByID(built, "Beta").Blockers).To(Equal([]string{"Alpha"}))
+		builds := h.counter.get()
+
+		// Completing Alpha refreshes Alpha's status-cache entry and marks Alpha's
+		// page, so the next read takes the row patch rather than a full build.
+		h.cache.statuses["Alpha"] = "completed"
+		h.index.setPages(pageStatus("Alpha", "completed"), pageStatus("Beta", "todo"))
+		h.index.markPages("Alpha.md")
+
+		patched, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		// Beta's own page did not change, so its row is carried over — but
+		// blockers/blocked are cross-row derived and must be recomputed, or Beta
+		// keeps showing as blocked by the Alpha it is no longer waiting on.
+		Expect(taskByID(patched, "Beta").Blocked).To(BeFalse())
+		Expect(taskByID(patched, "Beta").Blockers).To(BeEmpty())
+		// And the read stayed a patch: it added no vault list walk.
+		Expect(h.counter.get()).To(Equal(builds))
+	})
+
+	It("recomputes the session-started marker of a changed row", func() {
+		h := newHarness(item("Alpha"))
+		h.cache.started["Alpha"] = "2026-10-04T11:00:00Z"
+		h.index.setPages(pageStatus("Alpha", "in_progress"))
+
+		built, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(built[0].ClaudeSessionStarted).NotTo(BeNil())
+		Expect(*built[0].ClaudeSessionStarted).To(Equal("2026-10-04T11:00:00Z"))
+		builds := h.counter.get()
+
+		// ClearTaskSession clears the marker and marks the page; the status cache
+		// drops it in the same write. The patch must recompute the marker rather
+		// than carry the held value over, which would republish the cleared one.
+		delete(h.cache.started, "Alpha")
+		h.index.markPages("Alpha.md")
+
+		patched, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(patched[0].ClaudeSessionStarted).To(BeNil())
+		Expect(h.counter.get()).To(Equal(builds))
 	})
 })

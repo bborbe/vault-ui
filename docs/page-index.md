@@ -33,12 +33,30 @@ derived from the page snapshot and the session snapshot; it is never a field on
   them. When only the page revision moved, the page index can name the pages
   whose parsed form changed — a per-file write mark, a single-file watcher read,
   or a stat-diff's re-reads and drops — and the rebuild re-derives exactly those
-  rows from the pages the index already holds, reusing the session-derived fields
-  of the rows already published. It performs no vault list, no vault-wide page
-  scan and no process spawn; the one page-index read it makes resolves any
-  pending write mark, which is the same resolution the full rebuild's list walk
-  performs. A page with no row already published cannot be re-derived this way,
-  so the whole key rebuilds in full rather than fetching what is missing.
+  rows from the pages the index already holds. It performs no vault list, no
+  vault-wide page scan and no process spawn; the one page-index read it makes
+  resolves any pending write mark, which is the same resolution the full
+  rebuild's list walk performs. A page with no row already published cannot be
+  re-derived this way, so the whole key rebuilds in full rather than fetching
+  what is missing.
+- **Cross-row dependencies.** `blockers` and `blocked` are cross-row derived: a
+  row's own `BlockedBy` list is filtered through the status cache, so one row's
+  badge depends on another row's status. A patch therefore re-derives
+  `blockers`/`blocked` not only for the changed page's own row but for every held
+  row that names a changed page in its `BlockedBy` — completing a blocking task
+  clears its dependents' badges on the next read instead of leaving them showing
+  as blocked. That walk reads only the `BlockedBy` lists the held rows already
+  carry and re-runs the same in-memory cache lookups the full build's blocker
+  read makes, so it adds no vault list, no page scan and no process spawn: the
+  patch's I/O stays bounded by the changed set.
+- **Session-derived fields.** A patch reuses the classified session state and the
+  activity date from the rows already published: those come from the session
+  snapshot, and a patch is only taken when the session generation has not moved,
+  so they are already the current generation's. The session-started marker is the
+  exception — it derives from the launch registry and the status cache, both in
+  memory and both moved by the write that marked the page, so the patch recomputes
+  it for the changed row at no I/O rather than republishing a marker the write
+  just superseded.
 - **Bounded or full.** A rebuild that cannot bound the changed set — a
   folder-level mark (the eight synchronous sites keep theirs), a forced reload, a
   revision the key has since advanced past, or a move of the page revision and

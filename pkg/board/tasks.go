@@ -233,10 +233,26 @@ func (b *board) refreshTaskRows(
 // names are the changed pages' base filenames including their ".md" suffix. The
 // pages come from the page index, whose read resolves any pending write mark, so
 // a row is derived from the page the write produced rather than the one the
-// snapshot held before it. The session-derived fields — the classified session
-// state, the activity date and the session-started marker — are carried over
-// from the held row: the store only takes this path when the session generation
-// has not moved, so those values are already the current generation's.
+// snapshot held before it.
+//
+// Beyond the changed page's own row, two kinds of field need care:
+//
+//   - The classified session state and the activity date are carried over from
+//     the held row. They come from the session snapshot, and the store only
+//     takes this path when the session generation has not moved, so those values
+//     are already the current generation's; recomputing them would need the
+//     process spawn and transcript probe this path exists to avoid.
+//   - The session-started marker is NOT carried over. It derives from the launch
+//     registry and the status cache, both in memory and both moved by the write
+//     that marked the page — Cache.Invalidate refreshes the cache and the launch
+//     registry updates on Begin/Finish — so it is recomputed here at no I/O.
+//     Carrying it over would republish a marker a ClearTaskSession write had
+//     just cleared, for up to a session refresh.
+//
+// blockers and blocked are cross-row derived — uncompletedBlockers filters a
+// row's own BlockedBy through the status cache, so one row's badge depends on
+// another row's status — and are handled by recomputeDependentBlockers once the
+// changed rows are spliced in.
 //
 // It returns a new slice. The rows it is given are shared with every reader, so
 // each is copied before a field is written, and a row that is replaced is
@@ -315,11 +331,14 @@ func (b *board) patchTaskRows(
 			questions = []domain.OpenQuestion{}
 		}
 		patched[at] = taskSnapshotRow{
-			item:          item,
-			vault:         vault,
-			blockers:      blockers,
-			blocked:       len(blockers) > 0,
-			started:       rows[at].started,
+			item:     item,
+			vault:    vault,
+			blockers: blockers,
+			blocked:  len(blockers) > 0,
+			// The marker is recomputed, not carried over: it reads the launch
+			// registry and the status cache, both in memory and both moved by the
+			// write that marked this page, so it is free and it is current.
+			started:       b.sessionStarted(vault.Name, item.Name),
 			sessionState:  rows[at].sessionState,
 			activityDate:  rows[at].activityDate,
 			openQuestions: questions,
@@ -328,7 +347,70 @@ func (b *board) patchTaskRows(
 	if len(dropped) > 0 {
 		patched = withoutRows(patched, dropped)
 	}
+	b.recomputeDependentBlockers(vault.Name, patched, names)
 	return patched, nil
+}
+
+// recomputeDependentBlockers re-derives blockers and blocked for every row that
+// names one of the changed pages in its own BlockedBy, after the changed rows
+// have been spliced into patched.
+//
+// blockers/blocked are cross-row derived: uncompletedBlockers filters a row's
+// own BlockedBy through the status cache, so row B's badge depends on row A's
+// status. Re-deriving only the changed page's own row would leave every
+// dependent of a changed page publishing the blockers it had before the write —
+// completing a blocking task would leave its dependents showing as blocked until
+// the next full build, which is the regression this walk closes.
+//
+// It keeps the patch's I/O bounded by the changed set: it reads only the
+// BlockedBy lists the held rows already carry and re-runs the same in-memory
+// cache lookups uncompletedBlockers already makes, so it adds no vault list, no
+// page scan and no process spawn. The alternative — falling back to the full
+// build whenever any held row depends on a changed page — would give the patch
+// up entirely for the common case of a single blocked task, which is the cost
+// this path exists to remove.
+//
+// names are the changed pages' base filenames including their ".md" suffix; a
+// row whose own page is one of them was rebuilt by the caller and is skipped.
+// Rows are copied by the caller before this runs, so a field write here never
+// reaches a row a concurrent reader is holding.
+func (b *board) recomputeDependentBlockers(
+	vaultName string,
+	rows []taskSnapshotRow,
+	names []string,
+) {
+	if len(names) == 0 {
+		return
+	}
+	changed := make(map[string]bool, len(names))
+	for _, name := range names {
+		changed[name] = true
+	}
+	for i := range rows {
+		if changed[rows[i].item.Name+".md"] {
+			// The row's own page changed, so its blockers were re-derived above.
+			continue
+		}
+		if !blockedByNamesChangedPage(rows[i].item.BlockedBy, changed) {
+			continue
+		}
+		blockers := b.uncompletedBlockers(vaultName, rows[i].item.BlockedBy)
+		rows[i].blockers = blockers
+		rows[i].blocked = len(blockers) > 0
+	}
+}
+
+// blockedByNamesChangedPage reports whether any of a row's own BlockedBy
+// wikilinks names a changed page. The comparison strips the wikilink brackets
+// exactly as uncompletedBlockers does, so a hit is precisely the entry whose
+// cached status the blocker read consults.
+func blockedByNamesChangedPage(blockedBy []string, changed map[string]bool) bool {
+	for _, wikilink := range blockedBy {
+		if changed[stripBrackets(wikilink)+".md"] {
+			return true
+		}
+	}
+	return false
 }
 
 // withoutRows returns rows with the given positions removed, in a new slice.
