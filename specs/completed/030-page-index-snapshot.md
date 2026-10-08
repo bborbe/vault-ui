@@ -1,5 +1,6 @@
 ---
 status: completed
+completed: "2026-10-08T17:59:40Z"
 tags:
     - dark-factory
     - spec
@@ -7,7 +8,6 @@ approved: "2026-10-08T08:51:44Z"
 generating: "2026-10-08T09:21:42Z"
 prompted: "2026-10-08T10:04:44Z"
 verifying: "2026-10-08T16:46:50Z"
-completed: "2026-10-08T17:34:55Z"
 branch: dark-factory/page-index-snapshot
 ---
 
@@ -17,7 +17,7 @@ branch: dark-factory/page-index-snapshot
 - This change keeps a copy of the parsed index on local disk. A restart loads it and re-checks each file's size and timestamps, one stat per file and no content reads, re-parsing only the files that actually changed.
 - The on-disk copy is a cache: missing, empty, damaged, unreadable, or written by a different version means it is thrown away and the board falls back to today's full parse. It can never change what the board serves and can never stop the board from starting.
 - The copy is written as the index publishes new snapshots, in one transaction per publication, with no new background timer and no new configuration.
-- Target: the first list after a restart is served in under 300 ms, against roughly 1.5 s per large vault today.
+- Target: the first list after a restart is served in under 300 ms, against roughly 1.5 s per large vault today. **Measured 2026-10-08: 0.692-0.778 s — the target is NOT met.** The residual cost is the store load plus one stat-diff over ~21k files; the sub-300 ms bar is deferred to a follow-up task and recorded as AC11.
 
 Traceability: goal `[[Vault UI Ultra-Fast Reads and Writes]]` (Personal vault). It completes the item spec 027 deferred — 027's Non-goals read "No persistence of the index (the Bolt snapshot is a separate task)", and this is that task.
 
@@ -98,7 +98,6 @@ Fixture note: "real dir" means a temp directory on disk read through the product
   - `grep -n 'RescanInterval = ' pkg/pageindex/pageindex.go` shows 50 s.
   - `grep -rn 'RawMap()' pkg/` returns at least one line, so the store encodes through the exported frontmatter escape hatch rather than a marshal method added to vault-cli's types.
 - [x] **Post-Deploy (Rung-2):** AC9: a restart loads the store instead of re-parsing. Run the Operator-executable cold-start block twice, on two restarts. Evidence:
-  - **Elapsed time — MEASURED, MISSED.** 2026-10-08 on the deployed board: **0.778 s and 0.692 s**, against the original bar of under 0.300 s. The bar is not met. The residual cost is the store load plus one stat-diff over ~21k files — the design this spec deliberately chose over serving an unverified snapshot — and the sub-300 ms bar is carried by the follow-up [[Cut the Vault UI Cold Start Below 300 ms]]. The criterion originally read "cold start to first served list under 300 ms".
   - Immediately after that first response, `vault_ui_page_index_files_read_total{reason="build"}` is under 1,000. The pre-fix cold start parses 21,163 files.
   - `deploy_check:` `pid=$(launchctl list | awk '$3=="com.github.bborbe.vault-ui"{print $1}') && python3 -c 'import os,subprocess,sys,time; s=" ".join(subprocess.check_output(["ps","-o","lstart=","-p",sys.argv[1]],text=True,env={"LC_ALL":"C","PATH":"/bin:/usr/bin"}).split()); sys.exit(0 if time.mktime(time.strptime(s,"%a %b %d %H:%M:%S %Y"))>=int(os.path.getmtime(sys.argv[2])) else 1)' "$pid" ~/Documents/workspaces/go/bin/vault-ui && [ ~/Documents/workspaces/go/bin/vault-ui -nt ~/Documents/workspaces/vault-ui/.git/ORIG_HEAD ] && cd ~/Documents/workspaces/vault-ui && git rev-parse --short HEAD`
   - `deploy_target:` `$(cd ~/Documents/workspaces/vault-ui && git fetch -q && git rev-parse --short origin/master)`
@@ -106,6 +105,11 @@ Fixture note: "real dir" means a temp directory on disk read through the product
   - The store file exists at the resolved cache path.
   - After one task write through the board and no restart, the store file's modification time advances within 60 s.
   - A restart's `vault_ui_page_index_files_read_total{reason="build"}` is under 1,000, so the restart loaded the store rather than full-parsing.
+  - `deploy_check:` same command as AC9.
+  - `deploy_target:` `$(cd ~/Documents/workspaces/vault-ui && git fetch -q && git rev-parse --short origin/master)`
+- [ ] **Post-Deploy (Rung-2): AC11 — DEFERRED, bar not met.** Cold start to first served list under 300 ms. Evidence:
+  - **Elapsed time — MEASURED, MISSED.** 2026-10-08 on the deployed board: **0.778 s and 0.692 s**, against the bar of under 0.300 s. The residual cost is the store load plus one stat-diff over ~21k files — the design this spec deliberately chose over serving an unverified snapshot. The criterion originally read "cold start to first served list under 300 ms".
+  - The bar is carried by a follow-up vault task, and its existence is asserted as the sibling spec 027 asserts its own: a task file exists at `~/Documents/Obsidian/private-personal/25 Tasks/Cut the Vault UI Cold Start Below 300 ms.md`.
   - `deploy_check:` same command as AC9.
   - `deploy_target:` `$(cd ~/Documents/workspaces/vault-ui && git fetch -q && git rev-parse --short origin/master)`
 
@@ -120,7 +124,7 @@ No new scenario. AC1–AC7 reach every behavior with real temp dirs and fakes, A
 - `go test -race ./pkg/pageindex/... ./pkg/factory/...`
 - `grep -n '^## ' docs/page-index.md` lists `Page index store`
 - `grep -n 'page-index.bolt' docs/page-index.md`
-- `awk '/^## /{s=$0} /Persist the board.s parsed page index/{print "under: " s}' CHANGELOG.md` — originally `grep -A10 '^## Unreleased'`, but the release flow consumed that section; see AC8
+- `grep -F -B1 'Persist the board' CHANGELOG.md` shows the bullet's own section heading — an exact literal match rather than the dot-wildcard regex, which was over-permissive. Originally `grep -A10 '^## Unreleased'`, but the release flow consumed that section; see AC8
 - `grep -n 'boltkv' go.mod`
 - `grep -n 'RescanInterval = ' pkg/pageindex/pageindex.go`
 
