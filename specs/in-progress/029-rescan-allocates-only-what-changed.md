@@ -51,7 +51,10 @@ A rescan's cost is proportional to what changed. A stat-diff over a folder whose
   - (b) a vault task file exists under `~/Documents/Obsidian/private-personal/25 Tasks/`, linked to goal `[[Vault UI Ultra-Fast Reads and Writes]]`, recording the six window values and a 10 s `sample` attribution naming ≥ 1 site outside this spec's allocation path as the leading residual. Check with `grep -lE 'statFingerprint|os\.Stat|readdir|directoryLister' "<that file>"`.
   - `deploy_check:` `pid=$(launchctl list | awk '$3=="com.github.bborbe.vault-ui"{print $1}') && python3 -c 'import os,subprocess,sys,time; s=" ".join(subprocess.check_output(["ps","-o","lstart=","-p",sys.argv[1]],text=True,env={"LC_ALL":"C","PATH":"/bin:/usr/bin"}).split()); sys.exit(0 if time.mktime(time.strptime(s,"%a %b %d %H:%M:%S %Y"))>=int(os.path.getmtime(sys.argv[2])) else 1)' "$pid" ~/Documents/workspaces/go/bin/vault-ui && [ ~/Documents/workspaces/go/bin/vault-ui -nt ~/Documents/workspaces/vault-ui/.git/ORIG_HEAD ] && cd ~/Documents/workspaces/vault-ui && git rev-parse --short HEAD`
   - `deploy_target:` `$(cd ~/Documents/workspaces/vault-ui && git fetch -q && git rev-parse --short origin/master)`
-- [ ] **Post-Deploy (Rung-2):** AC10 — the rescan's allocation drops where it is the dominant allocator. Build the watcher-less loopback diagnostic from the deployed commit (the recipe the parent task used: admin bound to `127.0.0.1:<spare>`, the vault watcher dropped from the run group only), then read `go_memstats_alloc_bytes_total` from its `/metrics` across a 120 s window and take two cumulative `alloc_space` snapshots 120 s apart — evidence: the window's total is ≤ 65 % of the recorded pre-change 1,037 MB per 120 s, and neither `mergeSnapshot` nor `recordedFingerprints` appears among the top 15 `alloc_space` sites.
+- [ ] **Post-Deploy (Rung-2):** AC10 — the rescan's allocation drops where it is the dominant allocator. Build the watcher-less loopback diagnostic from the deployed commit (the recipe the parent task used: admin bound to `127.0.0.1:<spare>`, the vault watcher dropped from the run group only), then read `go_memstats_alloc_bytes_total` from its `/metrics` across a 120 s window and take two cumulative `alloc_space` snapshots 120 s apart. Evidence, in two parts, both measured on the live vault in any 120 s window:
+  - **(a) Aggregate:** the window's total is ≤ 65 % of the recorded pre-change 1,037 MB per 120 s.
+  - **(b) The previously dominant sites no longer dominate:** `recordedFingerprints` does not appear among the top 15 `alloc_space` sites, and `mergeSnapshot`'s **flat** `alloc_space` is ≤ 65 % of its recorded pre-change 15.4 MB flat (≤ 10.0 MB).
+  - **Why (b) is a magnitude bound and not an absence, and must stay one.** Requiring `mergeSnapshot` to be *absent* from the top 15 demands a pass with zero work, and DB3 makes that unmeasurable on a live vault: a pass with any work still merges into the folder-sized pages snapshot, walked in lockstep with the listing, so a window containing even one changed file runs the merge path and ranks `mergeSnapshot` however much this change saved. Measured 2026-10-08/09 on the diagnostic, a window with a 60 s flat precondition still recorded 5 rescan reads, and `mergeSnapshot` ranked #6 and #7 in two such windows — while (a) passed in both, at 64.9 MB and 43.9 MB against the 674.1 MB bar, and `mergeSnapshot`'s own flat figure had fallen from 15.4 MB to 2.02–3.52 MB. The live vault churns faster than the 50 s rescan interval, so a change-free window does not occur; (b) therefore measures the drop this change claims rather than an absence the environment cannot produce.
   - `deploy_check:` `pid=$(launchctl list | awk '$3=="com.github.bborbe.vault-ui"{print $1}') && python3 -c 'import os,subprocess,sys,time; s=" ".join(subprocess.check_output(["ps","-o","lstart=","-p",sys.argv[1]],text=True,env={"LC_ALL":"C","PATH":"/bin:/usr/bin"}).split()); sys.exit(0 if time.mktime(time.strptime(s,"%a %b %d %H:%M:%S %Y"))>=int(os.path.getmtime(sys.argv[2])) else 1)' "$pid" ~/Documents/workspaces/go/bin/vault-ui && [ ~/Documents/workspaces/go/bin/vault-ui -nt ~/Documents/workspaces/vault-ui/.git/ORIG_HEAD ] && cd ~/Documents/workspaces/vault-ui && git rev-parse --short HEAD`
   - `deploy_target:` `$(cd ~/Documents/workspaces/vault-ui && git fetch -q && git rev-parse --short origin/master)`
 
@@ -95,13 +98,22 @@ curl -s http://127.0.0.1:9090/metrics | grep vault_ui_websocket_connected_client
 echo "broadcasts over 60 s: $(python3 -c "print($b-$a)")"
 ```
 
-Allocation (AC10), on the watcher-less loopback diagnostic:
+Allocation (AC10), on the watcher-less loopback diagnostic. Both parts run on the live vault in the same 120 s window.
 
 ```bash
 a=$(curl -s http://127.0.0.1:9091/metrics | awk '/^go_memstats_alloc_bytes_total/{print $2}'); sleep 120
 b=$(curl -s http://127.0.0.1:9091/metrics | awk '/^go_memstats_alloc_bytes_total/{print $2}')
 echo "allocated in 120 s: $(python3 -c "print(($b-$a)/1048576)") MB"
-# two cumulative alloc_space snapshots 120 s apart, diffed with -diff_base
+# two cumulative alloc_space snapshots 120 s apart, diffed with -diff_base.
+# Flags MUST precede the profile arguments: pprof stops parsing flags at the first
+# positional argument, so `-diff_base a.pb.gz b.pb.gz -top` treats -top as a
+# filename, prints no site list at all, and a grep for an absent function then
+# "passes" on empty output - a check that cannot fail.
+go tool pprof -diff_base=/tmp/alloc-1.pb.gz -top -nodecount=15 -sample_index=alloc_space /tmp/alloc-2.pb.gz
+# (b): recordedFingerprints absent from that list, and mergeSnapshot's flat column
+# at or below 10.0 MB. pprof's diff header prints "of <N> total", which is the BASE
+# profile's cumulative alloc_space and not the diff; the diff total is the
+# "accounting for" figure, confirmed with -nodecount=100000.
 ```
 
 ## Desired Behavior
