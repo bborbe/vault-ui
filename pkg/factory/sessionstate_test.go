@@ -8,7 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/bborbe/vault-cli/mocks"
@@ -30,25 +30,48 @@ type sessionRegistryFrame struct {
 	ItemKind string `json:"item_kind"`
 }
 
-// writeSessionRegistryEntry atomically writes one `<name>.json` registry entry.
-// The write goes to a dot-prefixed temp file first and is renamed into place: a
-// plain truncating write would expose a momentarily empty file to the watcher's
-// read, which registers as a spurious change. The temp file does not end in
-// `.json`, so the registry reader ignores it.
-func writeSessionRegistryEntry(dir, name, sessionID string) {
-	content := []byte(`{"sessionId":"` + sessionID + `"}`)
-	tmp := filepath.Join(dir, "."+name+".json.tmp")
-	Expect(os.WriteFile(tmp, content, 0600)).To(Succeed())
-	Expect(os.Rename(tmp, filepath.Join(dir, name+".json"))).To(Succeed())
+// fakeStore is a hand-written heartbeat.Store double whose live set a spec moves
+// between polls.
+type fakeStore struct {
+	mu    sync.Mutex
+	ids   []string
+	known bool
+}
+
+func newFakeStore(ids ...string) *fakeStore {
+	return &fakeStore{ids: ids, known: true}
+}
+
+func (s *fakeStore) LiveSessionIDs(_ context.Context) ([]string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string{}, s.ids...), s.known
+}
+
+func (s *fakeStore) IsLive(_ context.Context, sessionID string) (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range s.ids {
+		if id == sessionID {
+			return true, s.known
+		}
+	}
+	return false, s.known
+}
+
+func (s *fakeStore) set(ids ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ids = ids
+	s.known = true
 }
 
 var _ = Describe("CreateSessionStateWatcher", func() {
-	It("seeds the state on the initial read and pushes two frames per real change", func() {
-		homeDir := tempDir()
-		registryDir := filepath.Join(homeDir, ".claude", "sessions")
-		Expect(os.MkdirAll(registryDir, 0750)).To(Succeed())
-		writeSessionRegistryEntry(registryDir, "seed", "seed")
+	// The poll interval is short so the spec drives the watcher without waiting
+	// the production minute.
+	const pollInterval = 20 * time.Millisecond
 
+	It("seeds the state on the initial read and pushes two frames per real change", func() {
 		loader := &mocks.Loader{}
 		loader.GetAllVaultsReturns([]*config.Vault{{
 			Name: "personal", Path: tempDir(),
@@ -56,27 +79,25 @@ var _ = Describe("CreateSessionStateWatcher", func() {
 
 		manager := &websocketmocks.WebsocketConnectionManager{}
 		state := factory.CreateSessionState()
+		store := newFakeStore("seed")
 
 		ctx, cancel := context.WithCancel(context.Background())
 		DeferCleanup(cancel)
 		go func() {
 			defer GinkgoRecover()
-			_ = factory.CreateSessionStateWatcher(loader, manager, state, homeDir)(ctx)
+			_ = factory.CreateSessionStateWatcher(
+				loader, manager, state, store, pollInterval,
+			)(ctx)
 		}()
 
 		// The initial read populates the state and pushes nothing. Waiting for
-		// it here means the write below cannot be absorbed by it.
+		// it here means the change below cannot be absorbed by it.
 		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
 			Should(ConsistOf("seed"))
 		Expect(manager.BroadcastCallCount()).To(Equal(0))
 
-		// The watch may not be armed yet, so rewrite on every poll: an
-		// identical rewrite leaves the set unchanged and cannot inflate the
-		// count once the event has been observed.
-		Eventually(func() int {
-			writeSessionRegistryEntry(registryDir, "2", "second")
-			return manager.BroadcastCallCount()
-		}, 5*time.Second, 20*time.Millisecond).Should(Equal(2))
+		store.set("seed", "second")
+		Eventually(manager.BroadcastCallCount, 5*time.Second, 20*time.Millisecond).Should(Equal(2))
 
 		frames := [][]byte{
 			manager.BroadcastArgsForCall(0),
@@ -101,15 +122,12 @@ var _ = Describe("CreateSessionStateWatcher", func() {
 			Event: "modified", Vault: "personal", Type: "goal",
 		})))
 
-		// A rewrite that changes nothing pushes no frame.
-		writeSessionRegistryEntry(registryDir, "2", "second")
-		Consistently(manager.BroadcastCallCount, 300*time.Millisecond).Should(Equal(2))
+		// A poll that reads the same set pushes no frame.
+		Consistently(manager.BroadcastCallCount, 150*time.Millisecond).Should(Equal(2))
 
 		// A third live session is two more frames.
-		Eventually(func() int {
-			writeSessionRegistryEntry(registryDir, "3", "third")
-			return manager.BroadcastCallCount()
-		}, 5*time.Second, 20*time.Millisecond).Should(Equal(4))
+		store.set("seed", "second", "third")
+		Eventually(manager.BroadcastCallCount, 5*time.Second, 20*time.Millisecond).Should(Equal(4))
 	})
 
 	It("fails when the vault config cannot be loaded", func() {
@@ -118,7 +136,7 @@ var _ = Describe("CreateSessionStateWatcher", func() {
 
 		err := factory.CreateSessionStateWatcher(
 			loader, &websocketmocks.WebsocketConnectionManager{},
-			factory.CreateSessionState(), tempDir(),
+			factory.CreateSessionState(), newFakeStore("seed"), pollInterval,
 		)(context.Background())
 		Expect(err).To(HaveOccurred())
 	})

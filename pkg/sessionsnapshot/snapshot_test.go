@@ -14,6 +14,7 @@ import (
 	"time"
 
 	libtime "github.com/bborbe/time"
+	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo/v2"
@@ -65,15 +66,17 @@ func (s *countingScanner) callCount() int {
 	return s.calls
 }
 
-// countingRegistry counts registry reads and returns a settable set.
+// countingRegistry counts live-id reads and returns a settable set. A set
+// unknown is "cannot tell": the store could not be reached.
 type countingRegistry struct {
-	ids   []string
-	calls int
+	ids     []string
+	unknown bool
+	calls   int
 }
 
-func (r *countingRegistry) Get(_ context.Context) []string {
+func (r *countingRegistry) Get(_ context.Context) ([]string, bool) {
 	r.calls++
-	return r.ids
+	return r.ids, !r.unknown
 }
 
 // countingProbe counts transcript probes and returns a settable mtime.
@@ -200,6 +203,25 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(snapshot.Generation()).To(Equal(uint64(1)))
 	})
 
+	It("keeps the last known ids and reports them unknown when the store cannot be reached", func() {
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.LiveIDsKnown()).To(BeTrue())
+
+		registry.unknown = true
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+
+		// "Cannot tell" is not "nothing is live": the ids survive so an
+		// already-live session never flips to Resume.
+		Expect(snapshot.RegistrySessionIDs(ctx)).To(Equal([]string{otherID}))
+		Expect(snapshot.LiveIDsKnown()).To(BeFalse())
+
+		registry.unknown = false
+		registry.ids = []string{otherID, liveSessionID}
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.LiveIDsKnown()).To(BeTrue())
+		Expect(snapshot.RegistrySessionIDs(ctx)).To(ConsistOf(otherID, liveSessionID))
+	})
+
 	It("returns non-nil, non-aliasing slices", func() {
 		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 
@@ -217,6 +239,7 @@ var _ = Describe("SessionSnapshot", func() {
 	It("returns empty slices, never nil, before the first refresh", func() {
 		Expect(snapshot.RegistrySessionIDs(ctx)).NotTo(BeNil())
 		Expect(snapshot.RegistrySessionIDs(ctx)).To(BeEmpty())
+		Expect(snapshot.LiveIDsKnown()).To(BeTrue(), "empty before the first read is not 'cannot tell'")
 		Expect(snapshot.ResumeSessionIDs(ctx)).NotTo(BeNil())
 		Expect(snapshot.ResumeSessionIDs(ctx)).To(BeEmpty())
 		Expect(snapshot.Generation()).To(Equal(uint64(0)))
@@ -488,10 +511,19 @@ func newSnapshotBoard(snapshot sessionsnapshot.Snapshot) board.Board {
 
 // staticIndex is a page-index revision source that never moves: this board is
 // built fresh per spec, so the store's first read always builds and no read
-// rebuilds behind the spec's back.
+// rebuilds behind the spec's back. It cannot bound a changed set and holds no
+// pages, so every read takes the full build.
 type staticIndex struct{}
 
 func (staticIndex) Revision(pageindex.Key) uint64 { return 0 }
+
+func (staticIndex) ChangedPagesSince(pageindex.Key, uint64) ([]string, bool) {
+	return nil, false
+}
+
+func (staticIndex) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+	return nil, nil
+}
 
 // classifyFirstTask lists the single fixture task and returns its rendered
 // session state.

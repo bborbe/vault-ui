@@ -13,10 +13,10 @@ it survives the Python backend's removal.
 
 | Outcome | Meaning | Signal behind it |
 |---|---|---|
-| `live` | A Claude session for this card is running right now; the wall must not offer Resume. | The harness session registry lists the session id, **or** the transcript was written within the five-minute window, **or** a live `--resume` / `--session-id` process pins the session id. |
-| `quiet` | The session ended and Resume is safe (vault-cli's per-session flock releases on process death). | A transcript exists and is older than the five-minute window, no registry entry, and no live `--resume` / `--session-id` process matches. |
-| `indeterminate` | A session id is set but no transcript can be found, so the session cannot be proven dead. Do not offer a Resume that cannot be honored. | A session id is set, but no transcript exists on this host (a manual terminal `/resume` in another cwd, a cloud/container session, or an entity-name session the resolver cannot match). |
-| none | The card carries no `claude_session_id`; a human task, nothing to classify. | An empty session id — regardless of what the session registry holds. |
+| `live` | A Claude session for this card is running right now; the wall must not offer Resume. | The attention store lists the session id live, **or** the transcript was written within the five-minute window, **or** a live `--resume` / `--session-id` process pins the session id. |
+| `quiet` | The session ended and Resume is safe (vault-cli's per-session flock releases on process death). | A transcript exists and is older than the five-minute window, the store does not list the session, no live `--resume` / `--session-id` process matches, **and** the store answered. |
+| `indeterminate` | A session id is set but the session cannot be proven dead, so a Resume that cannot be honored must not be offered. | No transcript exists on this host (a manual terminal `/resume` in another cwd, a cloud/container session, or an entity-name session the resolver cannot match) — **or** the attention store could not be reached. |
+| none | The card carries no `claude_session_id`; a human task, nothing to classify. | An empty session id — regardless of what the attention store holds. |
 
 ## Signal order (checked first to last)
 
@@ -24,15 +24,18 @@ Classification evaluates the three signals in a fixed order. The first that
 fires decides the outcome.
 
 1. **Empty session id → none.** Checked before anything else; an empty id is
-   `none` even when the registry contains entries.
-2. **Harness session registry → live.** The harness writes one `<pid>.json` per
-   live Claude Code session under `~/.claude/sessions`. Its presence is the
-   harness's own record that a session is alive — the signal transcript recency
-   cannot give, because an open-but-idle session stops writing its transcript
-   while its process stays up. The registry is authoritative and is checked
-   before the transcript lookup, so an alive-but-idle worker reads `live` rather
-   than `quiet`, and a registry-live session whose transcript is not on this
-   host reads `live` rather than `indeterminate`.
+   `none` even when the store lists sessions.
+2. **Attention store → live.** The store (the attention-controller's
+   `GET /api/1.0/session-heartbeat`, read through `pkg/heartbeat`) reports the
+   session ids that are live right now, and computes the liveness window itself.
+   It is the signal transcript recency cannot give, because an open-but-idle
+   session stops writing its transcript while its process stays up. The store is
+   authoritative and is checked before the transcript lookup, so an
+   alive-but-idle worker reads `live` rather than `quiet`, and a store-live
+   session whose transcript is not on this host reads `live` rather than
+   `indeterminate`. This is deliberately **not** the harness session registry
+   under `~/.claude/sessions`: that directory only sees sessions started on this
+   host, and the store is the single source every reader shares.
 3. **Transcript recency within the five-minute window → live.** The transcript
    (`<session_id>.jsonl`) is looked up in the card's project directory first,
    then by scanning every project directory under `~/.claude/projects`. A
@@ -45,18 +48,39 @@ fires decides the outcome.
    wrapper or a headless launch keeps its process alive while its transcript
    stops being written, so recency alone would wrongly read `quiet` and the wall
    would offer a corrupting Resume. When no process matches, the state is
-   `quiet`.
+   `quiet` — **unless the store could not be reached** (see below).
+
+## An unreachable store is "cannot tell", not "dead"
+
+A store that answers is authoritative in both directions: every id it lists
+`live` is live, and every id it does not list is not live, so a Resume is safe.
+A store that **cannot be reached** answers neither. It must never be read as
+"nothing is live", because a session that is live but idle — stale transcript,
+no `--resume` process — would then read `quiet` and the wall would offer a
+Resume it cannot honor.
+
+So the live-id read reports reachability alongside the ids, and an unreachable
+store makes signal #2 "cannot tell" instead of "no live sessions":
+
+- The last known ids are **kept**, not cleared, so a session already known live
+  never flips to Resume.
+- A session that would otherwise read `quiet` reads `indeterminate` instead.
+
+The two failure modes are distinct and are not conflated: a `404` from the
+single-session form means the session has **never posted**, which is an answer
+("not live"), whereas a transport failure is silence ("cannot tell").
 
 ## Cached inputs
 
 The classification inputs are now read from a process-wide, timer-refreshed
-session snapshot (`pkg/sessionsnapshot`), not from the request path. The registry
-ids and the live `--resume`/`--session-id` ids — the latter from one `ps` scan
-per refresh — and the transcript mtimes, probed at most once per session per
-refresh, are cached with a timestamp and refreshed on a fixed interval of at
-least 60 s (`SessionRefreshInterval`). A cached verdict never outlives its
-refresh window: once a later refresh has been published, the cached value is
-discarded and probed again.
+session snapshot (`pkg/sessionsnapshot`), not from the request path. The live
+session ids — read from the attention store through `pkg/sessionstate`, which
+polls it on the rescan interval — the live `--resume`/`--session-id` ids (the
+latter from one `ps` scan per refresh), and the transcript mtimes, probed at most
+once per session per refresh, are cached with a timestamp and refreshed on a
+fixed interval of at least 60 s (`SessionRefreshInterval`). A cached verdict
+never outlives its refresh window: once a later refresh has been published, the
+cached value is discarded and probed again.
 
 The `ps` cross-check stays signal #4 in the fixed order above, the four outcomes
 and the five-minute window are unchanged. Only the source of the two inputs

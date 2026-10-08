@@ -67,10 +67,14 @@ type OpsProvider interface {
 }
 
 // SessionSignals supplies the two per-request liveness signals that are not
-// derivable from the vault: the Claude session registry ids and the live
-// `--resume`/`--session-id` process ids.
+// derivable from the vault: the live session ids from the attention store and
+// the live `--resume`/`--session-id` process ids.
 type SessionSignals interface {
 	RegistrySessionIDs(ctx context.Context) []string
+	// LiveIDsKnown reports whether RegistrySessionIDs is authoritative. It is
+	// false when the attention store could not be reached, which the board
+	// passes to the classifier as "cannot tell" rather than "nothing is live".
+	LiveIDsKnown() bool
 	ResumeSessionIDs(ctx context.Context) []string
 }
 
@@ -94,7 +98,9 @@ type Deps struct {
 	// Sessions supplies the session-derived fields the board renders. A nil
 	// value means the board probes directly (tests only).
 	Sessions SessionProbe
-	// Index reports the page-index revision the task-list store rebuilds on.
+	// Index reports the page-index revision the task-list store rebuilds on, the
+	// pages that moved since a revision, and the key's current pages. It is the
+	// store's rebuild input and the row patch's page source.
 	// pageindex.PageIndex satisfies it.
 	Index IndexRevisions
 	// PageIndex serves a vault's task pages, which the board reads for the one
@@ -121,6 +127,7 @@ type board struct {
 	clock     libtime.CurrentDateTimeGetter
 	signals   SessionSignals
 	sessions  SessionProbe
+	index     IndexRevisions
 	pageIndex pageindex.PageIndex
 	homeDir   string
 	snapshot  *taskSnapshotStore
@@ -136,12 +143,14 @@ func New(deps Deps) Board {
 		clock:     deps.Clock,
 		signals:   deps.Signals,
 		sessions:  deps.Sessions,
+		index:     deps.Index,
 		pageIndex: deps.PageIndex,
 		homeDir:   deps.HomeDir,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,
 		Refresh:     b.refreshTaskRows,
+		Patch:       b.patchTaskRows,
 		Revisions:   deps.Index,
 		Generations: deps.Sessions,
 	})
