@@ -76,9 +76,9 @@ awk '/^## Incremental updates/{s=1; next} /^## /{s=0} s && /allocate/ {print; fo
 Must exit 0 (the word "allocate" appears inside the `## Incremental updates` section).
 
 ```
-awk '/^## (Unreleased|v)/{sec=$0} /page-index|stat-diff/ && /allocat/{found=1; print "allocation bullet under: " sec} END{exit !found}' CHANGELOG.md
+awk '/^## (Unreleased|v)/{sec=$0} /page-index|stat-diff/ && /allocat/ && sec != ""{found=1; print "allocation bullet under: " sec} END{exit !found}' CHANGELOG.md
 ```
-Must exit 0 (the implementation prompt's allocation bullet is present and sits under `## Unreleased`, not under a released `## vX.Y.Z`). Do not use `grep -A10 '^## Unreleased' CHANGELOG.md | grep -q '^- fix:'` — it passes on any other `fix:` bullet in the section when this one never landed, and prints nothing once a release has renamed the section. Do not use a bare `awk '/^## /{sec=$0} /allocat/{print sec}'` either: an `awk` that only prints exits 0 whether or not it printed anything, so that form passes whenever `## Unreleased` merely exists and cannot fail on the condition it asserts.
+Must exit 0 and print the section holding the bullet — `## Unreleased` or a released `## vX.Y.Z`; a released section is the better outcome, not a failure. Do not use `grep -A10 '^## Unreleased' CHANGELOG.md | grep -q '^- fix:'` — it passes on any other `fix:` bullet in the section when this one never landed, and prints nothing once a release has renamed the section. Do not use a bare `awk '/^## /{sec=$0} /allocat/{print sec}'` either: an `awk` that only prints exits 0 whether or not it printed anything, so that form passes whenever `## Unreleased` merely exists and cannot fail on the condition it asserts.
 
 ```
 export PATH=/usr/local/go/bin:$PATH
