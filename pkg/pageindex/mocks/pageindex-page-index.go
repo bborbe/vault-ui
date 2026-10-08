@@ -23,6 +23,17 @@ type PageIndex struct {
 	buildReturnsOnCall map[int]struct {
 		result1 error
 	}
+	ChangedPagesSinceStub        func(pageindex.Key, uint64) ([]string, bool)
+	changedPagesSinceMutex       sync.RWMutex
+	changedPagesSinceArgsForCall []PageIndexChangedPagesSinceArgs
+	changedPagesSinceReturns     struct {
+		result1 []string
+		result2 bool
+	}
+	changedPagesSinceReturnsOnCall map[int]struct {
+		result1 []string
+		result2 bool
+	}
 	ForceReloadStub        func()
 	forceReloadMutex       sync.RWMutex
 	forceReloadArgsForCall []struct{}
@@ -99,6 +110,12 @@ type PageIndex struct {
 type PageIndexBuildArgs struct {
 	Arg1 context.Context
 	Arg2 []pageindex.Key
+}
+
+// PageIndexChangedPagesSinceArgs holds the arguments of one call to ChangedPagesSince.
+type PageIndexChangedPagesSinceArgs struct {
+	Arg1 pageindex.Key
+	Arg2 uint64
 }
 
 // PageIndexListPagesArgs holds the arguments of one call to ListPages.
@@ -220,6 +237,76 @@ func (fake *PageIndex) BuildReturnsOnCall(i int, result1 error) {
 	fake.buildReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *PageIndex) ChangedPagesSince(arg1 pageindex.Key, arg2 uint64) ([]string, bool) {
+	fake.changedPagesSinceMutex.Lock()
+	ret, specificReturn := fake.changedPagesSinceReturnsOnCall[len(fake.changedPagesSinceArgsForCall)]
+	fake.changedPagesSinceArgsForCall = append(fake.changedPagesSinceArgsForCall, PageIndexChangedPagesSinceArgs{arg1, arg2})
+	stub := fake.ChangedPagesSinceStub
+	fakeReturns := fake.changedPagesSinceReturns
+	fake.recordInvocation("ChangedPagesSince", []interface{}{arg1, arg2})
+	fake.changedPagesSinceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *PageIndex) ChangedPagesSinceCallCount() int {
+	fake.changedPagesSinceMutex.RLock()
+	defer fake.changedPagesSinceMutex.RUnlock()
+	return len(fake.changedPagesSinceArgsForCall)
+}
+
+func (fake *PageIndex) ChangedPagesSinceCalls(stub func(pageindex.Key, uint64) ([]string, bool)) {
+	fake.changedPagesSinceMutex.Lock()
+	defer fake.changedPagesSinceMutex.Unlock()
+	fake.ChangedPagesSinceStub = stub
+}
+
+func (fake *PageIndex) ChangedPagesSinceArgsForCall(i int) (pageindex.Key, uint64) {
+	fake.changedPagesSinceMutex.RLock()
+	defer fake.changedPagesSinceMutex.RUnlock()
+	argsForCall := fake.changedPagesSinceArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2
+}
+
+func (fake *PageIndex) ChangedPagesSinceArgs() []PageIndexChangedPagesSinceArgs {
+	fake.changedPagesSinceMutex.RLock()
+	defer fake.changedPagesSinceMutex.RUnlock()
+	args := make([]PageIndexChangedPagesSinceArgs, len(fake.changedPagesSinceArgsForCall))
+	copy(args, fake.changedPagesSinceArgsForCall)
+	return args
+}
+
+func (fake *PageIndex) ChangedPagesSinceReturns(result1 []string, result2 bool) {
+	fake.changedPagesSinceMutex.Lock()
+	defer fake.changedPagesSinceMutex.Unlock()
+	fake.ChangedPagesSinceStub = nil
+	fake.changedPagesSinceReturns = struct {
+		result1 []string
+		result2 bool
+	}{result1, result2}
+}
+
+func (fake *PageIndex) ChangedPagesSinceReturnsOnCall(i int, result1 []string, result2 bool) {
+	fake.changedPagesSinceMutex.Lock()
+	defer fake.changedPagesSinceMutex.Unlock()
+	fake.ChangedPagesSinceStub = nil
+	if fake.changedPagesSinceReturnsOnCall == nil {
+		fake.changedPagesSinceReturnsOnCall = make(map[int]struct {
+			result1 []string
+			result2 bool
+		})
+	}
+	fake.changedPagesSinceReturnsOnCall[i] = struct {
+		result1 []string
+		result2 bool
+	}{result1, result2}
 }
 
 func (fake *PageIndex) ForceReload() {

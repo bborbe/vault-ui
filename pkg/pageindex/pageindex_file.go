@@ -88,6 +88,8 @@ func (p *pageIndex) applyFileReadLocked(
 	e.fileReadSeq[filename] = seq
 	e.snapshot = splicePage(e.snapshot, filename, page)
 	e.revision++
+	// One file was re-read, so the advance is attributable to exactly it.
+	e.recordChangeLocked([]string{filename}, true)
 	e.fingerprints[filename] = fingerprint
 	if readErr != nil {
 		switch {

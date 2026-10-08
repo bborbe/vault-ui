@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: `pageindex.PageIndex` gains `ChangedPagesSince(key, revision)`, which reports the pages a key's revision move can be attributed to — the names a publication re-read and the names it dropped — and answers `ok == false` for a folder-level mark, a forced reload, an unknown key, or a revision the key has since advanced past, so a caller that already holds a snapshot can bound which pages moved instead of assuming the whole folder did.
+
 ## v0.89.0
 
 - feat: Persist the board's parsed page index on local disk at a fixed user-cache path (`<user cache directory>/vault-ui/page-index.bolt`), so a restart loads it and re-checks each file's size and timestamps, re-parsing only the files that actually changed instead of every indexed file — the on-disk copy is a cache that is discarded on any mismatch (missing, empty, damaged, unreadable, or written under a different store format or vault-cli parser version) and never changes what the board serves; the store is opened with the process-wide index at startup, written through on each publication in one transaction off the read path, and adds no configuration surface.
