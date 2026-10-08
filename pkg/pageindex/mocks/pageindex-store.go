@@ -15,9 +15,8 @@ import (
 type Store struct {
 	CloseStub        func() error
 	closeMutex       sync.RWMutex
-	closeArgsForCall []struct {
-	}
-	closeReturns struct {
+	closeArgsForCall []struct{}
+	closeReturns     struct {
 		result1 error
 	}
 	closeReturnsOnCall map[int]struct {
@@ -25,11 +24,8 @@ type Store struct {
 	}
 	LoadStub        func(context.Context, pageindex.Key) ([]pageindex.StoredEntry, bool, error)
 	loadMutex       sync.RWMutex
-	loadArgsForCall []struct {
-		arg1 context.Context
-		arg2 pageindex.Key
-	}
-	loadReturns struct {
+	loadArgsForCall []StoreLoadArgs
+	loadReturns     struct {
 		result1 []pageindex.StoredEntry
 		result2 bool
 		result3 error
@@ -41,9 +37,8 @@ type Store struct {
 	}
 	PathStub        func() string
 	pathMutex       sync.RWMutex
-	pathArgsForCall []struct {
-	}
-	pathReturns struct {
+	pathArgsForCall []struct{}
+	pathReturns     struct {
 		result1 string
 	}
 	pathReturnsOnCall map[int]struct {
@@ -51,27 +46,36 @@ type Store struct {
 	}
 	WriteStub        func(context.Context, pageindex.Key, []pageindex.StoredEntry, []string) error
 	writeMutex       sync.RWMutex
-	writeArgsForCall []struct {
-		arg1 context.Context
-		arg2 pageindex.Key
-		arg3 []pageindex.StoredEntry
-		arg4 []string
-	}
-	writeReturns struct {
+	writeArgsForCall []StoreWriteArgs
+	writeReturns     struct {
 		result1 error
 	}
 	writeReturnsOnCall map[int]struct {
 		result1 error
 	}
 	invocations      map[string][][]interface{}
+	callOrder        []string
 	invocationsMutex sync.RWMutex
+}
+
+// StoreLoadArgs holds the arguments of one call to Load.
+type StoreLoadArgs struct {
+	Arg1 context.Context
+	Arg2 pageindex.Key
+}
+
+// StoreWriteArgs holds the arguments of one call to Write.
+type StoreWriteArgs struct {
+	Arg1 context.Context
+	Arg2 pageindex.Key
+	Arg3 []pageindex.StoredEntry
+	Arg4 []string
 }
 
 func (fake *Store) Close() error {
 	fake.closeMutex.Lock()
 	ret, specificReturn := fake.closeReturnsOnCall[len(fake.closeArgsForCall)]
-	fake.closeArgsForCall = append(fake.closeArgsForCall, struct {
-	}{})
+	fake.closeArgsForCall = append(fake.closeArgsForCall, struct{}{})
 	stub := fake.CloseStub
 	fakeReturns := fake.closeReturns
 	fake.recordInvocation("Close", []interface{}{})
@@ -123,10 +127,7 @@ func (fake *Store) CloseReturnsOnCall(i int, result1 error) {
 func (fake *Store) Load(arg1 context.Context, arg2 pageindex.Key) ([]pageindex.StoredEntry, bool, error) {
 	fake.loadMutex.Lock()
 	ret, specificReturn := fake.loadReturnsOnCall[len(fake.loadArgsForCall)]
-	fake.loadArgsForCall = append(fake.loadArgsForCall, struct {
-		arg1 context.Context
-		arg2 pageindex.Key
-	}{arg1, arg2})
+	fake.loadArgsForCall = append(fake.loadArgsForCall, StoreLoadArgs{arg1, arg2})
 	stub := fake.LoadStub
 	fakeReturns := fake.loadReturns
 	fake.recordInvocation("Load", []interface{}{arg1, arg2})
@@ -156,7 +157,15 @@ func (fake *Store) LoadArgsForCall(i int) (context.Context, pageindex.Key) {
 	fake.loadMutex.RLock()
 	defer fake.loadMutex.RUnlock()
 	argsForCall := fake.loadArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.Arg1, argsForCall.Arg2
+}
+
+func (fake *Store) LoadArgs() []StoreLoadArgs {
+	fake.loadMutex.RLock()
+	defer fake.loadMutex.RUnlock()
+	args := make([]StoreLoadArgs, len(fake.loadArgsForCall))
+	copy(args, fake.loadArgsForCall)
+	return args
 }
 
 func (fake *Store) LoadReturns(result1 []pageindex.StoredEntry, result2 bool, result3 error) {
@@ -191,8 +200,7 @@ func (fake *Store) LoadReturnsOnCall(i int, result1 []pageindex.StoredEntry, res
 func (fake *Store) Path() string {
 	fake.pathMutex.Lock()
 	ret, specificReturn := fake.pathReturnsOnCall[len(fake.pathArgsForCall)]
-	fake.pathArgsForCall = append(fake.pathArgsForCall, struct {
-	}{})
+	fake.pathArgsForCall = append(fake.pathArgsForCall, struct{}{})
 	stub := fake.PathStub
 	fakeReturns := fake.pathReturns
 	fake.recordInvocation("Path", []interface{}{})
@@ -254,12 +262,7 @@ func (fake *Store) Write(arg1 context.Context, arg2 pageindex.Key, arg3 []pagein
 	}
 	fake.writeMutex.Lock()
 	ret, specificReturn := fake.writeReturnsOnCall[len(fake.writeArgsForCall)]
-	fake.writeArgsForCall = append(fake.writeArgsForCall, struct {
-		arg1 context.Context
-		arg2 pageindex.Key
-		arg3 []pageindex.StoredEntry
-		arg4 []string
-	}{arg1, arg2, arg3Copy, arg4Copy})
+	fake.writeArgsForCall = append(fake.writeArgsForCall, StoreWriteArgs{arg1, arg2, arg3Copy, arg4Copy})
 	stub := fake.WriteStub
 	fakeReturns := fake.writeReturns
 	fake.recordInvocation("Write", []interface{}{arg1, arg2, arg3Copy, arg4Copy})
@@ -289,7 +292,15 @@ func (fake *Store) WriteArgsForCall(i int) (context.Context, pageindex.Key, []pa
 	fake.writeMutex.RLock()
 	defer fake.writeMutex.RUnlock()
 	argsForCall := fake.writeArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3, argsForCall.Arg4
+}
+
+func (fake *Store) WriteArgs() []StoreWriteArgs {
+	fake.writeMutex.RLock()
+	defer fake.writeMutex.RUnlock()
+	args := make([]StoreWriteArgs, len(fake.writeArgsForCall))
+	copy(args, fake.writeArgsForCall)
+	return args
 }
 
 func (fake *Store) WriteReturns(result1 error) {
@@ -325,9 +336,18 @@ func (fake *Store) Invocations() map[string][][]interface{} {
 	return copiedInvocations
 }
 
+func (fake *Store) CallOrder() []string {
+	fake.invocationsMutex.RLock()
+	defer fake.invocationsMutex.RUnlock()
+	order := make([]string, len(fake.callOrder))
+	copy(order, fake.callOrder)
+	return order
+}
+
 func (fake *Store) recordInvocation(key string, args []interface{}) {
 	fake.invocationsMutex.Lock()
 	defer fake.invocationsMutex.Unlock()
+	fake.callOrder = append(fake.callOrder, key)
 	if fake.invocations == nil {
 		fake.invocations = map[string][][]interface{}{}
 	}

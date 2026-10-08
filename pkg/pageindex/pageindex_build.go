@@ -395,11 +395,18 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 		return
 	}
 	pages, fingerprints := mergeSnapshot(e, reads)
-	b.delta = listingDelta(e, reads, fingerprints)
+	delta := listingDelta(e, reads, fingerprints)
+	b.delta = delta
 	e.fingerprints = fingerprints
 	if !e.hasSnapshot || !samePages(e.snapshot, pages) {
 		e.snapshot = pages
 		e.revision++
+		// A publication is attributable to a bounded set of single files only when
+		// it merged into an already-published snapshot. A key's first publication
+		// publishes the whole snapshot whatever the build's kind, so it stays
+		// unbounded: the hydrate path reaches here with full false but nothing
+		// published, which e.hasSnapshot still reports before it is set below.
+		e.recordChangeLocked(listingChangedNames(full, delta), !full && e.hasSnapshot)
 		b.pages = pages
 	} else {
 		b.pages = e.snapshot
@@ -437,6 +444,22 @@ func listingDelta(
 		}
 	}
 	return delta
+}
+
+// listingChangedNames returns the page names a listing's publication can be
+// attributed to: every name the listing re-read and every name it dropped. A
+// full listing — a cold build or a reload — re-reads the whole folder, so it
+// cannot be attributed to a bounded set and reports none; the caller records it
+// as unbounded instead.
+func listingChangedNames(full bool, delta *storeDelta) []string {
+	if full {
+		return nil
+	}
+	names := make([]string, 0, len(delta.puts)+len(delta.deletes))
+	for _, put := range delta.puts {
+		names = append(names, put.Filename)
+	}
+	return append(names, delta.deletes...)
 }
 
 // release clears the finished build and promotes the key's follow-up, so no

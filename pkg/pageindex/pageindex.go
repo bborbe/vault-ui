@@ -98,6 +98,19 @@ type PageIndex interface {
 	// snapshot is published or marked stale. A derived snapshot reads it to
 	// detect that its page input changed. An unknown key reports 0.
 	Revision(key Key) uint64
+	// ChangedPagesSince returns the names of the pages whose parsed form changed
+	// in key's publications and marks after revision. Each name is a base
+	// filename WITH its ".md" suffix, matching the page index's write-mark and
+	// snapshot naming.
+	//
+	// ok is false when the key cannot bound the set. That is any of: an unknown
+	// key; a revision ahead of the key's current one, which the key has never
+	// reached; a revision so far behind that the retained change window no longer
+	// covers it; a folder-level mark; a forced reload; or the key's first
+	// publication, which publishes the whole snapshot whatever the build's kind.
+	// A revision the key has advanced past while the advance is still retained is
+	// the normal bounded case.
+	ChangedPagesSince(key Key, revision uint64) (names []string, ok bool)
 	// Rescan refreshes every known key once per RescanInterval until ctx is done.
 	Rescan(ctx context.Context) error
 }
@@ -221,9 +234,45 @@ type entry struct {
 	// at folder or file level, a forced reload, or a published snapshot. A
 	// derived snapshot polls it to detect that its page input changed.
 	revision uint64
+	// changeLog records the last maxChangeLog revision advances with the pages
+	// each can be attributed to, so a derived snapshot can bound which of its
+	// rows moved instead of rebuilding all of them. Older entries are dropped:
+	// a revision below the retained window can no longer be placed, which
+	// ChangedPagesSince reports as unknown rather than guessing.
+	changeLog []pageChange
 
 	inflight *build
 	followUp *build
+}
+
+// maxChangeLog bounds one key's change log. It is far above the number of
+// advances a derived snapshot can fall behind by in one read.
+const maxChangeLog = 64
+
+// pageChange is one revision advance and the pages it changed. bounded is false
+// when the advance cannot be attributed to a bounded set of single files — a
+// folder-level mark or a forced reload — so no reader may treat it as a row
+// patch.
+type pageChange struct {
+	revision uint64
+	names    []string
+	bounded  bool
+}
+
+// recordChangeLocked appends one revision advance to the key's change log. The
+// caller must hold the mutex and must already have advanced revision, so the
+// entry's revision is the value the advance produced.
+func (e *entry) recordChangeLocked(names []string, bounded bool) {
+	e.changeLog = append(e.changeLog, pageChange{
+		revision: e.revision,
+		names:    names,
+		bounded:  bounded,
+	})
+	if len(e.changeLog) > maxChangeLog {
+		trimmed := make([]pageChange, maxChangeLog)
+		copy(trimmed, e.changeLog[len(e.changeLog)-maxChangeLog:])
+		e.changeLog = trimmed
+	}
 }
 
 type pageIndex struct {
@@ -376,6 +425,9 @@ func (p *pageIndex) MarkDirty(keys ...Key) {
 			e.requestSeq++
 			e.dirtySeq = e.requestSeq
 			e.revision++
+			// A folder-level mark names no file, so the change cannot be bounded
+			// to a set of single pages.
+			e.recordChangeLocked(nil, false)
 		}
 	}
 }
@@ -416,6 +468,7 @@ func (p *pageIndex) MarkFileDirty(key Key, name string) {
 	e.requestSeq++
 	e.writeMarked[filename] = e.requestSeq
 	e.revision++
+	e.recordChangeLocked([]string{filename}, true)
 }
 
 // ForceReload marks every known key so the next read of each re-reads every
@@ -427,6 +480,8 @@ func (p *pageIndex) ForceReload() {
 		e.requestSeq++
 		e.reloadSeq = e.requestSeq
 		e.revision++
+		// A forced reload re-reads every file, so its change is unbounded.
+		e.recordChangeLocked(nil, false)
 	}
 }
 
@@ -441,6 +496,59 @@ func (p *pageIndex) Revision(key Key) uint64 {
 		return 0
 	}
 	return e.revision
+}
+
+// ChangedPagesSince returns the names of the pages whose parsed form changed in
+// the key's publications and marks after revision. Each name is a base filename
+// WITH its ".md" suffix, matching the page index's write-mark and snapshot
+// naming. ok is false when the key cannot bound the set: an unknown key, a
+// revision ahead of the key's current one, a revision the retained change window
+// no longer covers, a folder-level mark, a forced reload, or the key's first
+// publication — which publishes the whole snapshot whatever the build's kind,
+// including a hydrate whose stored baseline carries pages the delta never names.
+//
+// A caller uses it to re-derive only the rows whose files moved, so a per-file
+// write mark costs a bounded set of row derivations instead of a vault-wide
+// rebuild. The returned slice is a fresh copy; the caller may keep or mutate it.
+func (p *pageIndex) ChangedPagesSince(key Key, revision uint64) ([]string, bool) {
+	key = NewKey(key.VaultPath, key.PagesDir)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.entries[key]
+	if !ok {
+		return nil, false
+	}
+	if revision > e.revision {
+		// The caller holds a revision the key has never reached: it cannot be
+		// placed against this key's history.
+		return nil, false
+	}
+	if revision == e.revision {
+		return nil, true
+	}
+	if len(e.changeLog) == 0 || e.changeLog[0].revision > revision+1 {
+		// The advances between revision and the current one are not all
+		// retained, so the set cannot be bounded.
+		return nil, false
+	}
+	names := make([]string, 0, len(e.changeLog))
+	seen := make(map[string]bool, len(e.changeLog))
+	for _, change := range e.changeLog {
+		if change.revision <= revision {
+			continue
+		}
+		if !change.bounded {
+			return nil, false
+		}
+		for _, name := range change.names {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names, true
 }
 
 // Rescan refreshes every known key once per RescanInterval until ctx is done.
