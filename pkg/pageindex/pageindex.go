@@ -101,9 +101,15 @@ type PageIndex interface {
 	// ChangedPagesSince returns the names of the pages whose parsed form changed
 	// in key's publications and marks after revision. Each name is a base
 	// filename WITH its ".md" suffix, matching the page index's write-mark and
-	// snapshot naming. ok is false when the key cannot bound the set — a
-	// folder-level mark, a forced reload, an unknown key, or a revision the key
-	// has since advanced past.
+	// snapshot naming.
+	//
+	// ok is false when the key cannot bound the set. That is any of: an unknown
+	// key; a revision ahead of the key's current one, which the key has never
+	// reached; a revision so far behind that the retained change window no longer
+	// covers it; a folder-level mark; a forced reload; or the key's first
+	// publication, which publishes the whole snapshot whatever the build's kind.
+	// A revision the key has advanced past while the advance is still retained is
+	// the normal bounded case.
 	ChangedPagesSince(key Key, revision uint64) (names []string, ok bool)
 	// Rescan refreshes every known key once per RescanInterval until ctx is done.
 	Rescan(ctx context.Context) error
@@ -495,8 +501,11 @@ func (p *pageIndex) Revision(key Key) uint64 {
 // ChangedPagesSince returns the names of the pages whose parsed form changed in
 // the key's publications and marks after revision. Each name is a base filename
 // WITH its ".md" suffix, matching the page index's write-mark and snapshot
-// naming. ok is false when the key cannot bound the set — a folder-level mark, a
-// forced reload, an unknown key, or a revision the key has since advanced past.
+// naming. ok is false when the key cannot bound the set: an unknown key, a
+// revision ahead of the key's current one, a revision the retained change window
+// no longer covers, a folder-level mark, a forced reload, or the key's first
+// publication — which publishes the whole snapshot whatever the build's kind,
+// including a hydrate whose stored baseline carries pages the delta never names.
 //
 // A caller uses it to re-derive only the rows whose files moved, so a per-file
 // write mark costs a bounded set of row derivations instead of a vault-wide

@@ -401,7 +401,12 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	if !e.hasSnapshot || !samePages(e.snapshot, pages) {
 		e.snapshot = pages
 		e.revision++
-		e.recordChangeLocked(listingChangedNames(full, delta), !full)
+		// A publication is attributable to a bounded set of single files only when
+		// it merged into an already-published snapshot. A key's first publication
+		// publishes the whole snapshot whatever the build's kind, so it stays
+		// unbounded: the hydrate path reaches here with full false but nothing
+		// published, which e.hasSnapshot still reports before it is set below.
+		e.recordChangeLocked(listingChangedNames(full, delta), !full && e.hasSnapshot)
 		b.pages = pages
 	} else {
 		b.pages = e.snapshot
