@@ -1,6 +1,13 @@
 ---
-status: draft
+status: completed
+summary: Served GET /api/assignees from the precomputed task-list snapshot instead of a per-request vault walk, returning identical JSON, with tests for warm reads, shared builds, write visibility and the unassigned flag.
+execution_id: vault-ui-exec-147-serve-assignees-from-task-snapshot
+dark-factory-version: v0.196.0
 created: "2026-10-08T12:37:15Z"
+queued: "2026-10-08T13:17:10Z"
+started: "2026-10-08T13:17:13Z"
+completed: "2026-10-08T13:21:00Z"
+branch: dark-factory/147-serve-assignees-from-task-snapshot
 ---
 
 # Serve `/api/assignees` from the precomputed task-list snapshot

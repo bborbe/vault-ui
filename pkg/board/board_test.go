@@ -853,6 +853,75 @@ var _ = Describe("ListAssignees", func() {
 		Expect(response.Named).To(Equal([]string{"Alice", "bob"}))
 		Expect(response.HasUnassigned).To(BeTrue())
 	})
+
+	It("serves a warm assignees read without a second vault list walk", func() {
+		h := newHarness(item("A", func(i *ops.TaskListItem) { i.Assignee = "alice" }))
+
+		first, err := h.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first.Named).To(Equal([]string{"alice"}))
+		// The first request pays for exactly one build, and that build is the
+		// only vault-cli list walk.
+		Expect(h.counter.get()).To(Equal(1))
+
+		second, err := h.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second).To(Equal(first))
+		// The warm read adds no list walk.
+		Expect(h.counter.get()).To(Equal(1))
+	})
+
+	It("shares one row build between ListTasks and ListAssignees", func() {
+		// Whichever endpoint is asked first pays for the build; the other reuses
+		// the published snapshot. Asserted on the counter in both orders.
+		tasksFirst := newHarness(item("A", func(i *ops.TaskListItem) { i.Assignee = "alice" }))
+		_, err := tasksFirst.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tasksFirst.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tasksFirst.counter.get()).To(Equal(1))
+
+		assigneesFirst := newHarness(item("A", func(i *ops.TaskListItem) { i.Assignee = "alice" }))
+		_, err = assigneesFirst.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = assigneesFirst.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(assigneesFirst.counter.get()).To(Equal(1))
+	})
+
+	It("sees a write through the next assignees read once the revision moves", func() {
+		h := newHarness(item("Before", func(i *ops.TaskListItem) { i.Assignee = "alice" }))
+		first, err := h.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first.Named).To(Equal([]string{"alice"}))
+		Expect(h.counter.get()).To(Equal(1))
+
+		// A write's MarkFileDirty advances the revision the store rebuilds on.
+		h.list.items["24 Tasks"] = []ops.TaskListItem{
+			item("After", func(i *ops.TaskListItem) { i.Assignee = "bob" }),
+		}
+		h.index.bump()
+
+		second, err := h.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second.Named).To(Equal([]string{"bob"}))
+		Expect(h.counter.get()).To(Equal(2))
+	})
+
+	It("derives the unassigned flag from the rows in both directions", func() {
+		assigned := newHarness(item("A", func(i *ops.TaskListItem) { i.Assignee = "alice" }))
+		response, err := assigned.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.HasUnassigned).To(BeFalse())
+
+		unassigned := newHarness(
+			item("A", func(i *ops.TaskListItem) { i.Assignee = "alice" }),
+			item("B"),
+		)
+		response, err = unassigned.board.ListAssignees(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.HasUnassigned).To(BeTrue())
+	})
 })
 
 var _ = Describe("ListTasks open_questions", func() {
