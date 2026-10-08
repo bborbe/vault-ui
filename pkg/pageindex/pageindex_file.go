@@ -55,8 +55,10 @@ func (p *pageIndex) RefreshFile(ctx context.Context, key Key, filename string) e
 	recordRead(reasonEvent)
 
 	p.mu.Lock()
-	p.applyFileReadLocked(e, key, filename, seq, page, fingerprint, readErr)
+	delta := p.applyFileReadLocked(e, key, filename, seq, page, fingerprint, readErr)
 	p.mu.Unlock()
+
+	p.writeThrough(readCtx, key, delta)
 
 	if err := ctx.Err(); err != nil {
 		return errors.Wrap(ctx, err, "refresh file")
@@ -64,9 +66,11 @@ func (p *pageIndex) RefreshFile(ctx context.Context, key Key, filename string) e
 	return nil
 }
 
-// applyFileReadLocked applies one single-file read to the current snapshot. A
-// read that started before one already applied is discarded. The caller must
-// hold the mutex.
+// applyFileReadLocked applies one single-file read to the current snapshot and
+// returns the store delta the read produced, or nil when a later-started read
+// has already been applied. A file that is gone is a delete; a file that is
+// present, even one excluded from the snapshot, is a put carrying its
+// fingerprint. The caller must hold the mutex.
 func (p *pageIndex) applyFileReadLocked(
 	e *entry,
 	key Key,
@@ -75,37 +79,44 @@ func (p *pageIndex) applyFileReadLocked(
 	page *domain.Page,
 	fingerprint FileFingerprint,
 	readErr error,
-) {
+) *storeDelta {
 	if seq < e.fileReadSeq[filename] {
 		// A read that started later has already been applied.
-		return
+		return nil
 	}
 	previous, known := e.fingerprints[filename]
 	e.fileReadSeq[filename] = seq
 	e.snapshot = splicePage(e.snapshot, filename, page)
 	e.revision++
 	e.fingerprints[filename] = fingerprint
-	if readErr == nil {
-		return
+	if readErr != nil {
+		switch {
+		case fingerprint == (FileFingerprint{}):
+			// The stat itself failed: a plain deletion, not a broken page.
+			glog.V(2).Infof(
+				"page file gone %q in %q/%q: %v",
+				filename,
+				key.VaultPath,
+				key.PagesDir,
+				readErr,
+			)
+		case !known || previous != fingerprint:
+			p.warnf(
+				"unreadable page excluded %q in %q/%q: %v",
+				filename,
+				key.VaultPath,
+				key.PagesDir,
+				readErr,
+			)
+		}
 	}
-	switch {
-	case fingerprint == (FileFingerprint{}):
-		// The stat itself failed: a plain deletion, not a broken page.
-		glog.V(2).Infof(
-			"page file gone %q in %q/%q: %v",
-			filename,
-			key.VaultPath,
-			key.PagesDir,
-			readErr,
-		)
-	case !known || previous != fingerprint:
-		p.warnf(
-			"unreadable page excluded %q in %q/%q: %v",
-			filename,
-			key.VaultPath,
-			key.PagesDir,
-			readErr,
-		)
+
+	// A vanished file is a delete, a present file a put.
+	if fingerprint == (FileFingerprint{}) {
+		return &storeDelta{deletes: []string{filename}}
+	}
+	return &storeDelta{
+		puts: []StoredEntry{{Filename: filename, Page: page, Fingerprint: fingerprint}},
 	}
 }
 

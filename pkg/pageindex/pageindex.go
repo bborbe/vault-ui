@@ -123,6 +123,14 @@ const (
 	buildHydrate
 )
 
+// storeDelta is one publication's store change: the entries it re-read and the
+// names it dropped. It is computed under the index mutex and written after the
+// build is released, so no reader waits on store I/O.
+type storeDelta struct {
+	puts    []StoredEntry
+	deletes []string
+}
+
 // build is one resolution of one key. It is created under the index mutex and
 // its result fields are written under that mutex before done is closed.
 type build struct {
@@ -137,6 +145,10 @@ type build struct {
 	done     chan struct{}
 	pages    []*domain.Page
 	err      error
+	// delta is the store change this build's publication produced, or nil when
+	// there is nothing to persist. It is written under the mutex before done is
+	// closed and read only by the goroutine that ran the build.
+	delta *storeDelta
 }
 
 func newBuild(kind buildKind, reason string, startSeq uint64) *build {
