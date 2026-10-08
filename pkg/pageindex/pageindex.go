@@ -117,6 +117,10 @@ const (
 	// buildReload lists the folder and re-reads every file, ignoring
 	// fingerprints.
 	buildReload
+	// buildHydrate loads the key's stored entries, seeds them as the stat-diff
+	// baseline and lists the folder. It is used only for a key with no published
+	// snapshot whose store has not been consulted yet.
+	buildHydrate
 )
 
 // build is one resolution of one key. It is created under the index mutex and
@@ -154,6 +158,8 @@ func (b *build) covers(kind buildKind, needSeq uint64) bool {
 	switch b.kind {
 	case buildCold, buildReload:
 		return true
+	case buildHydrate:
+		return kind == buildCold || kind == buildStatDiff || kind == buildHydrate
 	case buildFileReads:
 		return kind == buildFileReads
 	case buildStatDiff:
@@ -167,6 +173,14 @@ type entry struct {
 	snapshot     []*domain.Page
 	hasSnapshot  bool
 	fingerprints map[string]FileFingerprint
+
+	// storeLoaded records that this key has consulted the store, so the store
+	// is never re-read on a later start of the same process.
+	storeLoaded bool
+	// storedBaseline records that snapshot and fingerprints hold entries seeded
+	// from the store that have not yet been stat-diffed and must never be served
+	// as they are.
+	storedBaseline bool
 
 	// fileReadSeq holds, per base filename, the read sequence of the read whose
 	// result is currently applied — the page present or removed. A name whose
@@ -210,17 +224,22 @@ type pageIndex struct {
 	lister                DirectoryLister
 	currentDateTimeGetter libtime.CurrentDateTimeGetter
 	waiter                libtime.WaiterDuration
+	// store hydrates each key from the on-disk cache before its first stat-diff.
+	// It is written once at construction and read under the mutex.
+	store Store
 	// warnf emits the per-file exclusion warnings. It is a field so a test can
 	// capture them per index instance.
 	warnf func(format string, args ...any)
 }
 
-// NewPageIndex creates an empty page index over the given reader and lister.
-func NewPageIndex(
+// NewPageIndexWithStore creates an empty page index over the given reader and
+// lister that hydrates each key from store before its first stat-diff.
+func NewPageIndexWithStore(
 	reader PageReader,
 	lister DirectoryLister,
 	currentDateTimeGetter libtime.CurrentDateTimeGetter,
 	waiter libtime.WaiterDuration,
+	store Store,
 ) PageIndex {
 	return &pageIndex{
 		entries:               map[Key]*entry{},
@@ -228,8 +247,19 @@ func NewPageIndex(
 		lister:                lister,
 		currentDateTimeGetter: currentDateTimeGetter,
 		waiter:                waiter,
+		store:                 store,
 		warnf:                 glog.Warningf,
 	}
+}
+
+// NewPageIndex creates an empty page index with no store.
+func NewPageIndex(
+	reader PageReader,
+	lister DirectoryLister,
+	currentDateTimeGetter libtime.CurrentDateTimeGetter,
+	waiter libtime.WaiterDuration,
+) PageIndex {
+	return NewPageIndexWithStore(reader, lister, currentDateTimeGetter, waiter, nil)
 }
 
 // ListPages returns the pages of the key's folder from the in-memory snapshot.

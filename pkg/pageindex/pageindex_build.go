@@ -94,6 +94,9 @@ func (p *pageIndex) ensure(
 // hold the mutex.
 func (p *pageIndex) pendingLocked(e *entry, refresh bool) (buildKind, uint64, bool) {
 	if !e.hasSnapshot {
+		if p.store != nil && !e.storeLoaded {
+			return buildHydrate, e.requestSeq, true
+		}
 		return buildCold, e.requestSeq, true
 	}
 	if refresh {
@@ -201,10 +204,54 @@ func (p *pageIndex) execute(ctx context.Context, key Key, b *build) {
 	switch b.kind {
 	case buildFileReads:
 		p.executeFileReads(readCtx, key, b)
+	case buildHydrate:
+		p.executeHydrate(readCtx, key, b)
 	default:
 		p.executeListing(readCtx, key, b)
 	}
 	p.release(key, b)
+}
+
+// executeHydrate loads the key's stored entries, seeds them as the stat-diff
+// baseline and runs one listing over them. The store read runs outside the
+// index mutex. A store that cannot supply entries leaves the key on the
+// full-parse path. A failed listing clears the seeded baseline so a stored
+// snapshot is never served without its stat-diff.
+func (p *pageIndex) executeHydrate(ctx context.Context, key Key, b *build) {
+	entries, ok, err := p.store.Load(ctx, key)
+	if err != nil {
+		// A store that cannot supply entries leaves the key on the full-parse
+		// path: a store failure never stops the index from starting or serving.
+		ok = false
+	}
+
+	p.mu.Lock()
+	e := p.entryLocked(key)
+	if ok {
+		seedStoredBaseline(e, entries)
+	}
+	e.storeLoaded = true
+	p.mu.Unlock()
+
+	p.executeListing(ctx, key, b)
+}
+
+// seedStoredBaseline fills the entry's snapshot and fingerprints from the stored
+// entries, in the store's key order (byte-ascending file names, which equals
+// os.ReadDir order). The caller must hold the mutex. hasSnapshot stays false:
+// the baseline is an input to the stat-diff, never a published value.
+func seedStoredBaseline(e *entry, entries []StoredEntry) {
+	pages := make([]*domain.Page, 0, len(entries))
+	fingerprints := make(map[string]FileFingerprint, len(entries))
+	for _, entry := range entries {
+		fingerprints[entry.Filename] = entry.Fingerprint
+		if entry.Page != nil {
+			pages = append(pages, entry.Page)
+		}
+	}
+	e.snapshot = pages
+	e.fingerprints = fingerprints
+	e.storedBaseline = true
 }
 
 // executeFileReads re-reads exactly the write-marked files. The marks are taken
@@ -247,9 +294,9 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	e := p.entryLocked(key)
 	startSeq := e.requestSeq
 	b.startSeq = startSeq
-	hadSnapshot := e.hasSnapshot
+	baseline := e.hasSnapshot || e.storedBaseline
 	full := b.kind == buildCold || b.kind == buildReload
-	if !hadSnapshot {
+	if !baseline {
 		full = true
 	}
 	var forced map[string]bool
@@ -274,7 +321,7 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 
 	reason := b.reason
 	switch {
-	case !hadSnapshot, b.kind == buildCold:
+	case !baseline, b.kind == buildCold, b.kind == buildHydrate:
 		reason = reasonBuild
 	case b.kind == buildReload:
 		reason = reasonReload
@@ -293,6 +340,13 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 			key.PagesDir,
 			err,
 		)
+		if e.storedBaseline {
+			// The stored baseline was never stat-diffed; never serve it.
+			e.snapshot = nil
+			e.fingerprints = nil
+			e.storedBaseline = false
+			e.hasSnapshot = false
+		}
 		return
 	}
 	pages, fingerprints := mergeSnapshot(e, reads)
@@ -305,6 +359,7 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 		b.pages = e.snapshot
 	}
 	e.hasSnapshot = true
+	e.storedBaseline = false
 	e.dirtyResolvedSeq = startSeq
 	if full {
 		e.reloadResolvedSeq = startSeq
