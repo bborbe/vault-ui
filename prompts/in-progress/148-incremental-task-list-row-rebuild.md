@@ -1,5 +1,7 @@
 ---
-status: draft
+status: approved
+created: "2026-10-08T14:44:26Z"
+queued: "2026-10-08T14:44:26Z"
 ---
 
 # Rebuild only the marked rows on a single-file write
