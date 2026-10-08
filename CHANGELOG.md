@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.91.0
 
 - fix: Recompute the cross-row `blockers`/`blocked` of every task row whose `BlockedBy` names a page a row patch re-derived, and recompute the session-started marker for the changed row, so completing a blocking task clears its dependents' badges on the next `GET /api/tasks` and a cleared marker stops being republished — the patch re-derived only the changed page's own row, but `blockers`/`blocked` are derived from the status cache across rows and the marker from the launch registry and the status cache, so a per-file write mark left dependents showing as blocked and a `ClearTaskSession` marker live until the next session refresh; the added walk reads only the `BlockedBy` lists the held rows already carry and re-runs the same in-memory cache lookups, so the patch still performs no vault list, no page scan and no process spawn.
 
