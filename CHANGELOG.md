@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.88.0
 
 - feat: Serve `GET /api/assignees` from the precomputed task-list snapshot that `GET /api/tasks` already reads, so an assignees request no longer walks the vault per selected vault — it projects the distinct assignee names and the unassigned flag from the rows the task-list store has already published, so whichever endpoint is asked first pays for the build and the other reuses it, a write or watcher event that makes `/api/tasks` rebuild makes `/api/assignees` see the new rows too, and a slow vault read is bounded by the store's existing `snapshotBuildTimeout`; the response JSON is unchanged, and a failed rebuild with a snapshot already published now serves the previous rows with a 200 instead of the vault walk's 500, inheriting `/api/tasks`'s stale-on-error contract.
 
