@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-08T07:21:29Z"
 generating: "2026-10-08T08:53:55Z"
 prompted: "2026-10-08T09:21:42Z"
+verifying: "2026-10-08T17:39:27Z"
 branch: dark-factory/rescan-allocates-only-what-changed
 ---
 
