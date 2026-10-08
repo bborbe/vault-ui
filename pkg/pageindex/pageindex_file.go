@@ -90,7 +90,15 @@ func (p *pageIndex) applyFileReadLocked(
 	e.revision++
 	// One file was re-read, so the advance is attributable to exactly it.
 	e.recordChangeLocked([]string{filename}, true)
-	e.fingerprints[filename] = fingerprint
+	if page == nil && fingerprint == (FileFingerprint{}) {
+		// A vanished file leaves no recorded fingerprint behind, so the recorded
+		// name set stays equal to a later listing's and the unchanged fast path
+		// is not blocked by a zero-fingerprint tombstone. An excluded-but-present
+		// file keeps its non-zero fingerprint.
+		delete(e.fingerprints, filename)
+	} else {
+		e.fingerprints[filename] = fingerprint
+	}
 	if readErr != nil {
 		switch {
 		case fingerprint == (FileFingerprint{}):

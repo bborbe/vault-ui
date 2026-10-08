@@ -6,6 +6,7 @@ package pageindex
 
 import (
 	"context"
+	"sort"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/domain"
@@ -334,6 +335,14 @@ func mergeStoreDeltas(a, b *storeDelta) *storeDelta {
 
 // executeListing lists the key's folder and reads the files the build's kind
 // asks for, then merges the result into the published snapshot.
+//
+// A pass whose listing matches the recorded fingerprints, whose name set
+// matches the recorded name set and that has no file to re-read is an
+// unchanged pass: it publishes nothing, leaves the published snapshot and the
+// recorded fingerprints exactly in place, and allocates nothing beyond the one
+// listing it performs. A pass with work to do re-reads exactly the changed,
+// new and forced names and updates the recorded fingerprints for those names
+// in place.
 func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	p.mu.Lock()
 	e := p.entryLocked(key)
@@ -371,33 +380,59 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	case b.kind == buildReload:
 		reason = reasonReload
 	}
-	reads, err := p.collect(ctx, key, full, forced, reason)
+
+	listingSeq := p.takeReadSeq()
+	entries, listErr := p.lister.ListFiles(ctx, key.VaultPath, key.PagesDir)
+	if listErr != nil {
+		p.failListing(key, b, listErr)
+		return
+	}
+
+	var toRead map[string]bool
+	if !full {
+		p.mu.Lock()
+		e = p.entryLocked(key)
+		for _, fe := range entries {
+			recorded, ok := e.fingerprints[fe.Name]
+			if forced[fe.Name] || !ok || recorded != fe.Fingerprint {
+				if toRead == nil {
+					toRead = make(map[string]bool)
+				}
+				toRead[fe.Name] = true
+			}
+		}
+		// An unchanged pass requires a published snapshot to keep serving: a
+		// hydrated baseline has recorded fingerprints but nothing published, so
+		// the fast path would publish nothing and leave the key serving nothing.
+		// The name set is equal exactly when the lengths match and every listed
+		// entry is present and equal, and the missing/empty state did not flip.
+		unchanged := len(forced) == 0 &&
+			len(toRead) == 0 &&
+			e.hasSnapshot &&
+			len(entries) == len(e.fingerprints) &&
+			(entries == nil) == (e.snapshot == nil)
+		if unchanged {
+			b.pages = e.snapshot
+			e.dirtyResolvedSeq = startSeq
+			p.mu.Unlock()
+			return
+		}
+		p.mu.Unlock()
+	}
+
+	reads, collectErr := p.collect(ctx, key, listingSeq, entries, full, toRead, reason)
+	if collectErr != nil {
+		p.failListing(key, b, collectErr)
+		return
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	b.pages = nil
-	b.err = err
 	e = p.entryLocked(key)
-	if err != nil {
-		glog.Errorf(
-			"page index rebuild failed for vault %q pages dir %q: %v",
-			key.VaultPath,
-			key.PagesDir,
-			err,
-		)
-		if e.storedBaseline {
-			// The stored baseline was never stat-diffed; never serve it.
-			e.snapshot = nil
-			e.fingerprints = nil
-			e.storedBaseline = false
-			e.hasSnapshot = false
-		}
-		return
-	}
-	pages, fingerprints := mergeSnapshot(e, reads)
-	delta := listingDelta(e, reads, fingerprints)
+	pages, dropped := mergeSnapshot(e, entries, reads)
+	delta := listingDelta(reads, dropped)
 	b.delta = delta
-	e.fingerprints = fingerprints
 	if !e.hasSnapshot || !samePages(e.snapshot, pages) {
 		e.snapshot = pages
 		e.revision++
@@ -419,17 +454,36 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	}
 }
 
+// failListing records a listing or collection failure: nothing is published,
+// the error is logged with the key, a stored baseline that was never
+// stat-diffed is dropped, and the mark stays pending so the next read retries.
+func (p *pageIndex) failListing(key Key, b *build, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	b.pages = nil
+	b.err = err
+	e := p.entryLocked(key)
+	glog.Errorf(
+		"page index rebuild failed for vault %q pages dir %q: %v",
+		key.VaultPath,
+		key.PagesDir,
+		err,
+	)
+	if e.storedBaseline {
+		// The stored baseline was never stat-diffed; never serve it.
+		e.snapshot = nil
+		e.fingerprints = nil
+		e.storedBaseline = false
+		e.hasSnapshot = false
+	}
+}
+
 // listingDelta returns the store change one listing produced: a put for every
 // entry it re-read (including an excluded entry, stored as fingerprint plus a
 // nil page) and a delete for every name the entry held before the merge that
-// the merged map no longer holds. A name carried forward by the merge stays in
-// the merged map and is therefore not a delete. The caller must hold the mutex
-// and must pass the merged fingerprints returned by mergeSnapshot.
-func listingDelta(
-	e *entry,
-	reads *snapshotReads,
-	fingerprints map[string]FileFingerprint,
-) *storeDelta {
+// the merged set no longer holds. dropped is exactly those names, captured by
+// mergeSnapshot before its in-place update removed them.
+func listingDelta(reads *snapshotReads, dropped []string) *storeDelta {
 	delta := &storeDelta{}
 	for name, read := range reads.reads {
 		delta.puts = append(delta.puts, StoredEntry{
@@ -438,11 +492,7 @@ func listingDelta(
 			Fingerprint: read.fingerprint,
 		})
 	}
-	for name, previous := range e.fingerprints {
-		if _, ok := fingerprints[name]; !ok && previous != (FileFingerprint{}) {
-			delta.deletes = append(delta.deletes, name)
-		}
-	}
+	delta.deletes = append(delta.deletes, dropped...)
 	return delta
 }
 
@@ -500,55 +550,43 @@ type fileRead struct {
 }
 
 // snapshotReads is one listing's collected reads: the sequence the listing
-// itself started at, the listing's base filenames in order and each re-read
-// file's result.
+// itself started at, the K-sized map of each re-read file's result and whether
+// the folder was missing. It holds no per-name order slice: the listing's
+// []FileEntry supplies the order.
 type snapshotReads struct {
 	listingSeq uint64
-	order      []string
 	reads      map[string]fileRead
 	// missing reports that the folder does not exist, which lists as nil.
 	missing bool
 }
 
-// collect lists the key's folder and reads the entries that need it: every
-// entry when full is set, every forced entry, and otherwise only the entries
-// whose fingerprint differs from the one recorded at their last read. It
-// returns the listing order plus the result and fingerprint of every entry it
-// re-read, including the ones whose read failed.
+// collect reads the listed entries that need it: every entry when full is set,
+// otherwise only the names in toRead (the changed, new and forced names). It
+// lists nothing and copies no recorded fingerprints, so its allocation is
+// bounded by the entries it actually re-read. It returns the listing's
+// sequence and the result and fingerprint of every entry it re-read, including
+// the ones whose read failed.
 func (p *pageIndex) collect(
 	ctx context.Context,
 	key Key,
+	listingSeq uint64,
+	entries []FileEntry,
 	full bool,
-	forced map[string]bool,
+	toRead map[string]bool,
 	reason string,
 ) (*snapshotReads, error) {
-	listingSeq := p.takeReadSeq()
-	entries, err := p.lister.ListFiles(ctx, key.VaultPath, key.PagesDir)
-	if err != nil {
-		return nil, err
-	}
-	if entries == nil {
-		// A missing folder lists as nil, matching vault-cli's nil-vs-empty.
-		return &snapshotReads{listingSeq: listingSeq, missing: true}, nil
-	}
-	recorded := p.recordedFingerprints(key)
-
 	result := &snapshotReads{
 		listingSeq: listingSeq,
-		order:      make([]string, 0, len(entries)),
-		reads:      make(map[string]fileRead, len(entries)),
+		reads:      map[string]fileRead{},
+		missing:    entries == nil,
 	}
 	skipped := 0
 	for _, fe := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Wrap(ctx, err, "build page snapshot")
 		}
-		result.order = append(result.order, fe.Name)
-		if !full && !forced[fe.Name] {
-			previous, ok := recorded[fe.Name]
-			if ok && previous == fe.Fingerprint {
-				continue
-			}
+		if !full && !toRead[fe.Name] {
+			continue
 		}
 		seq := p.takeReadSeq()
 		page, fingerprint, readErr := p.reader.ReadPage(
@@ -578,22 +616,6 @@ func (p *pageIndex) collect(
 	return result, nil
 }
 
-// recordedFingerprints copies the key's recorded fingerprints so the comparison
-// runs without holding the mutex across the reads.
-func (p *pageIndex) recordedFingerprints(key Key) map[string]FileFingerprint {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	e, ok := p.entries[key]
-	if !ok {
-		return nil
-	}
-	recorded := make(map[string]FileFingerprint, len(e.fingerprints))
-	for name, fingerprint := range e.fingerprints {
-		recorded[name] = fingerprint
-	}
-	return recorded
-}
-
 // samePages reports whether two snapshots hold the same pages in the same
 // order, distinguishing a nil snapshot from an empty one.
 func samePages(a, b []*domain.Page) bool {
@@ -608,69 +630,119 @@ func samePages(a, b []*domain.Page) bool {
 	return true
 }
 
-// snapshotMerge accumulates one listing's merge into a new snapshot. The
-// entry's current snapshot is the other input, so a read a later-started one
-// has already superseded is never applied.
+// snapshotMerge accumulates one listing's merge into a new snapshot and
+// updates the entry's recorded fingerprints in place. The entry's current
+// snapshot is the other input, so a read a later-started one has already
+// superseded is never applied.
 type snapshotMerge struct {
-	entry        *entry
-	reads        *snapshotReads
-	pages        []*domain.Page
-	fingerprints map[string]FileFingerprint
+	entry   *entry
+	reads   *snapshotReads
+	pages   []*domain.Page
+	dropped []string
 }
 
 // listed takes a listed file: the listing's own read when no later-started read
-// has already been applied to that name, else the page currently published.
+// has already been applied to that name, else the page currently published. A
+// re-read updates the recorded fingerprint in place; a name carried forward
+// keeps the fingerprint it already has.
 func (m *snapshotMerge) listed(name string, current *domain.Page) {
 	read, ok := m.reads.reads[name]
 	if ok && read.seq >= m.entry.fileReadSeq[name] {
 		m.entry.fileReadSeq[name] = read.seq
-		m.fingerprints[name] = read.fingerprint
+		m.entry.fingerprints[name] = read.fingerprint
 		if read.page != nil {
 			m.pages = append(m.pages, read.page)
 		}
 		return
 	}
-	m.kept(name, current)
+	m.kept(current)
 }
 
 // unlisted drops a name the listing no longer holds, unless the listing started
-// before that name's last applied read — then a newer read put it there.
+// before that name's last applied read — then a newer read put it there. A
+// dropped name has its recorded fingerprint deleted in place so the recorded
+// name set never keeps a tombstone the next listing could not match.
 func (m *snapshotMerge) unlisted(name string, current *domain.Page) {
 	if m.reads.listingSeq > m.entry.fileReadSeq[name] {
+		m.remove(name)
 		return
 	}
-	m.kept(name, current)
+	m.kept(current)
 }
 
-// kept carries a currently published page and its fingerprint forward. A name
-// the listing excludes has no page but keeps its fingerprint, so an unchanged
-// broken file is neither re-read nor re-warned on the next listing.
-func (m *snapshotMerge) kept(name string, current *domain.Page) {
+// kept carries a currently published page forward. A name the listing excludes
+// has no page but keeps its fingerprint, so an unchanged broken file is neither
+// re-read nor re-warned on the next listing.
+func (m *snapshotMerge) kept(current *domain.Page) {
 	if current != nil {
 		m.pages = append(m.pages, current)
 	}
-	if fingerprint, ok := m.entry.fingerprints[name]; ok {
-		m.fingerprints[name] = fingerprint
+}
+
+// remove deletes one recorded fingerprint in place, recording it for the store
+// delta when the prior value was non-zero — a zero fingerprint is the "never
+// recorded" sentinel and has no stored entry to delete.
+func (m *snapshotMerge) remove(name string) {
+	previous, ok := m.entry.fingerprints[name]
+	if !ok {
+		return
+	}
+	delete(m.entry.fingerprints, name)
+	if previous != (FileFingerprint{}) {
+		m.dropped = append(m.dropped, name)
 	}
 }
 
+// pruneFingerprints deletes every recorded fingerprint that is neither listed
+// nor currently published — an excluded file the listing no longer holds, whose
+// fingerprint the in-place update would otherwise keep forever. A tombstone
+// kept past the pass would leave the recorded name set larger than any listing,
+// so the unchanged fast path could never fire again.
+func (m *snapshotMerge) pruneFingerprints(entries []FileEntry, current []*domain.Page) {
+	for name := range m.entry.fingerprints {
+		if listedContains(entries, name) || publishedContains(current, name) {
+			continue
+		}
+		m.remove(name)
+	}
+}
+
+// listedContains reports whether the sorted listing holds name.
+func listedContains(entries []FileEntry, name string) bool {
+	i := sort.Search(len(entries), func(i int) bool { return entries[i].Name >= name })
+	return i < len(entries) && entries[i].Name == name
+}
+
+// publishedContains reports whether the sorted snapshot holds name, whose
+// ordering key is the page's file name plus ".md".
+func publishedContains(pages []*domain.Page, name string) bool {
+	i := sort.Search(len(pages), func(i int) bool {
+		return pages[i].FileMetadata.Name+".md" >= name
+	})
+	return i < len(pages) && pages[i].FileMetadata.Name+".md" == name
+}
+
 // mergeSnapshot merges a listing's reads into the entry's current snapshot in
-// one O(n) pass over both ordered name sequences. The caller must hold the
-// mutex.
+// one O(n) pass over both ordered name sequences and updates the entry's
+// recorded fingerprints in place. It returns the new pages slice and the names
+// whose recorded fingerprints it dropped. The caller must hold the mutex.
 func mergeSnapshot(
 	e *entry,
+	entries []FileEntry,
 	reads *snapshotReads,
-) ([]*domain.Page, map[string]FileFingerprint) {
+) ([]*domain.Page, []string) {
 	current := e.snapshot
+	if e.fingerprints == nil {
+		e.fingerprints = map[string]FileFingerprint{}
+	}
 	m := &snapshotMerge{
-		entry:        e,
-		reads:        reads,
-		pages:        make([]*domain.Page, 0, len(reads.order)+len(current)),
-		fingerprints: make(map[string]FileFingerprint, len(reads.order)+len(current)),
+		entry: e,
+		reads: reads,
+		pages: make([]*domain.Page, 0, len(entries)),
 	}
 	i, j := 0, 0
-	for i < len(reads.order) && j < len(current) {
-		listed := reads.order[i]
+	for i < len(entries) && j < len(current) {
+		listed := entries[i].Name
 		published := current[j].FileMetadata.Name + ".md"
 		switch {
 		case listed < published:
@@ -685,14 +757,15 @@ func mergeSnapshot(
 			j++
 		}
 	}
-	for ; i < len(reads.order); i++ {
-		m.listed(reads.order[i], nil)
+	for ; i < len(entries); i++ {
+		m.listed(entries[i].Name, nil)
 	}
 	for ; j < len(current); j++ {
 		m.unlisted(current[j].FileMetadata.Name+".md", current[j])
 	}
+	m.pruneFingerprints(entries, current)
 	if reads.missing && len(m.pages) == 0 {
-		return nil, m.fingerprints
+		return nil, m.dropped
 	}
-	return m.pages, m.fingerprints
+	return m.pages, m.dropped
 }

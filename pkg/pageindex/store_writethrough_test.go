@@ -262,6 +262,28 @@ var _ = Describe("Store write-through", func() {
 		Expect(store.stored(key)).NotTo(HaveKey("Page02.md"))
 	})
 
+	It("AC5: a stat-diff that drops a removed file writes exactly one delete", func() {
+		vaultDir := newStoreVault(5)
+		key := pageindex.NewKey(vaultDir, equivalenceFolder)
+		_, _, index := newWriteThroughIndex(store)
+
+		_, err := index.ListPages(ctx, vaultDir, equivalenceFolder)
+		Expect(err).NotTo(HaveOccurred())
+		store.reset()
+
+		// The listing path, never RefreshFile: the removed name is dropped by the
+		// merge, so the delete must be derived before the in-place fingerprint
+		// update erases the name it would have reported.
+		Expect(os.Remove(pageFile(vaultDir, "Page02.md"))).To(Succeed())
+		Expect(index.Refresh(ctx, key)).To(Succeed())
+
+		writes := store.recorded()
+		Expect(writes).To(HaveLen(1))
+		Expect(writes[0].puts).To(BeEmpty())
+		Expect(writes[0].deletes).To(Equal([]string{"Page02.md"}))
+		Expect(store.stored(key)).NotTo(HaveKey("Page02.md"))
+	})
+
 	It("AC5: a failed write leaves serving and the store intact", func() {
 		vaultDir := newStoreVault(5)
 		key := pageindex.NewKey(vaultDir, equivalenceFolder)
