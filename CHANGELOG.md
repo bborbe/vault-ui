@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Make a page-index stat-diff allocate only what changed — an unchanged rescan pass now publishes nothing and leaves the key's published snapshot and recorded fingerprint set exactly in place, so it allocates no per-page structure beyond the one directory listing it performs to detect change, while a pass that finds K changed, added or removed files updates the recorded fingerprints in place and allocates in proportion to K instead of copying the whole folder's fingerprint set and rebuilding the published pages slice on every 50 s pass.
+
 ## v0.90.0
 
 - feat: `pageindex.PageIndex` gains `ChangedPagesSince(key, revision)`, which reports the pages a key's revision move can be attributed to — the names a publication re-read and the names it dropped — and answers `ok == false` for a folder-level mark, a forced reload, an unknown key, or a revision the key has since advanced past, so a caller that already holds a snapshot can bound which pages moved instead of assuming the whole folder did.
