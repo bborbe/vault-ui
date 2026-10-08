@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 
 - feat: Re-derive only the task rows whose pages changed when a write mark or a single-file watcher read moves a key's page revision, so a UI write is visible to the next `GET /api/tasks` without a vault-wide rebuild — `taskSnapshotStore` gains a third rebuild kind beside the full build and the session-only refresh that splices the changed rows into a copy of the published list and swaps it in atomically; the patch reads the pages the index already holds — its one page-index read resolving any pending write mark — reuses the session-derived fields of the rows already published, and does no vault list, no vault-wide page scan and no process spawn; a key whose page revision and session generation both moved, a folder-level mark (the eight synchronous sites keep theirs) and a page with no row already published all still rebuild in full.
 
+## v0.89.1
+
+- test: Redirect both the user-cache environment variables in the page-index store spec that opens the default store, so the spec no longer assumes Linux's `XDG_CACHE_HOME` redirect and stops failing `make precommit` on darwin, where `os.UserCacheDir()` reads `HOME` and the spec compared the store path against the temp directory it had set; the expected path now comes from a fresh `os.UserCacheDir()` call taken after the redirect.
+
 ## v0.89.0
 
 - feat: Persist the board's parsed page index on local disk at a fixed user-cache path (`<user cache directory>/vault-ui/page-index.bolt`), so a restart loads it and re-checks each file's size and timestamps, re-parsing only the files that actually changed instead of every indexed file — the on-disk copy is a cache that is discarded on any mismatch (missing, empty, damaged, unreadable, or written under a different store format or vault-cli parser version) and never changes what the board serves; the store is opened with the process-wide index at startup, written through on each publication in one transaction off the read path, and adds no configuration surface.
