@@ -51,11 +51,13 @@ func execute(ctx context.Context) error {
 	launches := launchregistry.NewRegistry()
 	manager := factory.CreateConnectionManager()
 	// The process-wide page index reads single page files through the
-	// production reader and lister seams, shared by every vault.
-	pageIndex := factory.CreatePageIndex(
+	// production reader and lister seams, shared by every vault, and hydrates
+	// from the on-disk store at its fixed cache path.
+	pageIndex := factory.CreatePageIndexWithStore(
 		pageindex.NewPageReader(storage.NewPageStorage(nil)),
 		pageindex.NewDirectoryLister(),
 		libtime.NewCurrentDateTime(),
+		factory.CreatePageIndexStore(ctx),
 	)
 	sessionState := factory.CreateSessionState()
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)

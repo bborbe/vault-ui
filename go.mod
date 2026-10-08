@@ -3,8 +3,10 @@ module github.com/bborbe/vault-ui
 go 1.27.1
 
 require (
+	github.com/bborbe/boltkv v1.15.3
 	github.com/bborbe/errors v1.6.1
 	github.com/bborbe/http v1.26.26
+	github.com/bborbe/kv v1.21.13
 	github.com/bborbe/log v1.7.1
 	github.com/bborbe/run v1.11.0
 	github.com/bborbe/time v1.27.14
@@ -18,6 +20,7 @@ require (
 	github.com/onsi/gomega v1.44.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
+	go.etcd.io/bbolt v1.5.0
 	go.yaml.in/yaml/v3 v3.0.5
 )
 
@@ -28,7 +31,6 @@ require (
 	github.com/bborbe/cqrs v0.6.11 // indirect
 	github.com/bborbe/k8s v1.14.17 // indirect
 	github.com/bborbe/kafka v1.26.0 // indirect
-	github.com/bborbe/kv v1.21.13 // indirect
 	github.com/bborbe/math v1.4.8 // indirect
 	github.com/bborbe/notification v0.6.1 // indirect
 	github.com/bborbe/parse v1.11.4 // indirect
