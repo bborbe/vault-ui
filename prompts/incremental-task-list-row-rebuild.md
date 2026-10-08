@@ -81,7 +81,17 @@ for the `github.com/bborbe/errors` convention, and
    Add it to the interface that `pkg/board` consumes for revisions, or to a
    sibling interface alongside `IndexRevisions` — pick whichever keeps
    `pkg/board`'s dependency on `pkg/pageindex` a narrow interface, and wire it in
-   `pkg/board/board.go` next to `Revisions`.
+   `pkg/board/board.go` next to `Revisions`. `pageindex.PageIndex` gains the
+   method either way (the factory passes one interface value as both seams), so
+   regenerate `pkg/pageindex/mocks/pageindex-page-index.go`: from `pkg/pageindex`
+   run `go run github.com/maxbrunsfeld/counterfeiter/v6@v6.14.0 -generate`; do not
+   add counterfeiter to `go.mod`; keep the copyright header. If the module proxy is
+   unreachable, hand-edit the fake to add `ChangedPagesSinceStub`,
+   `ChangedPagesSinceCallCount`, `ChangedPagesSinceArgsForCall`,
+   `ChangedPagesSinceReturns` and `ChangedPagesSinceReturnsOnCall` in
+   counterfeiter's exact shape. `pkg/board/board_test.go`'s harness holds a
+   `*pageindexmocks.PageIndex` and passes it as `Deps.PageIndex`, so the fake must
+   satisfy the grown interface or the test build fails.
 
 2. Teach `taskSnapshotStore.List` in `pkg/board/snapshot.go` a third rebuild kind.
    Extend `taskSnapshotParams` with a patch func beside `Build` and `Refresh`,
@@ -144,12 +154,13 @@ for the `github.com/bborbe/errors` convention, and
      reports one name, and asserts the next `List` (a) returns the updated row,
      (b) does **not** increment the build counter, and (c) leaves the previously
      returned slice's contents unchanged — the atomic-swap invariant.
-   - a `pkg/board` test that injects **counting** `Ops`, `Signals` and `PageIndex`
-     seams and asserts that a patch-path `List` calls none of them. The `Build`
-     counter alone does not observe this: a patch that re-called
-     `RegistrySessionIDs`, `ResumeSessionIDs` or a vault-wide `ListPages` would
-     still leave `Build` at 0 while violating requirement 3. This is the test that
-     makes requirement 3 checkable rather than asserted.
+   - a `pkg/board` test that injects **counting** `Ops`, `Signals`, `Sessions` and
+     `PageIndex` seams and asserts that a patch-path `List` calls none of them.
+     The `Build` counter alone does not observe this: a patch that re-called
+     `RegistrySessionIDs`, `ResumeSessionIDs`, a transcript probe
+     (`b.sessions.TranscriptMtime`) or a vault-wide `ListPages` would still leave
+     `Build` at 0 while violating requirement 3. This is the test that makes
+     requirement 3 checkable rather than asserted.
    - a `pkg/board` test that a folder-level mark still increments the build
      counter, and one that a session-generation-only move still takes
      `refreshOnly` without incrementing it.
@@ -185,6 +196,9 @@ for the `github.com/bborbe/errors` convention, and
 </constraints>
 
 <verification>
+`go` lives at `/usr/local/go/bin` in this container and is not always on `PATH`;
+run every command below with `export PATH=/usr/local/go/bin:$PATH` first.
+
 Run `make precommit` — must pass. (`ROOTDIR` is not read by this repo's Makefile,
 so a `ROOTDIR=/workspace` prefix is inert. `hideGit: true` is set, so `.git` is
 masked; `make precommit` runs no `go build` of the main package, so it needs no
@@ -192,6 +206,13 @@ masked; `make precommit` runs no `go build` of the main package, so it needs no
 
 Run `make parity` — must pass. This change touches the `/api/tasks` read path, and
 the Go-vs-Python parity lock is not part of `make precommit`.
+
+```
+awk '/^## /{print; exit}' CHANGELOG.md | grep -q '^## Unreleased$'
+```
+
+Must exit 0 (the created `## Unreleased` is the topmost section, above
+`## v0.88.0`).
 
 New code needs ≥ 80% statement coverage (`docs/dod.md`). Check it with:
 
