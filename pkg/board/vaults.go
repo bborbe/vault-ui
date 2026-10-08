@@ -43,17 +43,13 @@ func (b *board) ListAssignees(ctx context.Context, vaults []string) (api.Assigne
 	namedSet := map[string]bool{}
 	hasUnassigned := false
 	for _, vault := range selected {
-		items, listErr := b.ops.List(vault).Execute(
-			ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
-		)
-		if listErr != nil {
-			return api.AssigneesResponse{}, errors.Wrapf(
-				ctx, listErr, "list assignees for vault %s", vault.Name,
-			)
+		rows, snapshotErr := b.snapshot.List(ctx, vault)
+		if snapshotErr != nil {
+			return api.AssigneesResponse{}, snapshotErr
 		}
-		for _, item := range items {
-			if strings.TrimSpace(item.Assignee) != "" {
-				namedSet[item.Assignee] = true
+		for _, row := range rows {
+			if strings.TrimSpace(row.item.Assignee) != "" {
+				namedSet[row.item.Assignee] = true
 			} else {
 				hasUnassigned = true
 			}

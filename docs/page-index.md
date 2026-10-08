@@ -20,7 +20,8 @@ readers share the same `*domain.Page` pointers read-only.
 The board holds one immutable **task-list snapshot** per page-index key — the
 same key, a vault root plus its tasks folder. It is a second published snapshot,
 derived from the page snapshot and the session snapshot; it is never a field on
-`domain.Page` and is never mutated after publication. `GET /api/tasks` serves it.
+`domain.Page` and is never mutated after publication. `GET /api/tasks` and
+`GET /api/assignees` serve it.
 
 - **Rebuild triggers.** A key's task-list snapshot is rebuilt when the page
   index's revision for that key moves (a publication or a mark) or when a new
@@ -46,9 +47,9 @@ derived from the page snapshot and the session snapshot; it is never a field on
 ## Staleness bounds
 
 - A warm read never touches disk. `ListPages` returns the published snapshot
-  without any filesystem access. A warm `/api/tasks` read likewise returns the
-  published task-list rows and performs no page-storage call, no transcript probe
-  and no process spawn.
+  without any filesystem access. A warm `/api/tasks` or `/api/assignees` read
+  likewise returns the published task-list rows and performs no page-storage
+  call, no transcript probe and no process spawn.
 - An external edit becomes visible after the watcher's ~100 ms debounce plus one
   re-read of that file. An event whose path is not a single plain filename
   directly inside its folder costs one stat-diff of that folder instead.
