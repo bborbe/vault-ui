@@ -8,6 +8,7 @@ created: "2026-10-08T09:07:08Z"
 queued: "2026-10-08T18:57:22Z"
 started: "2026-10-08T18:58:20Z"
 completed: "2026-10-08T19:00:28Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/166
 branch: dark-factory/rescan-allocates-only-what-changed
 ---
 
