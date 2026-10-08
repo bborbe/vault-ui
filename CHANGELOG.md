@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.90.0
 
 - feat: `pageindex.PageIndex` gains `ChangedPagesSince(key, revision)`, which reports the pages a key's revision move can be attributed to — the names a publication re-read and the names it dropped — and answers `ok == false` for a folder-level mark, a forced reload, an unknown key, or a revision the key has since advanced past, so a caller that already holds a snapshot can bound which pages moved instead of assuming the whole folder did.
 - fix: Record a key's first page-index publication as unbounded whatever the path it was reached by, so `ChangedPagesSince(key, 0)` answers `ok == false` after a store-backed hydrate publishes its whole snapshot instead of naming only the files the hydrate re-read against its stored baseline — the pages it carried forward from the store are part of that first snapshot and were never in the reported set; the cold path already refused a bound for the identical first publication, so the two paths now agree, and `ok` keeps its contract of being false whenever the key cannot bound the set.
