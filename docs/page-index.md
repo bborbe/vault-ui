@@ -123,6 +123,24 @@ derived from the page snapshot and the session snapshot; it is never a field on
   stat-diff of an unchanged folder reads nothing and keeps the identical
   snapshot slice. An excluded file is warned about once per fingerprint change,
   so an unchanged broken file is not re-logged every pass.
+- An unchanged stat-diff **allocates** nothing beyond the one folder listing it
+  performs to detect the change. It requires a published snapshot already
+  serving the key, every listed entry's fingerprint present in the recorded set
+  and equal to the one recorded for it, the listed name set equal to the
+  recorded name set, and no file consumed to re-read — no pending write mark
+  forced a name. Such a pass builds no new pages slice, no per-name order
+  structure and no folder-sized lookup map, keeps the published snapshot and the
+  recorded fingerprint set in place, still resolves the mark that triggered it,
+  and publishes nothing.
+- The recorded fingerprint set is index-private — read only by the pass's own
+  comparison, never published to a reader — and updated in place for the K names
+  a pass changes, so a pass's allocation is proportional to K and not to the
+  folder's file count. A name the listing no longer holds has its entry deleted
+  from the set in that same pass, so the recorded name set never outgrows a
+  listing.
+- A new published snapshot is built only when the page set or its order actually
+  moved: a read that reproduces the same pages in the same order publishes
+  nothing and leaves a reader's snapshot identity unchanged.
 - `MarkDirty(keys...)` marks a **folder** stale: the next read resolves it by
   that stat-diff, never by a full re-read.
 - `MarkFileDirty(key, id)` marks **one file** stale, so the next read re-reads
