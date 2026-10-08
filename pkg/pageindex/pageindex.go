@@ -117,7 +117,19 @@ const (
 	// buildReload lists the folder and re-reads every file, ignoring
 	// fingerprints.
 	buildReload
+	// buildHydrate loads the key's stored entries, seeds them as the stat-diff
+	// baseline and lists the folder. It is used only for a key with no published
+	// snapshot whose store has not been consulted yet.
+	buildHydrate
 )
+
+// storeDelta is one publication's store change: the entries it re-read and the
+// names it dropped. It is computed under the index mutex and written after the
+// build is released, so no reader waits on store I/O.
+type storeDelta struct {
+	puts    []StoredEntry
+	deletes []string
+}
 
 // build is one resolution of one key. It is created under the index mutex and
 // its result fields are written under that mutex before done is closed.
@@ -133,6 +145,10 @@ type build struct {
 	done     chan struct{}
 	pages    []*domain.Page
 	err      error
+	// delta is the store change this build's publication produced, or nil when
+	// there is nothing to persist. It is written under the mutex before done is
+	// closed and read only by the goroutine that ran the build.
+	delta *storeDelta
 }
 
 func newBuild(kind buildKind, reason string, startSeq uint64) *build {
@@ -154,6 +170,8 @@ func (b *build) covers(kind buildKind, needSeq uint64) bool {
 	switch b.kind {
 	case buildCold, buildReload:
 		return true
+	case buildHydrate:
+		return kind == buildCold || kind == buildStatDiff || kind == buildHydrate
 	case buildFileReads:
 		return kind == buildFileReads
 	case buildStatDiff:
@@ -167,6 +185,14 @@ type entry struct {
 	snapshot     []*domain.Page
 	hasSnapshot  bool
 	fingerprints map[string]FileFingerprint
+
+	// storeLoaded records that this key has consulted the store, so the store
+	// is never re-read on a later start of the same process.
+	storeLoaded bool
+	// storedBaseline records that snapshot and fingerprints hold entries seeded
+	// from the store that have not yet been stat-diffed and must never be served
+	// as they are.
+	storedBaseline bool
 
 	// fileReadSeq holds, per base filename, the read sequence of the read whose
 	// result is currently applied — the page present or removed. A name whose
@@ -210,17 +236,22 @@ type pageIndex struct {
 	lister                DirectoryLister
 	currentDateTimeGetter libtime.CurrentDateTimeGetter
 	waiter                libtime.WaiterDuration
+	// store hydrates each key from the on-disk cache before its first stat-diff.
+	// It is written once at construction and read under the mutex.
+	store Store
 	// warnf emits the per-file exclusion warnings. It is a field so a test can
 	// capture them per index instance.
 	warnf func(format string, args ...any)
 }
 
-// NewPageIndex creates an empty page index over the given reader and lister.
-func NewPageIndex(
+// NewPageIndexWithStore creates an empty page index over the given reader and
+// lister that hydrates each key from store before its first stat-diff.
+func NewPageIndexWithStore(
 	reader PageReader,
 	lister DirectoryLister,
 	currentDateTimeGetter libtime.CurrentDateTimeGetter,
 	waiter libtime.WaiterDuration,
+	store Store,
 ) PageIndex {
 	return &pageIndex{
 		entries:               map[Key]*entry{},
@@ -228,8 +259,19 @@ func NewPageIndex(
 		lister:                lister,
 		currentDateTimeGetter: currentDateTimeGetter,
 		waiter:                waiter,
+		store:                 store,
 		warnf:                 glog.Warningf,
 	}
+}
+
+// NewPageIndex creates an empty page index with no store.
+func NewPageIndex(
+	reader PageReader,
+	lister DirectoryLister,
+	currentDateTimeGetter libtime.CurrentDateTimeGetter,
+	waiter libtime.WaiterDuration,
+) PageIndex {
+	return NewPageIndexWithStore(reader, lister, currentDateTimeGetter, waiter, nil)
 }
 
 // ListPages returns the pages of the key's folder from the in-memory snapshot.

@@ -94,6 +94,9 @@ func (p *pageIndex) ensure(
 // hold the mutex.
 func (p *pageIndex) pendingLocked(e *entry, refresh bool) (buildKind, uint64, bool) {
 	if !e.hasSnapshot {
+		if p.store != nil && !e.storeLoaded {
+			return buildHydrate, e.requestSeq, true
+		}
 		return buildCold, e.requestSeq, true
 	}
 	if refresh {
@@ -201,10 +204,73 @@ func (p *pageIndex) execute(ctx context.Context, key Key, b *build) {
 	switch b.kind {
 	case buildFileReads:
 		p.executeFileReads(readCtx, key, b)
+	case buildHydrate:
+		p.executeHydrate(readCtx, key, b)
 	default:
 		p.executeListing(readCtx, key, b)
 	}
 	p.release(key, b)
+	p.writeThrough(readCtx, key, b.delta)
+}
+
+// writeThrough persists one publication's delta outside the index mutex. It is
+// called after the build is released, so no reader waits on store I/O. A failed
+// write leaves the previous store content intact, does not affect what is
+// served, and is reported with exactly one warning naming the failure.
+func (p *pageIndex) writeThrough(ctx context.Context, key Key, delta *storeDelta) {
+	if p.store == nil || delta == nil || (len(delta.puts) == 0 && len(delta.deletes) == 0) {
+		return
+	}
+	if err := p.store.Write(ctx, key, delta.puts, delta.deletes); err != nil {
+		p.warnf(
+			"page index store write failed for %q/%q: %v",
+			key.VaultPath,
+			key.PagesDir,
+			err,
+		)
+	}
+}
+
+// executeHydrate loads the key's stored entries, seeds them as the stat-diff
+// baseline and runs one listing over them. The store read runs outside the
+// index mutex. A store that cannot supply entries leaves the key on the
+// full-parse path. A failed listing clears the seeded baseline so a stored
+// snapshot is never served without its stat-diff.
+func (p *pageIndex) executeHydrate(ctx context.Context, key Key, b *build) {
+	entries, ok, err := p.store.Load(ctx, key)
+	if err != nil {
+		// A store that cannot supply entries leaves the key on the full-parse
+		// path: a store failure never stops the index from starting or serving.
+		ok = false
+	}
+
+	p.mu.Lock()
+	e := p.entryLocked(key)
+	if ok {
+		seedStoredBaseline(e, entries)
+	}
+	e.storeLoaded = true
+	p.mu.Unlock()
+
+	p.executeListing(ctx, key, b)
+}
+
+// seedStoredBaseline fills the entry's snapshot and fingerprints from the stored
+// entries, in the store's key order (byte-ascending file names, which equals
+// os.ReadDir order). The caller must hold the mutex. hasSnapshot stays false:
+// the baseline is an input to the stat-diff, never a published value.
+func seedStoredBaseline(e *entry, entries []StoredEntry) {
+	pages := make([]*domain.Page, 0, len(entries))
+	fingerprints := make(map[string]FileFingerprint, len(entries))
+	for _, entry := range entries {
+		fingerprints[entry.Filename] = entry.Fingerprint
+		if entry.Page != nil {
+			pages = append(pages, entry.Page)
+		}
+	}
+	e.snapshot = pages
+	e.fingerprints = fingerprints
+	e.storedBaseline = true
 }
 
 // executeFileReads re-reads exactly the write-marked files. The marks are taken
@@ -224,6 +290,7 @@ func (p *pageIndex) executeFileReads(ctx context.Context, key Key, b *build) {
 	}
 	p.mu.Unlock()
 
+	var delta *storeDelta
 	for _, name := range names {
 		seq := p.takeReadSeq()
 		page, fingerprint, readErr := p.reader.ReadPage(
@@ -235,9 +302,34 @@ func (p *pageIndex) executeFileReads(ctx context.Context, key Key, b *build) {
 		recordRead(reasonWrite)
 
 		p.mu.Lock()
-		p.applyFileReadLocked(e, key, name, seq, page, fingerprint, readErr)
+		d := p.applyFileReadLocked(e, key, name, seq, page, fingerprint, readErr)
 		p.mu.Unlock()
+		delta = mergeStoreDeltas(delta, d)
 	}
+
+	p.mu.Lock()
+	b.delta = delta
+	p.mu.Unlock()
+}
+
+// mergeStoreDeltas returns a delta holding both inputs' puts and deletes; nil
+// inputs contribute nothing and the result is nil when both are nil.
+func mergeStoreDeltas(a, b *storeDelta) *storeDelta {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	merged := &storeDelta{
+		puts:    make([]StoredEntry, 0, len(a.puts)+len(b.puts)),
+		deletes: make([]string, 0, len(a.deletes)+len(b.deletes)),
+	}
+	merged.puts = append(merged.puts, a.puts...)
+	merged.puts = append(merged.puts, b.puts...)
+	merged.deletes = append(merged.deletes, a.deletes...)
+	merged.deletes = append(merged.deletes, b.deletes...)
+	return merged
 }
 
 // executeListing lists the key's folder and reads the files the build's kind
@@ -247,9 +339,9 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 	e := p.entryLocked(key)
 	startSeq := e.requestSeq
 	b.startSeq = startSeq
-	hadSnapshot := e.hasSnapshot
+	baseline := e.hasSnapshot || e.storedBaseline
 	full := b.kind == buildCold || b.kind == buildReload
-	if !hadSnapshot {
+	if !baseline {
 		full = true
 	}
 	var forced map[string]bool
@@ -274,7 +366,7 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 
 	reason := b.reason
 	switch {
-	case !hadSnapshot, b.kind == buildCold:
+	case !baseline, b.kind == buildCold, b.kind == buildHydrate:
 		reason = reasonBuild
 	case b.kind == buildReload:
 		reason = reasonReload
@@ -293,9 +385,17 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 			key.PagesDir,
 			err,
 		)
+		if e.storedBaseline {
+			// The stored baseline was never stat-diffed; never serve it.
+			e.snapshot = nil
+			e.fingerprints = nil
+			e.storedBaseline = false
+			e.hasSnapshot = false
+		}
 		return
 	}
 	pages, fingerprints := mergeSnapshot(e, reads)
+	b.delta = listingDelta(e, reads, fingerprints)
 	e.fingerprints = fingerprints
 	if !e.hasSnapshot || !samePages(e.snapshot, pages) {
 		e.snapshot = pages
@@ -305,10 +405,38 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 		b.pages = e.snapshot
 	}
 	e.hasSnapshot = true
+	e.storedBaseline = false
 	e.dirtyResolvedSeq = startSeq
 	if full {
 		e.reloadResolvedSeq = startSeq
 	}
+}
+
+// listingDelta returns the store change one listing produced: a put for every
+// entry it re-read (including an excluded entry, stored as fingerprint plus a
+// nil page) and a delete for every name the entry held before the merge that
+// the merged map no longer holds. A name carried forward by the merge stays in
+// the merged map and is therefore not a delete. The caller must hold the mutex
+// and must pass the merged fingerprints returned by mergeSnapshot.
+func listingDelta(
+	e *entry,
+	reads *snapshotReads,
+	fingerprints map[string]FileFingerprint,
+) *storeDelta {
+	delta := &storeDelta{}
+	for name, read := range reads.reads {
+		delta.puts = append(delta.puts, StoredEntry{
+			Filename:    name,
+			Page:        read.page,
+			Fingerprint: read.fingerprint,
+		})
+	}
+	for name, previous := range e.fingerprints {
+		if _, ok := fingerprints[name]; !ok && previous != (FileFingerprint{}) {
+			delta.deletes = append(delta.deletes, name)
+		}
+	}
+	return delta
 }
 
 // release clears the finished build and promotes the key's follow-up, so no

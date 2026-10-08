@@ -24,6 +24,24 @@ func NewPageIndexWithWarnf(
 	return index
 }
 
+// NewPageIndexWithStoreAndWarnf builds a store-backed page index whose warnings
+// go to warnf instead of glog, so a test can capture them. It must be used
+// before the index reads anything.
+func NewPageIndexWithStoreAndWarnf(
+	reader PageReader,
+	lister DirectoryLister,
+	currentDateTimeGetter libtime.CurrentDateTimeGetter,
+	waiter libtime.WaiterDuration,
+	store Store,
+	warnf func(format string, args ...any),
+) PageIndex {
+	index := NewPageIndexWithStore(
+		reader, lister, currentDateTimeGetter, waiter, store,
+	).(*pageIndex)
+	index.warnf = warnf
+	return index
+}
+
 // FilesReadTotal returns the current value of one files-read counter series.
 // The counter is package-global, so callers must assert deltas, not absolutes.
 func FilesReadTotal(reason string) float64 {

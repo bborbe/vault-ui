@@ -95,8 +95,11 @@ derived from the page snapshot and the session snapshot; it is never a field on
   `POST /api/cache/reload`.
 - A failed listing keeps serving the previous snapshot and logs the error with
   the key; the mark stays pending, so the next read retries.
-- A process restart starts with an empty index. Cold reads wait for the startup
-  build of their key rather than each starting their own.
+- A process restart loads each key's stored pages and fingerprints from the
+  on-disk store and resolves exactly one stat-diff before that key is served,
+  reading only the files that changed while the process was down. The stored
+  snapshot is never served as it was written: cold reads wait for that stat-diff
+  rather than each starting their own.
 
 ## Incremental updates
 
@@ -173,3 +176,37 @@ parts so equivalent paths produce identical keys.
   so the two derivations match.
 - A mismatch silently disables refresh — the key simply never matches and the
   folder keeps its rescan cadence. The watcher tests guard this.
+
+## Page index store
+
+The parsed page index is persisted on local disk as a cache, so a restart does
+not have to re-parse every indexed file. The store is never a source of truth:
+it is read as untrusted input, discarded on any mismatch, and never changes what
+the board serves.
+
+- **What it holds.** One entry per indexed file: the parsed page plus the
+  pre-read fingerprint — size, modification time and status-change time — taken
+  from the symlink-following stat before the read. A file excluded from the
+  index (unreadable, unparsable, or a symlink out of the vault) stores its
+  fingerprint and no page, so an unchanged excluded file is neither re-read nor
+  re-warned on the next start.
+- **Where it lives.** `<user cache directory>/vault-ui/page-index.bolt` — on
+  darwin, under `~/Library/Caches` — never inside a vault and never inside the
+  repository tree; its directory is created when absent. No configuration
+  selects, relocates, disables or bounds it.
+- **When it is written.** Whenever a snapshot is published, exactly the entries
+  that publication changed — the files it re-read and the files that vanished —
+  are written in a single transaction, outside the index mutex, so a reader
+  never waits on store I/O. A failed write leaves the previous content intact
+  and serving unaffected. No timer flushes the store.
+- **When it is discarded.** A store that is missing, empty, damaged, unreadable,
+  or written under a different store-format version or by a different vault-cli
+  parser version is discarded and the key takes the full parse; it is never
+  migrated. A discard logs one warning naming the reason and the path, and never
+  changes a served response and never stops the process from starting.
+- **The codec trap.** `domain.Page` embeds `FrontmatterMap`, whose only field is
+  unexported, so `json.Marshal` on a `domain.Page` silently drops every
+  frontmatter field and produces a page with no status, phase, goals, assignee,
+  priority, dates or page_type. The store therefore encodes frontmatter through
+  `FrontmatterMap.RawMap()` and rebuilds each page with `domain.NewPage`; a JSON
+  codec is not an option.

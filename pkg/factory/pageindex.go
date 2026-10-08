@@ -11,6 +11,7 @@ import (
 	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
+	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
@@ -28,6 +29,32 @@ func CreatePageIndex(
 		lister,
 		currentDateTimeGetter,
 		libtime.NewWaiterDuration(),
+	)
+}
+
+// CreatePageIndexStore opens the process-wide page-index store at its fixed
+// location under the user cache directory. It never fails: an unusable location
+// yields a store that serves nothing and reports a discard.
+func CreatePageIndexStore(ctx context.Context) pageindex.Store {
+	return pageindex.OpenDefaultStore(ctx, glog.Warningf, func(format string, args ...any) {
+		glog.V(2).Infof(format, args...)
+	})
+}
+
+// CreatePageIndexWithStore returns the process-wide page index over the reader
+// and lister seams, hydrated from store.
+func CreatePageIndexWithStore(
+	reader pageindex.PageReader,
+	lister pageindex.DirectoryLister,
+	currentDateTimeGetter libtime.CurrentDateTimeGetter,
+	store pageindex.Store,
+) pageindex.PageIndex {
+	return pageindex.NewPageIndexWithStore(
+		reader,
+		lister,
+		currentDateTimeGetter,
+		libtime.NewWaiterDuration(),
+		store,
 	)
 }
 
