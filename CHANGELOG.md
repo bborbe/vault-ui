@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.90.1
 
 - fix: Make a page-index stat-diff allocate only what changed — an unchanged rescan pass now publishes nothing and leaves the key's published snapshot and recorded fingerprint set exactly in place, so it allocates no per-page structure beyond the one directory listing it performs to detect change, while a pass that finds K changed, added or removed files updates the recorded fingerprints in place and allocates in proportion to K instead of copying the whole folder's fingerprint set and rebuilding the published pages slice on every 50 s pass.
 
