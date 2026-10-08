@@ -96,14 +96,48 @@ func (f fakeOps) List(_ board.Vault) ops.ListOperation { return f.list }
 
 func (f fakeOps) TopicShow(_ board.Vault) ops.EntityShowOperation { return f.show }
 
+// seamCounter counts the calls a spec makes to one injected seam. A nil counter
+// counts nothing, so a spec that does not care pays nothing.
+type seamCounter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *seamCounter) inc() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n++
+}
+
+func (c *seamCounter) get() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
 type fakeSignals struct {
 	registry []string
 	resume   []string
+
+	registryCalls *seamCounter
+	resumeCalls   *seamCounter
 }
 
-func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string { return f.registry }
+func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string {
+	f.registryCalls.inc()
+	return f.registry
+}
 
-func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string { return f.resume }
+func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string {
+	f.resumeCalls.inc()
+	return f.resume
+}
 
 // fakeProbe is the injected session probe: it returns a fixed mtime and never
 // touches the filesystem, so a spec can prove the board reads the probe. Its
@@ -112,9 +146,13 @@ type fakeProbe struct {
 	mu         sync.Mutex
 	mtime      *libtime.DateTime
 	generation uint64
+	// transcriptCalls counts TranscriptMtime calls, so a spec can prove a path
+	// never probed a transcript.
+	transcriptCalls seamCounter
 }
 
 func (f *fakeProbe) TranscriptMtime(_ context.Context, _, _, _ string) *libtime.DateTime {
+	f.transcriptCalls.inc()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.mtime
@@ -142,10 +180,20 @@ func (f *fakeProbe) bumpGeneration() {
 }
 
 // fakeIndex is the injected page-index revision source: a settable counter
-// behind a mutex. bump simulates a write mark or a watcher publication.
+// behind a mutex, plus the changed set and the pages the index holds. bump
+// simulates an unbounded revision move, markPages a per-file one.
 type fakeIndex struct {
 	mu    sync.Mutex
 	value uint64
+	// changed is the set ChangedPagesSince reports and changedOK whether it can
+	// bound it.
+	changed   []string
+	changedOK bool
+	// pages is what ListPages serves: the pages the index already holds.
+	pages []*domain.Page
+	// pageReads counts ListPages calls, so a spec can prove a patch read the
+	// pages the index holds instead of listing the vault.
+	pageReads int
 }
 
 func (f *fakeIndex) Revision(pageindex.Key) uint64 {
@@ -154,10 +202,52 @@ func (f *fakeIndex) Revision(pageindex.Key) uint64 {
 	return f.value
 }
 
+func (f *fakeIndex) ChangedPagesSince(_ pageindex.Key, revision uint64) ([]string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if revision > f.value {
+		return nil, false
+	}
+	return append([]string(nil), f.changed...), f.changedOK
+}
+
+func (f *fakeIndex) ListPages(_ context.Context, _, _ string) ([]*domain.Page, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pageReads++
+	return f.pages, nil
+}
+
 func (f *fakeIndex) bump() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.value++
+	f.changed = nil
+	f.changedOK = false
+}
+
+// markPages advances the revision and reports the given pages as changed, the
+// effect of a per-file write mark or a single-file watcher read.
+func (f *fakeIndex) markPages(names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.value++
+	f.changed = append([]string(nil), names...)
+	f.changedOK = true
+}
+
+// setPages swaps the pages ListPages serves.
+func (f *fakeIndex) setPages(pages ...*domain.Page) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pages = pages
+}
+
+// PageReads reports how many ListPages calls the board made against the index.
+func (f *fakeIndex) PageReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pageReads
 }
 
 type fakeCache struct {
@@ -219,7 +309,10 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 	}
 	show := &fakeShow{}
 	cache := fakeCache{statuses: map[string]string{}, started: map[string]string{}}
-	signals := fakeSignals{}
+	signals := fakeSignals{
+		registryCalls: &seamCounter{},
+		resumeCalls:   &seamCounter{},
+	}
 	launch := launchregistry.NewRegistry()
 	h := &harness{
 		list:      list,

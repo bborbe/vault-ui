@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Recompute the cross-row `blockers`/`blocked` of every task row whose `BlockedBy` names a page a row patch re-derived, and recompute the session-started marker for the changed row, so completing a blocking task clears its dependents' badges on the next `GET /api/tasks` and a cleared marker stops being republished — the patch re-derived only the changed page's own row, but `blockers`/`blocked` are derived from the status cache across rows and the marker from the launch registry and the status cache, so a per-file write mark left dependents showing as blocked and a `ClearTaskSession` marker live until the next session refresh; the added walk reads only the `BlockedBy` lists the held rows already carry and re-runs the same in-memory cache lookups, so the patch still performs no vault list, no page scan and no process spawn.
+
+- feat: Re-derive only the task rows whose pages changed when a write mark or a single-file watcher read moves a key's page revision, so a UI write is visible to the next `GET /api/tasks` without a vault-wide rebuild — `taskSnapshotStore` gains a third rebuild kind beside the full build and the session-only refresh that splices the changed rows into a copy of the published list and swaps it in atomically; the patch reads the pages the index already holds — its one page-index read resolving any pending write mark — reuses the session-derived fields of the rows already published, and does no vault list, no vault-wide page scan and no process spawn; a key whose page revision and session generation both moved, a folder-level mark (the eight synchronous sites keep theirs) and a page with no row already published all still rebuild in full.
+
 ## v0.90.1
 
 - fix: Make a page-index stat-diff allocate only what changed — an unchanged rescan pass now publishes nothing and leaves the key's published snapshot and recorded fingerprint set exactly in place, so it allocates no per-page structure beyond the one directory listing it performs to detect change, while a pass that finds K changed, added or removed files updates the recorded fingerprints in place and allocates in proportion to K instead of copying the whole folder's fingerprint set and rebuilding the published pages slice on every 50 s pass.
