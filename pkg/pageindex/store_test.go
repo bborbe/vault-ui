@@ -23,6 +23,13 @@ import (
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 )
 
+// cacheDirEnv points the user cache directory at dir so the real cache is
+// never touched. linux reads XDG_CACHE_HOME, darwin reads HOME.
+func cacheDirEnv(dir string) {
+	GinkgoT().Setenv("XDG_CACHE_HOME", dir)
+	GinkgoT().Setenv("HOME", dir)
+}
+
 // vlogSink captures the store's V(2) lines.
 type vlogSink struct {
 	mu    sync.Mutex
@@ -470,7 +477,11 @@ var _ = Describe("Page index store", func() {
 
 		It("AC6 opens the default store at the cache path", func() {
 			cacheDir := GinkgoT().TempDir()
-			GinkgoT().Setenv("XDG_CACHE_HOME", cacheDir)
+			cacheDirEnv(cacheDir)
+
+			expectedCacheDir, err := os.UserCacheDir()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.HasPrefix(expectedCacheDir, cacheDir)).To(BeTrue())
 
 			key := pageindex.NewKey("/vault-a", "24 Tasks")
 			warns := &warnSink{}
@@ -478,7 +489,7 @@ var _ = Describe("Page index store", func() {
 			defer closeStore(store)
 
 			Expect(store.Path()).To(Equal(
-				filepath.Join(cacheDir, "vault-ui", "page-index.bolt"),
+				filepath.Join(expectedCacheDir, "vault-ui", "page-index.bolt"),
 			))
 			Expect(store.Write(ctx, key, []pageindex.StoredEntry{simpleEntry("A.md", "A")}, nil)).
 				To(Succeed())
