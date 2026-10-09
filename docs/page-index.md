@@ -170,10 +170,12 @@ derived from the page snapshot and the session snapshot; it is never a field on
   and publishes nothing.
 - The recorded fingerprint set is index-private — read only by the pass's own
   comparison, never published to a reader — and updated in place for the K names
-  a pass changes, so a pass's allocation is proportional to K and not to the
-  folder's file count. A name the listing no longer holds has its entry deleted
+  a pass changes, so the set's own update allocates in proportion to K and not to
+  the folder's file count. A name the listing no longer holds has its entry deleted
   from the set in that same pass, so the recorded name set never outgrows a
-  listing.
+  listing. That bound is the set's alone: a pass with work still merges into the
+  pages snapshot, which is sized to the folder and walked in lockstep with the
+  listing, so a one-file change in an N-file folder still costs O(N) there.
 - A new published snapshot is built only when the page set or its order actually
   moved: a read that reproduces the same pages in the same order publishes
   nothing and leaves a reader's snapshot identity unchanged.

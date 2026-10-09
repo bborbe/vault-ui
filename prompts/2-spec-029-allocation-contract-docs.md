@@ -10,7 +10,7 @@ branch: dark-factory/rescan-allocates-only-what-changed
 <summary>
 - The page-index design doc states the allocation contract of an incremental rescan.
 - It says an unchanged pass allocates no snapshot state and keeps the published snapshot and the recorded fingerprints in place.
-- It says the recorded fingerprint set is index-private and updated in place, so a pass that changes K files allocates in proportion to K, not to the folder's size.
+- It says the recorded fingerprint set is index-private and updated in place for the K names a pass changes, so the set's own update is proportional to K and not to the folder's size; the pass still merges into the folder-sized pages snapshot, so its total cost there is O(N).
 - It says a new snapshot is published only when the page set or its order moved.
 - Nothing else in the document changes meaning, and no production code changes.
 - The `## Unreleased` changelog bullet from the implementation prompt stays as it is.
@@ -38,7 +38,7 @@ Coding guides (in-container paths):
 
 1. In `docs/page-index.md`, inside the `## Incremental updates` section, add the allocation contract. Extend the existing stat-diff bullet or add one new bullet immediately after it. The added text must state, in plain prose:
    - an unchanged stat-diff — the key already has a published snapshot, every listed entry's fingerprint is present in the recorded set and equals the one recorded for it, the listed name set equals the recorded name set, and the pass consumed no file to re-read (no pending write mark forced a name) — **allocates** nothing beyond the one folder listing it performs to detect the change: it builds no new pages slice, no per-name order structure and no folder-sized lookup map, it keeps the published snapshot and the recorded fingerprint set in place, it still resolves the mark that triggered it, and it publishes nothing;
-   - the recorded fingerprint set is index-private and updated in place for the K names a pass changes, so a pass's allocation is proportional to K and not to the folder's file count; a name the listing no longer holds has its entry deleted from the set in that same pass, so the recorded name set never outgrows a listing;
+   - the recorded fingerprint set is index-private and updated in place for the K names a pass changes, so the set's own update is proportional to K and not to the folder's file count; that bound is the set's alone, because a pass with work still merges into the folder-sized pages snapshot, so a one-file change in an N-file folder still costs O(N) there; a name the listing no longer holds has its entry deleted from the set in that same pass, so the recorded name set never outgrows a listing;
    - a new published snapshot is built only when the page set or its order actually moved; a read that reproduces the same pages in the same order publishes nothing and leaves a reader's snapshot identity unchanged.
 
    The word `allocate` or `allocates` must appear in the added text — AC8 greps for the stem `allocate`, which matches `allocates` but **not** `allocation`, and the section-scoped `awk` below uses the same stem. Writing only "the allocation contract" satisfies the prose but fails both checks.
@@ -76,9 +76,9 @@ awk '/^## Incremental updates/{s=1; next} /^## /{s=0} s && /allocate/ {print; fo
 Must exit 0 (the word "allocate" appears inside the `## Incremental updates` section).
 
 ```
-awk '/^## /{sec=$0} /allocat/{if (sec=="## Unreleased") found=1} END{exit !found}' CHANGELOG.md
+awk '/^## (Unreleased|v)/{sec=$0} /page-index|stat-diff/ && /allocat/ && sec != ""{found=1; print "allocation bullet under: " sec} END{exit !found}' CHANGELOG.md
 ```
-Must exit 0 (the implementation prompt's allocation bullet is present and sits under `## Unreleased`, not under a released `## vX.Y.Z`). Do not use `grep -A10 '^## Unreleased' CHANGELOG.md | grep -q '^- fix:'` — it passes on any other `fix:` bullet in the section when this one never landed, and prints nothing once a release has renamed the section. Do not use a bare `awk '/^## /{sec=$0} /allocat/{print sec}'` either: an `awk` that only prints exits 0 whether or not it printed anything, so that form passes whenever `## Unreleased` merely exists and cannot fail on the condition it asserts.
+Must exit 0 and print the section holding the bullet — `## Unreleased` or a released `## vX.Y.Z`; a released section is the better outcome, not a failure. Do not use `grep -A10 '^## Unreleased' CHANGELOG.md | grep -q '^- fix:'` — it passes on any other `fix:` bullet in the section when this one never landed, and prints nothing once a release has renamed the section. Do not use a bare `awk '/^## /{sec=$0} /allocat/{print sec}'` either: an `awk` that only prints exits 0 whether or not it printed anything, so that form passes whenever `## Unreleased` merely exists and cannot fail on the condition it asserts.
 
 ```
 export PATH=/usr/local/go/bin:$PATH
