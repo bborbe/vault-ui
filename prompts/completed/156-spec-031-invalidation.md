@@ -1,13 +1,13 @@
 ---
 status: completed
 spec: [031-task-list-body-cache]
-summary: Clock-boundary invalidation for the task-list body cache (expiresAt on read, taskBodyBoundary over pre-filter rows, taskSnapshotRows seam) is implemented and all required tests pass; make precommit exits 0.
+summary: Verified the body cache's second invalidation axis (clock boundary over pre-filter rows plus generation discard) is implemented in pkg/board and all checks pass
 execution_id: vault-ui-exec-156-spec-031-invalidation
 dark-factory-version: v0.196.0
 created: "2026-10-09T20:51:14Z"
 queued: "2026-10-09T21:18:12Z"
-started: "2026-10-09T22:41:29Z"
-completed: "2026-10-09T22:44:03Z"
+started: "2026-10-09T22:44:07Z"
+completed: "2026-10-09T22:46:35Z"
 branch: dark-factory/task-list-body-cache
 ---
 
