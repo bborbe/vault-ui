@@ -44,6 +44,8 @@ var _ = Describe("Mutation handlers", func() {
 				http.MethodPost, "/api/tasks/TaskOne/jump"),
 			Entry("take-over task", handler.NewTakeOverTaskHandler(&fakeMutations{}),
 				http.MethodPost, "/api/tasks/TaskOne/take-over"),
+			Entry("resume task command", handler.NewResumeTaskCommandHandler(&fakeMutations{}),
+				http.MethodGet, "/api/tasks/TaskOne/resume-command"),
 			Entry("run goal", handler.NewRunGoalHandler(&fakeMutations{}),
 				http.MethodPost, "/api/goals/GoalOne/run"),
 			Entry("take-over goal", handler.NewTakeOverGoalHandler(&fakeMutations{}),
@@ -117,6 +119,43 @@ var _ = Describe("Mutation handlers", func() {
 		)
 		Expect(recorder.Code).To(Equal(http.StatusBadRequest))
 		Expect(recorder.Body.String()).To(ContainSubstring("must not start with"))
+	})
+
+	It("200s the resolved resume command for a task with a session", func() {
+		recorder := doRequest(
+			handler.NewResumeTaskCommandHandler(&fakeMutations{
+				resumeTaskCommand: func(
+					_ context.Context, _, _ string,
+				) (api.SessionResponse, error) {
+					return api.SessionResponse{
+						SessionID:  "sess-1",
+						Command:    "/s/cc-private-claude --resume sess-1",
+						WorkingDir: "/vaults/personal",
+						TaskTitle:  "Task One",
+					}, nil
+				},
+			}), http.MethodGet, "/api/tasks/TaskOne/resume-command?vault=personal", "",
+		)
+		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(recorder.Body.String()).
+			To(ContainSubstring("/s/cc-private-claude --resume sess-1"))
+	})
+
+	It("propagates the 400 for a task with no session", func() {
+		recorder := doRequest(
+			handler.NewResumeTaskCommandHandler(&fakeMutations{
+				resumeTaskCommand: func(
+					context.Context, string, string,
+				) (api.SessionResponse, error) {
+					return api.SessionResponse{}, &mutations.HTTPError{
+						Status: http.StatusBadRequest,
+						Detail: "Task has no Claude session to resume: TaskOne",
+					}
+				},
+			}), http.MethodGet, "/api/tasks/TaskOne/resume-command?vault=personal", "",
+		)
+		Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+		Expect(recorder.Body.String()).To(ContainSubstring("no Claude session"))
 	})
 
 	It("204s a successful jump", func() {

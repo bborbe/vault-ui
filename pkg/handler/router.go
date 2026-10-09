@@ -44,6 +44,8 @@ func CreateHTTPRouter(
 		Handler(NewJumpTaskHandler(m))
 	router.Methods(http.MethodPost).Path("/api/tasks/{task_id}/take-over").
 		Handler(NewTakeOverTaskHandler(m))
+	router.Methods(http.MethodGet).Path("/api/tasks/{task_id}/resume-command").
+		Handler(NewResumeTaskCommandHandler(m))
 	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/run").
 		Handler(NewRunGoalHandler(m))
 	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/take-over").

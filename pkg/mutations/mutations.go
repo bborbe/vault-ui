@@ -135,6 +135,7 @@ type Service interface {
 	RunTask(ctx context.Context, vault, taskID string) (api.SessionResponse, error)
 	JumpTask(ctx context.Context, vault, taskID string, sameOrigin bool) error
 	TakeOverTask(ctx context.Context, vault, taskID string) (api.SessionResponse, error)
+	ResumeTaskCommand(ctx context.Context, vault, taskID string) (api.SessionResponse, error)
 	RunGoal(ctx context.Context, vault, goalID string) (api.SessionResponse, error)
 	TakeOverGoal(ctx context.Context, vault, goalID string) (api.SessionResponse, error)
 	ExecuteTaskCommand(
@@ -343,9 +344,9 @@ func cliVault(vault vaultconfig.Vault) *config.Vault {
 
 // resumeCommand builds the claude --resume command, mirroring
 // _build_resume_command including the `-n <title>` suffix and the optional cd
-// prefix.
-func resumeCommand(vault vaultconfig.Vault, sessionID, taskTitle string) string {
-	script := vault.ClaudeScript
+// prefix. script is the resolved launcher — the task's own `launcher:` value,
+// an inherited goal value, or the vault's configured claude_script.
+func resumeCommand(vault vaultconfig.Vault, script, sessionID, taskTitle string) string {
 	nameSuffix := ""
 	if strings.TrimSpace(taskTitle) != "" {
 		nameSuffix = " -n " + shellQuote(taskTitle)
@@ -358,13 +359,16 @@ func resumeCommand(vault vaultconfig.Vault, sessionID, taskTitle string) string 
 }
 
 // sessionResponse builds the four-field base SessionResponse every session
-// route returns before its route-specific fields are populated.
+// route returns before its route-specific fields are populated. script is the
+// resolved launcher: the task routes pass what ops.ResolveTaskLauncher returned,
+// the goal routes the vault default (goal work-on is launcher-less in
+// vault-cli).
 func sessionResponse(
-	vault vaultconfig.Vault, sessionID, taskTitle string,
+	vault vaultconfig.Vault, script, sessionID, taskTitle string,
 ) api.SessionResponse {
 	return api.SessionResponse{
 		SessionID:  sessionID,
-		Command:    resumeCommand(vault, sessionID, taskTitle),
+		Command:    resumeCommand(vault, script, sessionID, taskTitle),
 		WorkingDir: vault.Path,
 		TaskTitle:  taskTitle,
 	}

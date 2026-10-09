@@ -1884,6 +1884,25 @@ async function runSession(kind, id) {
 
         // Resume short-circuit: an item with a session opens the modal directly.
         if (item.claude_session_id) {
+            if (kind === 'task') {
+                // The task's resume command is resolved server-side from the
+                // task/goal launcher: frontmatter, so it can name a different
+                // launcher than the vault default. Never build it client-side.
+                const response = await fetch(
+                    `/api/tasks/${encodeURIComponent(id)}/resume-command?vault=${encodeURIComponent(item.vault)}`
+                );
+                if (!response.ok) {
+                    showToast(await parseErrorResponse(response), true);
+                    button.textContent = originalText;
+                    button.disabled = false;
+                    return;
+                }
+                const data = await response.json();
+                showModal(data.session_id, data.command, data.working_dir, data.task_title);
+                button.textContent = originalText;
+                button.disabled = false;
+                return;
+            }
             const vaultsResponse = await fetch('/api/vaults');
             const vaults = await vaultsResponse.json();
             const vaultConfig = vaults.find(v => v.name === item.vault);

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/bborbe/vault-cli/pkg/domain"
+	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/golang/glog"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -22,6 +24,34 @@ import (
 
 // taskNotFound is the Python FileNotFoundError text for a missing task.
 func taskNotFound(taskID string) string { return "Task not found: " + taskID }
+
+// taskLauncherScript resolves the launcher script a task route must use. It
+// loads the task as a vault-cli *domain.Task and resolves it through
+// ops.ResolveTaskLauncher — the single home of the task > goal > vault
+// precedence and of the launcher value check. A resolution failure (an invalid
+// value, conflicting goal launchers, an unreadable task) is returned as the
+// HTTP error the route answers; it is never a silent fallback to the vault
+// default. Stale goal links are logged as warnings.
+func (s *service) taskLauncherScript(
+	ctx context.Context, resolved vaultconfig.Vault, set vaultui.OpSet, taskID string,
+) (string, *HTTPError) {
+	task, err := set.TaskStorage.FindTaskByName(ctx, resolved.Path, taskID)
+	if err != nil {
+		return "", newHTTPError(400, taskNotFound(taskID))
+	}
+	script, warnings, resolveErr := ops.ResolveTaskLauncher(
+		ctx, set.GoalStorage, resolved.Path, resolved.ClaudeScript, task,
+	)
+	for _, warning := range warnings {
+		glog.V(2).Infof(
+			"launcher resolution for task %s in vault %s: %s", taskID, resolved.Name, warning,
+		)
+	}
+	if resolveErr != nil {
+		return "", newHTTPError(400, resolveErr.Error())
+	}
+	return script, nil
+}
 
 // RunTask starts a Claude session for a task, mirroring run_task.
 func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.SessionResponse, error) {
@@ -48,6 +78,10 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	task, err := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if err != nil {
 		return api.SessionResponse{}, newHTTPError(404, taskNotFound(taskID))
+	}
+	script, launcherErr := s.taskLauncherScript(ctx, resolved, set, taskID)
+	if launcherErr != nil {
+		return api.SessionResponse{}, launcherErr
 	}
 	if task.Phase == "todo" {
 		if _, approveErr := set.Approve.Execute(
@@ -88,7 +122,7 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 			500, "vault-cli work-on did not start a claude session: no warnings reported",
 		)
 	}
-	return sessionResponse(resolved, sessionID, task.Name), nil
+	return sessionResponse(resolved, script, sessionID, task.Name), nil
 }
 
 // JumpTask activates the WezTerm pane a live task's session runs in, mirroring
@@ -147,6 +181,12 @@ func (s *service) TakeOverTask(
 	if showErr != nil {
 		return api.SessionResponse{}, newHTTPError(404, taskNotFound(taskID))
 	}
+	// Resolve before any SIGTERM: an invalid launcher must not terminate a
+	// session the caller then cannot resume.
+	script, launcherErr := s.taskLauncherScript(ctx, resolved, set, taskID)
+	if launcherErr != nil {
+		return api.SessionResponse{}, launcherErr
+	}
 	sessionID := task.ClaudeSessionID
 	terminated := false
 	if s.startingMarker(vault, taskID, "") != "" {
@@ -176,9 +216,43 @@ func (s *service) TakeOverTask(
 		}
 		terminated = s.terminateResumed(ctx, sessionID)
 	}
-	response := sessionResponse(resolved, sessionID, task.Name)
+	response := sessionResponse(resolved, script, sessionID, task.Name)
 	response.Terminated = &terminated
 	return response, nil
+}
+
+// ResumeTaskCommand returns the resume command for a task's existing session
+// without mutating anything — the Open button's server-side command. A task
+// with no session, or a launcher that does not resolve, is refused.
+func (s *service) ResumeTaskCommand(
+	ctx context.Context, vault, taskID string,
+) (api.SessionResponse, error) {
+	if guard := requireSafeID(taskID, "task_id"); guard != nil {
+		return api.SessionResponse{}, guard
+	}
+	resolved, ok, err := s.vaultByName(ctx, vault)
+	if err != nil {
+		return api.SessionResponse{}, err
+	}
+	if !ok {
+		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
+	}
+	set := s.opsForVault(resolved)
+	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
+	if showErr != nil {
+		return api.SessionResponse{}, newHTTPError(404, taskNotFound(taskID))
+	}
+	sessionID := task.ClaudeSessionID
+	if sessionID == "" {
+		return api.SessionResponse{}, newHTTPError(
+			400, "Task has no Claude session to resume: "+taskID,
+		)
+	}
+	script, launcherErr := s.taskLauncherScript(ctx, resolved, set, taskID)
+	if launcherErr != nil {
+		return api.SessionResponse{}, launcherErr
+	}
+	return sessionResponse(resolved, script, sessionID, task.Name), nil
 }
 
 // terminateLaunch SIGTERMs the in-flight launch process of a Starting card.
@@ -300,6 +374,10 @@ func (s *service) ExecuteTaskCommand(
 	if showErr != nil {
 		return api.SessionResponse{}, newHTTPError(404, taskNotFound(taskID))
 	}
+	script, launcherErr := s.taskLauncherScript(ctx, resolved, set, taskID)
+	if launcherErr != nil {
+		return api.SessionResponse{}, launcherErr
+	}
 	if req.Command == "defer-task" || req.Command == "complete-task" {
 		return s.taskFastPath(ctx, resolved, set, vault, taskID, task.Name, req)
 	}
@@ -319,7 +397,7 @@ func (s *service) ExecuteTaskCommand(
 			500, "vault-cli work-on did not start a claude session: no warnings reported",
 		)
 	}
-	return sessionResponse(resolved, result.SessionID, task.Name), nil
+	return sessionResponse(resolved, script, result.SessionID, task.Name), nil
 }
 
 // taskFastPath runs the vault-cli defer/complete fast path in-process, then

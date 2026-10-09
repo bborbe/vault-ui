@@ -18,6 +18,7 @@ type fakeMutations struct {
 	runTask            func(context.Context, string, string) (api.SessionResponse, error)
 	jumpTask           func(context.Context, string, string, bool) error
 	takeOverTask       func(context.Context, string, string) (api.SessionResponse, error)
+	resumeTaskCommand  func(context.Context, string, string) (api.SessionResponse, error)
 	runGoal            func(context.Context, string, string) (api.SessionResponse, error)
 	takeOverGoal       func(context.Context, string, string) (api.SessionResponse, error)
 	executeTaskCommand func(
@@ -67,6 +68,12 @@ func (f *fakeMutations) TakeOverTask(
 	ctx context.Context, vault, taskID string,
 ) (api.SessionResponse, error) {
 	return f.takeOverTask(ctx, vault, taskID)
+}
+
+func (f *fakeMutations) ResumeTaskCommand(
+	ctx context.Context, vault, taskID string,
+) (api.SessionResponse, error) {
+	return f.resumeTaskCommand(ctx, vault, taskID)
 }
 
 func (f *fakeMutations) RunGoal(

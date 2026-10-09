@@ -49,6 +49,13 @@ func mutationOpsFactory(vault vaultconfig.Vault) vaultui.OpSet {
 	locker := ops.NewSessionLocker()
 	starter := ops.NewClaudeSessionStarter(vault.ClaudeScript, locker)
 	resumer := ops.NewClaudeResumer(vault.ClaudeScript, locker)
+	// The launcher factory builds the starter/resumer pair for a task that
+	// resolved to a different launcher than the vault's claude_script. It shares
+	// the default pair's locker so both paths serialize on the same session
+	// files.
+	launcherFactory := func(script string) (ops.ClaudeSessionStarter, ops.ClaudeResumer) {
+		return ops.NewClaudeSessionStarter(script, locker), ops.NewClaudeResumer(script, locker)
+	}
 	return CreateOpSet(
 		cliVault,
 		libtime.NewCurrentDateTime(),
@@ -57,6 +64,7 @@ func mutationOpsFactory(vault vaultconfig.Vault) vaultui.OpSet {
 		resumer,
 		ops.NewInteractionCounter("", ""),
 		uuid.NewString,
+		launcherFactory,
 	)
 }
 

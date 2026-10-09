@@ -56,6 +56,7 @@ func CreateOpSet(
 	resumer ops.ClaudeResumer,
 	interactionCounter ops.InteractionCounter,
 	uuidGenerator func() string,
+	launcherFactory ops.LauncherFactory,
 ) vaultui.OpSet {
 	storageConfig := storage.NewConfigFromVault(vault)
 	taskStore := storage.NewTaskStorage(storageConfig)
@@ -64,11 +65,13 @@ func CreateOpSet(
 	dailyStore := storage.NewDailyNoteStorage(storageConfig)
 	pageStore := storage.NewPageStorage(storageConfig)
 	return vaultui.OpSet{
+		TaskStorage:      taskStore,
+		GoalStorage:      goalStore,
 		List:             ops.NewListOperation(pageStore),
 		Show:             ops.NewShowOperation(taskStore),
 		FrontmatterSet:   ops.NewFrontmatterSetOperation(taskStore, currentDateTime, publisher, vault.Name, vault.GetTasksDir()),
 		FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, publisher, vault.Name, vault.GetTasksDir()),
-		WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, currentDateTime, uuidGenerator, starter, resumer),
+		WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, goalStore, currentDateTime, uuidGenerator, starter, resumer, launcherFactory),
 		Approve:          ops.NewTaskApproveOperation(taskStore, currentDateTime),
 		Answer:           ops.NewTaskAnswerOperation(taskStore),
 		Defer:            ops.NewDeferOperation(taskStore, dailyStore, currentDateTime),

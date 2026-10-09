@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 
 	libtime "github.com/bborbe/time"
@@ -87,6 +88,7 @@ type harness struct {
 	launch    launchregistry.Registry
 	pane      *fakePane
 	jump      *fakeJump
+	signaler  *fakeSignaler
 	config    vaultconfig.Config
 	cfgPtr    *vaultconfig.Config
 	queue     queue.Queue
@@ -176,6 +178,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	index := &mocks.IndexInvalidator{}
 	pane := &fakePane{paneID: "pane-1", found: true}
 	jump := &fakeJump{token: "tok", hasToken: true}
+	signaler := &fakeSignaler{}
 
 	cfgPtr := &cfg
 	writeQueue := startWriteQueue()
@@ -190,7 +193,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
-		Signaler:  &fakeSignaler{},
+		Signaler:  signaler,
 		Pane:      pane,
 		Jump:      jump,
 		HomeDir:   dir,
@@ -207,6 +210,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		launch:    launch,
 		pane:      pane,
 		jump:      jump,
+		signaler:  signaler,
 		config:    cfg,
 		cfgPtr:    cfgPtr,
 		queue:     writeQueue,
@@ -236,11 +240,13 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 		publisher := ops.NewEscalationPublisher("", "", nil)
 		clock := libtime.NewCurrentDateTime()
 		return vaultui.OpSet{
+			TaskStorage:      taskStore,
+			GoalStorage:      goalStore,
 			List:             ops.NewListOperation(storage.NewPageStorage(storageConfig)),
 			Show:             ops.NewShowOperation(taskStore),
 			FrontmatterSet:   ops.NewFrontmatterSetOperation(taskStore, clock, publisher, vault.Name, vault.TasksFolder),
 			FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, publisher, vault.Name, vault.TasksFolder),
-			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, clock, func() string { return uuidTwo }, nil, nil),
+			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, goalStore, clock, func() string { return uuidTwo }, nil, nil, nil),
 			Approve:          ops.NewTaskApproveOperation(taskStore, clock),
 			Answer:           ops.NewTaskAnswerOperation(taskStore),
 			Defer:            ops.NewDeferOperation(taskStore, dailyStore, clock),
@@ -270,11 +276,13 @@ func opsFactoryWithStarter(
 		dailyStore := storage.NewDailyNoteStorage(storageConfig)
 		clock := libtime.NewCurrentDateTime()
 		return vaultui.OpSet{
+			TaskStorage:      taskStore,
+			GoalStorage:      goalStore,
 			List:             ops.NewListOperation(storage.NewPageStorage(storageConfig)),
 			Show:             ops.NewShowOperation(taskStore),
 			FrontmatterSet:   ops.NewFrontmatterSetOperation(taskStore, clock, ops.NewEscalationPublisher("", "", nil), vault.Name, vault.TasksFolder),
 			FrontmatterClear: ops.NewFrontmatterClearOperation(taskStore, ops.NewEscalationPublisher("", "", nil), vault.Name, vault.TasksFolder),
-			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, clock, func() string { return uuidTwo }, starter, resumer),
+			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, goalStore, clock, func() string { return uuidTwo }, starter, resumer, nil),
 			Approve:          ops.NewTaskApproveOperation(taskStore, clock),
 			Answer:           ops.NewTaskAnswerOperation(taskStore),
 			GoalSet:          ops.NewGoalSetOperation(goalStore),
@@ -352,6 +360,61 @@ func (h *harness) readGoal(goalID string) string {
 	content, err := os.ReadFile(filepath.Join(h.dir, "23 Goals", goalID+".md"))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return string(content)
+}
+
+// writeLauncherTask writes a task carrying a live session and the given extra
+// frontmatter lines into the harness vault's tasks dir.
+func (h *harness) writeLauncherTask(name string, extra ...string) {
+	lines := []string{"status: in_progress", "claude_session_id: " + uuidOne}
+	lines = append(lines, extra...)
+	writeFile(
+		filepath.Join(h.dir, "24 Tasks", name+".md"),
+		"---\n"+strings.Join(lines, "\n")+"\n---\n\n# "+name+"\n",
+	)
+}
+
+// withSignalingScanner rebuilds the harness's service with a ps scanner that
+// reports a live --resume row pinning uuidOne, so a take-over that reaches the
+// termination step actually signals a pid.
+func (h *harness) withSignalingScanner() mutations.Service {
+	return mutations.New(mutations.Deps{
+		Config:    configProvider{cfg: h.cfgPtr},
+		Ops:       opsFactory(h.config.Vaults[0]),
+		Cache:     h.cache,
+		Launch:    h.launch,
+		Locks:     sessionlock.NewRegistry(),
+		Publisher: h.publisher,
+		Index:     h.index,
+		Queue:     h.queue,
+		Clock:     libtime.NewCurrentDateTime(),
+		Scanner: session.ProcessScanner(func(context.Context) (string, error) {
+			return "40794 claude --settings {} --model x --resume " + uuidOne + "\n", nil
+		}),
+		Signaler: h.signaler,
+		Pane:     h.pane,
+		Jump:     h.jump,
+		HomeDir:  h.dir,
+	})
+}
+
+// withOps rebuilds the harness's service with the given ops factory.
+func (h *harness) withOps(ops mutations.OpsFactory) mutations.Service {
+	return mutations.New(mutations.Deps{
+		Config:    configProvider{cfg: h.cfgPtr},
+		Ops:       ops,
+		Cache:     h.cache,
+		Launch:    h.launch,
+		Locks:     sessionlock.NewRegistry(),
+		Publisher: h.publisher,
+		Index:     h.index,
+		Queue:     h.queue,
+		Clock:     libtime.NewCurrentDateTime(),
+		Scanner:   session.ProcessScanner(noScanner),
+		Signaler:  h.signaler,
+		Pane:      h.pane,
+		Jump:      h.jump,
+		HomeDir:   h.dir,
+	})
 }
 
 // httpStatus extracts the HTTP status from a mutation error.
@@ -1809,5 +1872,189 @@ var _ = Describe("UpdateTaskPhase answer ordering", func() {
 
 		Expect(answer.ExecuteCallCount()).To(Equal(0))
 		Expect(approve.ExecuteCallCount()).To(Equal(1))
+	})
+})
+
+var _ = Describe("Mutation service launcher resolution", func() {
+	var h *harness
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		h = newHarnessWith(func(vault *vaultconfig.Vault) {
+			vault.ClaudeScript = "/s/cc-private"
+		})
+	})
+
+	It("resolves a task's own launcher for the resume command", func() {
+		h.writeLauncherTask("LaunchOwn", "launcher: cc-private-claude")
+
+		result, err := h.service.ResumeTaskCommand(ctx, "personal", "LaunchOwn")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.SessionID).To(Equal(uuidOne))
+		Expect(result.Command).To(HavePrefix("/s/cc-private-claude --resume " + uuidOne))
+		Expect(result.WorkingDir).To(Equal(h.dir))
+		Expect(result.TaskTitle).To(Equal("LaunchOwn"))
+	})
+
+	It("keeps the vault default for a task without the field", func() {
+		result, err := h.service.ResumeTaskCommand(ctx, "personal", taskTwoID)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Command).To(HavePrefix("/s/cc-private --resume " + uuidOne))
+	})
+
+	It("400s an invalid launcher value and returns no command", func() {
+		h.writeLauncherTask("LaunchBad", `launcher: "cc private"`)
+
+		result, err := h.service.ResumeTaskCommand(ctx, "personal", "LaunchBad")
+
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(err.Error()).To(ContainSubstring("invalid launcher"))
+		Expect(result.Command).To(BeEmpty())
+	})
+
+	It("400s a task with no session", func() {
+		_, err := h.service.ResumeTaskCommand(ctx, "personal", taskOneID)
+
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(err.Error()).To(ContainSubstring("no Claude session"))
+	})
+
+	It("400s a dash-prefixed task id", func() {
+		_, err := h.service.ResumeTaskCommand(ctx, "personal", "-x")
+
+		Expect(httpStatus(err)).To(Equal(400))
+	})
+
+	It("500s an unknown vault", func() {
+		_, err := h.service.ResumeTaskCommand(ctx, "nope", taskTwoID)
+
+		Expect(httpStatus(err)).To(Equal(500))
+	})
+
+	It("inherits the launcher from the task's goal", func() {
+		writeFile(filepath.Join(h.dir, "23 Goals", "GoalLauncher.md"),
+			"---\nstatus: in_progress\nlauncher: cc-private-claude\n---\n\n# Goal Launcher\n")
+		h.writeLauncherTask("LaunchInherited", "goals:\n  - \"[[GoalLauncher]]\"")
+
+		result, err := h.service.ResumeTaskCommand(ctx, "personal", "LaunchInherited")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Command).To(HavePrefix("/s/cc-private-claude --resume " + uuidOne))
+	})
+
+	It("warns and keeps the vault default for a stale goal link", func() {
+		h.writeLauncherTask("LaunchStale", "goals:\n  - \"[[MissingGoal]]\"")
+
+		result, err := h.service.ResumeTaskCommand(ctx, "personal", "LaunchStale")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Command).To(HavePrefix("/s/cc-private --resume " + uuidOne))
+	})
+
+	It("400s conflicting goal launchers instead of falling back to the default", func() {
+		writeFile(filepath.Join(h.dir, "23 Goals", "GoalAlpha.md"),
+			"---\nstatus: in_progress\nlauncher: cc-alpha\n---\n\n# Goal Alpha\n")
+		writeFile(filepath.Join(h.dir, "23 Goals", "GoalBeta.md"),
+			"---\nstatus: in_progress\nlauncher: cc-beta\n---\n\n# Goal Beta\n")
+		h.writeLauncherTask(
+			"LaunchConflict",
+			"goals:\n  - \"[[GoalAlpha]]\"\n  - \"[[GoalBeta]]\"",
+		)
+
+		result, err := h.service.ResumeTaskCommand(ctx, "personal", "LaunchConflict")
+
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(err.Error()).To(ContainSubstring("conflicting launchers"))
+		Expect(result.Command).To(BeEmpty())
+	})
+
+	It("threads the resolved launcher through take-over", func() {
+		h.writeLauncherTask("LaunchTakeOver", "launcher: cc-private-claude")
+
+		result, err := h.service.TakeOverTask(ctx, "personal", "LaunchTakeOver")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Command).To(HavePrefix("/s/cc-private-claude --resume " + uuidOne))
+	})
+
+	It("400s a take-over with an invalid launcher and never signals the session", func() {
+		h.writeLauncherTask("LaunchBadTakeOver", `launcher: "cc private"`)
+		service := h.withSignalingScanner()
+
+		_, err := service.TakeOverTask(ctx, "personal", "LaunchBadTakeOver")
+
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(h.signaler.pids).To(BeEmpty())
+	})
+
+	It("signals the session on a take-over whose launcher resolves", func() {
+		h.writeLauncherTask("LaunchGoodTakeOver", "launcher: cc-private-claude")
+		service := h.withSignalingScanner()
+
+		_, err := service.TakeOverTask(ctx, "personal", "LaunchGoodTakeOver")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(h.signaler.pids).To(Equal([]int{40794}))
+	})
+
+	It("threads the resolved launcher through RunTask", func() {
+		// The plain harness's work-on has no launcher factory; a task that
+		// already carries a session needs neither a starter nor an interactive
+		// resumer, so RunTask reaches sessionResponse with the resolved script.
+		h = newHarness()
+		h.writeLauncherTask("LaunchRun", "launcher: cc-private-claude")
+
+		result, err := h.service.RunTask(ctx, "personal", "LaunchRun")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Command).To(HavePrefix("cc-private-claude --resume " + uuidOne))
+	})
+
+	It("400s RunTask with an invalid launcher before any write", func() {
+		h = newHarness()
+		h.writeLauncherTask("LaunchRunBad", `launcher: "cc private"`)
+		before := h.readTask("LaunchRunBad")
+
+		_, err := h.service.RunTask(ctx, "personal", "LaunchRunBad")
+
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(h.readTask("LaunchRunBad")).To(Equal(before))
+	})
+
+	It("400s when the task cannot be loaded for launcher resolution", func() {
+		h.writeLauncherTask("LaunchStorageFail")
+		taskStore := &vcmocks.TaskStorage{}
+		taskStore.FindTaskByNameReturns(nil, errors.New("unreadable"))
+		base := opsFactory(h.config.Vaults[0])
+		service := h.withOps(func(v vaultconfig.Vault) vaultui.OpSet {
+			set := base(v)
+			set.TaskStorage = taskStore
+			return set
+		})
+
+		result, err := service.ResumeTaskCommand(ctx, "personal", "LaunchStorageFail")
+
+		Expect(httpStatus(err)).To(Equal(400))
+		Expect(result.Command).To(BeEmpty())
+	})
+
+	It("keeps the vault default when the goal storage read fails", func() {
+		h.writeLauncherTask("LaunchGoalStorageFail", "goals:\n  - \"[[SomeGoal]]\"")
+		goalStore := &vcmocks.GoalStorage{}
+		goalStore.FindGoalByNameReturns(nil, errors.New("unreadable"))
+		base := opsFactory(h.config.Vaults[0])
+		service := h.withOps(func(v vaultconfig.Vault) vaultui.OpSet {
+			set := base(v)
+			set.GoalStorage = goalStore
+			return set
+		})
+
+		result, err := service.ResumeTaskCommand(ctx, "personal", "LaunchGoalStorageFail")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Command).To(HavePrefix("/s/cc-private --resume " + uuidOne))
 	})
 })

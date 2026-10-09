@@ -236,6 +236,23 @@ func NewTakeOverTaskHandler(m mutations.Service) http.Handler {
 	})
 }
 
+// NewResumeTaskCommandHandler returns the GET /api/tasks/{task_id}/resume-command
+// handler. It reads, never mutates, and answers 200 with the resolved command.
+func NewResumeTaskCommandHandler(m mutations.Service) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		vault, ok := requireVault(resp, req)
+		if !ok {
+			return
+		}
+		result, err := m.ResumeTaskCommand(req.Context(), vault, pathVar(req, "task_id"))
+		if err != nil {
+			writeMutationError(resp, err)
+			return
+		}
+		writeJSON(resp, http.StatusOK, result)
+	})
+}
+
 // NewRunGoalHandler returns the POST /api/goals/{goal_id}/run handler.
 func NewRunGoalHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
