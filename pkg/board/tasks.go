@@ -123,6 +123,35 @@ func (b *board) ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBod
 	return b.bodies.Get(ctx, query)
 }
 
+// taskSnapshotRows returns the snapshot's rows for the query's selected vaults,
+// concatenated, before the status filter and visibleRow drop any. The body
+// cache reads it to derive its clock boundary, so a row the visibility filter
+// drops still contributes its entry instant.
+//
+// It makes the same vault selection ListTasks makes and reads the same
+// snapshot, so it adds no vault I/O: the snapshot List is served from the
+// published rows.
+func (b *board) taskSnapshotRows(
+	ctx context.Context,
+	query TaskQuery,
+) ([]taskSnapshotRow, error) {
+	all, err := b.vaults.Vaults(ctx)
+	if err != nil {
+		return nil, errors.Wrap(ctx, err, "list vaults")
+	}
+	selected := b.selectVaults(all, query.Vaults)
+
+	rows := make([]taskSnapshotRow, 0, len(selected))
+	for _, vault := range selected {
+		vaultRows, snapshotErr := b.snapshot.List(ctx, vault)
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+		rows = append(rows, vaultRows...)
+	}
+	return rows, nil
+}
+
 // buildTaskRows lists the vault's tasks and precomputes every field that needs
 // I/O: the uncompleted blockers, the blocked flag, the session-started marker,
 // the classified session state and the activity date. It applies none of the

@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [031-task-list-body-cache]
+summary: 'Added the clock-boundary invalidation axis to the task-list body cache: a held entry now expires at the earliest clock-derived transition (defer_date, defer_date-upcoming_hours, or completion+LookbackHours) computed over the snapshot''s pre-filter rows, with tests for AC5 and AC6 and 90.2% package coverage.'
+execution_id: vault-ui-exec-156-spec-031-invalidation
+dark-factory-version: v0.196.0
 created: "2026-10-09T20:51:14Z"
 queued: "2026-10-09T21:18:12Z"
+started: "2026-10-09T22:18:53Z"
+completed: "2026-10-09T22:26:27Z"
 branch: dark-factory/task-list-body-cache
 ---
 
