@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [031-task-list-body-cache]
+summary: Added a real-board/real-handler end-to-end test proving gzip negotiation and byte parity, documented the task-list body cache in docs/page-index.md, and recorded it under a new CHANGELOG Unreleased heading.
+execution_id: vault-ui-exec-158-spec-031-e2e-docs-changelog
+dark-factory-version: v0.196.0
 created: "2026-10-09T20:51:14Z"
 queued: "2026-10-09T21:18:12Z"
+started: "2026-10-09T22:57:43Z"
+completed: "2026-10-09T23:00:57Z"
 branch: dark-factory/task-list-body-cache
 ---
 
