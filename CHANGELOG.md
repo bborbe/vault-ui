@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Start and Open honour the task/goal `launcher:` frontmatter via vault-cli `ops.ResolveTaskLauncher` (vault-cli bumped to v0.167.0); new `GET /api/tasks/{task_id}/resume-command`
+
 ## v0.92.1
 
 - docs: Scope the page-index rescan's K-proportional claim to the fingerprint set, and correct the 029 spec's AC8 and AC10 evidence checks

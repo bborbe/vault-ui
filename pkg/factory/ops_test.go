@@ -108,6 +108,9 @@ func createOpSet(vaultDir string) vaultui.OpSet {
 		resumer,
 		counter,
 		uuid.NewString,
+		func(string) (ops.ClaudeSessionStarter, ops.ClaudeResumer) {
+			return starter, resumer
+		},
 	)
 }
 
@@ -217,6 +220,43 @@ var _ = Describe("CreateOpSet", func() {
 			Expect(result.Success).To(BeTrue())
 			Expect(frontmatterValue(vaultDir, taskFile, "claude_session_id")).
 				NotTo(BeEmpty())
+		})
+
+		It("builds the work-on starter through the launcher factory for a resolved launcher", func() {
+			vaultDir := tempVault()
+			writeFile(vaultDir, "Tasks/Launcher Task.md",
+				"---\nstatus: in_progress\npage_type: task\nlauncher: cc-private-claude\n---\n"+
+					"# Launcher Task\n\nA task.\n")
+
+			vault := mustVault(vaultDir)
+			starter := &mocks.ClaudeSessionStarter{}
+			starter.StartSessionReturns(nil)
+			resumer := &mocks.ClaudeResumer{}
+			resumer.ResumeSessionReturns(nil)
+			counter := &mocks.InteractionCounter{}
+			counter.CountReturns(0)
+			gotScript := ""
+			set := factory.CreateOpSet(
+				vault,
+				libtime.NewCurrentDateTime(),
+				ops.NewEscalationPublisher("", "", ops.NewKafkaNotificationSenderFactory()),
+				starter,
+				resumer,
+				counter,
+				uuid.NewString,
+				func(script string) (ops.ClaudeSessionStarter, ops.ClaudeResumer) {
+					gotScript = script
+					return starter, resumer
+				},
+			)
+
+			result, err := set.WorkOn.Execute(
+				ctx, vaultDir, "Launcher Task", "alice", "test", false, vaultDir, vault,
+			)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Success).To(BeTrue())
+			Expect(gotScript).To(Equal("cc-private-claude"))
 		})
 
 		It("defer sets the task defer_date", func() {

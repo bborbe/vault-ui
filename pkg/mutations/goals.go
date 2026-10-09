@@ -71,7 +71,7 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 			500, "vault-cli goal work-on did not start a claude session: no warnings reported",
 		)
 	}
-	return sessionResponse(resolved, result.SessionID, goal.Name), nil
+	return sessionResponse(resolved, resolved.ClaudeScript, result.SessionID, goal.Name), nil
 }
 
 // TakeOverGoal terminates a live or starting goal session and returns the
@@ -127,7 +127,7 @@ func (s *service) TakeOverGoal(
 		}
 		terminated = s.terminateResumed(ctx, sessionID)
 	}
-	response := sessionResponse(resolved, sessionID, goal.Name)
+	response := sessionResponse(resolved, resolved.ClaudeScript, sessionID, goal.Name)
 	response.Terminated = &terminated
 	return response, nil
 }

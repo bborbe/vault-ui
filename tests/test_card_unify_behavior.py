@@ -33,7 +33,7 @@ def test_run_session_single_endpoint_from_kind() -> None:
     reaching both tasks and goals; a hardcoded single-kind endpoint fails."""
     assert "async function runSession(kind, id)" in APP_JS
     assert APP_JS.count("/run?vault=") == 1
-    body = _slice("async function runSession", 2600)
+    body = _slice("async function runSession", 4000)
     assert "kind === 'goal' ? 'goals' : 'tasks'" in body
     assert "/api/${base}/" in body
     assert "startsWith('-')" in body  # arg-injection guard on merged run path

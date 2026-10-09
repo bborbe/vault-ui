@@ -20,6 +20,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
+	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -73,6 +74,11 @@ func (f *fakeBoard) ShowTopic(
 }
 
 func newRouter(fake *fakeBoard) http.Handler {
+	return newRouterWithMutations(fake, &fakeMutations{})
+}
+
+// newRouterWithMutations builds the full router with the given mutation service.
+func newRouterWithMutations(fake *fakeBoard, m mutations.Service) http.Handler {
 	staticFS := fstest.MapFS{
 		"index.html": {Data: []byte("<html>index</html>")},
 		"app.js":     {Data: []byte("console.log('app')")},
@@ -81,7 +87,7 @@ func newRouter(fake *fakeBoard) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	manager := websocket.NewConnectionManager(websocket.NewMetrics())
-	return handler.CreateHTTPRouter(fake, &fakeMutations{}, staticFS, readiness, manager)
+	return handler.CreateHTTPRouter(fake, m, staticFS, readiness, manager)
 }
 
 func doGet(router http.Handler, target string) *httptest.ResponseRecorder {
@@ -137,6 +143,30 @@ var _ = Describe("API router", func() {
 				Expect(r.Body.String()).To(ContainSubstring("unresolved"))
 			}),
 	)
+
+	It("registers the task resume-command route", func() {
+		var gotVault, gotTaskID string
+		routerWithMutations := newRouterWithMutations(fake, &fakeMutations{
+			resumeTaskCommand: func(
+				_ context.Context, vault, taskID string,
+			) (api.SessionResponse, error) {
+				gotVault, gotTaskID = vault, taskID
+				return api.SessionResponse{
+					SessionID: "sess-1",
+					Command:   "/s/cc-private-claude --resume sess-1",
+					TaskTitle: taskID,
+				}, nil
+			},
+		})
+
+		recorder := doGet(routerWithMutations, "/api/tasks/TaskOne/resume-command?vault=personal")
+
+		Expect(recorder.Code).To(Equal(http.StatusOK))
+		Expect(gotVault).To(Equal("personal"))
+		Expect(gotTaskID).To(Equal("TaskOne"))
+		Expect(recorder.Body.String()).
+			To(ContainSubstring("/s/cc-private-claude --resume sess-1"))
+	})
 
 	It("passes the repeated vault query values through", func() {
 		doGet(router, "/api/assignees?vault=a&vault=b")

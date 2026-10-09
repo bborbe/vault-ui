@@ -31,7 +31,7 @@ def test_goal_card_renders_start_and_resume_gated_on_session() -> None:
 def test_run_goal_posts_to_run_endpoint_with_resume_shortcut() -> None:
     """runSession with kind='goal' POSTs to /api/goals/{id}/run and short-circuits
     to the modal on an existing session."""
-    body = _slice("async function runSession", 3500)
+    body = _slice("async function runSession", 4000)
     assert "/api/${base}/" in body
     assert "/run?vault=" in body
     assert "method: 'POST'" in body
