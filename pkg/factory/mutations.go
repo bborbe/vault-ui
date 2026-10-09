@@ -34,10 +34,10 @@ func (p *mutationConfigProvider) Load(ctx context.Context) (*vaultconfig.Config,
 	return vaultconfig.Load(ctx, p.loader, p.configPath)
 }
 
-// mutationOpsFactory builds a vault-cli op set for one resolved vault, wiring
-// the session starter and resumer from the vault's claude script.
-func mutationOpsFactory(vault vaultconfig.Vault) vaultui.OpSet {
-	cliVault := &config.Vault{
+// vaultCLIConfig maps a resolved vault to the vault-cli config.Vault the ops
+// constructors take.
+func vaultCLIConfig(vault vaultconfig.Vault) *config.Vault {
+	return &config.Vault{
 		Path:              vault.Path,
 		Name:              vault.Name,
 		TasksDir:          vault.TasksFolder,
@@ -46,6 +46,12 @@ func mutationOpsFactory(vault vaultconfig.Vault) vaultui.OpSet {
 		ClaudeScript:      vault.ClaudeScript,
 		SessionProjectDir: vault.SessionProjectDir,
 	}
+}
+
+// mutationOpsFactory builds a vault-cli op set for one resolved vault, wiring
+// the session starter and resumer from the vault's claude script.
+func mutationOpsFactory(vault vaultconfig.Vault) vaultui.OpSet {
+	cliVault := vaultCLIConfig(vault)
 	locker := ops.NewSessionLocker()
 	starter := ops.NewClaudeSessionStarter(vault.ClaudeScript, locker)
 	resumer := ops.NewClaudeResumer(vault.ClaudeScript, locker)

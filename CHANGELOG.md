@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Wire the five-minute cleanup sweep into the running service (`factory.CreateCleanupSweep` runs the startup orphan reconciliation once — after the status cache it reads has loaded — then `RunLoop` until shutdown), so stale session ids are cleared, orphaned starting markers expire, resurrected markers are re-cleared and an empty session id is re-bound again instead of the cards offering Start for work already running; the sweep reads the marker from the status cache at startup reconciliation (the vault-cli list never emitted it, so that pass cleared nothing) and its clock is now read at each consumer rather than frozen at construction, so a marker written after startup can still pass the TTL.
+- fix: Close the cleanup sweep's marker race — every clear site re-checks the launch registry after its awaited vault write and restores `claude_session_started` when the record is IN_FLIGHT, so a relaunch that begins during the await no longer has its fresh marker erased (the registry said "running" while the file said nothing, and the card rendered Start on a running turn); a FINISHED record is never restored, and the startup reconciliation skips its `Finish` when it restored, so the relaunch is not immediately marked done.
+
 ## v0.93.0
 
 - feat: Start and Open honour the task/goal `launcher:` frontmatter via vault-cli `ops.ResolveTaskLauncher` (vault-cli bumped to v0.167.0); new `GET /api/tasks/{task_id}/resume-command`

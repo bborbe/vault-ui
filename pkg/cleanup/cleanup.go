@@ -99,16 +99,20 @@ type Vault struct {
 // SweepParams carries every injectable dependency and every frozen value. None
 // of the durations is read from a wall clock inside the logic.
 type SweepParams struct {
-	Vaults             []Vault
-	OpsFor             VaultOpsFactory
-	HomeDir            string
-	CurrentUser        string
-	LaunchRegistry     launchregistry.Registry
-	SessionLock        sessionlock.Registry
-	StatusCache        statuscache.Cache
-	LiveNames          func(ctx context.Context) map[string]string
-	ProcessScanner     session.ProcessScanner
-	Now                libtime.DateTime
+	Vaults         []Vault
+	OpsFor         VaultOpsFactory
+	HomeDir        string
+	CurrentUser    string
+	LaunchRegistry launchregistry.Registry
+	SessionLock    sessionlock.Registry
+	StatusCache    statuscache.Cache
+	LiveNames      func(ctx context.Context) map[string]string
+	ProcessScanner session.ProcessScanner
+	// Now is a clock, read at each consumer (never a snapshot taken at
+	// construction): RunLoop reuses one SweepParams for the process lifetime, so
+	// a frozen instant would give every marker written after startup a negative
+	// age and the TTL pass would never clear it.
+	Now                libtime.CurrentDateTimeGetter
 	MarkerTTL          time.Duration
 	OrphanGrace        time.Duration
 	SetFieldTimeout    time.Duration
@@ -488,6 +492,10 @@ func (s *sweep) clearItemSession(
 			})
 		}
 	}
+	// One restore after the whole block covers both branches: a relaunch that
+	// landed while the session-id clear was awaited has already written its own
+	// marker, which the block above just removed.
+	s.restoreMarkerIfInFlight(ctx, ops, vault.Name, item.ID, kindName(isGoal))
 	return true
 }
 
@@ -543,6 +551,9 @@ func (s *sweep) clearOrphanedTaskMarkers(
 			task.ID,
 			vault.Name,
 		)
+		// A relaunch that began during the clear has a fresh marker this pass just
+		// wiped; put it back.
+		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, task.ID, "task")
 		cleared++
 	}
 	return cleared
@@ -593,6 +604,7 @@ func (s *sweep) clearOrphanedGoalMarkers(
 			goal.ID,
 			vault.Name,
 		)
+		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, goal.ID, "goal")
 		cleared++
 	}
 	return cleared
@@ -632,6 +644,10 @@ func (s *sweep) reclearResurrectedTaskMarkers(ctx context.Context, vault Vault, 
 			vault.Name,
 		)
 		cleared++
+		// A relaunch that began while the clear was awaited is InFlight; restore
+		// its fresh marker. The two compose without ordering: restore is a no-op
+		// for a Finished record, and EvictIfFinished refuses to evict a live one.
+		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, record.ItemID, "task")
 		// Evict only if the record is still FINISHED — a concurrent launch may
 		// have re-begun it while the clear was awaited, and that fresh record
 		// must survive.
@@ -672,6 +688,7 @@ func (s *sweep) reclearResurrectedGoalMarkers(ctx context.Context, vault Vault, 
 			vault.Name,
 		)
 		cleared++
+		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, record.ItemID, "goal")
 		s.params.LaunchRegistry.EvictIfFinished(vault.Name, record.ItemID)
 	}
 	return cleared
@@ -687,11 +704,74 @@ func (s *sweep) markerPresent(vaultName, itemID string) bool {
 // marker (legacy "true") has an unknown age and is treated as expired, so it is
 // never young.
 func (s *sweep) markerIsYoung(marker string, ttl time.Duration) bool {
-	age, ok := markerAgeSeconds(marker, s.params.Now)
+	age, ok := markerAgeSeconds(marker, s.params.Now.Now())
 	if !ok {
 		return false
 	}
 	return age < ttl.Seconds()
+}
+
+// restoreMarkerIfInFlight writes the claude_session_started marker back when a
+// launch began while a clear was awaited, and reports whether it did.
+//
+// The sweep decides what to clear from a snapshot taken BEFORE it awaits a vault
+// operation that edits the same file. During that await a relaunch for the same
+// (vault, item) records itself in the launch registry and writes a fresh marker;
+// the already-running clear then removes it, so the registry says the turn is
+// running while the file says nothing is. Restoring closes that window: the file
+// agrees with the registry again and the card never offers Start for a launch in
+// flight.
+//
+// Restore fires ONLY for an InFlight record — the relaunch case. Every other
+// case, including a known Finished record, returns false without writing: at the
+// two re-clear passes a Finished record is the normal pre-clear state, and
+// restoring there would undo the clear the pass just performed. Note that
+// clearItemSession gates on "any known record", so the helper also restores
+// there when the launch was already in flight before the await — a launch really
+// is running, so its marker belongs on disk.
+//
+// A failed restore is logged and returns false: it must not abort the pass.
+func (s *sweep) restoreMarkerIfInFlight(
+	ctx context.Context,
+	ops VaultOps,
+	vaultName, itemID, kind string,
+) bool {
+	state, known := s.params.LaunchRegistry.State(vaultName, itemID)
+	if !known || state != launchregistry.InFlight {
+		return false
+	}
+
+	// The instant the launch path writes (pkg/mutations sessionStartedMarker),
+	// from the injected clock rather than the wall clock.
+	value := s.params.Now.Now().UTC().Format(time.RFC3339Nano)
+
+	var err error
+	if kind == "goal" {
+		err = s.bounded(ctx, func(callCtx context.Context) error {
+			return ops.SetGoalField(callCtx, itemID, "claude_session_started", value)
+		})
+	} else {
+		err = s.bounded(ctx, func(callCtx context.Context) error {
+			return ops.SetTaskField(callCtx, itemID, "claude_session_started", value)
+		})
+	}
+	if err != nil {
+		glog.Warningf(
+			"[Cleanup] Failed to restore Starting marker on %s %s in vault %s: %v",
+			kind,
+			itemID,
+			vaultName,
+			err,
+		)
+		return false
+	}
+	glog.Infof(
+		"[Cleanup] Restored Starting marker on %s %s in vault %s: a launch began during the clear",
+		kind,
+		itemID,
+		vaultName,
+	)
+	return true
 }
 
 // bounded runs fn under a SetFieldTimeout bound so one stuck helper cannot

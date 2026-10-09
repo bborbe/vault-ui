@@ -19,6 +19,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/fdlimit"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
@@ -50,6 +51,13 @@ func execute(ctx context.Context) error {
 	cache := statuscache.NewCache()
 	paneResolver := factory.CreatePaneResolver(homeDir)
 	launches := launchregistry.NewRegistry()
+	// One session-lock registry for the process: the API's set_task_session and
+	// the cleanup sweep's re-bind write must share it to share the critical
+	// section.
+	locks := sessionlock.NewRegistry()
+	// Closed by CreateStatusCacheLoader once the status cache is loaded; the
+	// cleanup sweep's startup reconcile waits on it.
+	cacheReady := make(chan struct{})
 	manager := factory.CreateConnectionManager()
 	// The process-wide page index reads single page files through the
 	// production reader and lister seams, shared by every vault, and hydrates
@@ -65,8 +73,8 @@ func execute(ctx context.Context) error {
 	heartbeatStore := factory.CreateHeartbeatStore()
 	writeQueue := factory.CreateWriteQueue()
 	apiHandler := factory.CreateAPIHandler(
-		loader, configPath, cache, paneResolver, launches, homeDir, readiness, manager, pageIndex,
-		sessionSnapshot, writeQueue,
+		loader, configPath, cache, paneResolver, launches, locks, homeDir, readiness, manager,
+		pageIndex, sessionSnapshot, writeQueue,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -91,7 +99,7 @@ func execute(ctx context.Context) error {
 
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
-		factory.CreateStatusCacheLoader(loader, configPath, cache),
+		factory.CreateStatusCacheLoader(loader, configPath, cache, cacheReady),
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
 		pageIndex.Rescan,
 		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
@@ -99,6 +107,9 @@ func execute(ctx context.Context) error {
 			loader, manager, sessionState, heartbeatStore, sessionstate.DefaultRescanInterval,
 		),
 		sessionSnapshot.Run,
+		factory.CreateCleanupSweep(
+			loader, configPath, cache, launches, locks, homeDir, cacheReady,
+		),
 		writeQueue.Consume,
 		factory.CreateHTTPServer(adminListen, readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
