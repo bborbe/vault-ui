@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-09T20:35:40Z"
 generating: "2026-10-09T20:42:00Z"
 prompted: "2026-10-09T21:05:30Z"
+verifying: "2026-10-09T23:00:58Z"
 branch: dark-factory/task-list-body-cache
 ---
 
