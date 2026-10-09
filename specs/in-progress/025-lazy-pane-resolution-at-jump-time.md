@@ -26,7 +26,7 @@ Measured 2026-10-05 on the deployed v0.81.0: the board process sits at ~95% CPU 
 Two operator design rules (2026-10-05) make that shape wrong rather than merely expensive:
 
 1. **Clicks are rare; views are frequent.** The pane id exists for one action — the jump link — so it belongs at that action, not in every list response.
-2. **Go must not call Python.** Pane resolution is rebuilt in Go, and the background refresher is replaced by event-driven session state.
+2. **Go must not call Python.** Pane resolution is rebuilt in Go, and the background refresher is replaced by session state read from one shared source rather than resolved per request. *(2026-10-09: as this spec built it that source was event-driven; v0.92.0 replaced it with a 60 s poll — see the supersession note. The rule this item states is about removing the Python shell-out and the per-request pane work, and both hold.)*
 
 The vault goal's Success Criteria name a fixed short-interval refresher as a design defect, not a tuning problem: background work is event-driven (file watcher, session events) or computed on demand, and a slow safety-net rescan (minutes) is the only permitted timer. **Note (2026-10-09):** this spec satisfies that rule for everything it owns — the 3 s refresher is gone and no pane work runs on a timer at all. It no longer satisfies it for *session state*, where the current design makes a 60 s poll the primary refresh rather than a safety net, and under a minute; that change is v0.92.0's, not this spec's. See the supersession note.
 
@@ -142,7 +142,7 @@ curl -s http://127.0.0.1:18080/api/1.0/session-heartbeat | head -c 300   # the s
 ## Assumptions
 
 - `wezterm cli list --format json` is available on the operator's host and its output carries a field that identifies the session each pane is running; if the shape changes, AC5 fails loudly (see Failure Modes).
-- The harness writes one `<pid>.json` per live session under `~/.claude/sessions/`, as documented in `docs/liveness-classification.md`. *(2026-10-09: the session-state watcher no longer reads that directory for liveness — see the supersession note. It is still read for a session's display name by `pkg/pane/resolver.go:38`.)*
+- The harness writes one `<pid>.json` per live session under `~/.claude/sessions/`, as documented in `docs/liveness-classification.md`. *(2026-10-09: the session-state watcher no longer reads that directory for liveness — see the supersession note. It is still read for a session's display name by `readRegistryNames` (`pkg/pane/resolver.go:240`).)*
 - `who-needs-me.py` has no caller outside this repo once the Go resolver lands; if it does, it is left in place and only the Go-side calls are removed.
 - The Go module has no `make generate` target and does not depend on counterfeiter — asserted in Constraints, verified by the existing hand-written doubles.
 
@@ -152,13 +152,13 @@ curl -s http://127.0.0.1:18080/api/1.0/session-heartbeat | head -c 300   # the s
 |---|---|---|---|
 | `wezterm` is not running, or its CLI is absent | The jump request answers non-2xx with a body naming the failure; the list reads and the board are unaffected | Start WezTerm and click again; no state to repair | Card shows the visible error (AC5) |
 | A live session has no matching pane (launched outside WezTerm) | Same non-2xx answer; the jump control stays offered because the session is live | None needed — the session simply has no pane | AC5's no-pane case |
-| The session-heartbeat source is unreachable | The last known ids are kept and marked non-authoritative, so cards read `indeterminate` — never `none`/`quiet`; the board keeps serving | The store returns and the next poll re-authoritative the set | `MarkUnknown` transition plus a `glog` line (`pkg/sessionstate/sessionstate.go:49-52`, `pkg/heartbeat/heartbeat.go:15-22`) |
+| The session-heartbeat source is unreachable | The last known ids are kept and marked non-authoritative, so cards read `indeterminate` — never `none`/`quiet`; the board keeps serving | The store returns and the next poll re-authoritative the set | `MarkUnknown` transition (`pkg/sessionstate/sessionstate.go:100-108`) plus `glog.V(4)` "Cannot reach attention store" (`pkg/heartbeat/heartbeat.go:171`) |
 | A session starts or ends between two polls | The badge is stale for up to one `DefaultRescanInterval` (60 s), then follows the poll | None needed — the next poll applies it | Badge updates late by up to one interval |
 | WezTerm's `cli list --format json` output shape changes | The resolver fails to match and returns `false` for every session, so every jump answers non-2xx | Fix the parser; no cache to invalidate | AC5 fails loudly on the next click |
 | Two jump requests for the same session at once | Both resolve independently and both focus the same pane; no shared mutable state to corrupt | None needed | — |
 | The re-baseline is widened past the two intended surfaces | Routes this change does not touch lose their comparison silently | Narrow the re-baseline; re-run `make parity` | Review of the harness diff |
 | The per-request `ps` scan alone holds `/api/tasks` above the AC11 ratio | AC11 fails and the spec does not complete; the measured ratio is recorded against the sibling task | The sibling index task moves the scan off the request path — out of scope here | AC11's recorded numbers |
-| The `pkg/sessionstate` watcher goroutine exits or crashes | Badge stops updating entirely — with a poll-only source there is no event path left to fall back on; the board keeps serving | Restart the service; the watcher's own error path logs before it returns | V(2) log line; the degradation is otherwise silent |
+| The `pkg/sessionstate` watcher goroutine exits or crashes | Badge stops updating entirely — with a poll-only source there is no event path left to fall back on; the board keeps serving | Restart the service — nothing is logged on this path, so the stall is silent until it is restarted | No log exists on this path: `Run` returns nil only on `ctx.Done()` and has no error branch, and `pkg/sessionstate` imports no glog; the nearest `V(2)` (`pkg/factory/api.go:225`) fires at startup only |
 | The host clock jumps backwards across the five-minute liveness window | Classification is unchanged in kind — the window is compared against transcript mtimes, so a backward jump can briefly read a stale transcript as live | None needed; the next poll re-evaluates | Badge flicker only |
 
 *(2026-10-09: two rows were replaced above. "A session registry file is written but the watcher misses the event" and "Session registry directory missing or unreadable" both described the fsnotify watch v0.92.0 deleted — the second documented the **opposite** of the built behaviour, since an unreadable source must read `indeterminate` and never `none`. The store-unreachable row is the design's real external-dependency failure and had no row before.)*
@@ -174,10 +174,10 @@ The jump endpoint already resolves the caller's own task and enforces same-origi
 | 1 | Go pane resolver in `pkg/pane`: enumerate panes, match a session id, keep the seam its callers use, injected process boundary; unit tests with a hand-written double; delete the Python-invoking helpers | 1 | AC1 | — |
 | 2 | Delete `pkg/panecache` and the refresher wiring; drop the pane id from the list response; the jump endpoint resolves through the Go resolver and answers non-2xx when there is no pane; board + mutation tests | 2, 3, 4 | AC2, AC3, AC4 | prompt 1 |
 | 3 | Frontend: offer the jump control on live session state alone, drop the `jump_pane` read, surface the endpoint's error visibly | 5 | AC6 | prompt 2 |
-| 4 | New `pkg/sessionstate`: a watcher with an initial read and a 60 s rescan; badge and jump availability read from it; `pkg/session` classification untouched (AC8); `docs/pane-resolution.md` | 6, 7 | AC8, AC9 (docs) | prompt 2 |
-
-*(2026-10-09: row 4 originally specified the source as `~/.claude/sessions/*.json` file events. **Do not build that** — v0.92.0 deleted it. The source today is the attention-controller's session-heartbeat endpoint, and AC7 is withdrawn. The row is kept as the record of what prompt 4 actually delivered in v0.82.0, with the source clause removed so it cannot be followed literally.)*
+| 4 | New `pkg/sessionstate`: a watcher polled every `DefaultRescanInterval`, badge and jump availability read from it; `pkg/session` classification untouched (AC8); `docs/pane-resolution.md` | 6, 7 | AC8, AC9 (docs) | prompt 2 |
 | 5 | Re-baseline the parity harness for the `/api/tasks` body; update the `docs/go-cutover.md` regression guard; CHANGELOG | 8 | AC9 | prompts 2, 3 |
+
+*(2026-10-09: row 4 originally specified the source as `~/.claude/sessions/*.json` file events, read once and then on file events with a 60 s rescan as the safety net. **Do not build that** — v0.92.0 deleted it. The source today is the attention-controller's session-heartbeat endpoint, polled every `DefaultRescanInterval`, and AC7 is withdrawn. The row is kept as the record of what prompt 4 actually delivered in v0.82.0, with the source clause removed so it cannot be followed literally.)*
 
 Rationale: prompt 1 establishes the resolver seam every later prompt calls. Prompts 2 and 3 are the request-path change and can land together; prompt 4 is independent of 3 and could run in parallel. Prompt 5 must come last, because it re-pins the two surfaces the earlier prompts move.
 
