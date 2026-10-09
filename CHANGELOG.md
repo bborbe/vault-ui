@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.93.0
 
 - feat: Start and Open honour the task/goal `launcher:` frontmatter via vault-cli `ops.ResolveTaskLauncher` (vault-cli bumped to v0.167.0); new `GET /api/tasks/{task_id}/resume-command`
 
