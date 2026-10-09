@@ -1,13 +1,13 @@
 ---
 status: completed
 spec: [031-task-list-body-cache]
-summary: Verified the body cache's second invalidation axis (clock boundary over pre-filter rows plus generation discard) is implemented in pkg/board and all checks pass
+summary: Verified the clock-boundary invalidation axis in pkg/board/taskbody.go (expiresAt computed from pre-filter rows via taskSnapshotRows and taskBodyBoundary, checked on read) plus its AC5/AC6 test rows; go test -race and ROOTDIR=/workspace make precommit both pass.
 execution_id: vault-ui-exec-156-spec-031-invalidation
 dark-factory-version: v0.196.0
 created: "2026-10-09T20:51:14Z"
 queued: "2026-10-09T21:18:12Z"
-started: "2026-10-09T22:44:07Z"
-completed: "2026-10-09T22:46:35Z"
+started: "2026-10-09T22:46:39Z"
+completed: "2026-10-09T22:48:58Z"
 branch: dark-factory/task-list-body-cache
 ---
 
