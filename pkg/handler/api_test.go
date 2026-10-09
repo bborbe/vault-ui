@@ -28,6 +28,7 @@ type fakeBoard struct {
 	vaults    []api.VaultResponse
 	assignees api.AssigneesResponse
 	tasks     []api.TaskResponse
+	taskBody  board.TaskListBody
 	goals     []api.GoalResponse
 	topics    []api.TopicResponse
 	topic     api.TopicDetailResponse
@@ -52,6 +53,16 @@ func (f *fakeBoard) ListAssignees(_ context.Context, vaults []string) (api.Assig
 func (f *fakeBoard) ListTasks(_ context.Context, query board.TaskQuery) ([]api.TaskResponse, error) {
 	f.gotTaskQuery = query
 	return f.tasks, f.err
+}
+
+func (f *fakeBoard) ListTasksBody(
+	_ context.Context, query board.TaskQuery,
+) (board.TaskListBody, error) {
+	f.gotTaskQuery = query
+	if f.err != nil {
+		return board.TaskListBody{}, f.err
+	}
+	return f.taskBody, nil
 }
 
 func (f *fakeBoard) ListGoals(_ context.Context, query board.GoalQuery) ([]api.GoalResponse, error) {
@@ -110,6 +121,7 @@ var _ = Describe("API router", func() {
 		fake = &fakeBoard{
 			vaults:    []api.VaultResponse{},
 			tasks:     []api.TaskResponse{},
+			taskBody:  board.TaskListBody{Identity: []byte("[]"), Gzipped: []byte("[]")},
 			goals:     []api.GoalResponse{},
 			topics:    []api.TopicResponse{},
 			assignees: api.AssigneesResponse{Named: []string{}},

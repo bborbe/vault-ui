@@ -115,6 +115,14 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 	return responses, nil
 }
 
+// ListTasksBody renders the GET /api/tasks response for the query from the body
+// cache, which builds it once per (snapshot generation, query) and holds the
+// identity and gzip forms. A hit is served the stored bytes with no row walk,
+// no projection and no marshal.
+func (b *board) ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+	return b.bodies.Get(ctx, query)
+}
+
 // buildTaskRows lists the vault's tasks and precomputes every field that needs
 // I/O: the uncompleted blockers, the blocked flag, the session-started marker,
 // the classified session state and the activity date. It applies none of the

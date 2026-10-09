@@ -114,6 +114,9 @@ type Board interface {
 	ListVaults(ctx context.Context) ([]api.VaultResponse, error)
 	ListAssignees(ctx context.Context, vaults []string) (api.AssigneesResponse, error)
 	ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskResponse, error)
+	// ListTasksBody renders the GET /api/tasks response for the query, serving a
+	// held body when one exists for the current snapshot generation.
+	ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBody, error)
 	ListGoals(ctx context.Context, query GoalQuery) ([]api.GoalResponse, error)
 	ListTopics(ctx context.Context, vaults []string) ([]api.TopicResponse, error)
 	ShowTopic(ctx context.Context, vault, topicID string) (api.TopicDetailResponse, error)
@@ -131,6 +134,7 @@ type board struct {
 	pageIndex pageindex.PageIndex
 	homeDir   string
 	snapshot  *taskSnapshotStore
+	bodies    *taskBodyCache
 }
 
 // New returns a Board backed by the given dependencies.
@@ -153,6 +157,11 @@ func New(deps Deps) Board {
 		Patch:       b.patchTaskRows,
 		Revisions:   deps.Index,
 		Generations: deps.Sessions,
+	})
+	b.bodies = newTaskBodyCache(taskBodyParams{
+		Project:     b.ListTasks,
+		Encode:      encodeTaskList,
+		Generations: b.snapshot.SnapshotGeneration,
 	})
 	return b
 }
