@@ -6,6 +6,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/bborbe/vault-ui/pkg/board"
 )
@@ -19,7 +20,7 @@ func NewTasksHandler(b board.Board) http.Handler {
 			writeValidation(resp, []validationItem{*invalid})
 			return
 		}
-		result, err := b.ListTasks(req.Context(), board.TaskQuery{
+		body, err := b.ListTasksBody(req.Context(), board.TaskQuery{
 			Vaults:        query["vault"],
 			Statuses:      query["status"],
 			Phases:        query["phase"],
@@ -32,8 +33,42 @@ func NewTasksHandler(b board.Board) http.Handler {
 			writeBoardError(resp, err)
 			return
 		}
-		writeJSON(resp, http.StatusOK, result)
+		writeTaskBody(resp, req.Header.Get("Accept-Encoding"), body)
 	})
+}
+
+// writeTaskBody serves a rendered task-list body, choosing the gzip form when
+// the request negotiates it. Vary is set on every response — gzip and identity
+// alike — so a shared cache keys on the negotiation and never serves the wrong
+// form.
+func writeTaskBody(resp http.ResponseWriter, acceptEncoding string, body board.TaskListBody) {
+	resp.Header().Set("Content-Type", "application/json")
+	resp.Header().Set("Vary", "Accept-Encoding")
+	if acceptsGzip(acceptEncoding) {
+		resp.Header().Set("Content-Encoding", "gzip")
+		resp.WriteHeader(http.StatusOK)
+		_, _ = resp.Write(body.Gzipped)
+		return
+	}
+	resp.WriteHeader(http.StatusOK)
+	_, _ = resp.Write(body.Identity)
+}
+
+// acceptsGzip reports whether the Accept-Encoding header names the gzip token.
+// Only that single token is honoured; any other encoding token, an absent header
+// or an unparseable value falls to the identity form. Query values (`;q=`) are
+// not parsed.
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		token := strings.TrimSpace(part)
+		if i := strings.IndexByte(token, ';'); i >= 0 {
+			token = strings.TrimSpace(token[:i])
+		}
+		if strings.EqualFold(token, "gzip") {
+			return true
+		}
+	}
+	return false
 }
 
 // first returns the first value, or "" when empty.

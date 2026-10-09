@@ -117,9 +117,20 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 
 // ListTasksBody renders the GET /api/tasks response for the query from the body
 // cache, which builds it once per (snapshot generation, query) and holds the
-// identity and gzip forms. A hit is served the stored bytes with no row walk,
-// no projection and no marshal.
+// identity and gzip forms. A hit is served the stored bytes with no projection
+// and no marshal.
+//
+// It reads the snapshot for the query's vaults before consulting the cache. The
+// snapshot generation the cache keys on only moves when a read rebuilds a key,
+// and a cache hit would never make that read: an external page edit or a new
+// session snapshot would otherwise leave a held body serving indefinitely. The
+// read is a per-vault revision check that returns the published rows unchanged
+// when nothing moved, so it rebuilds only what the page index has marked — the
+// same read ListTasks makes.
 func (b *board) ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+	if _, err := b.taskSnapshotRows(ctx, query); err != nil {
+		return TaskListBody{}, err
+	}
 	return b.bodies.Get(ctx, query)
 }
 

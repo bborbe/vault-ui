@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [031-task-list-body-cache]
+summary: Wired GET /api/tasks to the board's held body and added Accept-Encoding negotiation with Vary/Content-Encoding at the handler write seam, plus a board-layer snapshot refresh so the body cache observes page-index revision moves.
+execution_id: vault-ui-exec-157-spec-031-handler-negotiation
+dark-factory-version: v0.196.0
 created: "2026-10-09T20:51:14Z"
 queued: "2026-10-09T21:18:12Z"
+started: "2026-10-09T22:52:35Z"
+completed: "2026-10-09T22:57:42Z"
 branch: dark-factory/task-list-body-cache
 ---
 
