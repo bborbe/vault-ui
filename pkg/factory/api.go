@@ -137,13 +137,17 @@ func CreateStaticFS() fs.FS {
 	return sub
 }
 
-// CreateAPIHandler builds the :8000 API router.
+// CreateAPIHandler builds the :8000 API router. locks is the process-wide
+// per-(vault, item) session-lock registry; it is passed in rather than created
+// here so the cleanup sweep's re-bind write joins the API's own critical
+// section.
 func CreateAPIHandler(
 	loader config.Loader,
 	configPath string,
 	cache statuscache.Cache,
 	paneResolver mutations.PaneResolver,
 	launches launchregistry.Registry,
+	locks sessionlock.Registry,
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
@@ -164,7 +168,7 @@ func CreateAPIHandler(
 		HomeDir:   homeDir,
 	})
 	mutationsService := CreateMutationService(
-		loader, configPath, cache, launches, sessionlock.NewRegistry(), homeDir,
+		loader, configPath, cache, launches, locks, homeDir,
 		paneResolver, websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
@@ -316,11 +320,15 @@ func buildWatchTargets(vaults []*config.Vault) []ops.WatchTarget {
 }
 
 // CreateStatusCacheLoader returns a run.Func that loads every vault's status
-// and claude_session_started markers into the cache once at startup.
+// and claude_session_started markers into the cache once at startup. It closes
+// ready once the load completes, so a consumer that reads the cache (the cleanup
+// sweep's startup reconcile) can wait for a populated cache instead of racing
+// the load in the shared run group.
 func CreateStatusCacheLoader(
 	loader config.Loader,
 	configPath string,
 	cache statuscache.Cache,
+	ready chan struct{},
 ) run.Func {
 	return func(ctx context.Context) error {
 		cfg, err := vaultconfig.Load(ctx, loader, configPath)
@@ -331,6 +339,9 @@ func CreateStatusCacheLoader(
 			if loadErr := cache.LoadVault(vault.Name, vault.Path, vault.TasksFolder); loadErr != nil {
 				glog.Warningf("load status cache for vault %s: %v", vault.Name, loadErr)
 			}
+		}
+		if ready != nil {
+			close(ready)
 		}
 		return nil
 	}

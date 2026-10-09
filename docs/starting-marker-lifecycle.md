@@ -82,6 +82,15 @@ writers that matter here:
   a task whose binding is EMPTY is re-bound from its title when exactly one
   session is running right now under that title (see below).
 
+  Every clear site re-checks the launch registry **after** its awaited write and
+  writes `claude_session_started` back when the record is IN_FLIGHT — the marker
+  side of the same race the conditional eviction closes. A relaunch that begins
+  during the await records itself and writes a fresh marker, and without the
+  restore the in-flight clear would wipe it, leaving the registry saying
+  "running" and the file saying nothing. A FINISHED record is never restored
+  (at the re-clear passes it is the normal pre-clear state), and a relaunch is
+  never marked finished by the startup reconciliation that just restored it.
+
 ## Re-binding a wiped `claude_session_id`
 
 Every other cleanup branch operates on tasks that already have a session id, so

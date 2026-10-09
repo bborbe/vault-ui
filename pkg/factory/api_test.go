@@ -27,6 +27,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/queue"
+	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -68,7 +69,7 @@ func newTestAPIHandlerWithManager(
 	readiness.SetReady()
 	return factory.CreateAPIHandler(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
-		launchregistry.NewRegistry(), tempDir(), readiness, manager,
+		launchregistry.NewRegistry(), sessionlock.NewRegistry(), tempDir(), readiness, manager,
 		factory.CreatePageIndex(
 			pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
 			libtime.NewCurrentDateTime(),
@@ -241,8 +242,9 @@ var _ = Describe("API factory", func() {
 		It("loads every vault's statuses", func() {
 			loader, configPath, _ := apiFixture()
 			cache := statuscache.NewCache()
-			Expect(factory.CreateStatusCacheLoader(loader, configPath, cache)(context.Background())).
-				To(Succeed())
+			Expect(factory.CreateStatusCacheLoader(
+				loader, configPath, cache, make(chan struct{}),
+			)(context.Background())).To(Succeed())
 			status, ok := cache.GetStatus("personal", "Task A")
 			Expect(ok).To(BeTrue())
 			Expect(status).To(Equal("next"))
@@ -252,6 +254,7 @@ var _ = Describe("API factory", func() {
 			loader, _, _ := apiFixture()
 			err := factory.CreateStatusCacheLoader(
 				loader, filepath.Join(tempDir(), "missing.yaml"), statuscache.NewCache(),
+				make(chan struct{}),
 			)(context.Background())
 			Expect(err).To(HaveOccurred())
 		})

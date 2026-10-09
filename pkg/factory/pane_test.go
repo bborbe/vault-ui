@@ -24,6 +24,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -100,7 +101,7 @@ func paneHandler(
 
 	return factory.CreateAPIHandler(
 		loader, configPath, statuscache.NewCache(), paneResolver,
-		launchregistry.NewRegistry(), homeDir, readiness,
+		launchregistry.NewRegistry(), sessionlock.NewRegistry(), homeDir, readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
 		sessionSnapshot, startWriteQueue(),
 	)

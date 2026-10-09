@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/queue"
+	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -212,7 +213,7 @@ func indexHandler(
 	readiness.SetReady()
 	return factory.CreateAPIHandler(
 		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
-		launchregistry.NewRegistry(), tempDir(), readiness,
+		launchregistry.NewRegistry(), sessionlock.NewRegistry(), tempDir(), readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		writeQueue,

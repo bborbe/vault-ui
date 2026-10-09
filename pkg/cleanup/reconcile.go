@@ -83,14 +83,17 @@ func (s *sweep) ReconcileOrphanedMarkers(ctx context.Context) (int, error) {
 			if ctxDone(ctx) {
 				return cleared, nil
 			}
-			marker := task.ClaudeSessionStarted
-			if marker == "" {
+			// The marker comes from the StatusCache, NOT from the listed item: the
+			// vault-cli list does not emit claude_session_started, so a read of the
+			// item's field would leave this loop body dead.
+			marker, ok := s.params.StatusCache.GetSessionStarted(vault.Name, task.ID)
+			if !ok || marker == "" {
 				continue
 			}
 			if _, known := s.params.LaunchRegistry.State(vault.Name, task.ID); known {
 				continue // this process knows the launch — leave it alone
 			}
-			age, parsed := markerAgeSeconds(marker, s.params.Now)
+			age, parsed := markerAgeSeconds(marker, s.params.Now.Now())
 			if parsed && age < s.params.OrphanGrace.Seconds() {
 				continue // the launch may still be booting
 			}
@@ -115,6 +118,14 @@ func (s *sweep) ReconcileOrphanedMarkers(ctx context.Context) (int, error) {
 				continue
 			}
 
+			// ORDER MATTERS. Restore first: a relaunch that began during the await
+			// is InFlight, and its fresh marker must survive this pass. Calling
+			// Finish first would immediately mark that relaunch finished, which the
+			// next re-clear pass undoes — and skipping Finish after a restore is
+			// what keeps the live record live.
+			if s.restoreMarkerIfInFlight(ctx, ops, vault.Name, task.ID, "task") {
+				continue // the marker was not left cleared; do not count it
+			}
 			s.params.LaunchRegistry.Finish(vault.Name, task.ID)
 			cleared++
 			glog.Infof(

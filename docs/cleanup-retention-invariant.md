@@ -16,6 +16,13 @@ through an injected `VaultOps` surface (vault-cli as a library), one instance pe
 vault, and every awaited operation is bounded so one stuck helper cannot freeze
 the pass.
 
+The running service performs this pass: `factory.CreateCleanupSweep` runs the
+startup orphan reconciliation once — after the status cache it reads has loaded —
+and then the sweep every `DefaultCleanupInterval` until shutdown. Every clear
+site re-checks the launch registry after its await and writes the marker back
+when the record is IN_FLIGHT, so a relaunch that began while the clear was
+awaited keeps its fresh marker.
+
 ## The retention invariant
 
 A valid UUID `claude_session_id` is cleared only when **both** hold:
