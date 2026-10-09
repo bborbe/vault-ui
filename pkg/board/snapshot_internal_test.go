@@ -350,6 +350,31 @@ var _ = Describe("taskSnapshotStore", func() {
 		Expect(h.Builds()).To(Equal(3))
 	})
 
+	It("advances the snapshot generation on a successful rebuild only", func() {
+		h := newSnapshotHarness(
+			func(_ context.Context, _ Vault, n int) ([]taskSnapshotRow, error) {
+				if n == 2 {
+					return nil, stderrors.New("boom")
+				}
+				return numberedRows(fmt.Sprintf("row-%d", n), 1), nil
+			},
+			0,
+		)
+
+		_, err := h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+		Expect(h.store.SnapshotGeneration()).To(Equal(uint64(1)))
+
+		h.revisions.bump()
+		_, err = h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+		Expect(h.store.SnapshotGeneration()).To(Equal(uint64(1)))
+
+		_, err = h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+		Expect(h.store.SnapshotGeneration()).To(Equal(uint64(2)))
+	})
+
 	It("returns the error of a failed cold build and retries the next read", func() {
 		h := newSnapshotHarness(
 			func(_ context.Context, _ Vault, _ int) ([]taskSnapshotRow, error) {

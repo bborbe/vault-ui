@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Cache the `GET /api/tasks` response body in the board — the board builds one body per (task-list snapshot generation, query) and holds both the identity JSON and its gzip form, so a request whose query matches a held entry is served the stored bytes with no row walk, no projection and no marshal instead of re-walking the published rows and re-marshalling the ~2.3 MB body on every warm read; an entry is dropped when a snapshot rebuild moves the generation or the clock crosses the next instant at which `upcoming`, `recently_completed` or the recently-completed phase override can change, derived from the request's `now` and `upcoming_hours` rather than a timer; the gzip form is served with `Content-Encoding: gzip` when the client negotiates gzip and every task-list response carries `Vary: Accept-Encoding`, while the decoded JSON is byte-identical to what the board produced before.
+
 ## v0.93.1
 
 - fix: Wire the five-minute cleanup sweep into the running service (`factory.CreateCleanupSweep` runs the startup orphan reconciliation once — after the status cache it reads has loaded — then `RunLoop` until shutdown), so stale session ids are cleared, orphaned starting markers expire, resurrected markers are re-cleared and an empty session id is re-bound again instead of the cards offering Start for work already running; the sweep reads the marker from the status cache at startup reconciliation (the vault-cli list never emitted it, so that pass cleared nothing) and its clock is now read at each consumer rather than frozen at construction, so a marker written after startup can still pass the TTL.
