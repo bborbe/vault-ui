@@ -276,12 +276,14 @@ func CreateConnectionManager() websocket.ConnectionManager {
 
 // CreateWatcher returns a run.Func that watches the configured vaults with the
 // injected watch operation and hands every change to watchrefresh's handler,
-// which re-reads the event's single page-index file (folder stat-diff fallback)
-// before broadcasting the frame. No vault-cli subprocess is spawned.
+// which re-reads the event's single page-index file (folder stat-diff fallback),
+// invalidates the changed item in the status cache, then broadcasts the frame.
+// No vault-cli subprocess is spawned.
 func CreateWatcher(
 	loader config.Loader,
 	manager websocket.ConnectionManager,
 	pageIndex pageindex.PageIndex,
+	cache statuscache.Cache,
 	watchOperation ops.WatchOperation,
 ) run.Func {
 	return func(ctx context.Context) error {
@@ -294,7 +296,7 @@ func CreateWatcher(
 		return watchOperation.Execute(
 			ctx,
 			targets,
-			watchrefresh.NewHandler(ctx, vaults, pageIndex, manager),
+			watchrefresh.NewHandler(ctx, vaults, pageIndex, cache, manager),
 		)
 	}
 }

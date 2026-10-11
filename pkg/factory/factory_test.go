@@ -28,6 +28,7 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -54,7 +55,8 @@ func watcherHandler(
 	DeferCleanup(cancel)
 	go func() {
 		_ = factory.CreateWatcher(
-			loader, websocket.NewConnectionManager(websocket.NewMetrics()), index, watch,
+			loader, websocket.NewConnectionManager(websocket.NewMetrics()), index,
+			statuscache.NewCache(), watch,
 		)(ctx)
 	}()
 	var handler func(ops.WatchEvent) error

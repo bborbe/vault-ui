@@ -25,6 +25,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	websocketmocks "github.com/bborbe/vault-ui/pkg/websocket/mocks"
@@ -367,7 +368,11 @@ func newRefreshFixture() *refreshFixture {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = factory.CreateWatcher(loader, fixture.manager, index, watch)(ctx) }()
+	go func() {
+		_ = factory.CreateWatcher(
+			loader, fixture.manager, index, statuscache.NewCache(), watch,
+		)(ctx)
+	}()
 	Eventually(handlerCh, 5*time.Second).Should(Receive(&fixture.handler))
 	DeferCleanup(cancel)
 	return fixture

@@ -6,6 +6,8 @@ package watchrefresh_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
+	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	websocketmocks "github.com/bborbe/vault-ui/pkg/websocket/mocks"
@@ -111,7 +114,8 @@ var _ = Describe("NewHandler", func() {
 			order = append(order, "broadcast")
 		}
 		handler := watchrefresh.NewHandler(
-			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+			context.Background(), []*config.Vault{alphaVault()}, pageIndex,
+			statuscache.NewCache(), manager,
 		)
 		event := ops.WatchEvent{
 			Event: "modified", Name: "One", Vault: "alpha",
@@ -134,7 +138,8 @@ var _ = Describe("NewHandler", func() {
 		pageIndex := &pageindexmocks.PageIndex{}
 		manager := &websocketmocks.WebsocketConnectionManager{}
 		handler := watchrefresh.NewHandler(
-			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+			context.Background(), []*config.Vault{alphaVault()}, pageIndex,
+			statuscache.NewCache(), manager,
 		)
 		event := ops.WatchEvent{
 			Event: "modified", Name: "One", Vault: "alpha",
@@ -154,7 +159,8 @@ var _ = Describe("NewHandler", func() {
 		pageIndex := &pageindexmocks.PageIndex{}
 		manager := &websocketmocks.WebsocketConnectionManager{}
 		handler := watchrefresh.NewHandler(
-			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+			context.Background(), []*config.Vault{alphaVault()}, pageIndex,
+			statuscache.NewCache(), manager,
 		)
 
 		Expect(handler(ops.WatchEvent{
@@ -174,7 +180,8 @@ var _ = Describe("NewHandler", func() {
 			return context.Canceled
 		}
 		handler := watchrefresh.NewHandler(
-			context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+			context.Background(), []*config.Vault{alphaVault()}, pageIndex,
+			statuscache.NewCache(), manager,
 		)
 
 		Expect(handler(ops.WatchEvent{
@@ -192,7 +199,8 @@ var _ = Describe("NewHandler", func() {
 			pageIndex := &pageindexmocks.PageIndex{}
 			manager := &websocketmocks.WebsocketConnectionManager{}
 			handler := watchrefresh.NewHandler(
-				context.Background(), []*config.Vault{alphaVault()}, pageIndex, manager,
+				context.Background(), []*config.Vault{alphaVault()}, pageIndex,
+				statuscache.NewCache(), manager,
 			)
 
 			Expect(handler(event)).To(Succeed())
@@ -216,7 +224,7 @@ var _ = Describe("NewHandler", func() {
 			return refreshCtx.Err()
 		}
 		handler := watchrefresh.NewHandler(
-			ctx, []*config.Vault{alphaVault()}, pageIndex, manager,
+			ctx, []*config.Vault{alphaVault()}, pageIndex, statuscache.NewCache(), manager,
 		)
 		done := make(chan error, 1)
 		go func() {
@@ -236,4 +244,139 @@ var _ = Describe("NewHandler", func() {
 		Eventually(done).Should(Receive(BeNil()))
 		Consistently(manager.BroadcastCallCount, 100*time.Millisecond).Should(Equal(0))
 	})
+})
+
+// statusFixture is a real status cache over a temp vault holding one task and
+// one goal file, both starting in_progress. The positive cache cases drive this
+// real cache so they traverse the real Invalidate -> GetStatus path.
+type statusFixture struct {
+	vaultPath string
+	taskPath  string
+	goalPath  string
+	cache     statuscache.Cache
+}
+
+func newStatusFixture() *statusFixture {
+	vaultPath := GinkgoT().TempDir()
+	for _, dir := range []string{"24 Tasks", "23 Goals"} {
+		ExpectWithOffset(1, os.MkdirAll(filepath.Join(vaultPath, dir), 0o750)).To(Succeed())
+	}
+	fixture := &statusFixture{
+		vaultPath: vaultPath,
+		taskPath:  filepath.Join(vaultPath, "24 Tasks", "One.md"),
+		goalPath:  filepath.Join(vaultPath, "23 Goals", "Goal.md"),
+	}
+	fixture.write(fixture.taskPath, "in_progress")
+	fixture.write(fixture.goalPath, "in_progress")
+	fixture.cache = statuscache.NewCache()
+	ExpectWithOffset(1, fixture.cache.LoadVault("alpha", vaultPath, "24 Tasks")).To(Succeed())
+	return fixture
+}
+
+// write rewrites a fixture file with the given status, simulating a change made
+// outside the board.
+func (f *statusFixture) write(path, status string) {
+	ExpectWithOffset(1, os.WriteFile(
+		path, []byte("---\nstatus: "+status+"\n---\n\nbody\n"), 0o600,
+	)).To(Succeed())
+}
+
+// handler builds the watch handler over this fixture's vault and the given cache.
+func (f *statusFixture) handler(cache statuscache.Cache) func(ops.WatchEvent) error {
+	return watchrefresh.NewHandler(
+		context.Background(),
+		[]*config.Vault{{
+			Name: "alpha", Path: f.vaultPath, TasksDir: "24 Tasks", GoalsDir: "23 Goals",
+		}},
+		&pageindexmocks.PageIndex{},
+		cache,
+		&websocketmocks.WebsocketConnectionManager{},
+	)
+}
+
+// recordingCache records Invalidate calls. It is used only for the negative
+// cases, where the assertion is that Invalidate is never called: it cannot
+// return a disk-derived status, so it cannot serve the positive cases.
+type recordingCache struct {
+	mu            sync.Mutex
+	invalidations [][2]string
+}
+
+func (c *recordingCache) LoadVault(_, _, _ string) error               { return nil }
+func (c *recordingCache) GetStatus(_, _ string) (string, bool)         { return "", false }
+func (c *recordingCache) GetSessionStarted(_, _ string) (string, bool) { return "", false }
+func (c *recordingCache) Count(_ string) int                           { return 0 }
+
+func (c *recordingCache) Invalidate(vaultName, itemID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.invalidations = append(c.invalidations, [2]string{vaultName, itemID})
+}
+
+func (c *recordingCache) calls() [][2]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([][2]string(nil), c.invalidations...)
+}
+
+var _ = Describe("NewHandler status cache", func() {
+	It("drops the task's stale status when its file changed outside the board", func() {
+		// Regression: a blocker completed outside the board (via the vault CLI)
+		// must clear the blocked-by chip without a restart. The cache holds the
+		// old status while the file on disk reads completed, so the event must
+		// drop the stale entry and GetStatus must re-read completed.
+		fixture := newStatusFixture()
+		status, ok := fixture.cache.GetStatus("alpha", "One")
+		Expect(ok).To(BeTrue())
+		Expect(status).To(Equal("in_progress"))
+
+		fixture.write(fixture.taskPath, "completed")
+
+		Expect(fixture.handler(fixture.cache)(ops.WatchEvent{
+			Event: "modified", Name: "One", Vault: "alpha",
+			Path: "24 Tasks/One.md", Type: "task",
+		})).To(Succeed())
+
+		status, ok = fixture.cache.GetStatus("alpha", "One")
+		Expect(ok).To(BeTrue())
+		Expect(status).To(Equal("completed"))
+	})
+
+	It("drops the goal's stale status for a goal event", func() {
+		fixture := newStatusFixture()
+		fixture.write(fixture.goalPath, "completed")
+
+		Expect(fixture.handler(fixture.cache)(ops.WatchEvent{
+			Event: "modified", Name: "Goal", Vault: "alpha",
+			Path: "23 Goals/Goal.md", Type: "goal",
+		})).To(Succeed())
+
+		status, ok := fixture.cache.GetStatus("alpha", "Goal")
+		Expect(ok).To(BeTrue())
+		Expect(status).To(Equal("completed"))
+	})
+
+	DescribeTable(
+		"leaves the cache untouched",
+		func(event ops.WatchEvent) {
+			cache := &recordingCache{}
+			handler := newStatusFixture().handler(cache)
+
+			Expect(handler(event)).To(Succeed())
+
+			Expect(cache.calls()).To(BeEmpty())
+		},
+		Entry(
+			"theme event",
+			ops.WatchEvent{Vault: "alpha", Type: "theme", Name: "One"},
+		),
+		Entry(
+			"objective event",
+			ops.WatchEvent{Vault: "alpha", Type: "objective", Name: "One"},
+		),
+		Entry(
+			"event for an unknown vault",
+			ops.WatchEvent{Vault: "beta", Type: "task", Name: "One"},
+		),
+	)
 })

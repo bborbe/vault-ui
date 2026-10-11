@@ -10,10 +10,12 @@
 // that read has swapped in a snapshot built after the event, so a client that
 // re-fetches on the frame sees fresh data. An event whose path is not a single
 // plain filename inside the key's folder falls back to the folder-level
-// stat-diff. Theme and objective events, and events for a vault the service
-// does not know, are broadcast unchanged without touching the index. The
-// staleness, frame-ordering and key-derivation rules are written down in
-// docs/page-index.md.
+// stat-diff. Once the refresh succeeds the handler also invalidates the changed
+// item in the status cache, so a status change made outside the board is
+// reflected without a restart. Theme and objective events, and events for a
+// vault the service does not know, are broadcast unchanged without touching the
+// index or the cache. The staleness, frame-ordering and key-derivation rules are
+// written down in docs/page-index.md.
 package watchrefresh
 
 import (
@@ -26,6 +28,7 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -64,15 +67,18 @@ func EventFilename(event ops.WatchEvent, key pageindex.Key) (string, bool) {
 
 // NewHandler returns the watch handler: it re-reads the event's single file
 // (falling back to the folder-level stat-diff when the event's path is not a
-// single plain filename inside the key's folder), then broadcasts the event's
+// single plain filename inside the key's folder), invalidates the changed item
+// in the status cache once that refresh succeeds, then broadcasts the event's
 // frame. It builds the vault lookup once; the returned handler holds no mutable
 // state and is safe to run concurrently, which the debouncer requires — a new
 // event for a path whose previous handler is still blocked starts a second
-// handler at the same time.
+// handler at the same time. Concurrency safety for the cache comes from the
+// cache's own locking.
 func NewHandler(
 	ctx context.Context,
 	vaults []*config.Vault,
 	pageIndex pageindex.PageIndex,
+	cache statuscache.Cache,
 	manager websocket.ConnectionManager,
 ) func(ops.WatchEvent) error {
 	vaultsByName := make(map[string]*config.Vault, len(vaults))
@@ -105,6 +111,11 @@ func NewHandler(
 				glog.V(2).Infof("drop frame on shutdown for %s/%s", event.Vault, event.Name)
 				return nil
 			}
+			// The index and the cache must agree on what is current: refresh
+			// first, then drop the item's cached status so the next read
+			// re-derives it from disk. The event's name already carries the
+			// item id (base name without ".md").
+			cache.Invalidate(event.Vault, event.Name)
 		}
 		manager.Broadcast(websocket.WatcherFrame(event))
 		return nil

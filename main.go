@@ -102,7 +102,7 @@ func execute(ctx context.Context) error {
 		factory.CreateStatusCacheLoader(loader, configPath, cache, cacheReady),
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
 		pageIndex.Rescan,
-		factory.CreateWatcher(loader, manager, pageIndex, ops.NewWatchOperation()),
+		factory.CreateWatcher(loader, manager, pageIndex, cache, ops.NewWatchOperation()),
 		factory.CreateSessionStateWatcher(
 			loader, manager, sessionState, heartbeatStore, sessionstate.DefaultRescanInterval,
 		),

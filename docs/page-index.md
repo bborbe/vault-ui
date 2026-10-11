@@ -198,6 +198,11 @@ derived from the page snapshot and the session snapshot; it is never a field on
 - A task/goal watcher event's WebSocket frame is sent only after a read that
   started after that event has been applied, so a client that re-fetches on the
   frame sees fresh data.
+- Once that page-index refresh succeeds, the handler also invalidates the changed
+  item in the status cache, so a status change made outside the board (for
+  example a blocker completed through the vault CLI) is reflected without a
+  restart. Theme and objective events, and events for an unknown vault, leave
+  the cache untouched.
 - A file's page in a published snapshot always comes from the most recently started
   read of that file; reads of different files never drop each other's results. A
   folder no longer keeps a single in-flight rebuild and a queued follow-up:
