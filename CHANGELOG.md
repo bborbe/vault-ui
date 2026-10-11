@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Invalidate the changed item in the status cache from the watcher handler (`watchrefresh.NewHandler` now takes the cache; `factory.CreateWatcher` and `main.go` thread the existing cache through), so the Tasks board's blocked-by badge no longer keeps a stale blocker status after the blocker is completed outside the board via the vault CLI — the chip clears without a restart.
+
 ## v0.93.1
 
 - fix: Wire the five-minute cleanup sweep into the running service (`factory.CreateCleanupSweep` runs the startup orphan reconciliation once — after the status cache it reads has loaded — then `RunLoop` until shutdown), so stale session ids are cleared, orphaned starting markers expire, resurrected markers are re-cleared and an empty session id is re-bound again instead of the cards offering Start for work already running; the sweep reads the marker from the status cache at startup reconciliation (the vault-cli list never emitted it, so that pass cleared nothing) and its clock is now read at each consumer rather than frozen at construction, so a marker written after startup can still pass the TTL.

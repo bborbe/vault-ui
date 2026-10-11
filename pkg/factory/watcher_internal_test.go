@@ -21,6 +21,7 @@ import (
 	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -144,7 +145,9 @@ func TestCreateWatcherBroadcastsChanges(t *testing.T) {
 	watcherDone := make(chan struct{})
 	go func() {
 		defer close(watcherDone)
-		_ = CreateWatcher(loader, manager, testPageIndex(), ops.NewWatchOperation())(ctx)
+		_ = CreateWatcher(
+			loader, manager, testPageIndex(), statuscache.NewCache(), ops.NewWatchOperation(),
+		)(ctx)
 	}()
 	// Stop the watcher and wait for it before the test returns, so its
 	// fsnotify goroutine cannot outlive the test and race later suites.
@@ -213,7 +216,9 @@ func TestCreateWatcherReadsOnlyTheEventFile(t *testing.T) {
 	watcherDone := make(chan struct{})
 	go func() {
 		defer close(watcherDone)
-		_ = CreateWatcher(loader, manager, index, ops.NewWatchOperation())(ctx)
+		_ = CreateWatcher(
+			loader, manager, index, statuscache.NewCache(), ops.NewWatchOperation(),
+		)(ctx)
 	}()
 	// Stop the watcher and wait for it before the test returns, so its
 	// fsnotify goroutine cannot outlive the test and race later suites.
@@ -299,6 +304,7 @@ func TestCreateWatcherSurfacesLoaderError(t *testing.T) {
 		loader,
 		websocket.NewConnectionManager(websocket.NewMetrics()),
 		testPageIndex(),
+		statuscache.NewCache(),
 		ops.NewWatchOperation(),
 	)(context.Background())
 	if err == nil {
@@ -315,6 +321,7 @@ func TestCreateWatcherStopsOnContextCancel(t *testing.T) {
 		loader,
 		websocket.NewConnectionManager(websocket.NewMetrics()),
 		testPageIndex(),
+		statuscache.NewCache(),
 		ops.NewWatchOperation(),
 	)(ctx); err != nil {
 		t.Fatalf("expected nil on context cancel, got %v", err)
