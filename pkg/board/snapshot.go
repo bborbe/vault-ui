@@ -355,17 +355,6 @@ func (s *taskSnapshotStore) runBuild(
 	return rows, nil
 }
 
-// SnapshotGeneration returns the number of content-changing task-list snapshot
-// publications so far, across every key. It advances by one only when a
-// rebuild's rows differ from the rows the key last published, so a full build, a
-// row patch or a session refresh that reproduces identical rows leaves it put.
-// The body cache keys on it and drops a superseded generation's bodies.
-func (s *taskSnapshotStore) SnapshotGeneration() uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.signalSeq
-}
-
 // Signal returns the key's published-rows signal: the value of the store's
 // content-gated counter at the key's last content-changing publication, or 0
 // when the key has never published rows. It is the input a held body is gated

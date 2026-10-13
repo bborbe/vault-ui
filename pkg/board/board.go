@@ -162,11 +162,11 @@ func New(deps Deps) Board {
 		Generations: deps.Sessions,
 	})
 	b.bodies = newTaskBodyCache(taskBodyParams{
-		Project:     b.ListTasks,
-		Rows:        b.taskSnapshotRows,
-		Encode:      encodeTaskList,
-		Generations: b.snapshot.SnapshotGeneration,
-		Clock:       b.clock,
+		Project: b.ListTasks,
+		Rows:    b.taskSnapshotRows,
+		Encode:  encodeTaskList,
+		Signals: b.taskSnapshotSignals,
+		Clock:   b.clock,
 	})
 	return b
 }

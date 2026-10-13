@@ -20,6 +20,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/session"
 )
 
@@ -118,22 +119,48 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 }
 
 // ListTasksBody renders the GET /api/tasks response for the query from the body
-// cache, which builds it once per (snapshot generation, query) and holds the
-// identity and gzip forms. A hit is served the stored bytes with no projection
-// and no marshal.
+// cache, which builds it once per (selected-vault signal vector, query) and
+// holds the identity and gzip forms. A hit is served the stored bytes with no
+// projection and no marshal.
 //
 // It reads the snapshot for the query's vaults before consulting the cache. The
-// snapshot generation the cache keys on only moves when a read rebuilds a key,
+// selected vaults' published-rows signals the cache keys on only move when a
+// read rebuilds a key with rows that differ from the ones it last published,
 // and a cache hit would never make that read: an external page edit or a new
 // session snapshot would otherwise leave a held body serving indefinitely. The
 // read is a per-vault revision check that returns the published rows unchanged
 // when nothing moved, so it rebuilds only what the page index has marked — the
 // same read ListTasks makes.
+//
+// The selection is loaded once and handed to the cache, so the cache's signals
+// are read for exactly the vaults whose rows were read, and the signals seam
+// itself performs no vault I/O.
 func (b *board) ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+	all, err := b.vaults.Vaults(ctx)
+	if err != nil {
+		return TaskListBody{}, errors.Wrap(ctx, err, "list vaults")
+	}
+	selected := b.selectVaults(all, query.Vaults)
 	if _, err := b.taskSnapshotRows(ctx, query); err != nil {
 		return TaskListBody{}, err
 	}
-	return b.bodies.Get(ctx, query)
+	return b.bodies.Get(ctx, query, selected)
+}
+
+// taskSnapshotSignals returns each selected vault's published-rows signal, in
+// selection order. A vault the query does not select is absent, so a change in
+// it cannot invalidate the query's held body; the bare query selects every
+// configured vault, so a genuine change in any of them does. It reads the same
+// selection ListTasks makes and performs no vault I/O.
+func (b *board) taskSnapshotSignals(selected []Vault) []VaultSignal {
+	signals := make([]VaultSignal, 0, len(selected))
+	for _, vault := range selected {
+		signals = append(signals, VaultSignal{
+			Name:   vault.Name,
+			Signal: b.snapshot.Signal(pageindex.NewKey(vault.Path, vault.TasksFolder)),
+		})
+	}
+	return signals
 }
 
 // taskSnapshotRows returns the snapshot's rows for the query's selected vaults,

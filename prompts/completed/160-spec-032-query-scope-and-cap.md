@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [032-task-body-cache-invalidation]
+summary: Rewired the rendered task-list body cache to gate on the query's selected-vault published-rows signals instead of one process-wide generation counter, and bounded the held set with an LRU cap of 64.
+execution_id: vault-ui-cache-invalidation-exec-160-spec-032-query-scope-and-cap
+dark-factory-version: v0.198.7
 created: "2026-10-13T22:16:50Z"
 queued: "2026-10-13T22:54:57Z"
+started: "2026-10-13T22:58:39Z"
+completed: "2026-10-13T23:04:42Z"
 branch: dark-factory/task-body-cache-invalidation
 ---
 
