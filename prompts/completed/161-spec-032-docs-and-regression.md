@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [032-task-body-cache-invalidation]
+summary: 'Documented the content-gated, query-scoped task-list body invalidation in docs/page-index.md, added the fix: entry under a new ## Unreleased, and added the forced identical-row-rebuild byte-identity regression row.'
+execution_id: vault-ui-cache-invalidation-exec-161-spec-032-docs-and-regression
+dark-factory-version: v0.198.7
 created: "2026-10-13T22:16:50Z"
 queued: "2026-10-13T22:55:00Z"
+started: "2026-10-13T23:04:43Z"
+completed: "2026-10-13T23:07:48Z"
 branch: dark-factory/task-body-cache-invalidation
 ---
 

@@ -558,6 +558,10 @@ type contentGateHarness struct {
 	cache     *taskBodyCache
 	clock     *fakeBodyClock
 
+	// project is the projection the cache is wired with, exposed so a row can
+	// reproduce the uncached path's body for the same query.
+	project func(ctx context.Context, query TaskQuery) ([]api.TaskResponse, error)
+
 	mu       sync.Mutex
 	vaults   []Vault
 	fixtures map[string][]taskSnapshotRow
@@ -596,10 +600,11 @@ func newContentGateHarnessWith(
 		Revisions:   h.revisions,
 		Generations: &fakeGenerations{},
 	})
+	h.project = func(_ context.Context, _ TaskQuery) ([]api.TaskResponse, error) {
+		return []api.TaskResponse{{ID: "Alpha"}}, nil
+	}
 	h.cache = newTaskBodyCache(taskBodyParams{
-		Project: func(_ context.Context, _ TaskQuery) ([]api.TaskResponse, error) {
-			return []api.TaskResponse{{ID: "Alpha"}}, nil
-		},
+		Project: h.project,
 		Encode: func(value any) ([]byte, error) {
 			h.mu.Lock()
 			h.encodes++
@@ -725,6 +730,32 @@ var _ = Describe("task-list body cache content gate", func() {
 		_, err = h.read(ctx, query)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
+	})
+
+	It("a body served after an identical-row rebuild is byte-identical to a fresh build", func() {
+		h := newContentGateHarness(contentGateFixture())
+		query := TaskQuery{}
+
+		first, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// Force the rebuild rather than wait for one: the revision moves with the
+		// fixture unchanged, so the store rebuilds byte-identical rows and the held
+		// body is served, not rebuilt.
+		h.revisions.bump()
+		served, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// The served body is byte-identical to what the uncached path produces for
+		// the same query at the same clock instant.
+		responses, err := h.project(ctx, query)
+		Expect(err).To(BeNil())
+		expected, err := encodeTaskList(responses)
+		Expect(err).To(BeNil())
+		Expect(served.Identity).To(Equal(expected))
+		Expect(served.Identity).To(Equal(first.Identity))
 	})
 
 	It("a rebuild that changes a rendered row discards the held body", func() {
