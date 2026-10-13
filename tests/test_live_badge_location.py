@@ -42,12 +42,12 @@ def test_live_badge_label_conditionally_appends_escaped_location() -> None:
     ``● Live·<location>`` with one, escaping the store-supplied text before it
     reaches the DOM."""
     body = _slice_function(APP_JS, "liveBadgeLabel")
-    assert "location" in body
-    assert "● Live" in body
-    # The separator is conditional on a location being present.
-    assert "·" in body
-    # Store-supplied text is escaped before it reaches the DOM.
-    assert "escapeHtml(" in body
+    # The false branch is the bare badge, with no separator. Asserting it as a
+    # literal is what pins the separator to the true branch: a helper that
+    # appended "·<location>" unconditionally would not contain it.
+    assert "'● Live'" in body
+    # The true branch carries the separator and the escaped store-supplied text.
+    assert "`● Live·${escapeHtml(location)}`" in body
 
 
 def test_session_button_live_badge_text_comes_from_label_helper() -> None:
@@ -64,6 +64,10 @@ def test_session_button_live_badge_keeps_take_over_affordance() -> None:
     body = _slice_function(APP_JS, "sessionButtonHtml")
     assert '<span class="live-badge" role="button" tabindex="0"' in body
     assert "onclick=\"takeOverSession('${kind}', '${escapeJsAttr(item.id)}')\"" in body
+    assert (
+        'title="Session is live — click to take over and resume '
+        '(ends the running turn; in-flight work is lost)"'
+    ) in body
 
 
 def test_session_button_serves_both_card_kinds() -> None:
