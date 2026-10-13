@@ -509,6 +509,190 @@ var _ = Describe("taskBodyCache", func() {
 	})
 })
 
+// contentGateVault is the single configured vault the content-gate harness
+// serves.
+var contentGateVault = Vault{Name: "vault-a", Path: "/vault-a", TasksFolder: "24 Tasks"}
+
+// contentGateFixture returns one row carrying a distinct value in every field
+// the request path renders, so a table entry can change exactly one of them.
+func contentGateFixture() []taskSnapshotRow {
+	started := "2026-01-01T00:00:00Z"
+	state := "live"
+	activity := libtime.DateTime(bodyBaseTime)
+	return []taskSnapshotRow{{
+		item: ops.TaskListItem{
+			Name:          "Alpha",
+			Status:        "todo",
+			Phase:         "planning",
+			CompletedDate: "2026-01-01",
+			Priority:      1,
+			Assignee:      "me",
+			Goals:         []string{"goal-a"},
+		},
+		blocked:       true,
+		blockers:      []string{"Beta"},
+		started:       &started,
+		sessionState:  &state,
+		activityDate:  &activity,
+		openQuestions: []domain.OpenQuestion{{Index: 1, Text: "why?"}},
+	}}
+}
+
+// contentGateHarness wires a real taskSnapshotStore to a real taskBodyCache over
+// a mutable row fixture, so the rows below exercise the store's content gate
+// through the cache rather than a settable counter.
+type contentGateHarness struct {
+	store     *taskSnapshotStore
+	revisions *fakeRevisions
+	cache     *taskBodyCache
+	clock     *fakeBodyClock
+
+	mu      sync.Mutex
+	fixture []taskSnapshotRow
+	encodes int
+}
+
+func newContentGateHarness(fixture []taskSnapshotRow) *contentGateHarness {
+	h := &contentGateHarness{
+		revisions: &fakeRevisions{},
+		clock:     newFakeBodyClock(bodyBaseTime),
+		fixture:   fixture,
+	}
+	h.store = newTaskSnapshotStore(taskSnapshotParams{
+		Build: func(_ context.Context, _ Vault) ([]taskSnapshotRow, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			rows := make([]taskSnapshotRow, len(h.fixture))
+			copy(rows, h.fixture)
+			return rows, nil
+		},
+		Revisions:   h.revisions,
+		Generations: &fakeGenerations{},
+	})
+	h.cache = newTaskBodyCache(taskBodyParams{
+		Project: func(_ context.Context, _ TaskQuery) ([]api.TaskResponse, error) {
+			return []api.TaskResponse{{ID: "Alpha"}}, nil
+		},
+		Encode: func(value any) ([]byte, error) {
+			h.mu.Lock()
+			h.encodes++
+			h.mu.Unlock()
+			return encodeTaskList(value)
+		},
+		Generations: h.store.SnapshotGeneration,
+		Clock:       h.clock,
+		Rows: func(ctx context.Context, _ TaskQuery) ([]taskSnapshotRow, error) {
+			// The read helper has already rebuilt the store; Get needs the rows
+			// only to derive its clock boundary.
+			return h.store.List(ctx, contentGateVault)
+		},
+	})
+	return h
+}
+
+// read mirrors ListTasksBody's production read order: it rebuilds every
+// configured vault first, so a revision move is observed, and only then
+// consults the cache.
+func (h *contentGateHarness) read(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+	if _, err := h.store.List(ctx, contentGateVault); err != nil {
+		return TaskListBody{}, err
+	}
+	return h.cache.Get(ctx, query)
+}
+
+// mutateRow applies fn to the fixture's row.
+func (h *contentGateHarness) mutateRow(fn func(*taskSnapshotRow)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	fn(&h.fixture[0])
+}
+
+// Encodes reports how many times the cache encoded a body.
+func (h *contentGateHarness) Encodes() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.encodes
+}
+
+var _ = Describe("task-list body cache content gate", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	It("a rebuild that reproduces identical rows keeps the held body", func() {
+		h := newContentGateHarness(contentGateFixture())
+		query := TaskQuery{}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// The fixture is unchanged, so the store publishes identical rows and the
+		// signal does not move: the held body is served.
+		h.revisions.bump()
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+	})
+
+	It("a rebuild that changes a rendered row discards the held body", func() {
+		h := newContentGateHarness(contentGateFixture())
+		query := TaskQuery{}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		h.mutateRow(func(row *taskSnapshotRow) { row.item.Status = "done" })
+		h.revisions.bump()
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(2))
+	})
+
+	DescribeTable("a change to any rendered row field discards the held body",
+		func(mutate func(*taskSnapshotRow)) {
+			h := newContentGateHarness(contentGateFixture())
+			query := TaskQuery{}
+
+			_, err := h.read(ctx, query)
+			Expect(err).To(BeNil())
+			Expect(h.Encodes()).To(Equal(1))
+
+			h.mutateRow(mutate)
+			h.revisions.bump()
+			_, err = h.read(ctx, query)
+			Expect(err).To(BeNil())
+			Expect(h.Encodes()).To(Equal(2))
+		},
+		Entry("status", func(row *taskSnapshotRow) { row.item.Status = "done" }),
+		Entry("phase", func(row *taskSnapshotRow) { row.item.Phase = "execution" }),
+		Entry("defer_date", func(row *taskSnapshotRow) { row.item.DeferDate = "2026-02-02" }),
+		Entry("completed_date", func(row *taskSnapshotRow) {
+			row.item.CompletedDate = "2026-02-02"
+		}),
+		Entry("priority", func(row *taskSnapshotRow) { row.item.Priority = 5 }),
+		Entry("assignee", func(row *taskSnapshotRow) { row.item.Assignee = "you" }),
+		Entry("goals", func(row *taskSnapshotRow) { row.item.Goals = []string{"goal-b"} }),
+		Entry("blocked", func(row *taskSnapshotRow) { row.blocked = false }),
+		Entry("blockers", func(row *taskSnapshotRow) { row.blockers = []string{"Gamma"} }),
+		Entry("session_state", func(row *taskSnapshotRow) { row.sessionState = strPtr("quiet") }),
+		Entry("activity_date", func(row *taskSnapshotRow) {
+			activity := libtime.DateTime(bodyBaseTime.Add(time.Hour))
+			row.activityDate = &activity
+		}),
+		Entry("claude_session_started", func(row *taskSnapshotRow) {
+			row.started = strPtr("2026-03-03T00:00:00Z")
+		}),
+		Entry("open_questions", func(row *taskSnapshotRow) {
+			row.openQuestions = []domain.OpenQuestion{{Index: 2, Text: "when?"}}
+		}),
+		Entry("flag", func(row *taskSnapshotRow) { row.item.Flag = true }),
+	)
+})
+
 // bodyRowsVaults is a VaultsProvider stub for the taskSnapshotRows tests.
 type bodyRowsVaults struct {
 	vaults []Vault

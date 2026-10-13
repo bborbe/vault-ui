@@ -1,6 +1,8 @@
 ---
-status: approved
+status: prompted
 approved: "2026-10-13T22:09:00Z"
+generating: "2026-10-13T22:11:16Z"
+prompted: "2026-10-13T22:38:04Z"
 branch: dark-factory/task-body-cache-invalidation
 ---
 

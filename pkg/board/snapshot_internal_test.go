@@ -350,29 +350,49 @@ var _ = Describe("taskSnapshotStore", func() {
 		Expect(h.Builds()).To(Equal(3))
 	})
 
-	It("advances the snapshot generation on a successful rebuild only", func() {
+	It("advances the published-rows signal only when a rebuild changes the rows", func() {
+		key := pageindex.NewKey(snapshotVaultA.Path, snapshotVaultA.TasksFolder)
 		h := newSnapshotHarness(
 			func(_ context.Context, _ Vault, n int) ([]taskSnapshotRow, error) {
-				if n == 2 {
+				switch n {
+				case 2:
+					// Byte-identical to the first publication: the content gate
+					// must leave the signal put.
+					return numberedRows("row-1", 1), nil
+				case 3:
+					return numberedRows("row-2", 1), nil
+				case 4:
 					return nil, stderrors.New("boom")
+				default:
+					return numberedRows("row-1", 1), nil
 				}
-				return numberedRows(fmt.Sprintf("row-%d", n), 1), nil
 			},
 			0,
 		)
 
+		// 1. The first read publishes rows and advances the signal.
 		_, err := h.store.List(ctx, snapshotVaultA)
 		Expect(err).To(BeNil())
-		Expect(h.store.SnapshotGeneration()).To(Equal(uint64(1)))
+		Expect(h.store.Signal(key)).To(Equal(uint64(1)))
 
+		// 2. A revision move whose build reproduces identical rows: the content
+		// gate leaves the signal untouched.
 		h.revisions.bump()
 		_, err = h.store.List(ctx, snapshotVaultA)
 		Expect(err).To(BeNil())
-		Expect(h.store.SnapshotGeneration()).To(Equal(uint64(1)))
+		Expect(h.store.Signal(key)).To(Equal(uint64(1)))
 
+		// 3. A revision move whose build returns different rows advances it.
+		h.revisions.bump()
 		_, err = h.store.List(ctx, snapshotVaultA)
 		Expect(err).To(BeNil())
-		Expect(h.store.SnapshotGeneration()).To(Equal(uint64(2)))
+		Expect(h.store.Signal(key)).To(Equal(uint64(2)))
+
+		// 4. A failed build advances nothing and keeps the previous rows serving.
+		h.revisions.bump()
+		_, err = h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+		Expect(h.store.Signal(key)).To(Equal(uint64(2)))
 	})
 
 	It("returns the error of a failed cold build and retries the next read", func() {
