@@ -1,13 +1,13 @@
 ---
 status: completed
 spec: [031-task-list-body-cache]
-summary: Verified prompt 2's clock-boundary invalidation in pkg/board — taskBodyBoundary/expiresAt computed from pre-filter rows via the Rows seam and taskSnapshotRows, checked on read, with the AC5/AC6 test rows — which was already present and released in v0.95.0; go test -race ./pkg/board/... passes at 90.2% coverage and ROOTDIR=/workspace make precommit exits 0.
+summary: 'Added the clock-boundary invalidation axis to the task-list body cache: expiry derived from pre-filter snapshot rows and the request''s upcoming_hours, with tests for AC5/AC6 and the hidden-row entry case; make precommit exits 0.'
 execution_id: vault-ui-exec-156-spec-031-invalidation
 dark-factory-version: v0.198.7
 created: "2026-10-09T20:51:14Z"
 queued: "2026-10-09T21:18:12Z"
-started: "2026-10-13T21:37:12Z"
-completed: "2026-10-13T21:42:09Z"
+started: "2026-10-13T21:42:19Z"
+completed: "2026-10-13T21:45:47Z"
 branch: dark-factory/task-list-body-cache
 ---
 
