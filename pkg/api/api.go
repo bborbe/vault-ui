@@ -60,6 +60,12 @@ type TaskResponse struct {
 	Flag                 bool     `json:"flag"`
 	ActivityDate         *string  `json:"activity_date"`
 	SessionState         *string  `json:"session_state"`
+	// Location is the location the attention store reports for the card's live
+	// session (e.g. "local", "pod"), so the wall's live badge can say where the
+	// session runs. It is Go-only (see the package doc) — the superseded Python
+	// backend cannot emit it — and null unless the session is live and the store
+	// carried a non-empty location.
+	Location *string `json:"location"`
 	// OpenQuestions is the task's Open Questions section, in section order. It is
 	// Go-only (see the package doc) and always non-nil, so it serialises as []
 	// rather than null and a task with no such section still carries the key.
@@ -86,6 +92,9 @@ type GoalResponse struct {
 	Upcoming             bool     `json:"upcoming"`
 	ActivityDate         *string  `json:"activity_date"`
 	SessionState         *string  `json:"session_state"`
+	// Location is the location the attention store reports for the goal's live
+	// session, on the same terms as TaskResponse.Location.
+	Location *string `json:"location"`
 }
 
 // TopicResponse is the wire shape of a topic list entry.

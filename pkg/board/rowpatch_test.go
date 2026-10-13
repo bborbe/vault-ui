@@ -14,6 +14,7 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 )
 
 // taskByID returns the response for one task id, failing the spec when it is
@@ -87,7 +88,9 @@ var _ = Describe("row patch", func() {
 		h := newHarness(item("Alpha", func(i *ops.TaskListItem) {
 			i.ClaudeSessionID = "11111111-1111-1111-1111-111111111111"
 		}))
-		h.signals.registry = []string{"11111111-1111-1111-1111-111111111111"}
+		h.signals.registry = []heartbeat.Session{
+			{ID: "11111111-1111-1111-1111-111111111111"},
+		}
 		h.index.setPages(pageStatus("Alpha", "in_progress"))
 
 		built, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})

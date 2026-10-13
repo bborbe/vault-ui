@@ -33,6 +33,7 @@ type taskSnapshotRow struct {
 	blocked       bool
 	started       *string
 	sessionState  *string
+	location      *string
 	activityDate  *libtime.DateTime
 	openQuestions []domain.OpenQuestion
 }
