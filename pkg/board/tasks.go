@@ -115,6 +115,54 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 	return responses, nil
 }
 
+// ListTasksBody renders the GET /api/tasks response for the query from the body
+// cache, which builds it once per (snapshot generation, query) and holds the
+// identity and gzip forms. A hit is served the stored bytes with no projection
+// and no marshal.
+//
+// It reads the snapshot for the query's vaults before consulting the cache. The
+// snapshot generation the cache keys on only moves when a read rebuilds a key,
+// and a cache hit would never make that read: an external page edit or a new
+// session snapshot would otherwise leave a held body serving indefinitely. The
+// read is a per-vault revision check that returns the published rows unchanged
+// when nothing moved, so it rebuilds only what the page index has marked — the
+// same read ListTasks makes.
+func (b *board) ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+	if _, err := b.taskSnapshotRows(ctx, query); err != nil {
+		return TaskListBody{}, err
+	}
+	return b.bodies.Get(ctx, query)
+}
+
+// taskSnapshotRows returns the snapshot's rows for the query's selected vaults,
+// concatenated, before the status filter and visibleRow drop any. The body
+// cache reads it to derive its clock boundary, so a row the visibility filter
+// drops still contributes its entry instant.
+//
+// It makes the same vault selection ListTasks makes and reads the same
+// snapshot, so it adds no vault I/O: the snapshot List is served from the
+// published rows.
+func (b *board) taskSnapshotRows(
+	ctx context.Context,
+	query TaskQuery,
+) ([]taskSnapshotRow, error) {
+	all, err := b.vaults.Vaults(ctx)
+	if err != nil {
+		return nil, errors.Wrap(ctx, err, "list vaults")
+	}
+	selected := b.selectVaults(all, query.Vaults)
+
+	rows := make([]taskSnapshotRow, 0, len(selected))
+	for _, vault := range selected {
+		vaultRows, snapshotErr := b.snapshot.List(ctx, vault)
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+		rows = append(rows, vaultRows...)
+	}
+	return rows, nil
+}
+
 // buildTaskRows lists the vault's tasks and precomputes every field that needs
 // I/O: the uncompleted blockers, the blocked flag, the session-started marker,
 // the classified session state and the activity date. It applies none of the

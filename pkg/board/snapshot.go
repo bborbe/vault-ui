@@ -127,6 +127,10 @@ type taskSnapshotStore struct {
 	revisions   IndexRevisions
 	generations generationSource
 	timeout     time.Duration
+	// snapshotGeneration counts successful rebuilds across every key. It is
+	// incremented under the mutex on the success path only, so the body cache can
+	// tell a published row set from a failed one.
+	snapshotGeneration uint64
 }
 
 // taskSnapshotEntry is the per-key state. pageRevision and sessionGeneration
@@ -330,6 +334,7 @@ func (s *taskSnapshotStore) runBuild(
 	e.hasSnapshot = true
 	e.pageRevision = b.startRevision
 	e.sessionGeneration = b.startGeneration
+	s.snapshotGeneration++
 	b.rows = rows
 	close(b.done)
 	s.mu.Unlock()
@@ -338,6 +343,17 @@ func (s *taskSnapshotStore) runBuild(
 		return nil, errors.Wrap(ctx, err, "task snapshot build")
 	}
 	return rows, nil
+}
+
+// SnapshotGeneration returns the number of successful task-list snapshot
+// rebuilds so far, across every key. It advances by one whenever a rebuild
+// publishes rows — a full build, a session refresh or a row patch — because
+// each of those can change what a body renders. The body cache keys on it and
+// drops a superseded generation's bodies.
+func (s *taskSnapshotStore) SnapshotGeneration() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshotGeneration
 }
 
 // entryLocked returns the key's entry, creating it when missing. The caller

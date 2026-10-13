@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Cache the `GET /api/tasks` response body in the board — the board builds one body per (task-list snapshot generation, query) and holds both the identity JSON and its gzip form, so a request whose query matches a held entry is served the stored bytes with no row walk, no projection and no marshal instead of re-walking the published rows and re-marshalling the ~2.3 MB body on every warm read; an entry is dropped when a snapshot rebuild moves the generation or the clock crosses the next instant at which `upcoming`, `recently_completed` or the recently-completed phase override can change, derived from the request's `now` and `upcoming_hours` rather than a timer; the gzip form is served with `Content-Encoding: gzip` when the client negotiates gzip and every task-list response carries `Vary: Accept-Encoding`, while the decoded JSON is byte-identical to what the board produced before.
+
 ## v0.94.0
 
 - fix: Invalidate the changed item in the status cache from the watcher handler (`watchrefresh.NewHandler` now takes the cache; `factory.CreateWatcher` and `main.go` thread the existing cache through), so the Tasks board's blocked-by badge no longer keeps a stale blocker status after the blocker is completed outside the board via the vault CLI — the chip clears without a restart.

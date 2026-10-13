@@ -80,6 +80,33 @@ derived from the page snapshot and the session snapshot; it is never a field on
 - **No new timer.** The task-list snapshot owns no timer; the only timer this
   change adds is the session refresh at ≥ 60 s.
 
+## Task-list body cache
+
+The board holds one rendered `GET /api/tasks` response body per (task-list
+snapshot generation, query), in two forms: the identity JSON and its
+gzip-compressed form. Both are built once and reused.
+
+- **What it holds.** One rendered body per (generation, query), identity and
+  gzip alike, built once and shared read-only with every reader.
+- **What a hit costs.** A request whose query matches a held entry is served the
+  stored bytes: no row walk, no projection and no marshal. A miss is built by the
+  existing path and the result is held.
+- **What it is keyed by.** The task-list snapshot generation plus every query
+  parameter that changes the body, including `upcoming_hours` and `session_live`.
+- **When it is discarded.** A snapshot rebuild moves the generation and drops the
+  superseded generation's bodies. The clock crossing the next instant at which
+  `upcoming`, `recently_completed` or the recently-completed phase override can
+  change drops the body; that instant is derived from the request's clock reading
+  and its upcoming-hours window, not from a timer. A discarded body is never
+  served again.
+- **What it does not change.** The decoded JSON is identical to what the board
+  produced before; only how it is served changes. `GET /api/assignees` keeps
+  reading the published rows and never touches the body cache.
+- **The wire shape.** The gzip form is served with `Content-Encoding: gzip` when
+  the request negotiates gzip, and the identity form otherwise. The header
+  `Vary: Accept-Encoding` is set on every task-list response, so a shared cache
+  cannot serve the wrong form.
+
 ## Staleness bounds
 
 - A warm read never touches disk. `ListPages` returns the published snapshot
