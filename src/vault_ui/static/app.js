@@ -1546,6 +1546,14 @@ function startingElapsedLabel(marker) {
     return ` ${mins}:${String(secs % 60).padStart(2, '0')}`;
 }
 
+// liveBadgeLabel renders the live badge's text: "● Live" plus the session's
+// location when the attention store reports one, so the badge says where the
+// session runs. An empty or absent location renders the plain "● Live" — never
+// a dangling separator. The location is store-supplied text, so it is escaped.
+function liveBadgeLabel(location) {
+    return location ? `● Live·${escapeHtml(location)}` : '● Live';
+}
+
 function sessionButtonHtml(kind, item) {
     const startingSet = kind === 'goal' ? startingGoals : startingTasks;
     const hasSession = item.claude_session_id;
@@ -1572,7 +1580,7 @@ function sessionButtonHtml(kind, item) {
         // it opens the confirm dialog, which ends the running turn (SIGTERM via
         // the ps --resume match), then Resume works normally. In-flight work is
         // lost — that is the accepted trade-off, stated in the confirm dialog.
-        const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">● Live</span>`;
+        const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">${liveBadgeLabel(item.location)}</span>`;
         // Jump control — a sibling of the badge, never a second handler on it: the
         // badge's click ENDS the session, so navigation must not ride on it. Offered
         // on live session state alone, and only for tasks: a goal card has no jump

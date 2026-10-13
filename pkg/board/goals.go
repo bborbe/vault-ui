@@ -168,6 +168,9 @@ func (b *board) goalResponse(
 			projectsRoot,
 		)),
 		SessionState: sessionStatePtr(state),
+		Location: liveLocationPtr(
+			state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
+		),
 	}
 }
 

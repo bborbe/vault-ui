@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
@@ -122,19 +123,34 @@ func (c *seamCounter) get() int {
 }
 
 type fakeSignals struct {
-	registry []string
+	registry []heartbeat.Session
 	resume   []string
-	// unknown is "cannot tell": the live-id source could not be reached. It is
-	// the negative so the zero value keeps the pre-existing, known behaviour.
+	// unknown is "cannot tell": the live-session source could not be reached. It
+	// is the negative so the zero value keeps the pre-existing, known behaviour.
 	unknown bool
 
 	registryCalls *seamCounter
+	locationCalls *seamCounter
 	resumeCalls   *seamCounter
 }
 
 func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string {
 	f.registryCalls.inc()
-	return f.registry
+	ids := make([]string, 0, len(f.registry))
+	for _, session := range f.registry {
+		ids = append(ids, session.ID)
+	}
+	return ids
+}
+
+func (f fakeSignals) RegistryLocation(_ context.Context, sessionID string) string {
+	f.locationCalls.inc()
+	for _, session := range f.registry {
+		if session.ID == sessionID {
+			return session.Location
+		}
+	}
+	return ""
 }
 
 func (f fakeSignals) LiveIDsKnown() bool { return !f.unknown }
@@ -316,6 +332,7 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 	cache := fakeCache{statuses: map[string]string{}, started: map[string]string{}}
 	signals := fakeSignals{
 		registryCalls: &seamCounter{},
+		locationCalls: &seamCounter{},
 		resumeCalls:   &seamCounter{},
 	}
 	launch := launchregistry.NewRegistry()
@@ -549,7 +566,9 @@ var _ = Describe("ListTasks", func() {
 		h := newHarness(item("Live", func(i *ops.TaskListItem) {
 			i.ClaudeSessionID = "11111111-1111-1111-1111-111111111111"
 		}))
-		h.signals.registry = []string{"11111111-1111-1111-1111-111111111111"}
+		h.signals.registry = []heartbeat.Session{
+			{ID: "11111111-1111-1111-1111-111111111111"},
+		}
 		service := board.New(board.Deps{
 			Vaults:    fakeVaults{vaults: []board.Vault{vault}},
 			Ops:       fakeOps{list: *h.list, show: *h.show},
@@ -602,7 +621,9 @@ var _ = Describe("ListTasks", func() {
 			}),
 			item("Human"),
 		)
-		h.signals.registry = []string{"11111111-1111-1111-1111-111111111111"}
+		h.signals.registry = []heartbeat.Session{
+			{ID: "11111111-1111-1111-1111-111111111111"},
+		}
 		h.build()
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{
 			UpcomingHours: 8, SessionLive: true,
@@ -1095,5 +1116,118 @@ var _ = Describe("ListTasks open_questions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].OpenQuestions).To(BeEmpty())
+	})
+})
+
+var _ = Describe("live badge location", func() {
+	const liveID = "11111111-1111-1111-1111-111111111111"
+
+	It("renders a live task's store location as a pointer", func() {
+		h := newHarness(item("Live", func(i *ops.TaskListItem) { i.ClaudeSessionID = liveID }))
+		h.signals.registry = []heartbeat.Session{{ID: liveID, Location: "local"}}
+		h.build()
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("live"))
+		Expect(responses[0].Location).NotTo(BeNil())
+		Expect(*responses[0].Location).To(Equal("local"))
+	})
+
+	It("renders a live task with an empty store location as nil", func() {
+		h := newHarness(item("Live", func(i *ops.TaskListItem) { i.ClaudeSessionID = liveID }))
+		h.signals.registry = []heartbeat.Session{{ID: liveID, Location: ""}}
+		h.build()
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("live"))
+		Expect(responses[0].Location).To(BeNil())
+	})
+
+	It("renders a task with no session id as nil", func() {
+		h := newHarness(item("Human"))
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Location).To(BeNil())
+	})
+
+	It("carries the location key on the task-list body", func() {
+		h := newHarness(item("Live", func(i *ops.TaskListItem) { i.ClaudeSessionID = liveID }))
+		h.signals.registry = []heartbeat.Session{{ID: liveID, Location: "local"}}
+		h.build()
+
+		body, err := h.board.ListTasksBody(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(body.Identity)).To(ContainSubstring(`"location":"local"`))
+	})
+
+	It("renders location null in the body for a live task with no location", func() {
+		h := newHarness(item("Live", func(i *ops.TaskListItem) { i.ClaudeSessionID = liveID }))
+		h.signals.registry = []heartbeat.Session{{ID: liveID}}
+		h.build()
+
+		body, err := h.board.ListTasksBody(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(body.Identity)).To(ContainSubstring(`"location":null`))
+	})
+
+	It("precomputes the task location: a warm read pays no signal read", func() {
+		h := newHarness(item("Live", func(i *ops.TaskListItem) { i.ClaudeSessionID = liveID }))
+		h.signals.registry = []heartbeat.Session{{ID: liveID, Location: "local"}}
+		h.build()
+
+		_, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		after := h.signals.locationCalls.get()
+		Expect(after).To(BeNumerically(">", 0))
+
+		_, err = h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		// The location is carried on the snapshot row, so a warm task request pays
+		// no signal read for it.
+		Expect(h.signals.locationCalls.get()).To(Equal(after))
+	})
+
+	It("renders a live goal's store location as a pointer and in its JSON", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{{
+			Name: "Goal", Status: "in_progress", ClaudeSessionID: liveID,
+		}}
+		h.signals.registry = []heartbeat.Session{{ID: liveID, Location: "pod"}}
+		h.build()
+
+		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("live"))
+		Expect(responses[0].Location).NotTo(BeNil())
+		Expect(*responses[0].Location).To(Equal("pod"))
+
+		encoded, err := json.Marshal(responses[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"location":"pod"`))
+	})
+
+	It("renders a live goal with an empty store location as nil", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{{
+			Name: "Goal", Status: "in_progress", ClaudeSessionID: liveID,
+		}}
+		h.signals.registry = []heartbeat.Session{{ID: liveID}}
+		h.build()
+
+		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(*responses[0].SessionState).To(Equal("live"))
+		Expect(responses[0].Location).To(BeNil())
 	})
 })

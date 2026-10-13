@@ -48,18 +48,19 @@ const sessionHeartbeatPath = "/api/1.0/session-heartbeat"
 
 // Store is the attention-controller's session-heartbeat API.
 type Store interface {
-	// LiveSessionIDs returns the session ids the store currently reports live.
+	// LiveSessions returns the sessions the store currently reports live, with
+	// the location each one carries.
 	//
 	// The second result is false when the store could not be reached — "cannot
 	// tell", which a caller must never read as "nothing is live". A store that
-	// answers returns (ids, true), and ids may be empty: an answered store with
-	// no live sessions is not the same as an unreachable one.
-	LiveSessionIDs(ctx context.Context) ([]string, bool)
+	// answers returns (sessions, true), and sessions may be empty: an answered
+	// store with no live sessions is not the same as an unreachable one.
+	LiveSessions(ctx context.Context) ([]Session, bool)
 
 	// IsLive reports the store's verdict for one session. A 404 is
 	// (false, true): the session has never posted a heartbeat, so it is not
 	// live and a Resume is safe. The second result is false only when the store
-	// could not be reached — the same "cannot tell" as LiveSessionIDs.
+	// could not be reached — the same "cannot tell" as LiveSessions.
 	IsLive(ctx context.Context, sessionID string) (bool, bool)
 }
 
@@ -88,12 +89,21 @@ type store struct {
 type heartbeatRow struct {
 	SessionID string `json:"session_id"`
 	Live      bool   `json:"live"`
+	Location  string `json:"location"`
 }
 
-// LiveSessionIDs lists the store's live session ids. Every failure — a
+// Session is one live session the store reports: its id and the location it
+// runs from (the store's own `location` field, e.g. "local" or "pod"). Location
+// is empty when the store carries none.
+type Session struct {
+	ID       string
+	Location string
+}
+
+// LiveSessions lists the store's live sessions. Every failure — a
 // transport error, a non-200 status, an unparseable body — is "cannot tell"
 // (nil, false), never an empty live set.
-func (s *store) LiveSessionIDs(ctx context.Context) ([]string, bool) {
+func (s *store) LiveSessions(ctx context.Context) ([]Session, bool) {
 	body, ok := s.get(ctx, s.baseURL+sessionHeartbeatPath)
 	if !ok {
 		return nil, false
@@ -105,13 +115,13 @@ func (s *store) LiveSessionIDs(ctx context.Context) ([]string, bool) {
 		return nil, false
 	}
 
-	ids := make([]string, 0, len(rows))
+	sessions := make([]Session, 0, len(rows))
 	for _, row := range rows {
 		if row.Live && row.SessionID != "" {
-			ids = append(ids, row.SessionID)
+			sessions = append(sessions, Session{ID: row.SessionID, Location: row.Location})
 		}
 	}
-	return ids, true
+	return sessions, true
 }
 
 // IsLive reports whether the store lists one session as live. A 404 is

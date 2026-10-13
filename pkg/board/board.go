@@ -71,6 +71,9 @@ type OpsProvider interface {
 // the live `--resume`/`--session-id` process ids.
 type SessionSignals interface {
 	RegistrySessionIDs(ctx context.Context) []string
+	// RegistryLocation returns the location the live set carries for sessionID,
+	// or "" when the session is not in it or its location is empty.
+	RegistryLocation(ctx context.Context, sessionID string) string
 	// LiveIDsKnown reports whether RegistrySessionIDs is authoritative. It is
 	// false when the attention store could not be reached, which the board
 	// passes to the classifier as "cannot tell" rather than "nothing is live".

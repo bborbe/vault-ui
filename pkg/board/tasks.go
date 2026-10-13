@@ -41,6 +41,7 @@ type taskRow struct {
 	blocked           bool
 	started           *string
 	sessionState      *string
+	location          *string
 	openQuestions     []domain.OpenQuestion
 }
 
@@ -98,6 +99,7 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 			visibleTask.blocked = row.blocked
 			visibleTask.started = row.started
 			visibleTask.sessionState = row.sessionState
+			visibleTask.location = row.location
 			visibleTask.openQuestions = row.openQuestions
 			responses = append(responses, b.taskResponse(vault, visibleTask, row.activityDate))
 		}
@@ -165,8 +167,8 @@ func (b *board) taskSnapshotRows(
 
 // buildTaskRows lists the vault's tasks and precomputes every field that needs
 // I/O: the uncompleted blockers, the blocked flag, the session-started marker,
-// the classified session state and the activity date. It applies none of the
-// request-time filters, so one build serves every query.
+// the classified session state, the session's location and the activity date. It
+// applies none of the request-time filters, so one build serves every query.
 func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotRow, error) {
 	items, err := b.ops.List(vault).Execute(
 		ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
@@ -207,6 +209,9 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 			blocked:      len(blockers) > 0,
 			started:      b.sessionStarted(vault.Name, item.Name),
 			sessionState: sessionStatePtr(state),
+			location: liveLocationPtr(
+				state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
+			),
 			activityDate: activity.ComputeActivityDateWith(
 				ctx,
 				b.transcriptProbe(),
@@ -252,7 +257,7 @@ func (b *board) refreshTaskRows(
 	for i := range refreshed {
 		item := refreshed[i].item
 		refreshed[i].started = b.sessionStarted(vault.Name, item.Name)
-		refreshed[i].sessionState = sessionStatePtr(session.ClassifySessionState(
+		state := session.ClassifySessionState(
 			ctx,
 			session.ClassifyParams{
 				SessionID:          item.ClaudeSessionID,
@@ -265,7 +270,11 @@ func (b *board) refreshTaskRows(
 				LiveIDsUnknown:     liveIDsUnknown,
 				TranscriptMtime:    b.transcriptProbe(),
 			},
-		))
+		)
+		refreshed[i].sessionState = sessionStatePtr(state)
+		refreshed[i].location = liveLocationPtr(
+			state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
+		)
 		refreshed[i].activityDate = activity.ComputeActivityDateWith(
 			ctx,
 			b.transcriptProbe(),
@@ -289,8 +298,8 @@ func (b *board) refreshTaskRows(
 //
 // Beyond the changed page's own row, two kinds of field need care:
 //
-//   - The classified session state and the activity date are carried over from
-//     the held row. They come from the session snapshot, and the store only
+//   - The classified session state, the activity date and the location are
+//     carried over from the held row. They come from the session snapshot, and the store only
 //     takes this path when the session generation has not moved, so those values
 //     are already the current generation's; recomputing them would need the
 //     process spawn and transcript probe this path exists to avoid.
@@ -392,6 +401,7 @@ func (b *board) patchTaskRows(
 			// write that marked this page, so it is free and it is current.
 			started:       b.sessionStarted(vault.Name, item.Name),
 			sessionState:  rows[at].sessionState,
+			location:      rows[at].location,
 			activityDate:  rows[at].activityDate,
 			openQuestions: questions,
 		}
@@ -712,6 +722,7 @@ func (b *board) taskResponse(
 		Flag:                 item.Flag,
 		ActivityDate:         dateTimeString(activityDate),
 		SessionState:         row.sessionState,
+		Location:             row.location,
 		OpenQuestions:        openQuestions,
 	}
 }
@@ -826,4 +837,16 @@ func sessionStatePtr(state session.SessionState) *string {
 	}
 	value := string(state)
 	return &value
+}
+
+// liveLocationPtr renders the store's location for a live session as a nullable
+// wire value: nil unless the session is live and the store reported a non-empty
+// location. A live session the store gives no location for — and a session
+// classified live by transcript recency or a live resume process rather than by
+// the store — therefore carries null, and the badge renders the plain "● Live".
+func liveLocationPtr(state session.SessionState, location string) *string {
+	if state != session.SessionStateLive || location == "" {
+		return nil
+	}
+	return &location
 }

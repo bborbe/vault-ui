@@ -35,7 +35,10 @@ fires decides the outcome.
    session whose transcript is not on this host reads `live` rather than
    `indeterminate`. This is deliberately **not** the harness session registry
    under `~/.claude/sessions`: that directory only sees sessions started on this
-   host, and the store is the single source every reader shares.
+   host, and the store is the single source every reader shares. The same store
+   read also carries each live row's `location` (e.g. `local`, `pod`), which the
+   wall's live badge displays and which is **never** a classification signal —
+   the four outcomes and the signal order above are unchanged.
 3. **Transcript recency within the five-minute window → live.** The transcript
    (`<session_id>.jsonl`) is looked up in the card's project directory first,
    then by scanning every project directory under `~/.claude/projects`. A

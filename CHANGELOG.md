@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Show the live session's location on the board's live badge (`● Live·local`), so an operator scanning the wall can tell a local session from a cluster/pod one without opening anything — the attention store's session-heartbeat read decodes the `location` it already carries (`heartbeat.LiveSessions` replaces `LiveSessionIDs`), `pkg/sessionstate` holds the id/location pairs in memory (`State.Sessions`/`Replace`), `pkg/sessionsnapshot` publishes them through `RegistryLocation`, and `pkg/board` carries the location through the precomputed task-snapshot row and the goal response onto a new nullable `location` field on both `GET /api/tasks` and `GET /api/goals`; a live session the store reports no location for — and a session classified live by transcript recency or a live resume process rather than by the store — keeps the plain `● Live` with no dangling separator, non-live cards are untouched, and the badge keeps its take-over affordance.
+
 ## v0.95.0
 
 - feat: Cache the `GET /api/tasks` response body in the board — the board builds one body per (task-list snapshot generation, query) and holds both the identity JSON and its gzip form, so a request whose query matches a held entry is served the stored bytes with no row walk, no projection and no marshal instead of re-walking the published rows and re-marshalling the ~2.3 MB body on every warm read; an entry is dropped when a snapshot rebuild moves the generation or the clock crosses the next instant at which `upcoming`, `recently_completed` or the recently-completed phase override can change, derived from the request's `now` and `upcoming_hours` rather than a timer; the gzip form is served with `Content-Encoding: gzip` when the client negotiates gzip and every task-list response carries `Vary: Accept-Encoding`, while the decoded JSON is byte-identical to what the board produced before.

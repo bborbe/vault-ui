@@ -46,6 +46,15 @@ type Snapshot struct {
 	registrySessionIDsReturnsOnCall map[int]struct {
 		result1 []string
 	}
+	RegistryLocationStub        func(context.Context, string) string
+	registryLocationMutex       sync.RWMutex
+	registryLocationArgsForCall []SnapshotRegistryLocationArgs
+	registryLocationReturns     struct {
+		result1 string
+	}
+	registryLocationReturnsOnCall map[int]struct {
+		result1 string
+	}
 	ResumeSessionIDsStub        func(context.Context) []string
 	resumeSessionIDsMutex       sync.RWMutex
 	resumeSessionIDsArgsForCall []SnapshotResumeSessionIDsArgs
@@ -86,6 +95,12 @@ type SnapshotRefreshOnceArgs struct {
 // SnapshotRegistrySessionIDsArgs holds the arguments of one call to RegistrySessionIDs.
 type SnapshotRegistrySessionIDsArgs struct {
 	Arg1 context.Context
+}
+
+// SnapshotRegistryLocationArgs holds the arguments of one call to RegistryLocation.
+type SnapshotRegistryLocationArgs struct {
+	Arg1 context.Context
+	Arg2 string
 }
 
 // SnapshotResumeSessionIDsArgs holds the arguments of one call to ResumeSessionIDs.
@@ -341,6 +356,73 @@ func (fake *Snapshot) RegistrySessionIDsReturnsOnCall(i int, result1 []string) {
 	}
 	fake.registrySessionIDsReturnsOnCall[i] = struct {
 		result1 []string
+	}{result1}
+}
+
+func (fake *Snapshot) RegistryLocation(arg1 context.Context, arg2 string) string {
+	fake.registryLocationMutex.Lock()
+	ret, specificReturn := fake.registryLocationReturnsOnCall[len(fake.registryLocationArgsForCall)]
+	fake.registryLocationArgsForCall = append(fake.registryLocationArgsForCall, SnapshotRegistryLocationArgs{arg1, arg2})
+	stub := fake.RegistryLocationStub
+	fakeReturns := fake.registryLocationReturns
+	fake.recordInvocation("RegistryLocation", []interface{}{arg1, arg2})
+	fake.registryLocationMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Snapshot) RegistryLocationCallCount() int {
+	fake.registryLocationMutex.RLock()
+	defer fake.registryLocationMutex.RUnlock()
+	return len(fake.registryLocationArgsForCall)
+}
+
+func (fake *Snapshot) RegistryLocationCalls(stub func(context.Context, string) string) {
+	fake.registryLocationMutex.Lock()
+	defer fake.registryLocationMutex.Unlock()
+	fake.RegistryLocationStub = stub
+}
+
+func (fake *Snapshot) RegistryLocationArgsForCall(i int) (context.Context, string) {
+	fake.registryLocationMutex.RLock()
+	defer fake.registryLocationMutex.RUnlock()
+	argsForCall := fake.registryLocationArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2
+}
+
+func (fake *Snapshot) RegistryLocationArgs() []SnapshotRegistryLocationArgs {
+	fake.registryLocationMutex.RLock()
+	defer fake.registryLocationMutex.RUnlock()
+	args := make([]SnapshotRegistryLocationArgs, len(fake.registryLocationArgsForCall))
+	copy(args, fake.registryLocationArgsForCall)
+	return args
+}
+
+func (fake *Snapshot) RegistryLocationReturns(result1 string) {
+	fake.registryLocationMutex.Lock()
+	defer fake.registryLocationMutex.Unlock()
+	fake.RegistryLocationStub = nil
+	fake.registryLocationReturns = struct {
+		result1 string
+	}{result1}
+}
+
+func (fake *Snapshot) RegistryLocationReturnsOnCall(i int, result1 string) {
+	fake.registryLocationMutex.Lock()
+	defer fake.registryLocationMutex.Unlock()
+	fake.RegistryLocationStub = nil
+	if fake.registryLocationReturnsOnCall == nil {
+		fake.registryLocationReturnsOnCall = make(map[int]struct {
+			result1 string
+		})
+	}
+	fake.registryLocationReturnsOnCall[i] = struct {
+		result1 string
 	}{result1}
 }
 
