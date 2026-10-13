@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.96.0
 
 - feat: Show the live session's location on the board's live badge (`● Live·local`), so an operator scanning the wall can tell a local session from a cluster/pod one without opening anything — the attention store's session-heartbeat read decodes the `location` it already carries (`heartbeat.LiveSessions` replaces `LiveSessionIDs`), `pkg/sessionstate` holds the id/location pairs in memory (`State.Sessions`/`Replace`), `pkg/sessionsnapshot` publishes them through `RegistryLocation`, and `pkg/board` carries the location through the precomputed task-snapshot row and the goal response onto a new nullable `location` field on both `GET /api/tasks` and `GET /api/goals`; a live session the store reports no location for — and a session classified live by transcript recency or a live resume process rather than by the store — keeps the plain `● Live` with no dangling separator, non-live cards are untouched, and the badge keeps its take-over affordance.
 
