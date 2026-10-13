@@ -189,8 +189,8 @@ func CreateSessionState() sessionstate.State {
 // reads session-derived fields from. Its Run must run in main's run group.
 func CreateSessionSnapshot(state sessionstate.State) sessionsnapshot.Snapshot {
 	return sessionsnapshot.NewSnapshot(sessionsnapshot.Params{
-		Registry: func(ctx context.Context) ([]string, bool) {
-			return state.RegistrySessionIDs(ctx), state.LiveIDsKnown()
+		Registry: func(ctx context.Context) ([]heartbeat.Session, bool) {
+			return state.Sessions(ctx), state.LiveIDsKnown()
 		},
 		Scanner: session.NewPSScanner("-axww", "-o", "args="),
 		// Probe is deliberately left nil. A nil probe selects the snapshot's own
@@ -229,7 +229,7 @@ func CreateSessionStateWatcher(
 		glog.V(2).Infof("starting session state watcher for %d vaults", len(names))
 		return sessionstate.NewWatcher(sessionstate.WatchParams{
 			State:    state,
-			Read:     store.LiveSessionIDs,
+			Read:     store.LiveSessions,
 			Changed:  sessionRefreshBroadcaster(manager, names),
 			Interval: interval,
 		}).Run(ctx)

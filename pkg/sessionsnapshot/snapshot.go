@@ -28,6 +28,7 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/session"
 )
 
@@ -45,6 +46,10 @@ type Snapshot interface {
 	// They come from the attention store (pkg/heartbeat), never from the harness
 	// session registry directory. Never nil.
 	RegistrySessionIDs(ctx context.Context) []string
+	// RegistryLocation returns the location the last refresh's live set carried
+	// for sessionID, or "" when the session is not in that set or its location
+	// is empty.
+	RegistryLocation(ctx context.Context, sessionID string) string
 	// LiveIDsKnown reports whether RegistrySessionIDs is authoritative. It is
 	// false when the last refresh could not reach the store — "cannot tell",
 	// which the board must not read as "nothing is live".
@@ -70,10 +75,10 @@ type Snapshot interface {
 
 // Params carries the snapshot's injectable dependencies.
 type Params struct {
-	// Registry returns the live session ids and whether the source answered. A
+	// Registry returns the live sessions and whether the source answered. A
 	// false second result is "cannot tell" (an unreachable attention store): the
-	// previous ids are kept and marked unknown rather than cleared.
-	Registry func(ctx context.Context) ([]string, bool)
+	// previous sessions are kept and marked unknown rather than cleared.
+	Registry func(ctx context.Context) ([]heartbeat.Session, bool)
 	// Scanner produces fresh `ps` output; one scan runs per refresh.
 	Scanner session.ProcessScanner
 	// Probe returns a session transcript's mtime. Nil selects the snapshot's own
@@ -92,12 +97,13 @@ type Params struct {
 // NewSnapshot creates an empty snapshot. Call RefreshOnce or Run before serving.
 func NewSnapshot(params Params) Snapshot {
 	return &snapshot{
-		params:      params,
-		registryIDs: []string{},
-		liveKnown:   true,
-		resumeIDs:   []string{},
-		transcripts: map[transcriptKey]transcriptEntry{},
-		indices:     newTranscriptIndexSet(),
+		params:            params,
+		registryIDs:       []string{},
+		registryLocations: map[string]string{},
+		liveKnown:         true,
+		resumeIDs:         []string{},
+		transcripts:       map[transcriptKey]transcriptEntry{},
+		indices:           newTranscriptIndexSet(),
 	}
 }
 
@@ -119,13 +125,14 @@ type transcriptEntry struct {
 type snapshot struct {
 	params Params
 
-	mu          sync.Mutex
-	registryIDs []string
-	liveKnown   bool
-	resumeIDs   []string
-	refreshedAt *libtime.DateTime
-	generation  uint64
-	transcripts map[transcriptKey]transcriptEntry
+	mu                sync.Mutex
+	registryIDs       []string
+	registryLocations map[string]string
+	liveKnown         bool
+	resumeIDs         []string
+	refreshedAt       *libtime.DateTime
+	generation        uint64
+	transcripts       map[transcriptKey]transcriptEntry
 	// indices holds one listing of each projects root, built on first use and
 	// dropped with the epoch. Resolving a session through it costs a map hit and
 	// one stat, where activity.TranscriptMtime's filepath.Glob fallback re-reads
@@ -152,6 +159,14 @@ func (s *snapshot) RegistrySessionIDs(_ context.Context) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string{}, s.registryIDs...)
+}
+
+// RegistryLocation returns the location the last refresh's live set carried for
+// sessionID, or "" when the session is not in that set or its location is empty.
+func (s *snapshot) RegistryLocation(_ context.Context, sessionID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.registryLocations[sessionID]
 }
 
 // LiveIDsKnown reports whether the last refresh's ids are authoritative.
@@ -291,12 +306,21 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 		return errors.Wrap(ctx, err, "refresh session snapshot")
 	}
 	resumeIDs := session.ParseLiveSessionIDs(output)
-	registryIDs, liveKnown := s.params.Registry(ctx)
+	registrySessions, liveKnown := s.params.Registry(ctx)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if liveKnown {
-		s.registryIDs = append([]string{}, registryIDs...)
+		registryIDs := make([]string, 0, len(registrySessions))
+		registryLocations := make(map[string]string, len(registrySessions))
+		for _, registrySession := range registrySessions {
+			registryIDs = append(registryIDs, registrySession.ID)
+			if registrySession.Location != "" {
+				registryLocations[registrySession.ID] = registrySession.Location
+			}
+		}
+		s.registryIDs = registryIDs
+		s.registryLocations = registryLocations
 	}
 	s.liveKnown = liveKnown
 	s.resumeIDs = append([]string{}, resumeIDs...)

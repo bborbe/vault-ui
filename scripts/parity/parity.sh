@@ -314,11 +314,16 @@ normalize() {
   # waiting on, and the superseded Python backend cannot be updated to emit it.
   # It is removed from BOTH sides for the same reason.
   #
+  # `location` is Go-only on the same terms: the task and goal bodies carry the
+  # attention store's location for a live session so the wall's live badge can
+  # say where it runs, and the superseded Python backend cannot emit it. Leaving
+  # it in makes every task-list and goal-list case diverge.
+  #
   # Every other key stays compared: widening this filter would silently drop the
   # safety net for the routes this change does not touch.
   jq -S 'if type == "array"
-         then map(if type == "object" then del(.jump_pane, .open_questions) else . end)
-         elif type == "object" then del(.jump_pane, .open_questions)
+         then map(if type == "object" then del(.jump_pane, .open_questions, .location) else . end)
+         elif type == "object" then del(.jump_pane, .open_questions, .location)
          else . end' "$1" 2>/dev/null || cat "$1"
 }
 

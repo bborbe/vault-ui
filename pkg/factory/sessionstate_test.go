@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	websocketmocks "github.com/bborbe/vault-ui/pkg/websocket/mocks"
 )
@@ -42,10 +43,14 @@ func newFakeStore(ids ...string) *fakeStore {
 	return &fakeStore{ids: ids, known: true}
 }
 
-func (s *fakeStore) LiveSessionIDs(_ context.Context) ([]string, bool) {
+func (s *fakeStore) LiveSessions(_ context.Context) ([]heartbeat.Session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]string{}, s.ids...), s.known
+	sessions := make([]heartbeat.Session, 0, len(s.ids))
+	for _, id := range s.ids {
+		sessions = append(sessions, heartbeat.Session{ID: id})
+	}
+	return sessions, s.known
 }
 
 func (s *fakeStore) IsLive(_ context.Context, sessionID string) (bool, bool) {
@@ -92,8 +97,8 @@ var _ = Describe("CreateSessionStateWatcher", func() {
 
 		// The initial read populates the state and pushes nothing. Waiting for
 		// it here means the change below cannot be absorbed by it.
-		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
-			Should(ConsistOf("seed"))
+		Eventually(func() []heartbeat.Session { return state.Sessions(ctx) }).
+			Should(ConsistOf(heartbeat.Session{ID: "seed"}))
 		Expect(manager.BroadcastCallCount()).To(Equal(0))
 
 		store.set("seed", "second")

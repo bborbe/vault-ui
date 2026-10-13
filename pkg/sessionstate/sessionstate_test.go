@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
 )
 
@@ -34,6 +35,11 @@ func (c *counter) get() int {
 	return c.n
 }
 
+// liveSession builds one live session with the given location.
+func liveSession(id, location string) heartbeat.Session {
+	return heartbeat.Session{ID: id, Location: location}
+}
+
 // startWatcher runs the watcher in the background and returns its result
 // channel plus a cancel that the caller must register as cleanup.
 func startWatcher(
@@ -48,8 +54,8 @@ func startWatcher(
 	return done
 }
 
-// sequenceRead serves a fresh (ids, known) pair per call, so a spec can move the
-// source between polls.
+// sequenceRead serves a fresh (sessions, known) pair per call, so a spec can
+// move the source between polls.
 type sequenceRead struct {
 	mu      sync.Mutex
 	results []readResult
@@ -57,8 +63,8 @@ type sequenceRead struct {
 }
 
 type readResult struct {
-	ids   []string
-	known bool
+	sessions []heartbeat.Session
+	known    bool
 }
 
 func newSequenceRead(results ...readResult) *sequenceRead {
@@ -66,7 +72,7 @@ func newSequenceRead(results ...readResult) *sequenceRead {
 }
 
 // Get returns the next scripted result, repeating the last one once exhausted.
-func (r *sequenceRead) Get(_ context.Context) ([]string, bool) {
+func (r *sequenceRead) Get(_ context.Context) ([]heartbeat.Session, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	result := r.results[len(r.results)-1]
@@ -74,7 +80,7 @@ func (r *sequenceRead) Get(_ context.Context) ([]string, bool) {
 		result = r.results[r.calls]
 	}
 	r.calls++
-	return result.ids, result.known
+	return result.sessions, result.known
 }
 
 func (r *sequenceRead) callCount() int {
@@ -86,33 +92,95 @@ func (r *sequenceRead) callCount() int {
 var _ = Describe("State", func() {
 	It("reports a change on a different set and no change on a reordered one", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]string{"a", "b"})).To(BeTrue())
-		Expect(state.Replace([]string{"b", "a"})).To(BeFalse())
-		Expect(state.Replace([]string{"a", "b", "c"})).To(BeTrue())
-		Expect(state.Replace([]string{"a", "b"})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("b", "pod"),
+		})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("b", "pod"), liveSession("a", "local"),
+		})).To(BeFalse())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("b", "pod"), liveSession("c", "local"),
+		})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("b", "pod"),
+		})).To(BeTrue())
+	})
+
+	It("reports a change when only a location moved", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).To(BeTrue())
+		// The id set is unchanged, but the location moved — that is what pushes a
+		// board refresh frame.
+		Expect(state.Replace([]heartbeat.Session{liveSession("a", "pod")})).To(BeTrue())
+		Expect(state.Sessions(context.Background())).To(Equal(
+			[]heartbeat.Session{liveSession("a", "pod")},
+		))
+	})
+
+	It("reports no change when the same id/location set arrives reordered", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("b", "pod"),
+		})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("b", "pod"), liveSession("a", "local"),
+		})).To(BeFalse())
 	})
 
 	It("drops duplicates and empty ids", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]string{"a", "a", "", "b", ""})).To(BeTrue())
-		Expect(state.RegistrySessionIDs(context.Background())).To(ConsistOf("a", "b"))
-		Expect(state.Replace([]string{"b", "a"})).To(BeFalse())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("a", "local"), liveSession("", "pod"),
+			liveSession("b", "pod"), liveSession("", ""),
+		})).To(BeTrue())
+		Expect(state.Sessions(context.Background())).To(ConsistOf(
+			liveSession("a", "local"), liveSession("b", "pod"),
+		))
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("b", "pod"), liveSession("a", "local"),
+		})).To(BeFalse())
+	})
+
+	It("keeps the last row for an id when the same id is reported twice", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("a", "pod"),
+		})).To(BeTrue())
+		Expect(state.Sessions(context.Background())).To(Equal(
+			[]heartbeat.Session{liveSession("a", "pod")},
+		))
 	})
 
 	It("starts empty and never returns nil", func() {
 		state := sessionstate.NewState()
-		ids := state.RegistrySessionIDs(context.Background())
-		Expect(ids).NotTo(BeNil())
-		Expect(ids).To(BeEmpty())
+		sessions := state.Sessions(context.Background())
+		Expect(sessions).NotTo(BeNil())
+		Expect(sessions).To(BeEmpty())
+	})
+
+	It("returns each stored location paired with its own id", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("b", "pod"),
+		})).To(BeTrue())
+
+		sessions := state.Sessions(context.Background())
+		byID := map[string]string{}
+		for _, session := range sessions {
+			byID[session.ID] = session.Location
+		}
+		Expect(byID).To(Equal(map[string]string{"a": "local", "b": "pod"}))
 	})
 
 	It("returns a copy that does not alias the stored set", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]string{"a"})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).To(BeTrue())
 
-		ids := state.RegistrySessionIDs(context.Background())
-		ids[0] = "mutated"
-		Expect(state.RegistrySessionIDs(context.Background())).To(Equal([]string{"a"}))
+		sessions := state.Sessions(context.Background())
+		sessions[0] = liveSession("mutated", "pod")
+		Expect(state.Sessions(context.Background())).To(Equal(
+			[]heartbeat.Session{liveSession("a", "local")},
+		))
 	})
 
 	It("starts authoritative and marks unknown only once", func() {
@@ -125,21 +193,26 @@ var _ = Describe("State", func() {
 		Expect(state.MarkUnknown()).To(BeFalse())
 	})
 
-	It("keeps the last known ids when it is marked unknown", func() {
+	It("keeps the last known sessions and their locations when it is marked unknown", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]string{"a", "b"})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{
+			liveSession("a", "local"), liveSession("b", "pod"),
+		})).To(BeTrue())
 		state.MarkUnknown()
 
-		Expect(state.RegistrySessionIDs(context.Background())).To(ConsistOf("a", "b"))
+		Expect(state.Sessions(context.Background())).To(ConsistOf(
+			liveSession("a", "local"), liveSession("b", "pod"),
+		))
 		Expect(state.LiveIDsKnown()).To(BeFalse())
 	})
 
 	It("becomes authoritative again on the next successful replace", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]string{"a"})).To(BeTrue())
+		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).To(BeTrue())
 		state.MarkUnknown()
 
-		Expect(state.Replace([]string{"a"})).To(BeTrue(), "known flag moved back")
+		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).
+			To(BeTrue(), "known flag moved back")
 		Expect(state.LiveIDsKnown()).To(BeTrue())
 	})
 })
@@ -150,7 +223,9 @@ var _ = Describe("Watcher", func() {
 		DeferCleanup(cancel)
 
 		state := sessionstate.NewState()
-		read := newSequenceRead(readResult{ids: []string{"seed"}, known: true})
+		read := newSequenceRead(readResult{
+			sessions: []heartbeat.Session{liveSession("seed", "local")}, known: true,
+		})
 		var changedCount counter
 
 		startWatcher(ctx, sessionstate.WatchParams{
@@ -160,8 +235,8 @@ var _ = Describe("Watcher", func() {
 			Interval: time.Hour,
 		})
 
-		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
-			Should(ConsistOf("seed"))
+		Eventually(func() []heartbeat.Session { return state.Sessions(ctx) }).
+			Should(ConsistOf(liveSession("seed", "local")))
 		// The seed is not an event: a stable set never pushes a frame.
 		Consistently(changedCount.get, 150*time.Millisecond).Should(Equal(0))
 	})
@@ -172,8 +247,10 @@ var _ = Describe("Watcher", func() {
 
 		state := sessionstate.NewState()
 		read := newSequenceRead(
-			readResult{ids: []string{"a"}, known: true},
-			readResult{ids: []string{"a", "b"}, known: true},
+			readResult{sessions: []heartbeat.Session{liveSession("a", "local")}, known: true},
+			readResult{sessions: []heartbeat.Session{
+				liveSession("a", "local"), liveSession("b", "pod"),
+			}, known: true},
 		)
 		var changedCount counter
 
@@ -184,23 +261,23 @@ var _ = Describe("Watcher", func() {
 			Interval: 50 * time.Millisecond,
 		})
 
-		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
-			Should(ConsistOf("a"))
-		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
-			Should(ConsistOf("a", "b"))
+		Eventually(func() []heartbeat.Session { return state.Sessions(ctx) }).
+			Should(ConsistOf(liveSession("a", "local")))
+		Eventually(func() []heartbeat.Session { return state.Sessions(ctx) }).
+			Should(ConsistOf(liveSession("a", "local"), liveSession("b", "pod")))
 		Eventually(changedCount.get).Should(Equal(1))
 
 		// Later polls re-read the same set: no further refresh frame.
 		Consistently(changedCount.get, 200*time.Millisecond).Should(Equal(1))
 	})
 
-	It("keeps the last known ids and marks them unknown when the source fails", func() {
+	It("keeps the last known sessions and marks them unknown when the source fails", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		DeferCleanup(cancel)
 
 		state := sessionstate.NewState()
 		read := newSequenceRead(
-			readResult{ids: []string{"a"}, known: true},
+			readResult{sessions: []heartbeat.Session{liveSession("a", "local")}, known: true},
 			readResult{known: false},
 		)
 		var changedCount counter
@@ -213,8 +290,8 @@ var _ = Describe("Watcher", func() {
 		})
 
 		Eventually(state.LiveIDsKnown).Should(BeFalse())
-		// "Cannot tell" is not "nothing is live": the ids survive.
-		Expect(state.RegistrySessionIDs(ctx)).To(ConsistOf("a"))
+		// "Cannot tell" is not "nothing is live": the sessions survive.
+		Expect(state.Sessions(ctx)).To(ConsistOf(liveSession("a", "local")))
 		// The transition into the unknown state is worth one frame.
 		Eventually(changedCount.get).Should(Equal(1))
 		Consistently(changedCount.get, 200*time.Millisecond).Should(Equal(1))
@@ -227,7 +304,7 @@ var _ = Describe("Watcher", func() {
 		state := sessionstate.NewState()
 		read := newSequenceRead(
 			readResult{known: false},
-			readResult{ids: []string{"a"}, known: true},
+			readResult{sessions: []heartbeat.Session{liveSession("a", "local")}, known: true},
 		)
 
 		startWatcher(ctx, sessionstate.WatchParams{
@@ -237,15 +314,17 @@ var _ = Describe("Watcher", func() {
 			Interval: 50 * time.Millisecond,
 		})
 
-		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
-			Should(ConsistOf("a"))
+		Eventually(func() []heartbeat.Session { return state.Sessions(ctx) }).
+			Should(ConsistOf(liveSession("a", "local")))
 		Expect(state.LiveIDsKnown()).To(BeTrue())
 	})
 
 	It("returns nil when its context is cancelled", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		state := sessionstate.NewState()
-		read := newSequenceRead(readResult{ids: []string{"a"}, known: true})
+		read := newSequenceRead(readResult{
+			sessions: []heartbeat.Session{liveSession("a", "local")}, known: true,
+		})
 		done := startWatcher(ctx, sessionstate.WatchParams{
 			State:    state,
 			Read:     read.Get,
@@ -253,8 +332,8 @@ var _ = Describe("Watcher", func() {
 			Interval: 50 * time.Millisecond,
 		})
 
-		Eventually(func() []string { return state.RegistrySessionIDs(ctx) }).
-			Should(ConsistOf("a"))
+		Eventually(func() []heartbeat.Session { return state.Sessions(ctx) }).
+			Should(ConsistOf(liveSession("a", "local")))
 		cancel()
 		Eventually(done, 5*time.Second).Should(Receive(BeNil()))
 	})
@@ -271,7 +350,7 @@ var _ = Describe("Watcher", func() {
 		})
 
 		Consistently(
-			func() []string { return state.RegistrySessionIDs(ctx) },
+			func() []heartbeat.Session { return state.Sessions(ctx) },
 			150*time.Millisecond,
 		).Should(BeEmpty())
 		Expect(state.LiveIDsKnown()).To(BeTrue())

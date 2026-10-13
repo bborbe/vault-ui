@@ -22,6 +22,7 @@ import (
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/factory"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
@@ -95,7 +96,7 @@ func paneHandler(
 	// keeps current from the attention store with the session-state watcher.
 	// Seed it directly so the fixture's session id stays load-bearing.
 	sessionState := factory.CreateSessionState()
-	sessionState.Replace([]string{liveSessionID})
+	sessionState.Replace([]heartbeat.Session{{ID: liveSessionID}})
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	Expect(sessionSnapshot.RefreshOnce(context.Background())).To(Succeed())
 

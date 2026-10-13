@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
@@ -66,17 +67,17 @@ func (s *countingScanner) callCount() int {
 	return s.calls
 }
 
-// countingRegistry counts live-id reads and returns a settable set. A set
+// countingRegistry counts live-session reads and returns a settable set. A set
 // unknown is "cannot tell": the store could not be reached.
 type countingRegistry struct {
-	ids     []string
-	unknown bool
-	calls   int
+	sessions []heartbeat.Session
+	unknown  bool
+	calls    int
 }
 
-func (r *countingRegistry) Get(_ context.Context) ([]string, bool) {
+func (r *countingRegistry) Get(_ context.Context) ([]heartbeat.Session, bool) {
 	r.calls++
-	return r.ids, !r.unknown
+	return r.sessions, !r.unknown
 }
 
 // countingProbe counts transcript probes and returns a settable mtime.
@@ -188,7 +189,7 @@ var _ = Describe("SessionSnapshot", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		scanner = &countingScanner{output: psLine(liveSessionID)}
-		registry = &countingRegistry{ids: []string{otherID}}
+		registry = &countingRegistry{sessions: []heartbeat.Session{{ID: otherID}}}
 		probe = &countingProbe{}
 		snapshot = newSnapshot(scanner, registry, probe, fixedClock(), nil)
 	})
@@ -216,7 +217,7 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(snapshot.LiveIDsKnown()).To(BeFalse())
 
 		registry.unknown = false
-		registry.ids = []string{otherID, liveSessionID}
+		registry.sessions = []heartbeat.Session{{ID: otherID}, {ID: liveSessionID}}
 		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 		Expect(snapshot.LiveIDsKnown()).To(BeTrue())
 		Expect(snapshot.RegistrySessionIDs(ctx)).To(ConsistOf(otherID, liveSessionID))
@@ -234,6 +235,28 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(resume).NotTo(BeNil())
 		resume[0] = "mutated"
 		Expect(snapshot.ResumeSessionIDs(ctx)).To(Equal([]string{liveSessionID}))
+	})
+
+	It("publishes the registry's locations and keeps them across an unknown read", func() {
+		registry.sessions = []heartbeat.Session{{ID: otherID, Location: "local"}}
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.RegistryLocation(ctx, otherID)).To(Equal("local"))
+
+		registry.unknown = true
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+
+		// "Cannot tell" is not "nothing is live": the locations survive so an
+		// already-live session never loses its badge location.
+		Expect(snapshot.RegistryLocation(ctx, otherID)).To(Equal("local"))
+		Expect(snapshot.LiveIDsKnown()).To(BeFalse())
+	})
+
+	It("returns an empty location for a session the last refresh did not carry", func() {
+		registry.sessions = []heartbeat.Session{{ID: otherID, Location: "local"}}
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+
+		Expect(snapshot.RegistryLocation(ctx, "no-such-session")).To(Equal(""))
+		Expect(snapshot.RegistryLocation(ctx, "")).To(Equal(""))
 	})
 
 	It("returns empty slices, never nil, before the first refresh", func() {
@@ -473,7 +496,7 @@ var _ = Describe("SessionSnapshot", func() {
 		It("serves the new ids after a second refresh and flips the board", func() {
 			staleMtime := libtime.DateTime(baseTime.Add(-3 * time.Hour)).UTC()
 			probe.value = staleMtime.Ptr()
-			registry.ids = []string{liveSessionID}
+			registry.sessions = []heartbeat.Session{{ID: liveSessionID}}
 
 			Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 			Expect(snapshot.Generation()).To(Equal(uint64(1)))
@@ -482,7 +505,7 @@ var _ = Describe("SessionSnapshot", func() {
 			Expect(classifyFirstTask(ctx, service)).To(Equal("live"))
 
 			// The session ends: it leaves the registry and the process table.
-			registry.ids = []string{}
+			registry.sessions = []heartbeat.Session{}
 			scanner.output = ""
 			Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
 
