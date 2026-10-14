@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Instrument the task-list rebuild path so the board can say which rebuild ran and why — `pkg/board` gains `vault_ui_board_task_snapshot_rebuilds_total{kind}` (`full`, `patch`, `refresh`) and `vault_ui_board_task_snapshot_full_rebuilds_total{reason}` (`cold_key`, `both_moved`, `patch_not_wired`, `changed_set_unbounded`, `new_page_no_held_row`, `patch_page_not_listed`), with every full rebuild attributed to its cause including the two in-patch fallback sites (`patchTaskRows` records its own kind, so a patch that fell back is counted as a full rebuild and never as a patch); `pkg/pageindex` gains `vault_ui_page_index_changed_pages_unbounded_total{reason}` (`unknown_key`, `revision_ahead`, `window_not_retained`, `forced_reload`, `first_publication`, `folder_mark_explicit` and the four `folder_mark_widened_*` sub-causes), so a refused bound reports exactly one reason — the earliest unbounded advance in the window — and a folder-level mark a write route issued outright is told apart from a `MarkFileDirty` widening; every series is pre-initialised at boot and incremented once per rebuild off the request path, and no behaviour changes.
+
 ## v0.96.1
 
 - fix: Discard a held `GET /api/tasks` body only when the content it was rendered from actually changes — the task-list store now advances a key's published-rows signal only when that key's rebuild produces rows that differ from the rows it last published, and the body cache gates on the published-rows signals of the vaults its query selects instead of one process-wide rebuild counter, so an identical-row rebuild or a session refresh that reclassifies nothing no longer drops a correct body and a change in a vault a query does not select no longer invalidates it; the number of held bodies is capped with least-recently-used eviction, replacing the incidental bound the blanket generation drop provided.

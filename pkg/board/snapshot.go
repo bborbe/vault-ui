@@ -165,9 +165,14 @@ type taskSnapshotBuild struct {
 	// changed names the pages a patch re-derives, as base filenames including
 	// their ".md" suffix. It is set only when patchOnly is set.
 	changed []string
-	done    chan struct{}
-	rows    []taskSnapshotRow
-	err     error
+	// fullReason is the cause to attribute when this build ends up a full build.
+	// It is empty for a build whose cause has no enum value, which is the
+	// session-only move with the refresh seam unwired (a test-only
+	// configuration: board.New always wires Refresh).
+	fullReason string
+	done       chan struct{}
+	rows       []taskSnapshotRow
+	err        error
 }
 
 // newTaskSnapshotStore creates an empty store. It starts empty and builds on
@@ -247,12 +252,25 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 		refreshOnly := !pageMoved && sessionMoved && s.refresh != nil
 		var changed []string
 		patchOnly := false
-		if pageMoved && !sessionMoved && s.patch != nil {
-			names, ok := s.revisions.ChangedPagesSince(key, e.pageRevision)
-			if ok {
+		fullReason := ""
+		switch {
+		case !e.hasSnapshot:
+			fullReason = fullReasonColdKey
+		case pageMoved && sessionMoved:
+			fullReason = fullReasonBothMoved
+		case pageMoved:
+			if s.patch == nil {
+				fullReason = fullReasonPatchNotWired
+			} else if names, ok := s.revisions.ChangedPagesSince(key, e.pageRevision); ok {
 				patchOnly = true
 				changed = names
+			} else {
+				fullReason = fullReasonChangedSetUnbounded
 			}
+		case sessionMoved:
+			// Only the session generation moved and the refresh seam is unwired, so
+			// the key rebuilds in full. The spec's cause enum has no label for this
+			// (test-only) configuration, so the kind is counted with no cause.
 		}
 		b := &taskSnapshotBuild{
 			startRevision:   revision,
@@ -260,6 +278,7 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 			refreshOnly:     refreshOnly,
 			patchOnly:       patchOnly,
 			changed:         changed,
+			fullReason:      fullReason,
 			done:            make(chan struct{}),
 		}
 		e.inflight = b
@@ -295,6 +314,8 @@ func (s *taskSnapshotStore) runBuild(
 	var buildErr error
 	switch {
 	case b.patchOnly:
+		// The patch func records its own rebuild kind and any full-rebuild cause,
+		// because only it knows whether it fell back to the full build.
 		// The held rows are read under the mutex and never mutated: Patch splices
 		// the changed rows into a copy of them, so the slice a concurrent reader
 		// is holding stays intact.
@@ -303,6 +324,7 @@ func (s *taskSnapshotStore) runBuild(
 		s.mu.Unlock()
 		rows, buildErr = s.patch(buildCtx, vault, held, b.changed)
 	case b.refreshOnly:
+		recordRebuild(rebuildKindRefresh)
 		// The held rows are read under the mutex and never mutated: Refresh
 		// returns a new slice and copies each row before touching a field, so
 		// the slice a concurrent reader is holding stays intact.
@@ -311,6 +333,10 @@ func (s *taskSnapshotStore) runBuild(
 		s.mu.Unlock()
 		rows, buildErr = s.refresh(buildCtx, vault, held)
 	default:
+		recordRebuild(rebuildKindFull)
+		if b.fullReason != "" {
+			recordFullRebuild(b.fullReason)
+		}
 		rows, buildErr = s.build(buildCtx, vault)
 	}
 

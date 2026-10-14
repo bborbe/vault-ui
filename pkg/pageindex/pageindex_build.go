@@ -441,7 +441,16 @@ func (p *pageIndex) executeListing(ctx context.Context, key Key, b *build) {
 		// publishes the whole snapshot whatever the build's kind, so it stays
 		// unbounded: the hydrate path reaches here with full false but nothing
 		// published, which e.hasSnapshot still reports before it is set below.
-		e.recordChangeLocked(listingChangedNames(full, delta), !full && e.hasSnapshot)
+		bounded := !full && e.hasSnapshot
+		reason := ""
+		if !bounded {
+			if !e.hasSnapshot {
+				reason = unboundedFirstPublication
+			} else {
+				reason = unboundedForcedReload
+			}
+		}
+		e.recordChangeLocked(listingChangedNames(full, delta), bounded, reason)
 		b.pages = pages
 	} else {
 		b.pages = e.snapshot
