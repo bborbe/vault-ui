@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [033-measure-task-list-rebuild-path]
+summary: Added the two labelled board rebuild counters (kind and full-rebuild cause) in pkg/board/metrics.go wired through snapshot.go and patchTaskRows, and the page-index changed-pages-unbounded counter with per-site causes threaded through pageChange/recordChangeLocked, MarkDirty/MarkFileDirty, ForceReload, executeListing and ChangedPagesSince, all pre-initialised at boot with no behaviour change and no test edits.
+execution_id: vault-ui-rebuild-fix-exec-163-spec-033-rebuild-and-unbounded-counters
+dark-factory-version: v0.198.7
 created: "2026-10-14T12:29:16Z"
 queued: "2026-10-14T13:02:28Z"
+started: "2026-10-14T13:28:54Z"
+completed: "2026-10-14T13:37:02Z"
 branch: dark-factory/measure-task-list-rebuild-path
 ---
 

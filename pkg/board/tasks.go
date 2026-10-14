@@ -356,6 +356,18 @@ func (b *board) patchTaskRows(
 	rows []taskSnapshotRow,
 	names []string,
 ) ([]taskSnapshotRow, error) {
+	kind := rebuildKindPatch
+	fullReason := ""
+	// Record exactly one rebuild kind per call, on every return path: the
+	// bounded path counts as a patch, and a fallback to the full build counts
+	// as a full rebuild attributed to the site that forced it, never as a patch.
+	defer func() {
+		recordRebuild(kind)
+		if fullReason != "" {
+			recordFullRebuild(fullReason)
+		}
+	}()
+
 	pages, err := b.index.ListPages(ctx, vault.Path, vault.TasksFolder)
 	if err != nil {
 		return nil, errors.Wrapf(ctx, err, "list task pages for vault %s", vault.Name)
@@ -380,6 +392,8 @@ func (b *board) patchTaskRows(
 			changed = append(changed, page)
 		case present:
 			// A page with no held row carries no session data to reuse.
+			kind = rebuildKindFull
+			fullReason = fullReasonNewPageNoHeldRow
 			return b.buildTaskRows(ctx, vault)
 		case wasHeld:
 			dropped = append(dropped, at)
@@ -404,6 +418,8 @@ func (b *board) patchTaskRows(
 		item, ok := itemByName[name]
 		if !ok {
 			// The list operation dropped the page the snapshot holds.
+			kind = rebuildKindFull
+			fullReason = fullReasonPatchPageNotListed
 			return b.buildTaskRows(ctx, vault)
 		}
 		at := held[name+".md"]

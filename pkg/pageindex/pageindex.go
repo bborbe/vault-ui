@@ -257,16 +257,21 @@ type pageChange struct {
 	revision uint64
 	names    []string
 	bounded  bool
+	// reason is the unbounded cause this advance carries, empty for a bounded
+	// advance. ChangedPagesSince reports the earliest unbounded advance's reason
+	// when it refuses to bound a set.
+	reason string
 }
 
 // recordChangeLocked appends one revision advance to the key's change log. The
 // caller must hold the mutex and must already have advanced revision, so the
 // entry's revision is the value the advance produced.
-func (e *entry) recordChangeLocked(names []string, bounded bool) {
+func (e *entry) recordChangeLocked(names []string, bounded bool, reason string) {
 	e.changeLog = append(e.changeLog, pageChange{
 		revision: e.revision,
 		names:    names,
 		bounded:  bounded,
+		reason:   reason,
 	})
 	if len(e.changeLog) > maxChangeLog {
 		trimmed := make([]pageChange, maxChangeLog)
@@ -422,14 +427,30 @@ func (p *pageIndex) MarkDirty(keys ...Key) {
 	for _, key := range keys {
 		key = NewKey(key.VaultPath, key.PagesDir)
 		if e, ok := p.entries[key]; ok {
-			e.requestSeq++
-			e.dirtySeq = e.requestSeq
-			e.revision++
-			// A folder-level mark names no file, so the change cannot be bounded
-			// to a set of single pages.
-			e.recordChangeLocked(nil, false)
+			p.markFolderDirtyLocked(e, unboundedFolderMarkExplicit)
 		}
 	}
+}
+
+// markFolderDirty marks one key folder-level with the given unbounded cause.
+func (p *pageIndex) markFolderDirty(key Key, reason string) {
+	key = NewKey(key.VaultPath, key.PagesDir)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e, ok := p.entries[key]; ok {
+		p.markFolderDirtyLocked(e, reason)
+	}
+}
+
+// markFolderDirtyLocked records one folder-level mark. The caller must hold the
+// mutex.
+func (p *pageIndex) markFolderDirtyLocked(e *entry, reason string) {
+	e.requestSeq++
+	e.dirtySeq = e.requestSeq
+	e.revision++
+	// A folder-level mark names no file, so the change cannot be bounded to a
+	// set of single pages.
+	e.recordChangeLocked(nil, false, reason)
 }
 
 // MarkFileDirty marks one file of the key stale so the next read re-reads it
@@ -448,17 +469,25 @@ func (p *pageIndex) MarkFileDirty(key Key, name string) {
 
 	p.mu.Lock()
 	e, ok := p.entries[key]
-	if !ok || !e.hasSnapshot || !validFileMarkName(stripped) ||
-		!snapshotHasName(e.snapshot, stripped) {
+	switch {
+	case !ok || !e.hasSnapshot:
 		p.mu.Unlock()
-		p.MarkDirty(key)
+		p.markFolderDirty(key, unboundedFolderMarkWidenedKey)
+		return
+	case !validFileMarkName(stripped):
+		p.mu.Unlock()
+		p.markFolderDirty(key, unboundedFolderMarkWidenedNameInvalid)
+		return
+	case !snapshotHasName(e.snapshot, stripped):
+		p.mu.Unlock()
+		p.markFolderDirty(key, unboundedFolderMarkWidenedName)
 		return
 	}
 	p.mu.Unlock()
 
 	filename := stripped + ".md"
 	if _, err := os.Stat(filepath.Join(key.VaultPath, key.PagesDir, filename)); err != nil {
-		p.MarkDirty(key)
+		p.markFolderDirty(key, unboundedFolderMarkWidenedFile)
 		return
 	}
 
@@ -468,7 +497,7 @@ func (p *pageIndex) MarkFileDirty(key Key, name string) {
 	e.requestSeq++
 	e.writeMarked[filename] = e.requestSeq
 	e.revision++
-	e.recordChangeLocked([]string{filename}, true)
+	e.recordChangeLocked([]string{filename}, true, "")
 }
 
 // ForceReload marks every known key so the next read of each re-reads every
@@ -481,7 +510,7 @@ func (p *pageIndex) ForceReload() {
 		e.reloadSeq = e.requestSeq
 		e.revision++
 		// A forced reload re-reads every file, so its change is unbounded.
-		e.recordChangeLocked(nil, false)
+		e.recordChangeLocked(nil, false, unboundedForcedReload)
 	}
 }
 
@@ -513,23 +542,34 @@ func (p *pageIndex) Revision(key Key) uint64 {
 func (p *pageIndex) ChangedPagesSince(key Key, revision uint64) ([]string, bool) {
 	key = NewKey(key.VaultPath, key.PagesDir)
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	names, ok, reason := p.changedPagesSinceLocked(key, revision)
+	p.mu.Unlock()
+	if !ok {
+		recordUnbounded(reason)
+	}
+	return names, ok
+}
+
+// changedPagesSinceLocked is ChangedPagesSince's body under the mutex. It
+// returns the refusal's reason as its third value. The caller must hold the
+// mutex.
+func (p *pageIndex) changedPagesSinceLocked(key Key, revision uint64) ([]string, bool, string) {
 	e, ok := p.entries[key]
 	if !ok {
-		return nil, false
+		return nil, false, unboundedUnknownKey
 	}
 	if revision > e.revision {
 		// The caller holds a revision the key has never reached: it cannot be
 		// placed against this key's history.
-		return nil, false
+		return nil, false, unboundedRevisionAhead
 	}
 	if revision == e.revision {
-		return nil, true
+		return nil, true, ""
 	}
 	if len(e.changeLog) == 0 || e.changeLog[0].revision > revision+1 {
 		// The advances between revision and the current one are not all
 		// retained, so the set cannot be bounded.
-		return nil, false
+		return nil, false, unboundedWindowNotRetained
 	}
 	names := make([]string, 0, len(e.changeLog))
 	seen := make(map[string]bool, len(e.changeLog))
@@ -538,7 +578,9 @@ func (p *pageIndex) ChangedPagesSince(key Key, revision uint64) ([]string, bool)
 			continue
 		}
 		if !change.bounded {
-			return nil, false
+			// The earliest unbounded advance in the window decides the cause;
+			// entries after it are not consulted.
+			return nil, false, change.reason
 		}
 		for _, name := range change.names {
 			if seen[name] {
@@ -548,7 +590,7 @@ func (p *pageIndex) ChangedPagesSince(key Key, revision uint64) ([]string, bool)
 			names = append(names, name)
 		}
 	}
-	return names, true
+	return names, true, ""
 }
 
 // Rescan refreshes every known key once per RescanInterval until ctx is done.
