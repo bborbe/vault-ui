@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.96.1
 
 - fix: Discard a held `GET /api/tasks` body only when the content it was rendered from actually changes — the task-list store now advances a key's published-rows signal only when that key's rebuild produces rows that differ from the rows it last published, and the body cache gates on the published-rows signals of the vaults its query selects instead of one process-wide rebuild counter, so an identical-row rebuild or a session refresh that reclassifies nothing no longer drops a correct body and a change in a vault a query does not select no longer invalidates it; the number of held bodies is capped with least-recently-used eviction, replacing the incidental bound the blanket generation drop provided.
 
