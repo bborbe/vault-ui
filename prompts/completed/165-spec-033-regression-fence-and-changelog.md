@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [033-measure-task-list-rebuild-path]
+summary: 'Added pkg/board/parity_test.go, the container-side payload-parity fence pinning the decoded GET /api/tasks field set against an explicit 30-field list, with the CHANGELOG ## Unreleased entry already present from the earlier prompt of this spec and left as the single feat bullet it requires'
+execution_id: vault-ui-rebuild-fix-exec-165-spec-033-regression-fence-and-changelog
+dark-factory-version: v0.198.7
 created: "2026-10-14T12:29:16Z"
 queued: "2026-10-14T13:02:28Z"
+started: "2026-10-14T13:51:22Z"
+completed: "2026-10-14T13:56:39Z"
 branch: dark-factory/measure-task-list-rebuild-path
 ---
 
