@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -29,6 +30,13 @@ type TaskListBody struct {
 	Gzipped  []byte
 }
 
+// VaultSignal is one selected vault's published-rows signal. A held body is
+// gated on the signals of exactly the vaults its query selects.
+type VaultSignal struct {
+	Name   string
+	Signal uint64
+}
+
 // taskBodyParams carries the body cache's injectable dependencies.
 type taskBodyParams struct {
 	// Project renders the query's rows. Production: the board's ListTasks.
@@ -36,8 +44,11 @@ type taskBodyParams struct {
 	// Encode marshals the projected rows into the identity body. Production:
 	// encodeTaskList, which reproduces the handler's writeJSON exactly.
 	Encode func(value any) ([]byte, error)
-	// Generations reports the task-list snapshot generation.
-	Generations func() uint64
+	// Signals returns, in selection order, the published-rows signal of every
+	// vault the query selects. It changes when any selected vault's rows change or
+	// when the selection changes, and is unaffected by a vault the query does not
+	// select. Production: the board's taskSnapshotSignals.
+	Signals func(selected []Vault) []VaultSignal
 	// Clock reads the request time the clock boundary is derived from.
 	// Production: the board's clock.
 	Clock libtime.CurrentDateTimeGetter
@@ -51,56 +62,78 @@ type taskBodyParams struct {
 // rather than mutated in place.
 type taskBodyEntry struct {
 	body TaskListBody
+	// signals are the selected vaults' published-rows signals the body was built
+	// from. The entry is served only while the query's current signals equal
+	// these.
+	signals []VaultSignal
+	// lastUsed is the cache's monotonic access ordinal, which orders the held
+	// bodies for least-recently-used eviction.
+	lastUsed uint64
 	// expiresAt is the first instant, strictly after the entry was built, at
 	// which a clock-derived field of the body can change. The zero time means
-	// the body has no clock-derived rows and never expires within its
-	// generation.
+	// the body has no clock-derived rows and never expires while its selected
+	// vaults' signals hold.
 	expiresAt time.Time
 }
 
-// taskBodyCache holds one rendered body per (snapshot generation, query). A
-// superseded generation's entries are dropped rather than retained, so the cache
-// holds at most one generation's bodies.
+// taskBodyCacheMaxEntries bounds the number of held bodies. It is a fixed
+// constant, never a configuration key: the per-query scoping removes the
+// incidental bound the old blanket generation drop provided, so an
+// unauthenticated client requesting many distinct queries must not be able to
+// grow the held set without bound. Its value is local to this cache and
+// reversible; it must be at least 2.
+const taskBodyCacheMaxEntries = 64
+
+// taskBodyCache holds one rendered body per (selected-vault signal vector,
+// query). The held set is bounded by taskBodyCacheMaxEntries with
+// least-recently-used eviction.
 type taskBodyCache struct {
-	mu          sync.Mutex
-	generation  uint64
-	entries     map[string]*taskBodyEntry
-	project     func(ctx context.Context, query TaskQuery) ([]api.TaskResponse, error)
-	encode      func(value any) ([]byte, error)
-	generations func() uint64
-	clock       libtime.CurrentDateTimeGetter
-	rows        func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error)
+	mu      sync.Mutex
+	entries map[string]*taskBodyEntry
+	project func(ctx context.Context, query TaskQuery) ([]api.TaskResponse, error)
+	encode  func(value any) ([]byte, error)
+	// signals is the seam Get reads the selected vaults' signals from.
+	signals func(selected []Vault) []VaultSignal
+	clock   libtime.CurrentDateTimeGetter
+	rows    func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error)
+	// lastUsedSeq is the cache's monotonic access ordinal. It is advanced under
+	// the mutex on every touch and every store.
+	lastUsedSeq uint64
 }
 
 // newTaskBodyCache returns an empty cache over the given seams.
 func newTaskBodyCache(params taskBodyParams) *taskBodyCache {
 	return &taskBodyCache{
-		entries:     map[string]*taskBodyEntry{},
-		project:     params.Project,
-		encode:      params.Encode,
-		generations: params.Generations,
-		clock:       params.Clock,
-		rows:        params.Rows,
+		entries: map[string]*taskBodyEntry{},
+		project: params.Project,
+		encode:  params.Encode,
+		signals: params.Signals,
+		clock:   params.Clock,
+		rows:    params.Rows,
 	}
 }
 
 // Get returns the rendered body for the query, building and holding it on a
-// miss. A hit performs no projection, no marshal and no compression. A
-// generation move drops the superseded generation's entries; a build that
-// started before a generation move is not held.
-func (c *taskBodyCache) Get(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+// miss. A hit performs no projection, no marshal and no compression. A held
+// body is discarded when the query's selected-vault signals differ from the ones
+// the body was built from, or when the clock boundary has passed; a build that
+// started before a signal move is not held.
+func (c *taskBodyCache) Get(
+	ctx context.Context,
+	query TaskQuery,
+	selected []Vault,
+) (TaskListBody, error) {
 	key := taskBodyKey(query)
 	now := c.clock.Now().UTC().Time()
 
+	signals := c.signals(selected)
+
 	c.mu.Lock()
-	gen := c.generations()
-	if gen != c.generation {
-		c.entries = map[string]*taskBodyEntry{}
-		c.generation = gen
-	}
 	if entry, ok := c.entries[key]; ok {
-		if entry.expiresAt.IsZero() || now.Before(entry.expiresAt) {
+		if slices.Equal(entry.signals, signals) &&
+			(entry.expiresAt.IsZero() || now.Before(entry.expiresAt)) {
 			body := entry.body
+			c.touchLocked(entry)
 			c.mu.Unlock()
 			return body, nil
 		}
@@ -123,7 +156,6 @@ func (c *taskBodyCache) Get(ctx context.Context, query TaskQuery) (TaskListBody,
 		glog.Errorf("gzip task-list body for key %q query %+v: %v", key, query, err)
 		return TaskListBody{}, errors.Wrapf(ctx, err, "build task-list body")
 	}
-
 	body := TaskListBody{Identity: identity, Gzipped: gzipped}
 
 	// The boundary is computed over the snapshot's pre-filter rows, not the
@@ -139,13 +171,41 @@ func (c *taskBodyCache) Get(ctx context.Context, query TaskQuery) (TaskListBody,
 	}
 	expiresAt := taskBodyBoundary(rows, now, query.UpcomingHours)
 
+	// Re-read the signals the build started from: a signal that moved while the
+	// build ran leaves the entry unheld and the next read rebuilds.
+	current := c.signals(selected)
 	c.mu.Lock()
-	if c.generations() == gen {
-		c.entries[key] = &taskBodyEntry{body: body, expiresAt: expiresAt}
+	if slices.Equal(current, signals) {
+		c.storeLocked(key, &taskBodyEntry{body: body, expiresAt: expiresAt, signals: current})
 	}
 	c.mu.Unlock()
 
 	return body, nil
+}
+
+// touchLocked marks the entry most recently used.
+func (c *taskBodyCache) touchLocked(e *taskBodyEntry) {
+	c.lastUsedSeq++
+	e.lastUsed = c.lastUsedSeq
+}
+
+// storeLocked holds the entry, evicting the least recently used held body first
+// when the cache is at its cap.
+func (c *taskBodyCache) storeLocked(key string, e *taskBodyEntry) {
+	c.lastUsedSeq++
+	e.lastUsed = c.lastUsedSeq
+	c.entries[key] = e
+	for len(c.entries) > taskBodyCacheMaxEntries {
+		var oldestKey string
+		var oldest uint64
+		first := true
+		for k, entry := range c.entries {
+			if first || entry.lastUsed < oldest {
+				oldestKey, oldest, first = k, entry.lastUsed, false
+			}
+		}
+		delete(c.entries, oldestKey)
+	}
 }
 
 // taskBodyBoundary returns the earliest instant strictly after now at which a

@@ -82,23 +82,33 @@ derived from the page snapshot and the session snapshot; it is never a field on
 
 ## Task-list body cache
 
-The board holds one rendered `GET /api/tasks` response body per (task-list
-snapshot generation, query), in two forms: the identity JSON and its
-gzip-compressed form. Both are built once and reused.
+The board holds one rendered `GET /api/tasks` response body per (the
+published-rows signals of the vaults its query selects, query), in two forms:
+the identity JSON and its gzip-compressed form. Both are built once and reused.
 
-- **What it holds.** One rendered body per (generation, query), identity and
-  gzip alike, built once and shared read-only with every reader.
+- **What it holds.** One rendered body per (selected-vault signals, query),
+  identity and gzip alike, built once and shared read-only with every reader. The
+  held set is bounded at a fixed number of entries (the cache's cap) with
+  least-recently-used eviction, so a client requesting many distinct queries
+  cannot grow it without bound. The cap is a fixed constant, not a configuration
+  key.
 - **What a hit costs.** A request whose query matches a held entry is served the
   stored bytes: no row walk, no projection and no marshal. A miss is built by the
   existing path and the result is held.
-- **What it is keyed by.** The task-list snapshot generation plus every query
-  parameter that changes the body, including `upcoming_hours` and `session_live`.
-- **When it is discarded.** A snapshot rebuild moves the generation and drops the
-  superseded generation's bodies. The clock crossing the next instant at which
-  `upcoming`, `recently_completed` or the recently-completed phase override can
-  change drops the body; that instant is derived from the request's clock reading
-  and its upcoming-hours window, not from a timer. A discarded body is never
-  served again.
+- **What it is keyed by.** The published-rows signals of the vaults the query
+  selects, plus every query parameter that changes the body, including
+  `upcoming_hours` and `session_live`.
+- **When it is discarded.** A held body is discarded when the published-rows
+  signal of a vault **the query selects** advances. A rebuild that reproduces
+  identical rows leaves the signal — and the held body — alone; a rebuild that
+  changes a rendered row advances the signal and discards the affected queries'
+  bodies. A change in a vault the query does **not** select discards nothing for
+  that query. The bare query selects every configured vault, so a genuine change
+  in any of them discards it, and a change to the configured set discards it too.
+  The clock crossing the next instant at which `upcoming`, `recently_completed`
+  or the recently-completed phase override can change drops the body; that
+  instant is derived from the request's clock reading and its upcoming-hours
+  window, not from a timer. A discarded body is never served again.
 - **What it does not change.** The decoded JSON is identical to what the board
   produced before; only how it is served changes. `GET /api/assignees` keeps
   reading the published rows and never touches the body cache.

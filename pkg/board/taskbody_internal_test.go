@@ -54,9 +54,9 @@ func (c *fakeBodyClock) set(now time.Time) {
 }
 
 // bodyHarness wires a taskBodyCache to counting seams: the projection and encode
-// counters prove a hit performs neither, the generation is settable so a test
-// can move it, and the clock and rows are settable so a test can exercise the
-// boundary.
+// counters prove a hit performs neither, the selected-vault signals are settable
+// so a test can move one, and the clock and rows are settable so a test can
+// exercise the boundary.
 type bodyHarness struct {
 	cache *taskBodyCache
 	clock *fakeBodyClock
@@ -64,7 +64,7 @@ type bodyHarness struct {
 	mu          sync.Mutex
 	projections int
 	encodes     int
-	generation  uint64
+	signals     []VaultSignal
 
 	rowsFn func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error)
 }
@@ -93,13 +93,27 @@ func newBodyHarness(
 			h.mu.Unlock()
 			return encodeTaskList(value)
 		},
-		Generations: h.Generation,
-		Clock:       h.clock,
+		Signals: h.Signals,
+		Clock:   h.clock,
 		Rows: func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error) {
 			return h.rowsFn(ctx, query)
 		},
 	})
 	return h
+}
+
+// Signals returns the settable selected-vault signals the cache reads. The
+// harness's selection is irrelevant to these rows, so the argument is ignored.
+func (h *bodyHarness) Signals(_ []Vault) []VaultSignal {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]VaultSignal(nil), h.signals...)
+}
+
+func (h *bodyHarness) setSignals(signals ...VaultSignal) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.signals = signals
 }
 
 // bodySnapshotRow builds one pre-filter snapshot row, the shape
@@ -110,19 +124,6 @@ func bodySnapshotRow(name string, mutate ...func(*ops.TaskListItem)) taskSnapsho
 		fn(&entry)
 	}
 	return taskSnapshotRow{item: entry}
-}
-
-// Generation reports the settable generation the cache reads.
-func (h *bodyHarness) Generation() uint64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.generation
-}
-
-func (h *bodyHarness) setGeneration(value uint64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.generation = value
 }
 
 func (h *bodyHarness) Projections() int {
@@ -179,9 +180,9 @@ var _ = Describe("taskBodyCache", func() {
 		h := newBodyHarness(bodyFixture)
 		query := TaskQuery{Vaults: []string{"a"}}
 
-		first, err := h.cache.Get(ctx, query)
+		first, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
-		second, err := h.cache.Get(ctx, query)
+		second, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 
 		// Both counters are required: the encoder alone would leave "no row
@@ -202,14 +203,14 @@ var _ = Describe("taskBodyCache", func() {
 		h := newBodyHarness(bodyFixture)
 
 		for _, query := range queries {
-			body, err := h.cache.Get(ctx, query)
+			body, err := h.cache.Get(ctx, query, nil)
 			Expect(err).To(BeNil())
 			expected, err := encodeTaskList(projectBody(bodyFixture, query))
 			Expect(err).To(BeNil())
 			Expect(body.Identity).To(Equal(expected))
 		}
 
-		body, err := h.cache.Get(ctx, queries[0])
+		body, err := h.cache.Get(ctx, queries[0], nil)
 		Expect(err).To(BeNil())
 		// (a) HTML is not escaped.
 		Expect(bytes.Contains(body.Identity, []byte("<"))).To(BeTrue())
@@ -225,44 +226,44 @@ var _ = Describe("taskBodyCache", func() {
 	It("builds again for a distinct query", func() {
 		h := newBodyHarness(bodyFixture)
 
-		_, err := h.cache.Get(ctx, TaskQuery{})
+		_, err := h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
-		_, err = h.cache.Get(ctx, TaskQuery{Vaults: []string{"a"}})
+		_, err = h.cache.Get(ctx, TaskQuery{Vaults: []string{"a"}}, nil)
 		Expect(err).To(BeNil())
 
 		Expect(h.Projections()).To(Equal(2))
 		Expect(h.Encodes()).To(Equal(2))
 	})
 
-	It("drops the held entries when the generation moves", func() {
+	It("drops the held entries when a selected vault's signal moves", func() {
 		h := newBodyHarness(bodyFixture)
 
-		_, err := h.cache.Get(ctx, TaskQuery{})
+		_, err := h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Projections()).To(Equal(1))
 
-		h.setGeneration(1)
-		_, err = h.cache.Get(ctx, TaskQuery{})
+		h.setSignals(VaultSignal{Name: "a", Signal: 1})
+		_, err = h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Projections()).To(Equal(2))
-		// The superseded generation's entry was dropped, not retained.
+		// The superseded signal vector's entry was dropped, not retained.
 		Expect(h.entryCount()).To(Equal(1))
 	})
 
 	It("leaves the entry unheld when the generation moves during a build", func() {
 		var h *bodyHarness
 		h = newBodyHarness(func(_ context.Context, _ TaskQuery) ([]api.TaskResponse, error) {
-			h.setGeneration(1)
+			h.setSignals(VaultSignal{Name: "a", Signal: 1})
 			return []api.TaskResponse{{ID: "Alpha", Title: "Alpha"}}, nil
 		})
 
-		body, err := h.cache.Get(ctx, TaskQuery{})
+		body, err := h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(body.Identity).NotTo(BeEmpty())
 		Expect(h.hasEntry(TaskQuery{})).To(BeFalse())
 
 		// The next read at the new generation builds again.
-		_, err = h.cache.Get(ctx, TaskQuery{})
+		_, err = h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Projections()).To(Equal(2))
 	})
@@ -274,9 +275,9 @@ var _ = Describe("taskBodyCache", func() {
 			second := TaskQuery{}
 			mutate(&second)
 
-			_, err := h.cache.Get(ctx, first)
+			_, err := h.cache.Get(ctx, first, nil)
 			Expect(err).To(BeNil())
-			_, err = h.cache.Get(ctx, second)
+			_, err = h.cache.Get(ctx, second, nil)
 			Expect(err).To(BeNil())
 
 			Expect(h.Projections()).To(Equal(2))
@@ -294,7 +295,7 @@ var _ = Describe("taskBodyCache", func() {
 	It("gzip-compresses the identity form losslessly", func() {
 		h := newBodyHarness(bodyFixture)
 
-		body, err := h.cache.Get(ctx, TaskQuery{})
+		body, err := h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 
 		reader, err := gzip.NewReader(bytes.NewReader(body.Gzipped))
@@ -315,33 +316,33 @@ var _ = Describe("taskBodyCache", func() {
 		first := TaskQuery{}
 		second := TaskQuery{Statuses: []string{"todo"}}
 
-		held, err := h.cache.Get(ctx, first)
+		held, err := h.cache.Get(ctx, first, nil)
 		Expect(err).To(BeNil())
 		Expect(held.Identity).NotTo(BeEmpty())
 		Expect(h.Projections()).To(Equal(1))
 
-		failed, err := h.cache.Get(ctx, second)
+		failed, err := h.cache.Get(ctx, second, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("build task-list body"))
 		Expect(failed).To(Equal(TaskListBody{}))
 		Expect(h.hasEntry(second)).To(BeFalse())
 
 		// The first query's entry was neither evicted nor re-projected.
-		served, err := h.cache.Get(ctx, first)
+		served, err := h.cache.Get(ctx, first, nil)
 		Expect(err).To(BeNil())
 		Expect(served).To(Equal(held))
 		Expect(h.Projections()).To(Equal(2))
 	})
 
-	It("rebuild discards held bodies", func() {
+	It("a rebuild that moves a selected vault's signal discards held bodies", func() {
 		h := newBodyHarness(bodyFixture)
 
-		_, err := h.cache.Get(ctx, TaskQuery{})
+		_, err := h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 
-		h.setGeneration(1)
-		_, err = h.cache.Get(ctx, TaskQuery{})
+		h.setSignals(VaultSignal{Name: "a", Signal: 1})
+		_, err = h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(2))
 		Expect(h.entryCount()).To(Equal(1))
@@ -364,20 +365,20 @@ var _ = Describe("taskBodyCache", func() {
 		)
 		query := TaskQuery{UpcomingHours: 8}
 
-		first, err := h.cache.Get(ctx, query)
+		first, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 
 		// The boundary is now+2h, so now+1h is still inside it.
 		h.clock.set(bodyBaseTime.Add(1 * time.Hour))
-		second, err := h.cache.Get(ctx, query)
+		second, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 		Expect(second).To(Equal(first))
 
 		// Crossing it discards the entry and rebuilds.
 		h.clock.set(bodyBaseTime.Add(3 * time.Hour))
-		third, err := h.cache.Get(ctx, query)
+		third, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(2))
 		Expect(third.Identity).NotTo(Equal(first.Identity))
@@ -393,12 +394,12 @@ var _ = Describe("taskBodyCache", func() {
 				return rows, nil
 			},
 		)
-		_, err := h.cache.Get(ctx, TaskQuery{})
+		_, err := h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 
 		h.clock.set(bodyBaseTime.Add(24 * time.Hour))
-		_, err = h.cache.Get(ctx, TaskQuery{})
+		_, err = h.cache.Get(ctx, TaskQuery{}, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 	})
@@ -425,17 +426,17 @@ var _ = Describe("taskBodyCache", func() {
 			},
 		)
 		query := TaskQuery{UpcomingHours: 8}
-		_, err := h.cache.Get(ctx, query)
+		_, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 
 		h.clock.set(bodyBaseTime.Add(1*time.Hour + 59*time.Minute))
-		_, err = h.cache.Get(ctx, query)
+		_, err = h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 
 		h.clock.set(bodyBaseTime.Add(2*time.Hour + time.Minute))
-		_, err = h.cache.Get(ctx, query)
+		_, err = h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(2))
 	})
@@ -491,13 +492,13 @@ var _ = Describe("taskBodyCache", func() {
 
 		// The row is beyond now+8h, so visibleRow drops it and the body omits
 		// it. Its entry instant is defer-upcoming = now+1h.
-		first, err := h.cache.Get(ctx, query)
+		first, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(1))
 		Expect(bytes.Contains(first.Identity, []byte("Hidden"))).To(BeFalse())
 
 		h.clock.set(bodyBaseTime.Add(2 * time.Hour))
-		second, err := h.cache.Get(ctx, query)
+		second, err := h.cache.Get(ctx, query, nil)
 		Expect(err).To(BeNil())
 		Expect(h.Encodes()).To(Equal(2))
 		Expect(bytes.Contains(second.Identity, []byte("Hidden"))).To(BeTrue())
@@ -506,6 +507,420 @@ var _ = Describe("taskBodyCache", func() {
 	It("keeps the lookback and upcoming windows", func() {
 		Expect(LookbackHours).To(Equal(8))
 		Expect(DefaultUpcomingHours).To(Equal(8))
+	})
+})
+
+// contentGateVaults is the configured vault set the multi-vault content-gate
+// rows wire. Each vault carries a distinct path, so each has its own page-index
+// key and its own published-rows signal.
+var contentGateVaults = []Vault{
+	{Name: "vault-a", Path: "/vault-a", TasksFolder: "24 Tasks"},
+	{Name: "vault-b", Path: "/vault-b", TasksFolder: "24 Tasks"},
+	{Name: "vault-c", Path: "/vault-c", TasksFolder: "24 Tasks"},
+}
+
+// contentGateVault is the single configured vault the single-vault content-gate
+// rows serve.
+var contentGateVault = contentGateVaults[0]
+
+// contentGateFixture returns one row carrying a distinct value in every field
+// the request path renders, so a table entry can change exactly one of them.
+func contentGateFixture() []taskSnapshotRow {
+	started := "2026-01-01T00:00:00Z"
+	state := "live"
+	activity := libtime.DateTime(bodyBaseTime)
+	return []taskSnapshotRow{{
+		item: ops.TaskListItem{
+			Name:          "Alpha",
+			Status:        "todo",
+			Phase:         "planning",
+			CompletedDate: "2026-01-01",
+			Priority:      1,
+			Assignee:      "me",
+			Goals:         []string{"goal-a"},
+		},
+		blocked:       true,
+		blockers:      []string{"Beta"},
+		started:       &started,
+		sessionState:  &state,
+		activityDate:  &activity,
+		openQuestions: []domain.OpenQuestion{{Index: 1, Text: "why?"}},
+	}}
+}
+
+// contentGateHarness wires a real taskSnapshotStore to a real taskBodyCache over
+// a mutable per-vault row fixture and a mutable configured-vault list, so the
+// rows below exercise the store's content gate and the cache's query scope
+// through the real seams rather than a settable counter.
+type contentGateHarness struct {
+	store     *taskSnapshotStore
+	revisions *fakeRevisions
+	cache     *taskBodyCache
+	clock     *fakeBodyClock
+
+	// project is the projection the cache is wired with, exposed so a row can
+	// reproduce the uncached path's body for the same query.
+	project func(ctx context.Context, query TaskQuery) ([]api.TaskResponse, error)
+
+	mu       sync.Mutex
+	vaults   []Vault
+	fixtures map[string][]taskSnapshotRow
+	encodes  int
+}
+
+// newContentGateHarness wires the single vault-a over the given fixture.
+func newContentGateHarness(fixture []taskSnapshotRow) *contentGateHarness {
+	return newContentGateHarnessWith(
+		contentGateVaults[:1],
+		map[string][]taskSnapshotRow{contentGateVault.Name: fixture},
+	)
+}
+
+// newContentGateHarnessWith wires the given configured vaults, each over its own
+// fixture.
+func newContentGateHarnessWith(
+	vaults []Vault,
+	fixtures map[string][]taskSnapshotRow,
+) *contentGateHarness {
+	h := &contentGateHarness{
+		revisions: &fakeRevisions{},
+		clock:     newFakeBodyClock(bodyBaseTime),
+		vaults:    append([]Vault(nil), vaults...),
+		fixtures:  fixtures,
+	}
+	h.store = newTaskSnapshotStore(taskSnapshotParams{
+		Build: func(_ context.Context, vault Vault) ([]taskSnapshotRow, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			held := h.fixtures[vault.Name]
+			rows := make([]taskSnapshotRow, len(held))
+			copy(rows, held)
+			return rows, nil
+		},
+		Revisions:   h.revisions,
+		Generations: &fakeGenerations{},
+	})
+	h.project = func(_ context.Context, _ TaskQuery) ([]api.TaskResponse, error) {
+		return []api.TaskResponse{{ID: "Alpha"}}, nil
+	}
+	h.cache = newTaskBodyCache(taskBodyParams{
+		Project: h.project,
+		Encode: func(value any) ([]byte, error) {
+			h.mu.Lock()
+			h.encodes++
+			h.mu.Unlock()
+			return encodeTaskList(value)
+		},
+		// The cache's signals are the real store's per-key signals for exactly
+		// the vaults the query selects.
+		Signals: func(selected []Vault) []VaultSignal {
+			signals := make([]VaultSignal, 0, len(selected))
+			for _, vault := range selected {
+				signals = append(signals, VaultSignal{
+					Name:   vault.Name,
+					Signal: h.store.Signal(pageindex.NewKey(vault.Path, vault.TasksFolder)),
+				})
+			}
+			return signals
+		},
+		Clock: h.clock,
+		Rows: func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error) {
+			var rows []taskSnapshotRow
+			for _, vault := range h.selection(query) {
+				vaultRows, err := h.store.List(ctx, vault)
+				if err != nil {
+					return nil, err
+				}
+				rows = append(rows, vaultRows...)
+			}
+			return rows, nil
+		},
+	})
+	return h
+}
+
+// read mirrors ListTasksBody's production read order: it reads the snapshot for
+// every configured vault first — not only the selected ones, so a key the query
+// does not select still has a live, current signal — and only then consults the
+// cache with the same selection the cache's Signals closure reads.
+func (h *contentGateHarness) read(ctx context.Context, query TaskQuery) (TaskListBody, error) {
+	for _, vault := range h.configuredVaults() {
+		if _, err := h.store.List(ctx, vault); err != nil {
+			return TaskListBody{}, err
+		}
+	}
+	return h.cache.Get(ctx, query, h.selection(query))
+}
+
+// configuredVaults returns a copy of the configured vault list.
+func (h *contentGateHarness) configuredVaults() []Vault {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Vault(nil), h.vaults...)
+}
+
+// selection resolves the query's vault filter against the configured set, the
+// same resolution ListTasksBody makes.
+func (h *contentGateHarness) selection(query TaskQuery) []Vault {
+	return (&board{}).selectVaults(h.configuredVaults(), query.Vaults)
+}
+
+// addVault adds a vault to the configured set, with its own fixture.
+func (h *contentGateHarness) addVault(vault Vault, rows []taskSnapshotRow) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.vaults = append(h.vaults, vault)
+	h.fixtures[vault.Name] = rows
+}
+
+// mutateRow applies fn to the first configured vault's row.
+func (h *contentGateHarness) mutateRow(fn func(*taskSnapshotRow)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	fn(&h.fixtures[h.vaults[0].Name][0])
+}
+
+// mutateVault applies fn to the named vault's row.
+func (h *contentGateHarness) mutateVault(name string, fn func(*taskSnapshotRow)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	fn(&h.fixtures[name][0])
+}
+
+// Encodes reports how many times the cache encoded a body.
+func (h *contentGateHarness) Encodes() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.encodes
+}
+
+// entryCount reports how many bodies the cache holds.
+func (h *contentGateHarness) entryCount() int {
+	h.cache.mu.Lock()
+	defer h.cache.mu.Unlock()
+	return len(h.cache.entries)
+}
+
+// hasEntry reports whether the query's body is held.
+func (h *contentGateHarness) hasEntry(query TaskQuery) bool {
+	h.cache.mu.Lock()
+	defer h.cache.mu.Unlock()
+	_, ok := h.cache.entries[taskBodyKey(query)]
+	return ok
+}
+
+var _ = Describe("task-list body cache content gate", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	It("a rebuild that reproduces identical rows keeps the held body", func() {
+		h := newContentGateHarness(contentGateFixture())
+		query := TaskQuery{}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// The fixture is unchanged, so the store publishes identical rows and the
+		// signal does not move: the held body is served.
+		h.revisions.bump()
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+	})
+
+	It("a body served after an identical-row rebuild is byte-identical to a fresh build", func() {
+		h := newContentGateHarness(contentGateFixture())
+		query := TaskQuery{}
+
+		first, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// Force the rebuild rather than wait for one: the revision moves with the
+		// fixture unchanged, so the store rebuilds byte-identical rows and the held
+		// body is served, not rebuilt.
+		h.revisions.bump()
+		served, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// The served body is byte-identical to what the uncached path produces for
+		// the same query at the same clock instant.
+		responses, err := h.project(ctx, query)
+		Expect(err).To(BeNil())
+		expected, err := encodeTaskList(responses)
+		Expect(err).To(BeNil())
+		Expect(served.Identity).To(Equal(expected))
+		Expect(served.Identity).To(Equal(first.Identity))
+	})
+
+	It("a rebuild that changes a rendered row discards the held body", func() {
+		h := newContentGateHarness(contentGateFixture())
+		query := TaskQuery{}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		h.mutateRow(func(row *taskSnapshotRow) { row.item.Status = "done" })
+		h.revisions.bump()
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(2))
+	})
+
+	DescribeTable("a change to any rendered row field discards the held body",
+		func(mutate func(*taskSnapshotRow)) {
+			h := newContentGateHarness(contentGateFixture())
+			query := TaskQuery{}
+
+			_, err := h.read(ctx, query)
+			Expect(err).To(BeNil())
+			Expect(h.Encodes()).To(Equal(1))
+
+			h.mutateRow(mutate)
+			h.revisions.bump()
+			_, err = h.read(ctx, query)
+			Expect(err).To(BeNil())
+			Expect(h.Encodes()).To(Equal(2))
+		},
+		Entry("status", func(row *taskSnapshotRow) { row.item.Status = "done" }),
+		Entry("phase", func(row *taskSnapshotRow) { row.item.Phase = "execution" }),
+		Entry("defer_date", func(row *taskSnapshotRow) { row.item.DeferDate = "2026-02-02" }),
+		Entry("completed_date", func(row *taskSnapshotRow) {
+			row.item.CompletedDate = "2026-02-02"
+		}),
+		Entry("priority", func(row *taskSnapshotRow) { row.item.Priority = 5 }),
+		Entry("assignee", func(row *taskSnapshotRow) { row.item.Assignee = "you" }),
+		Entry("goals", func(row *taskSnapshotRow) { row.item.Goals = []string{"goal-b"} }),
+		Entry("blocked", func(row *taskSnapshotRow) { row.blocked = false }),
+		Entry("blockers", func(row *taskSnapshotRow) { row.blockers = []string{"Gamma"} }),
+		Entry("session_state", func(row *taskSnapshotRow) { row.sessionState = strPtr("quiet") }),
+		Entry("activity_date", func(row *taskSnapshotRow) {
+			activity := libtime.DateTime(bodyBaseTime.Add(time.Hour))
+			row.activityDate = &activity
+		}),
+		Entry("claude_session_started", func(row *taskSnapshotRow) {
+			row.started = strPtr("2026-03-03T00:00:00Z")
+		}),
+		Entry("open_questions", func(row *taskSnapshotRow) {
+			row.openQuestions = []domain.OpenQuestion{{Index: 2, Text: "when?"}}
+		}),
+		Entry("flag", func(row *taskSnapshotRow) { row.item.Flag = true }),
+	)
+
+	It("a move in an unselected vault keeps the query's held body", func() {
+		h := newContentGateHarnessWith(
+			contentGateVaults[:2],
+			map[string][]taskSnapshotRow{
+				"vault-a": contentGateFixture(),
+				"vault-b": contentGateFixture(),
+			},
+		)
+		query := TaskQuery{Vaults: []string{"vault-a"}}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// A rendered-row change in the vault the query does not select advances
+		// that key's signal and leaves the held body serving.
+		h.mutateVault("vault-b", func(row *taskSnapshotRow) { row.item.Status = "done" })
+		h.revisions.bump()
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// The identical change in the selected vault discards it.
+		h.mutateVault("vault-a", func(row *taskSnapshotRow) { row.item.Status = "done" })
+		h.revisions.bump()
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(2))
+	})
+
+	It("the bare query discards its body when any vault's rows change", func() {
+		h := newContentGateHarnessWith(
+			contentGateVaults,
+			map[string][]taskSnapshotRow{
+				"vault-a": contentGateFixture(),
+				"vault-b": contentGateFixture(),
+				"vault-c": contentGateFixture(),
+			},
+		)
+		query := TaskQuery{}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// The bare query selects every configured vault, so a genuine change in
+		// each of them in turn discards the held body.
+		for i, name := range []string{"vault-a", "vault-b", "vault-c"} {
+			h.mutateVault(name, func(row *taskSnapshotRow) { row.item.Status = "done" })
+			h.revisions.bump()
+			_, err = h.read(ctx, query)
+			Expect(err).To(BeNil())
+			Expect(h.Encodes()).To(Equal(i + 2))
+		}
+	})
+
+	It("a selection change discards the bare query's body", func() {
+		h := newContentGateHarnessWith(
+			contentGateVaults[:2],
+			map[string][]taskSnapshotRow{
+				"vault-a": contentGateFixture(),
+				"vault-b": contentGateFixture(),
+			},
+		)
+		query := TaskQuery{}
+
+		_, err := h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(1))
+
+		// A vault added to the configuration changes the bare query's selection,
+		// so its held body is discarded and rebuilt for the new selection.
+		h.addVault(contentGateVaults[2], contentGateFixture())
+		_, err = h.read(ctx, query)
+		Expect(err).To(BeNil())
+		Expect(h.Encodes()).To(Equal(2))
+	})
+
+	It("the held-entry count never exceeds the cap", func() {
+		h := newContentGateHarnessWith(
+			contentGateVaults[:1],
+			map[string][]taskSnapshotRow{"vault-a": contentGateFixture()},
+		)
+
+		// No input moves between these reads: the only thing that grows is the
+		// number of distinct queries an unauthenticated client has asked for.
+		for i := 0; i < taskBodyCacheMaxEntries+8; i++ {
+			_, err := h.read(ctx, TaskQuery{UpcomingHours: i})
+			Expect(err).To(BeNil())
+		}
+		Expect(h.entryCount()).To(Equal(taskBodyCacheMaxEntries))
+
+		// The floor: a degenerate cap of 1 would satisfy the count above, so two
+		// distinct query shapes are driven on a fresh cache and both must be held.
+		floor := newContentGateHarnessWith(
+			contentGateVaults[:1],
+			map[string][]taskSnapshotRow{"vault-a": contentGateFixture()},
+		)
+		unfiltered := TaskQuery{}
+		filtered := TaskQuery{Vaults: []string{contentGateVault.Name}}
+
+		_, err := floor.read(ctx, unfiltered)
+		Expect(err).To(BeNil())
+		_, err = floor.read(ctx, filtered)
+		Expect(err).To(BeNil())
+
+		Expect(floor.hasEntry(unfiltered)).To(BeTrue())
+		Expect(floor.hasEntry(filtered)).To(BeTrue())
 	})
 })
 

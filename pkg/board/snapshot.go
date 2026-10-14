@@ -6,6 +6,7 @@ package board
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"time"
 
@@ -128,20 +129,24 @@ type taskSnapshotStore struct {
 	revisions   IndexRevisions
 	generations generationSource
 	timeout     time.Duration
-	// snapshotGeneration counts successful rebuilds across every key. It is
-	// incremented under the mutex on the success path only, so the body cache can
-	// tell a published row set from a failed one.
-	snapshotGeneration uint64
+	// signalSeq counts content-changing publications across every key. It is
+	// advanced under the mutex on the success path only, and only when the
+	// publication's rows differ from the rows the key last published, so it
+	// counts content changes rather than rebuilds.
+	signalSeq uint64
 }
 
 // taskSnapshotEntry is the per-key state. pageRevision and sessionGeneration
 // are the inputs the published rows were built from; the entry is dirty while
-// either has moved since.
+// either has moved since. signal is the key's published-rows signal: the value
+// of the store's content-gated counter at the key's last content-changing
+// publication, and the input the held bodies are gated on.
 type taskSnapshotEntry struct {
 	rows              []taskSnapshotRow
 	hasSnapshot       bool
 	pageRevision      uint64
 	sessionGeneration uint64
+	signal            uint64
 	inflight          *taskSnapshotBuild
 }
 
@@ -331,11 +336,15 @@ func (s *taskSnapshotStore) runBuild(
 		return nil, errors.Wrapf(ctx, buildErr, "build task snapshot for vault %s", vault.Name)
 	}
 
+	changed := !e.hasSnapshot || !rowsEqual(e.rows, rows)
+	if changed {
+		s.signalSeq++
+		e.signal = s.signalSeq
+	}
 	e.rows = rows
 	e.hasSnapshot = true
 	e.pageRevision = b.startRevision
 	e.sessionGeneration = b.startGeneration
-	s.snapshotGeneration++
 	b.rows = rows
 	close(b.done)
 	s.mu.Unlock()
@@ -346,15 +355,22 @@ func (s *taskSnapshotStore) runBuild(
 	return rows, nil
 }
 
-// SnapshotGeneration returns the number of successful task-list snapshot
-// rebuilds so far, across every key. It advances by one whenever a rebuild
-// publishes rows — a full build, a session refresh or a row patch — because
-// each of those can change what a body renders. The body cache keys on it and
-// drops a superseded generation's bodies.
-func (s *taskSnapshotStore) SnapshotGeneration() uint64 {
+// Signal returns the key's published-rows signal: the value of the store's
+// content-gated counter at the key's last content-changing publication, or 0
+// when the key has never published rows. It is the input a held body is gated
+// on for the vaults a query selects.
+func (s *taskSnapshotStore) Signal(key pageindex.Key) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.snapshotGeneration
+	return s.entryLocked(key).signal
+}
+
+// rowsEqual reports whether two published row sets are identical in every
+// rendered field. The clock-derived fields (upcoming, recently_completed, the
+// phase override) are not stored on a row, so they cannot differ here; the
+// request path applies them.
+func rowsEqual(a, b []taskSnapshotRow) bool {
+	return reflect.DeepEqual(a, b)
 }
 
 // entryLocked returns the key's entry, creating it when missing. The caller
