@@ -1,5 +1,5 @@
 ---
-status: generating
+status: approved
 approved: "2026-10-14T21:34:37Z"
 generating: "2026-10-14T21:34:37Z"
 branch: dark-factory/bug-idle-board-spawns-ps

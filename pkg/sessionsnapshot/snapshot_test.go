@@ -107,33 +107,6 @@ type mutableClock struct {
 
 func (c *mutableClock) Now() libtime.DateTime { return c.now }
 
-// fakeWaiter drives the refresh interval: it records every duration it was
-// asked to wait for and fails (as a cancelled context does) after `limit`
-// waits, so Run terminates.
-type fakeWaiter struct {
-	mu        sync.Mutex
-	calls     int
-	durations []libtime.Duration
-	limit     int
-}
-
-func (w *fakeWaiter) Wait(_ context.Context, duration libtime.Duration) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.calls++
-	w.durations = append(w.durations, duration)
-	if w.calls > w.limit {
-		return context.Canceled
-	}
-	return nil
-}
-
-func (w *fakeWaiter) observed() (int, []libtime.Duration) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.calls, append([]libtime.Duration{}, w.durations...)
-}
-
 // newSnapshot builds a snapshot over the given fakes with a fixed clock.
 func newSnapshot(
 	scanner *countingScanner,
@@ -284,26 +257,67 @@ var _ = Describe("SessionSnapshot", func() {
 		Expect(scanner.callCount()).To(Equal(2))
 	})
 
-	// AC8: the added timer is slow, and Run fires exactly one refresh per
-	// SessionRefreshInterval.
-	It("refreshes once per SessionRefreshInterval (AC8)", func() {
+	It("refreshes only when the snapshot has been read since the last refresh (AC4)", func() {
 		Expect(sessionsnapshot.SessionRefreshInterval).To(BeNumerically(">=", 60*time.Second))
 
-		waiter := &fakeWaiter{limit: 2}
-		running := newSnapshot(scanner, registry, probe, fixedClock(), waiter)
+		// Declared first so both the scripted steps and the waiter can close over
+		// it; assigned once, after the waiter exists.
+		var running sessionsnapshot.Snapshot
 
+		steps := []func(){
+			nil, nil, nil, // phase 1: three waits, zero reads
+			func() { running.ResumeSessionIDs(ctx) }, // phase 2: one read, then one wait
+			nil, nil,                                 // phase 3: two waits, no reads
+			func() { running.RegistrySessionIDs(ctx) }, // phase 3: one read, then one wait
+		}
+		var durations []libtime.Duration
+		next := 0
+		waiter := libtime.WaiterDurationFunc(func(_ context.Context, d libtime.Duration) error {
+			durations = append(durations, d)
+			if next >= len(steps) {
+				return context.Canceled
+			}
+			// The boundary assertions live here, immediately before the step runs:
+			// a one-line "ever read" latch passes phases 1 and 2 and then keeps
+			// refreshing forever, which these catch.
+			switch next {
+			case 3: // about to perform the phase-2 read
+				Expect(scanner.callCount()).To(Equal(1))
+			case 6: // about to perform the phase-3 read
+				Expect(scanner.callCount()).To(Equal(2))
+			}
+			if step := steps[next]; step != nil {
+				step()
+			}
+			next++
+			return nil
+		})
+
+		running = newSnapshot(scanner, registry, probe, fixedClock(), waiter)
 		Expect(running.Run(ctx)).To(Succeed())
-
-		// One initial refresh plus one per successful wait, and the third wait
-		// reports cancellation.
 		Expect(scanner.callCount()).To(Equal(3))
-		Expect(running.Generation()).To(Equal(uint64(3)))
 
-		calls, durations := waiter.observed()
-		Expect(calls).To(Equal(3))
+		Expect(durations).To(HaveLen(len(steps) + 1))
 		for _, duration := range durations {
 			Expect(duration).To(Equal(libtime.Duration(sessionsnapshot.SessionRefreshInterval)))
 		}
+	})
+
+	// AC5: the demand gate did not move the `ps` spawn onto the read path.
+	It("spawns no ps scan on the board read path (AC5)", func() {
+		service := newSnapshotBoard(snapshot)
+
+		_, err := service.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = service.ListGoals(ctx, board.GoalQuery{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(scanner.callCount()).To(Equal(0))
+
+		// Positive control: the same recorder is non-zero after an explicit
+		// refresh, proving it can see a scan at all.
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(scanner.callCount()).To(Equal(1))
 	})
 
 	It("keeps the previous values when a refresh fails", func() {

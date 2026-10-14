@@ -1,10 +1,14 @@
 ---
-status: failed
+status: completed
 spec: [034-bug-idle-board-spawns-ps]
+summary: Gated the session-snapshot refresh on demand inside the concrete snapshot type, so an idle board spawns no ps child while a read re-arms exactly one refresh at the unchanged 60 s ceiling.
+execution_id: vault-ui-session-idle-exec-166-spec-034-gate-session-snapshot-refresh-on-demand
+dark-factory-version: v0.198.7
 created: "2026-10-14T21:38:00Z"
 queued: "2026-10-14T21:44:39Z"
-completed: "2026-10-14T21:44:40Z"
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/166-spec-034-gate-session-snapshot-refresh-on-demand"; uncommitted changes: specs/bug-idle-board-spawns-ps.md, specs/in-progress/034-bug-idle-board-spawns-ps.md'
+started: "2026-10-14T21:45:08Z"
+completed: "2026-10-14T21:48:25Z"
+branch: dark-factory/166-spec-034-gate-session-snapshot-refresh-on-demand
 ---
 
 # Gate the session-snapshot refresh on demand so an idle board spawns no `ps`

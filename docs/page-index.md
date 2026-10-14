@@ -149,10 +149,11 @@ the identity JSON and its gzip-compressed form. Both are built once and reused.
   its frame is broadcast. No stronger bound than that is claimed.
 - The page-derived task-list fields keep the bounds above. The session-derived
   fields — `session_state` and the activity date — carry the **session-refresh
-  bound** instead: they come from the session snapshot, which is refreshed on a
-  fixed interval of at least 60 s (`SessionRefreshInterval`), so they can lag
-  reality by at most one refresh plus one rebuild. This is the one place the
-  bounds above no longer apply.
+  bound** instead: they come from the session snapshot, which is refreshed at a
+  60 s cadence (`SessionRefreshInterval`) but only when the snapshot has been read
+  since the previous refresh, so on a board that is being read they can lag
+  reality by at most one refresh plus one rebuild, and an idle board refreshes
+  nothing at all. This is the one place the bounds above no longer apply.
 - The first read after a mark resolves it before serving: a per-file mark
   re-reads exactly the marked files, a folder-level mark runs one stat-diff, and
   every concurrent reader waits on that same work — a reader of a key with a

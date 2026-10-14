@@ -8,9 +8,10 @@
 // modification times.
 //
 // A read never spawns a process and never reads the registry directory. The
-// `ps` scan runs once per refresh on a fixed interval of at least 60 s, and the
-// transcript probe runs at most once per session per refresh window, so no
-// request path pays for either.
+// `ps` scan runs at a 60 s cadence ceiling but only when the snapshot has been
+// read since the previous refresh, and the transcript probe runs at most once
+// per session per refresh window, so no request path pays for either and an
+// idle board refreshes nothing at all.
 //
 // The classification contract itself (the four outcomes, the fixed signal
 // order, the five-minute window) is unchanged and lives in pkg/session,
@@ -68,8 +69,9 @@ type Snapshot interface {
 	// RefreshOnce performs one refresh and returns the first error. A failed
 	// refresh keeps the previous values.
 	RefreshOnce(ctx context.Context) error
-	// Run refreshes once, then once per Interval until ctx is done. It returns
-	// nil on cancellation.
+	// Run refreshes once, then once per Interval until ctx is done. The startup
+	// refresh is unconditional; every later tick refreshes only when the snapshot
+	// has been read since the previous refresh. It returns nil on cancellation.
 	Run(ctx context.Context) error
 }
 
@@ -125,7 +127,11 @@ type transcriptEntry struct {
 type snapshot struct {
 	params Params
 
-	mu                sync.Mutex
+	mu sync.Mutex
+	// reads counts the public read calls served since the process started.
+	reads uint64
+	// readsAtRefresh is the value of reads when the last successful refresh ran.
+	readsAtRefresh    uint64
 	registryIDs       []string
 	registryLocations map[string]string
 	liveKnown         bool
@@ -158,6 +164,7 @@ func newTranscriptIndexSet() *transcriptIndexSet {
 func (s *snapshot) RegistrySessionIDs(_ context.Context) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	return append([]string{}, s.registryIDs...)
 }
 
@@ -166,6 +173,7 @@ func (s *snapshot) RegistrySessionIDs(_ context.Context) []string {
 func (s *snapshot) RegistryLocation(_ context.Context, sessionID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	return s.registryLocations[sessionID]
 }
 
@@ -173,6 +181,7 @@ func (s *snapshot) RegistryLocation(_ context.Context, sessionID string) string 
 func (s *snapshot) LiveIDsKnown() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	return s.liveKnown
 }
 
@@ -181,6 +190,7 @@ func (s *snapshot) LiveIDsKnown() bool {
 func (s *snapshot) ResumeSessionIDs(_ context.Context) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	return append([]string{}, s.resumeIDs...)
 }
 
@@ -188,6 +198,7 @@ func (s *snapshot) ResumeSessionIDs(_ context.Context) []string {
 func (s *snapshot) Generation() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	return s.generation
 }
 
@@ -213,6 +224,7 @@ func (s *snapshot) TranscriptMtime(
 	}
 
 	s.mu.Lock()
+	s.reads++
 	if entry, ok := s.transcripts[key]; ok &&
 		s.refreshedAt != nil && !entry.probedAt.Before(*s.refreshedAt) {
 		value := entry.mtime
@@ -330,5 +342,16 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 	// listing taken before the refresh.
 	s.indices = newTranscriptIndexSet()
 	s.generation++
+	s.readsAtRefresh = s.reads
 	return nil
+}
+
+// demanded reports whether the snapshot has been read since the last successful
+// refresh. A tick with no demand performs no work, so an idle board spawns no
+// `ps` child; a read re-arms exactly one refresh and does not latch the
+// refresher on.
+func (s *snapshot) demanded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads != s.readsAtRefresh
 }
