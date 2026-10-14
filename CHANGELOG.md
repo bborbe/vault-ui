@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.97.2
 
 - fix: Gate the session-snapshot refresh on demand so an idle board spawns no `ps` child — the refresh loop keeps its 60 s cadence ceiling but skips a tick when the snapshot has not been read since the previous refresh, so a board serving no requests spawns no `ps -axww -o args=` process and does no refresh work, while a board being read stays current at the same cadence; the demand gate lives inside the concrete snapshot type, the `Snapshot` interface and the liveness classification contract are unchanged, and no request path spawns a process.
 
