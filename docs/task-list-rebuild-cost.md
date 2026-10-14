@@ -172,8 +172,117 @@ tightening would be measured against.
 
 ## Live reading and verdict
 
-_Pending: the raw metric reads and the verdict over the reproduction protocol, recorded on the deployed instrumented build (the spec's Post-Deploy rung). Not produced by any container prompt._
+Taken 2026-10-14 on the deployed instrumented build — `v0.97.0` plus PR #178, board pid 16573, binary 44,396,130 B at 16:28 — over the reproduction protocol above.
 
-If the reading supports none of the named premises, this document says so and
-the work stops there, with no remedy implemented — the finding returns to the
-operator.
+**Commands, in order.** The board was warmed with 60 discarded requests to the bare URL first, so a cold start cannot be mistaken for a steady state. Then, for each URL: read the counters, run a 100-request burst, read the counters again.
+
+```bash
+M='http://127.0.0.1:9090/metrics'
+BARE='http://127.0.0.1:8000/api/tasks'
+FIVE='http://127.0.0.1:8000/api/tasks?vault=private-agent&vault=private-personal&vault=seibert-agent&vault=seibert-brogrammers&vault=seibert-personal'
+snap() { curl -s --noproxy '*' "$M" | grep -E '^vault_ui_(board_task_snapshot_rebuilds_total|board_task_snapshot_full_rebuilds_total|page_index_changed_pages_unbounded_total)'; }
+for i in $(seq 1 60); do curl -s --noproxy '*' -o /dev/null "$BARE"; done   # warm-up, discarded
+snap; for i in $(seq 1 100); do curl -s --noproxy '*' -o /dev/null "$BARE"; done; snap
+snap; for i in $(seq 1 100); do curl -s --noproxy '*' -o /dev/null "$FIVE"; done; snap
+```
+
+**Raw output, pasted verbatim.** Four blocks, in the order read: bare before, bare after, five before, five after.
+
+```
+### bare BEFORE
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="both_moved"} 11
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="changed_set_unbounded"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="cold_key"} 10
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"} 4
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_not_wired"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_page_not_listed"} 0
+vault_ui_board_task_snapshot_rebuilds_total{kind="full"} 25
+vault_ui_board_task_snapshot_rebuilds_total{kind="patch"} 42
+vault_ui_board_task_snapshot_rebuilds_total{kind="refresh"} 89
+vault_ui_page_index_changed_pages_unbounded_total{reason="first_publication"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_explicit"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_file_absent"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_invalid_name"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_key_unpublished"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_name_not_in_snapshot"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="forced_reload"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="revision_ahead"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="unknown_key"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 0
+### bare AFTER
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="both_moved"} 11
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="changed_set_unbounded"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="cold_key"} 10
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"} 4
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_not_wired"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_page_not_listed"} 0
+vault_ui_board_task_snapshot_rebuilds_total{kind="full"} 25
+vault_ui_board_task_snapshot_rebuilds_total{kind="patch"} 42
+vault_ui_board_task_snapshot_rebuilds_total{kind="refresh"} 89
+vault_ui_page_index_changed_pages_unbounded_total{reason="first_publication"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_explicit"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_file_absent"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_invalid_name"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_key_unpublished"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_name_not_in_snapshot"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="forced_reload"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="revision_ahead"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="unknown_key"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 0
+### five BEFORE
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="both_moved"} 11
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="changed_set_unbounded"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="cold_key"} 10
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"} 4
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_not_wired"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_page_not_listed"} 0
+vault_ui_board_task_snapshot_rebuilds_total{kind="full"} 25
+vault_ui_board_task_snapshot_rebuilds_total{kind="patch"} 42
+vault_ui_board_task_snapshot_rebuilds_total{kind="refresh"} 89
+vault_ui_page_index_changed_pages_unbounded_total{reason="first_publication"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_explicit"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_file_absent"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_invalid_name"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_key_unpublished"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_name_not_in_snapshot"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="forced_reload"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="revision_ahead"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="unknown_key"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 0
+### five AFTER
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="both_moved"} 11
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="changed_set_unbounded"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="cold_key"} 10
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"} 4
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_not_wired"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_page_not_listed"} 0
+vault_ui_board_task_snapshot_rebuilds_total{kind="full"} 25
+vault_ui_board_task_snapshot_rebuilds_total{kind="patch"} 42
+vault_ui_board_task_snapshot_rebuilds_total{kind="refresh"} 89
+vault_ui_page_index_changed_pages_unbounded_total{reason="first_publication"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_explicit"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_file_absent"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_invalid_name"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_key_unpublished"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_name_not_in_snapshot"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="forced_reload"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="revision_ahead"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="unknown_key"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 0
+```
+
+**The deltas are zero, on both URLs.** Over 100 warm requests on the bare URL (all ten vaults) and 100 on the pinned 5-vault filter URL, **not one of the nineteen counters moved** — no full rebuild, no patch, no refresh, and no page-index refusal of any kind. An earlier run of the same protocol recorded a single `new_page_no_held_row` full rebuild plus one patch during the 5-vault burst; that is a page genuinely changing while the burst ran, not a steady-state mechanism, and it did not reproduce.
+
+### Verdict
+
+**The reading supports none of the named premises, and the work stops here.**
+
+The premise this document was written to test was that a rebuild of this size fires on essentially every request because the bounded path is not being reached on the live board. On a warm board the bounded path **is** reached: the snapshot is already built, and the store serves it without rebuilding. After the restart, `cold_key` was the only reason any full rebuild fired — and a cold key is by definition a cold start.
+
+This is the branch Open Question 3 pre-registered: *"If the reading shows the bounded path is taken and the allocation is still ~4 MB per selected vault, the cost is the documented per-task work, which this spec must not trim — and the finding returns to the operator rather than becoming a remedy."* No remedy is implemented here.
+
+**Three things this reading does not license.**
+
+- It does **not** say the per-request cost is small. It says the cost is not a rebuild. What a *served* request does with rows it already holds is untouched by this document.
+- The allocation half of this reading is **confounded and is not reported as a measurement.** Over 100-request bursts the `/api/vaults` control read 8,427 KB/request — 25× the 329 KB in § *The measurement before any instrumentation* — so the delta absorbs concurrent background allocation (file watchers, the 60 s session refresh, websockets) across the burst's wall time. Bare `/api/tasks` read 52,305 KB/request and the 5-vault filter 46,390 KB/request. Treat all three as **upper bounds**, not per-request costs.
+- The benchmark's attribution does **not** transfer to a served request. `BenchmarkBuildTaskRows` puts 64% of `buildTaskRows`' allocation on the Open Questions section, but `openQuestionsByTask` is called only from `buildTaskRows`, which runs only on a rebuild — and on a warm board there is no rebuild. That figure describes a path that is not on the request's critical path.

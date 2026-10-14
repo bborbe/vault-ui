@@ -8,6 +8,7 @@ created: "2026-10-14T12:29:16Z"
 queued: "2026-10-14T13:02:28Z"
 started: "2026-10-14T13:51:22Z"
 completed: "2026-10-14T13:56:39Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/178
 branch: dark-factory/measure-task-list-rebuild-path
 ---
 
