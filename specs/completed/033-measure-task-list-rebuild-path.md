@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-10-14T12:14:48Z"
 generating: "2026-10-14T12:18:06Z"
 prompted: "2026-10-14T12:46:06Z"
 verifying: "2026-10-14T13:56:39Z"
+completed: "2026-10-14T15:41:29Z"
 branch: dark-factory/measure-task-list-rebuild-path
 ---
 
