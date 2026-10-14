@@ -273,6 +273,66 @@ vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 
 
 **The deltas are zero, on both URLs.** Over 100 warm requests on the bare URL (all ten vaults) and 100 on the pinned 5-vault filter URL, **not one of the nineteen counters moved** — no full rebuild, no patch, no refresh, and no page-index refusal of any kind. An earlier run of the same protocol recorded a single `new_page_no_held_row` full rebuild plus one patch during the 5-vault burst; that is a page genuinely changing while the burst ran, not a steady-state mechanism, and it did not reproduce.
 
+**Window B — the counter is alive, and it is not the requests that move it.** AC5 requires the recorded reading to show motion, so that an all-zero window cannot be read as "no rebuilds happened" when the truth is that the instrumentation never counted. A second window was therefore taken, long enough to span the 60 s session-refresh tick:
+
+```bash
+snap   # before
+for i in $(seq 1 600); do curl -s --noproxy '*' -o /dev/null "$BARE"; done
+snap   # after
+```
+
+Before:
+
+```
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="both_moved"} 50
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="changed_set_unbounded"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="cold_key"} 10
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"} 28
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_not_wired"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_page_not_listed"} 0
+vault_ui_board_task_snapshot_rebuilds_total{kind="full"} 88
+vault_ui_board_task_snapshot_rebuilds_total{kind="patch"} 251
+vault_ui_board_task_snapshot_rebuilds_total{kind="refresh"} 349
+vault_ui_page_index_changed_pages_unbounded_total{reason="first_publication"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_explicit"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_file_absent"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_invalid_name"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_key_unpublished"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_name_not_in_snapshot"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="forced_reload"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="revision_ahead"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="unknown_key"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 0
+```
+
+After:
+
+```
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="both_moved"} 50
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="changed_set_unbounded"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="cold_key"} 10
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"} 28
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_not_wired"} 0
+vault_ui_board_task_snapshot_full_rebuilds_total{reason="patch_page_not_listed"} 0
+vault_ui_board_task_snapshot_rebuilds_total{kind="full"} 88
+vault_ui_board_task_snapshot_rebuilds_total{kind="patch"} 253
+vault_ui_board_task_snapshot_rebuilds_total{kind="refresh"} 349
+vault_ui_page_index_changed_pages_unbounded_total{reason="first_publication"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_explicit"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_file_absent"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_invalid_name"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_key_unpublished"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="folder_mark_widened_name_not_in_snapshot"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="forced_reload"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="revision_ahead"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="unknown_key"} 0
+vault_ui_page_index_changed_pages_unbounded_total{reason="window_not_retained"} 0
+```
+
+**Delta: +2, entirely `kind="patch"`.** The sum moved 688 → 690. That is the motion AC5 asks for, and it settles the question the all-zero window could not: **the instrumentation counts.**
+
+**What the two windows together show is stronger than either alone.** The sum also advanced from 668 to 676 and then to 688 *between* probes, with no requests from the reading in between — so the counter advances on its own clock, driven by vault changes and the refresh tick, not by traffic. Probing for a moving window directly: **150 requests across 15 consecutive rounds left the sum flat at 668, delta 0 every time.** Requests do not drive rebuilds at all. The rebuild path is not on the request's critical path, and the instrumentation demonstrates it by moving while nothing is asking.
+
 ### Verdict
 
 **The reading supports none of the named premises, and the work stops here.**
