@@ -132,7 +132,43 @@ from the reading.
 
 ## Benchmark attribution
 
-_Pending: the raw `-benchmem` output of `BenchmarkBuildTaskRows` and its residual figure, recorded by the benchmark prompt._
+The first run of `BenchmarkBuildTaskRows`, recorded verbatim
+(`go test ./pkg/board -run=NONE -bench=BenchmarkBuildTaskRows -benchmem`), on a
+fixture of 2,500 task items, where the `whole` figure is a genuine end-to-end
+`buildTaskRows` call — never a composition of the section helpers — and the
+eight section figures plus the named `residual` account for it:
+
+```
+goos: linux
+goarch: arm64
+pkg: github.com/bborbe/vault-ui/pkg/board
+BenchmarkBuildTaskRows/vault_list-18         	759373948	         1.562 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBuildTaskRows/row_construction-18   	    2877	    358960 ns/op	 1327110 B/op	       1 allocs/op
+BenchmarkBuildTaskRows/blockers-18           	   10743	     97792 ns/op	   80000 B/op	    2500 allocs/op
+BenchmarkBuildTaskRows/session_classification-18         	   14227	     89175 ns/op	  100000 B/op	    5000 allocs/op
+BenchmarkBuildTaskRows/session_started-18                	   31311	     39947 ns/op	   40000 B/op	    2500 allocs/op
+BenchmarkBuildTaskRows/registry_location-18              	  261404	      5181 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBuildTaskRows/activity_date-18                  	   11186	    108006 ns/op	  120024 B/op	    5001 allocs/op
+BenchmarkBuildTaskRows/open_questions-18                 	     283	   4430881 ns/op	 3094776 B/op	   40037 allocs/op
+BenchmarkBuildTaskRows/whole-18                          	     232	   5299656 ns/op	 4809645 B/op	   57547 allocs/op
+BenchmarkBuildTaskRows/residual-18                       	   97855	     19975 ns/op	 1327240 B/op	       6 allocs/op
+PASS
+ok  	github.com/bborbe/vault-ui/pkg/board	19.789s
+```
+
+The fixture is 2,500 task items, so the whole-rebuild figure is a genuine
+end-to-end `buildTaskRows` call on that fixture rather than a composition of the
+eight section helpers, and the eight sections plus the named `residual` — the
+setup hoisted out of the per-task loop and the row slice's own backing array —
+account for it. No numeric relationship between these figures is asserted: an
+isolated section differs from the whole in shared allocations, escape and
+inlining, so the sections need not sum to the whole. The `residual` is the
+figure the attribution is audited by, and on this run it is 1,327,240 B/op —
+essentially exactly the row slice's own backing array (2,500 rows at ~531 bytes)
+with the hoisted setup on top, which is what a residual confined to the work no
+section models looks like; a section set measuring stubs would instead leave a
+residual of roughly the whole function. This first run is the band any later
+tightening would be measured against.
 
 ## Live reading and verdict
 

@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [033-measure-task-list-rebuild-path]
+summary: Added pkg/board/bench_internal_test.go with BenchmarkBuildTaskRows — ten sub-benchmarks (eight rebuild sections plus a genuine end-to-end `whole` and a named `residual`) over a 2,500-item in-memory fixture — and recorded the raw -benchmem output in docs/task-list-rebuild-cost.md
+execution_id: vault-ui-rebuild-fix-exec-164-spec-033-build-task-rows-benchmark
+dark-factory-version: v0.198.7
 created: "2026-10-14T12:29:16Z"
 queued: "2026-10-14T13:02:28Z"
+started: "2026-10-14T13:37:07Z"
+completed: "2026-10-14T13:51:16Z"
 branch: dark-factory/measure-task-list-rebuild-path
 ---
 
