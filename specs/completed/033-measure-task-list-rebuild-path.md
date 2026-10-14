@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-10-14T12:14:48Z"
 generating: "2026-10-14T12:18:06Z"
 prompted: "2026-10-14T12:46:06Z"
 verifying: "2026-10-14T13:56:39Z"
+completed: "2026-10-14T15:41:29Z"
 branch: dark-factory/measure-task-list-rebuild-path
 ---
 
@@ -248,3 +249,16 @@ Do nothing and the hypothesis stays unmeasured: the board has no way to say whic
 ## Next Steps
 
 The remedy is a **separate spec**, authored once this one's reading exists and names exactly one premise. Its scope is the premise the verdict names and nothing else; if the verdict records a stop, no remedy spec is written and the finding returns to the operator. This spec deliberately stops at the measurement, so that the remedy spec is written from evidence rather than from the same four-way guess this spec exists to replace.
+
+## Verification Result
+
+**Verified:** 2026-10-14T15:39:15Z (HEAD 6c253e7)
+**Binary:** /Users/bborbe/Documents/workspaces/go/bin/vault-ui — the live launchd service (pid 16573, 44,396,130 B, built 2026-10-14 16:28 local)
+**Scenario:** no scenario file (spec declares none) — replayed the Reproduction protocol against the deployed instrumented board (:8000) and read the counters off the admin metrics endpoint (:9090)
+**Evidence:**
+- AC1/AC2: live `…/metrics | grep -c` → 3 `rebuilds_total{kind=}`, 6 `full_rebuilds_total{reason=}`, 10 `changed_pages_unbounded_total{reason=}`; every label pre-initialised in `pkg/board/metrics.go` and `pkg/pageindex/metrics.go` `init()`; the three AC1 rows and five AC2 rows exist and pass (focused ginkgo: 7 passed / 0 failed / 0 pending)
+- AC3: `go test ./pkg/board -run=NONE -bench=BenchmarkBuildTaskRows -benchmem` → ten sub-benchmarks on `benchItemCount = 2500`; eight-section `B/op` sum 4,767,831 (non-zero); `whole` 4,806,067; `residual` 1,327,242
+- AC5: doc § *Live reading and verdict* carries Window B verbatim — bare sum 688 → 690, delta +2 (`kind="patch"` 251 → 253); independently re-measured on the deployed board: bare delta +11 (839 → 850) and +3
+- AC6: `git diff 3525571..50c97de` shows no existing `It(...)` body changed — the three named board test files untouched, one new row added; `gh -R bborbe/vault-ui pr view` → #178, #179, #180 all MERGED, `test` check SUCCESS on each
+- AC7: live decoded `GET /api/tasks?vault=private-personal` vs `~/Library/Logs/vault-ui-parity-before-b4ba15959675.json` → 853 shared ids, no field removed, only `location` added
+**Verdict:** PASS
