@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-10-06T06:06:48Z"
 generating: "2026-10-06T06:48:20Z"
 prompted: "2026-10-06T06:48:20Z"
 verifying: "2026-10-06T08:15:31Z"
+completed: "2026-10-14T20:15:09Z"
 branch: dark-factory/lazy-pane-resolution-at-jump-time
 ---
 
@@ -61,7 +62,7 @@ The rules are documented in `docs/pane-resolution.md`.
 **AC7 — WITHDRAWN 2026-10-09, superseded; not an acceptance criterion of this spec.** It asserted that the Live badge and the jump control follow session state kept current by file events on `~/.claude/sessions/`, within 2 s, with a negative control proving the update is not ticker-driven. That mechanism was built here (v0.82.0) and then **deleted by v0.92.0 (PR #168, commit `761ddc7`)**, which replaced the source with a poll of the attention-controller's `GET /api/1.0/session-heartbeat` every `DefaultRescanInterval` (60 s). The criterion's subject therefore no longer belongs to this spec. Its assertion now **fails** against unmodified master rather than passing — creating a `~/.claude/sessions/*.json` file changes nothing within 2 s, because that directory no longer feeds liveness — so keeping it would have left the spec carrying a criterion that can never pass, for a reason this spec does not own. The freshness property it stood for is now PR #168's to assert. This is a withdrawal, not a pass — the criterion was not met, it moved.
 - [ ] **AC8 — the liveness classification contract is unchanged.** `git diff origin/master -- pkg/session/classify.go` is empty, and the classification tests still pass — evidence: the diff prints nothing, and `go test ./pkg/session/...` exits 0 with the four-outcome, signal-order and five-minute-window cases still present by name.
 - [ ] **AC9 — build health, parity, docs.** `make precommit` exits 0 (includes `go test -race ./...`); `make parity` exits 0 against the re-baselined harness; `awk '/^## (Unreleased|v)/{sec=$0} /on demand/ && /pane/ && sec != ""{if (!found) {found=1; print "changelog bullet under: " sec}} END{exit !found}' CHANGELOG.md` exits 0 and prints the section holding the bullet — `## Unreleased` or a released `## vX.Y.Z` (it prints `## v0.82.0` today, the release this work landed in); the `grep -A10 '^## Unreleased'` form it replaces expired the moment the bullet was released, and a bare print-only `awk` would exit 0 whether or not it matched; `docs/pane-resolution.md` contains the headings `When a pane is resolved` and `Session state freshness` **and** records the resolver's seam signature (`grep -n 'Resolve(ctx' docs/pane-resolution.md` returns ≥1 line) — evidence: a headings-only file fails this. The re-baseline is narrow — evidence: `make parity`'s summary reports every route, case, error, mutation and static-asset ratio full (a route that lost its comparison drops below full), and the only harness logic edit is the `/api/tasks` body filter in `normalize()` (a comment above the static-asset loop is the only other change). The harness holds no stored static hash — `scripts/parity/parity.sh` hashes both backends' served bytes live, and both serve the same `src/vault_ui/static/` tree — so the static-tree re-baseline is the `docs/go-cutover.md` § 6 regression guard, not a harness line.
-- [ ] **Post-Deploy (Rung-2): AC10 — the idle burn is gone.** With ≥1 live session and zero requests for 10 s, the board spawns exactly 0 child processes and its CPU stays below 5 % — evidence: the two numbers from the Operator-executable idle probe below; pre-fix baseline 1146 children/10 s at ~95 %.
+- [ ] **Post-Deploy (Rung-2): AC10 — the idle burn is gone.** With ≥1 live session and zero requests for 10 s, the board spawns exactly 0 child processes, and a `sample` of its CPU time names no site on the pane-resolution path among the leading residuals — evidence: the two numbers from the Operator-executable idle probe below; pre-fix baseline 1146 children/10 s at ~95 %. **Restated 2026-10-14 by operator pick.** The original clause required CPU to stay below 5 % unconditionally, and on the deployed v0.97.1 build that is falsified: 25 of 67 ten-second windows exceeded 5 %, with sustained bursts to ~123 %, cross-checked three ways (`ps -o time=` 87 %, `top -l 2` 74.5 %, `sample`). But the hot path `sample` names is `encoding/json` decoding, not pane work, and the children clause is met in **every** one of the 67 windows — 0 children, against 1146/10 s before this spec. The residual is the page index's periodic rescan, which `specs/in-progress/029-rescan-allocates-only-what-changed.md` claims in its own words — *"This residual is what fails the board's CPU criterion"* — and whose own AC9 already accepts as *"attributed and filed"*. Same shape as AC7's withdrawal above, a criterion tripping on a cause this spec does not own; but here **only the CPU clause is restated**, because the children clause is this spec's own fix and is decisively met, and the pane-work burn this spec removed is gone.
   - `deploy_check:` `[ ~/Documents/workspaces/go/bin/vault-ui -nt ~/Documents/workspaces/vault-ui/.git/ORIG_HEAD ] && cd ~/Documents/workspaces/vault-ui && git rev-parse --short HEAD`
   - `deploy_target:` `$(cd ~/Documents/workspaces/vault-ui && git fetch -q && git rev-parse --short origin/master)`
 - [ ] **Post-Deploy (Rung-2): AC11 — `/api/tasks` is within a small multiple of an in-memory reference.** 10 warm samples each of `/api/tasks` and `/api/vaults` in the same window — evidence: `/api/tasks` p50 ≤ 5× `/api/vaults` p50, both recorded. Sampled relative, not absolute, because the host routinely runs at load 36+; the pre-change reading was ~750× (1.5 s against 2 ms). This AC gates: the per-request `ps` scan is known to remain, and if it alone holds the ratio above 5× the spec does not complete — the recorded number is then the evidence that hands the work to the sibling index task.
@@ -96,9 +97,13 @@ Idle probe (AC10) — run with at least one live Claude session on the host:
 
 ```bash
 pid=$(pgrep -f 'workspaces/go/bin/vault-ui' | head -1)
-cpu0=$(ps -o %cpu= -p "$pid"); sleep 10; cpu1=$(ps -o %cpu= -p "$pid")
-echo "children: $(pgrep -P "$pid" | wc -l | tr -d ' ')"; echo "cpu: $cpu0 -> $cpu1"
+t0=$(ps -o time= -p "$pid"); sleep 10; t1=$(ps -o time= -p "$pid")
+echo "children: $(pgrep -P "$pid" | wc -l | tr -d ' ')"; echo "cpu: $t0 -> $t1"
+sample "$pid" 10 -file /tmp/vault-ui-sample.txt >/dev/null 2>&1
+grep -E '^ +[0-9]+ ' /tmp/vault-ui-sample.txt | head -8
 ```
+
+`ps -o %cpu=` is a decaying average and understates a burst, so read the `time=` delta instead. The `sample` output is what AC10's restated clause reads: no pane-resolution site (`pkg/pane`, `Resolve`) may appear among the leading call-tree entries. The CPU figure is recorded, not thresholded — the board's residual CPU is the page index's periodic rescan, owned by `specs/in-progress/029-rescan-allocates-only-what-changed.md`, which names itself its owner.
 
 Latency (AC11):
 
@@ -184,3 +189,19 @@ Rationale: prompt 1 establishes the resolver seam every later prompt calls. Prom
 ## Do-Nothing Option
 
 The board keeps burning ~95 % of a core spawning Python interpreters around the clock, whether or not anyone is looking at it, and every list response keeps carrying a pane id that is stale within three seconds of being computed. The vault goal's architectural criterion — background work event-driven or on demand, a fixed short-interval refresher being a design defect — stays unmet, and the sibling read-path tasks cannot show their benefit while this burn continues alongside them.
+
+## Verification Result
+
+**Verified:** 2026-10-14T20:06:23Z (HEAD 63ebe09)
+**Binary:** `~/Documents/workspaces/go/bin/vault-ui` (v0.97.1, 44,396,210 B, built 2026-10-14T19:49:25; pid 19467 on 127.0.0.1:8000)
+**Scenario:** no scenario file (the spec states so); every AC walked against the deployed board plus the container rung, re-run fresh for this verification.
+**Evidence:**
+- AC1/AC2: the `python3\|\.py"` and `who-needs-me` greps over `pkg` print zero lines; `ls pkg/panecache` exits 1 and the `panecache` grep prints zero lines. Positive control at v0.81.0 shows the four non-test call sites (`factory/api.go:160`, `factory/mutations.go:117`, `pane/pane.go:99`, `pane/pane.go:108`).
+- AC3/AC4: `pkg/factory/pane_test.go` "Lazy pane resolution" (2 of 74 specs, 2 passed) — the recording resolver holds 0 calls across `ListTasks` and 1 across the jump; no key of any `/api/tasks` or `/api/goals` element contains "pane" (pre-change `pkg/api/api.go:58` carried `JumpPane` `json:"jump_pane"`).
+- AC5: `POST /api/tasks/…/jump` on a live task → 204, that session's WezTerm pane 1525 (tab 916) active; on a task with no resolvable pane → 409 `{"detail":"no pane resolves for this session"}`.
+- AC6: served `/app.js` byte-identical to `src/vault_ui/static/app.js`, `grep -c jump_pane` = 0; `index.html` carries `app.js?v=2026-10-13-live-badge-location` and `style.css?v=2026-10-06-lazy-pane-jump`, `grep -c '2026-10-01-jump-control'` = 0; the control is gated on `item.session_state === 'live'` (app.js:1576).
+- AC8: `git diff origin/master -- pkg/session/classify.go` empty; `go test ./pkg/session/...` ok, the four-outcome/signal-order/five-minute cases still present by name.
+- AC9: `make precommit` exit 0 (771 pytest passed, ruff clean, mypy clean); `make parity` exit 0 in `bborbe/claude-yolo:v0.15.1` — `routes: 25/25`, `body-parity: 23/23`, `error-parity: 3/3`, `mutation-parity: 34/34`, `ws-parity: frames identical (3 frames)`, `static-parity: 3/3`; CHANGELOG awk prints `## v0.82.0`.
+- AC10: idle probe `children: 0`, `ps -o time=` 25:30.31 → 25:30.47; two `sample` windows name zero `pkg/pane`/`Resolve`/pane sites — leading residuals are blocking syscalls plus the page index's `lstat`/`stat` stat-diff rescan (`pageindex.statFingerprint`), spec 029's residual. The only child the process spawns while idle is the session-snapshot `ps -axww -o args=` (pkg/sessionsnapshot, added after this spec in v0.87.0), once per 60 s.
+- AC11: `/api/vaults` p50 0.001801 s, `/api/tasks?vault=private-personal` p50 0.001696 s — ratio 0.94×.
+**Verdict:** PASS
