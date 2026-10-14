@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.97.1
 
 - fix: Drop the per-request row copy on the served task-list path — `ListTasksBody` read the snapshot for the query's selected vaults and discarded the concatenated rows before consulting the body cache, copying every row of every selected vault on every request, hit or miss; the read itself is load-bearing, because a vault's published-rows signal advances only when a read publishes rows and a cache hit makes no other read, so it is kept and driven per selected vault with each vault's rows dropped rather than concatenated. `taskSnapshotRows` is unchanged and still serves the body cache's clock-boundary seam on a miss. On the 2,500-item bench fixture a warm `ListTasksBody` falls from 196,337 ns/op and 1,328,394 B/op to ~320 ns/op and 177 B/op; no response bytes change.
 
