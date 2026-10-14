@@ -82,6 +82,7 @@ var benchSink struct {
 	location  string
 	date      *libtime.DateTime
 	n         int
+	body      TaskListBody
 }
 
 // benchItemName is the fixture's naming scheme: a distinct, stable name per
@@ -454,4 +455,50 @@ func BenchmarkBuildTaskRows(b *testing.B) {
 			}
 		}
 	})
+}
+
+// BenchmarkListTasksBodyWarm measures one warm GET /api/tasks body read: the
+// per-request cost once the body cache holds the query's body, as distinct from
+// BenchmarkBuildTaskRows' rebuild cost. The first call builds and holds the
+// body; the measured loop is the cache-hit path a served request takes.
+func BenchmarkListTasksBodyWarm(b *testing.B) {
+	ctx := context.Background()
+	bd := benchBoard(b)
+	query := TaskQuery{UpcomingHours: 8}
+
+	if _, err := bd.ListTasksBody(ctx, query); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		body, err := bd.ListTasksBody(ctx, query)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchSink.body = body
+	}
+}
+
+// BenchmarkTaskSnapshotRowsWarm measures the snapshot-rows read in isolation on
+// the warm store, so the per-request cost it contributes can be attributed.
+func BenchmarkTaskSnapshotRowsWarm(b *testing.B) {
+	ctx := context.Background()
+	bd := benchBoard(b)
+	query := TaskQuery{UpcomingHours: 8}
+
+	if _, err := bd.taskSnapshotRows(ctx, query); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := bd.taskSnapshotRows(ctx, query)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchSink.rows = rows
+	}
 }

@@ -132,6 +132,13 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 // when nothing moved, so it rebuilds only what the page index has marked — the
 // same read ListTasks makes.
 //
+// The read drives each selected vault and drops its rows. It does not
+// concatenate them: the only reader that wants the rows is the cache's clock
+// boundary, which reads them through its own seam on a miss. Concatenating them
+// here allocated and copied every row of every selected vault on every request,
+// hit or miss, and then discarded the result — the whole of a warm request's
+// allocation.
+//
 // The selection is loaded once and handed to the cache, so the cache's signals
 // are read for exactly the vaults whose rows were read, and the signals seam
 // itself performs no vault I/O.
@@ -141,10 +148,26 @@ func (b *board) ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBod
 		return TaskListBody{}, errors.Wrap(ctx, err, "list vaults")
 	}
 	selected := b.selectVaults(all, query.Vaults)
-	if _, err := b.taskSnapshotRows(ctx, query); err != nil {
+	if err := b.refreshTaskSnapshots(ctx, selected); err != nil {
 		return TaskListBody{}, err
 	}
 	return b.bodies.Get(ctx, query, selected)
+}
+
+// refreshTaskSnapshots drives each selected vault's published-rows read and
+// drops the rows. A read is what publishes a vault's rows and advances its
+// signal, so a cache hit must still make it or a held body would never be
+// invalidated; the rows themselves are not wanted here.
+//
+// It allocates nothing: snapshot.List returns the published slice, which the
+// store shares with every reader and which is discarded here rather than copied.
+func (b *board) refreshTaskSnapshots(ctx context.Context, selected []Vault) error {
+	for _, vault := range selected {
+		if _, err := b.snapshot.List(ctx, vault); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // taskSnapshotSignals returns each selected vault's published-rows signal, in
