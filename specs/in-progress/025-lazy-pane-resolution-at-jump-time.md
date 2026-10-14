@@ -188,3 +188,19 @@ Rationale: prompt 1 establishes the resolver seam every later prompt calls. Prom
 ## Do-Nothing Option
 
 The board keeps burning ~95 % of a core spawning Python interpreters around the clock, whether or not anyone is looking at it, and every list response keeps carrying a pane id that is stale within three seconds of being computed. The vault goal's architectural criterion — background work event-driven or on demand, a fixed short-interval refresher being a design defect — stays unmet, and the sibling read-path tasks cannot show their benefit while this burn continues alongside them.
+
+## Verification Result
+
+**Verified:** 2026-10-14T20:06:23Z (HEAD 63ebe09)
+**Binary:** `~/Documents/workspaces/go/bin/vault-ui` (v0.97.1, 44,396,210 B, built 2026-10-14T19:49:25; pid 19467 on 127.0.0.1:8000)
+**Scenario:** no scenario file (the spec states so); every AC walked against the deployed board plus the container rung, re-run fresh for this verification.
+**Evidence:**
+- AC1/AC2: the `python3\|\.py"` and `who-needs-me` greps over `pkg` print zero lines; `ls pkg/panecache` exits 1 and the `panecache` grep prints zero lines. Positive control at v0.81.0 shows the four non-test call sites (`factory/api.go:160`, `factory/mutations.go:117`, `pane/pane.go:99`, `pane/pane.go:108`).
+- AC3/AC4: `pkg/factory/pane_test.go` "Lazy pane resolution" (2 of 74 specs, 2 passed) — the recording resolver holds 0 calls across `ListTasks` and 1 across the jump; no key of any `/api/tasks` or `/api/goals` element contains "pane" (pre-change `pkg/api/api.go:58` carried `JumpPane` `json:"jump_pane"`).
+- AC5: `POST /api/tasks/…/jump` on a live task → 204, that session's WezTerm pane 1525 (tab 916) active; on a task with no resolvable pane → 409 `{"detail":"no pane resolves for this session"}`.
+- AC6: served `/app.js` byte-identical to `src/vault_ui/static/app.js`, `grep -c jump_pane` = 0; `index.html` carries `app.js?v=2026-10-13-live-badge-location` and `style.css?v=2026-10-06-lazy-pane-jump`, `grep -c '2026-10-01-jump-control'` = 0; the control is gated on `item.session_state === 'live'` (app.js:1576).
+- AC8: `git diff origin/master -- pkg/session/classify.go` empty; `go test ./pkg/session/...` ok, the four-outcome/signal-order/five-minute cases still present by name.
+- AC9: `make precommit` exit 0 (771 pytest passed, ruff clean, mypy clean); `make parity` exit 0 in `bborbe/claude-yolo:v0.15.1` — `routes: 25/25`, `body-parity: 23/23`, `error-parity: 3/3`, `mutation-parity: 34/34`, `ws-parity: frames identical (3 frames)`, `static-parity: 3/3`; CHANGELOG awk prints `## v0.82.0`.
+- AC10: idle probe `children: 0`, `ps -o time=` 25:30.31 → 25:30.47; two `sample` windows name zero `pkg/pane`/`Resolve`/pane sites — leading residuals are blocking syscalls plus the page index's `lstat`/`stat` stat-diff rescan (`pageindex.statFingerprint`), spec 029's residual. The only child the process spawns while idle is the session-snapshot `ps -axww -o args=` (pkg/sessionsnapshot, added after this spec in v0.87.0), once per 60 s.
+- AC11: `/api/vaults` p50 0.001801 s, `/api/tasks?vault=private-personal` p50 0.001696 s — ratio 0.94×.
+**Verdict:** PASS
