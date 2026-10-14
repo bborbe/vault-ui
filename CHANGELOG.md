@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.97.0
 
 - feat: Instrument the task-list rebuild path so the board can say which rebuild ran and why — `pkg/board` gains `vault_ui_board_task_snapshot_rebuilds_total{kind}` (`full`, `patch`, `refresh`) and `vault_ui_board_task_snapshot_full_rebuilds_total{reason}` (`cold_key`, `both_moved`, `patch_not_wired`, `changed_set_unbounded`, `new_page_no_held_row`, `patch_page_not_listed`), with every full rebuild attributed to its cause including the two in-patch fallback sites (`patchTaskRows` records its own kind, so a patch that fell back is counted as a full rebuild and never as a patch); `pkg/pageindex` gains `vault_ui_page_index_changed_pages_unbounded_total{reason}` (`unknown_key`, `revision_ahead`, `window_not_retained`, `forced_reload`, `first_publication`, `folder_mark_explicit` and the four `folder_mark_widened_*` sub-causes), so a refused bound reports exactly one reason — the earliest unbounded advance in the window — and a folder-level mark a write route issued outright is told apart from a `MarkFileDirty` widening; every series is pre-initialised at boot and incremented once per rebuild off the request path, and no behaviour changes.
 
