@@ -8,6 +8,7 @@ created: "2026-10-19T16:56:40Z"
 queued: "2026-10-19T17:31:58Z"
 started: "2026-10-19T17:38:58Z"
 completed: "2026-10-19T17:39:25Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/187
 branch: dark-factory/bug-goal-card-ignores-manager-session
 ---
 

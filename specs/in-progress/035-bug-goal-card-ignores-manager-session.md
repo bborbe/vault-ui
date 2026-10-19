@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-19T16:50:59Z"
 generating: "2026-10-19T16:54:24Z"
 prompted: "2026-10-19T17:06:50Z"
+verifying: "2026-10-19T17:39:25Z"
 branch: dark-factory/bug-goal-card-ignores-manager-session
 ---
 
