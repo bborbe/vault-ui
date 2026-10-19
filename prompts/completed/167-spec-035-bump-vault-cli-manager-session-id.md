@@ -1,10 +1,14 @@
 ---
-status: failed
+status: completed
 spec: [035-bug-goal-card-ignores-manager-session]
+summary: Bumped vault-cli to v0.171.0, proved ops.List populates ManagerSessionID, and restored the status:next approval contract in both callers
+execution_id: vault-ui-goal-manager-liveness-exec-167-spec-035-bump-vault-cli-manager-session-id
+dark-factory-version: v0.198.7
 created: "2026-10-19T16:56:40Z"
 queued: "2026-10-19T17:31:58Z"
-completed: "2026-10-19T17:32:12Z"
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/167-spec-035-bump-vault-cli-manager-session-id"; uncommitted changes: specs/in-progress/035-bug-goal-card-ignores-manager-session.md'
+started: "2026-10-19T17:32:55Z"
+completed: "2026-10-19T17:36:34Z"
+branch: dark-factory/167-spec-035-bump-vault-cli-manager-session-id
 ---
 
 # Bump vault-cli to a release whose list read model populates `ManagerSessionID`
