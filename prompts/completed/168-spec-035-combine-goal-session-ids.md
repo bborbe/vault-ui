@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [035-bug-goal-card-ignores-manager-session]
+summary: Goal cards now classify both claude_session_id and manager_session_id with strongest-outcome combination and fixed own-then-manager location precedence, with UUID validation for the manager id only.
+execution_id: vault-ui-goal-manager-liveness-exec-168-spec-035-combine-goal-session-ids
+dark-factory-version: v0.198.7
 created: "2026-10-19T16:56:40Z"
 queued: "2026-10-19T17:31:58Z"
+started: "2026-10-19T17:36:42Z"
+completed: "2026-10-19T17:38:51Z"
 branch: dark-factory/bug-goal-card-ignores-manager-session
 ---
 

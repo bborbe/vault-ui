@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
@@ -166,16 +167,23 @@ func (f fakeSignals) ResumeSessionIDs(_ context.Context) []string {
 type fakeProbe struct {
 	mu         sync.Mutex
 	mtime      *libtime.DateTime
+	mtimes     map[string]*libtime.DateTime
 	generation uint64
 	// transcriptCalls counts TranscriptMtime calls, so a spec can prove a path
 	// never probed a transcript.
 	transcriptCalls seamCounter
 }
 
-func (f *fakeProbe) TranscriptMtime(_ context.Context, _, _, _ string) *libtime.DateTime {
+func (f *fakeProbe) TranscriptMtime(
+	_ context.Context,
+	sessionID, _, _ string,
+) *libtime.DateTime {
 	f.transcriptCalls.inc()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.mtimes != nil {
+		return f.mtimes[sessionID]
+	}
 	return f.mtime
 }
 
@@ -844,6 +852,192 @@ var _ = Describe("ListGoals", func() {
 		}
 		Expect(upcoming["Soon"]).To(BeTrue())
 		Expect(upcoming["Past"]).To(BeFalse())
+	})
+})
+
+var _ = Describe("goal session-id combination", func() {
+	const (
+		ownID     = "11111111-1111-1111-1111-111111111111"
+		managerID = "22222222-2222-2222-2222-222222222222"
+	)
+
+	stale := libtime.DateTime(baseTime.Add(-time.Hour))
+	fresh := libtime.DateTime(baseTime)
+
+	goalItem := func(own, manager string) ops.TaskListItem {
+		return ops.TaskListItem{
+			Name:             "Goal",
+			Status:           "in_progress",
+			ClaudeSessionID:  own,
+			ManagerSessionID: manager,
+		}
+	}
+
+	listGoal := func(h *harness) api.GoalResponse {
+		responses, err := h.board.ListGoals(
+			context.Background(), board.GoalQuery{UpcomingHours: 8},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		return responses[0]
+	}
+
+	DescribeTable("combines every recorded session id by strongest outcome",
+		func(
+			own, manager string,
+			registry []heartbeat.Session,
+			mtimes map[string]*libtime.DateTime,
+			expected string,
+		) {
+			h := newHarness()
+			h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(own, manager)}
+			h.signals.registry = registry
+			h.sessions = &fakeProbe{mtimes: mtimes}
+			h.build()
+
+			response := listGoal(h)
+			if expected == "" {
+				Expect(response.SessionState).To(BeNil())
+				return
+			}
+			Expect(response.SessionState).NotTo(BeNil())
+			Expect(*response.SessionState).To(Equal(expected))
+		},
+		Entry("own live, manager quiet", ownID, managerID,
+			[]heartbeat.Session{{ID: ownID}},
+			map[string]*libtime.DateTime{managerID: &stale}, "live"),
+		Entry("manager live, own quiet", ownID, managerID,
+			[]heartbeat.Session{{ID: managerID}},
+			map[string]*libtime.DateTime{ownID: &stale}, "live"),
+		Entry("own live, manager indeterminate", ownID, managerID,
+			[]heartbeat.Session{{ID: ownID}}, nil, "live"),
+		Entry("own empty, manager live", "", managerID,
+			[]heartbeat.Session{{ID: managerID}}, nil, "live"),
+		Entry("own empty, manager quiet", "", managerID, nil,
+			map[string]*libtime.DateTime{managerID: &stale}, "quiet"),
+		Entry("own quiet, manager indeterminate", ownID, managerID, nil,
+			map[string]*libtime.DateTime{ownID: &stale}, "indeterminate"),
+		Entry("both quiet", ownID, managerID, nil,
+			map[string]*libtime.DateTime{ownID: &stale, managerID: &stale}, "quiet"),
+		Entry("own live, manager empty", ownID, "",
+			[]heartbeat.Session{{ID: ownID}}, nil, "live"),
+		Entry("both empty", "", "", nil, nil, ""),
+	)
+
+	It("serializes the none state as null when neither id is set", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", "")}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).To(BeNil())
+		encoded, err := json.Marshal(response)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"session_state":null`))
+	})
+
+	It("classifies a malformed manager id as indeterminate, never live or quiet", func() {
+		const malformed = "not-a-uuid"
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", malformed)}
+		// A fresh transcript would make an unvalidated id read live; the UUID
+		// guard must win and suppress Resume instead.
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{malformed: &fresh},
+		}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).NotTo(BeNil())
+		Expect(*response.SessionState).To(Equal("indeterminate"))
+		Expect(response.Location).To(BeNil())
+	})
+
+	It("keeps a manager-armed goal indeterminate when the attention store is unreachable", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", managerID)}
+		h.signals.unknown = true
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{managerID: &stale},
+		}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).NotTo(BeNil())
+		Expect(*response.SessionState).To(Equal("indeterminate"))
+	})
+
+	It("takes location from the own id when both ids are live", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(ownID, managerID)}
+		h.signals.registry = []heartbeat.Session{
+			{ID: ownID, Location: "local"},
+			{ID: managerID, Location: "pod"},
+		}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.Location).NotTo(BeNil())
+		Expect(*response.Location).To(Equal("local"))
+	})
+
+	It("does not fall through to the manager id when the own id is live without a store location", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(ownID, managerID)}
+		// Own id is live by transcript recency, not in the store, so its
+		// RegistryLocation is empty. The manager id is live in the store with a
+		// location; the location must still be null, not the manager's.
+		h.signals.registry = []heartbeat.Session{{ID: managerID, Location: "pod"}}
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{ownID: &fresh},
+		}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).NotTo(BeNil())
+		Expect(*response.SessionState).To(Equal("live"))
+		Expect(response.Location).To(BeNil())
+	})
+
+	It("takes location from the manager id when only the manager is live", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", managerID)}
+		h.signals.registry = []heartbeat.Session{{ID: managerID, Location: "pod"}}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).NotTo(BeNil())
+		Expect(*response.SessionState).To(Equal("live"))
+		Expect(response.Location).NotTo(BeNil())
+		Expect(*response.Location).To(Equal("pod"))
+	})
+
+	It("keeps claude_session_started and activity_date tied to the own id", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{{
+			Name:             "Goal",
+			Status:           "in_progress",
+			ManagerSessionID: managerID,
+			ModifiedDate:     "2026-10-04T11:00:00Z",
+		}}
+		h.signals.registry = []heartbeat.Session{{ID: managerID}}
+		// The manager transcript is newer than the page's modified date. If
+		// either field derived from the manager id, activity_date would move to
+		// 12:00; it must stay at the page's modified date.
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{managerID: &fresh},
+		}
+		h.cache.started["Goal"] = "2026-10-04T09:00:00Z"
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).NotTo(BeNil())
+		Expect(*response.SessionState).To(Equal("live"))
+		Expect(response.ClaudeSessionID).To(BeNil())
+		Expect(response.ClaudeSessionStarted).NotTo(BeNil())
+		Expect(*response.ClaudeSessionStarted).To(Equal("2026-10-04T09:00:00Z"))
+		Expect(response.ActivityDate).NotTo(BeNil())
+		Expect(*response.ActivityDate).To(Equal("2026-10-04T11:00:00Z"))
 	})
 })
 
