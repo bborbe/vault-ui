@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [035-bug-goal-card-ignores-manager-session]
+summary: Documented multi-session-id classification in docs/liveness-classification.md and confirmed the single fix bullet under CHANGELOG.md's Unreleased section.
+execution_id: vault-ui-goal-manager-liveness-exec-169-spec-035-liveness-docs-and-changelog
+dark-factory-version: v0.198.7
 created: "2026-10-19T16:56:40Z"
 queued: "2026-10-19T17:31:58Z"
+started: "2026-10-19T17:38:58Z"
+completed: "2026-10-19T17:39:25Z"
 branch: dark-factory/bug-goal-card-ignores-manager-session
 ---
 
