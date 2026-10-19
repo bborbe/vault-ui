@@ -84,10 +84,8 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 		return api.SessionResponse{}, launcherErr
 	}
 	if task.Phase == "todo" {
-		if _, approveErr := set.Approve.Execute(
-			ctx, resolved.Path, taskID, resolved.Name, "operator", "", cfg.CurrentUser,
-		); approveErr != nil {
-			return api.SessionResponse{}, newHTTPError(500, approveErr.Error())
+		if approveErr := approveAndQueue(ctx, resolved, set, taskID, cfg.CurrentUser); approveErr != nil {
+			return api.SessionResponse{}, approveErr
 		}
 	}
 	s.deps.Launch.Begin(vault, taskID, "task")
@@ -576,13 +574,39 @@ func (s *service) UpdateTaskPhase(
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
 }
 
+// approveAndQueue approves a task waiting in the inbox and restores the
+// status: next half of the approval contract. vault-cli v0.171.0's
+// task approve no longer rewrites status, so the caller writes it through the
+// same FrontmatterSet operation the non-approval branch uses. Without it an
+// approved row keeps status: todo and drops out of the manager sweep's
+// ready-to-start bucket.
+func approveAndQueue(
+	ctx context.Context,
+	resolved vaultconfig.Vault,
+	set vaultui.OpSet,
+	taskID string,
+	currentUser string,
+) *HTTPError {
+	if _, approveErr := set.Approve.Execute(
+		ctx, resolved.Path, taskID, resolved.Name, "operator", "", currentUser,
+	); approveErr != nil {
+		return newHTTPError(500, approveErr.Error())
+	}
+	if setErr := set.FrontmatterSet.Execute(
+		ctx, resolved.Path, taskID, "status", "next", "", "", "", false,
+	); setErr != nil {
+		return newHTTPError(500, setErr.Error())
+	}
+	return nil
+}
+
 // approveTask runs the operator's approval for a task waiting in the inbox,
-// with the same seven arguments RunTask passes. Approve owns all four keys in
-// one write — phase: planning, status: next, approved_by and approved_at — so
-// this branch writes neither phase nor status itself: setting the phase
-// alongside it would race the approval's own write, and the caller's status
-// logic would overwrite "next" with "in_progress", which is the write that
-// removes a freshly approved row from the ready-to-start bucket.
+// with the same seven arguments RunTask passes. Approve writes phase: planning,
+// approved_by and approved_at; approveAndQueue adds the status: next it no
+// longer writes. This branch writes no phase or status itself: setting the
+// phase alongside the approval would race the approval's own write, and the
+// caller's status logic would overwrite "next" with "in_progress", which is the
+// write that removes a freshly approved row from the ready-to-start bucket.
 //
 // A todo task that already carries an approval record is refused by the
 // operation; that case is not worth a request-path read, so it surfaces as an
@@ -612,10 +636,8 @@ func (s *service) approveTask(
 			return newHTTPError(500, answerErr.Error())
 		}
 	}
-	if _, approveErr := set.Approve.Execute(
-		ctx, resolved.Path, taskID, resolved.Name, "operator", "", cfg.CurrentUser,
-	); approveErr != nil {
-		return newHTTPError(500, approveErr.Error())
+	if approveErr := approveAndQueue(ctx, resolved, set, taskID, cfg.CurrentUser); approveErr != nil {
+		return approveErr
 	}
 	return nil
 }

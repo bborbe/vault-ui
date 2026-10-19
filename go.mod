@@ -10,7 +10,7 @@ require (
 	github.com/bborbe/log v1.7.1
 	github.com/bborbe/run v1.11.0
 	github.com/bborbe/time v1.27.14
-	github.com/bborbe/vault-cli v0.167.0
+	github.com/bborbe/vault-cli v0.171.0
 	github.com/golang/glog v1.2.5
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1

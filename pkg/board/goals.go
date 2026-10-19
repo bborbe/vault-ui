@@ -12,6 +12,7 @@ import (
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/google/uuid"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -130,8 +131,7 @@ func (b *board) goalResponse(
 		blockers = []string{}
 	}
 
-	state := session.ClassifySessionState(ctx, session.ClassifyParams{
-		SessionID:          item.ClaudeSessionID,
+	params := session.ClassifyParams{
 		ProjectDir:         projectDir,
 		ProjectsRoot:       projectsRoot,
 		Now:                b.clock.Now().UTC(),
@@ -140,7 +140,24 @@ func (b *board) goalResponse(
 		RegistrySessionIDs: registryIDs,
 		LiveIDsUnknown:     liveIDsUnknown,
 		TranscriptMtime:    b.transcriptProbe(),
-	})
+	}
+
+	ownParams := params
+	ownParams.SessionID = item.ClaudeSessionID
+	ownState := session.ClassifySessionState(ctx, ownParams)
+	managerState := classifyGoalManagerSessionID(ctx, item.ManagerSessionID, params)
+	state := strongestSessionState(ownState, managerState)
+
+	// The location comes from the first live id in a fixed order: the goal's own
+	// id, then its manager's. A live own id with no store location yields nil and
+	// does not fall through to the manager id.
+	var location *string
+	switch {
+	case ownState == session.SessionStateLive:
+		location = liveLocationPtr(ownState, b.signals.RegistryLocation(ctx, item.ClaudeSessionID))
+	case managerState == session.SessionStateLive:
+		location = liveLocationPtr(managerState, b.signals.RegistryLocation(ctx, item.ManagerSessionID))
+	}
 
 	return api.GoalResponse{
 		ID:                   item.Name,
@@ -168,10 +185,54 @@ func (b *board) goalResponse(
 			projectsRoot,
 		)),
 		SessionState: sessionStatePtr(state),
-		Location: liveLocationPtr(
-			state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
-		),
+		Location:     location,
 	}
+}
+
+// strongestSessionState combines per-id outcomes: live beats indeterminate,
+// which beats quiet. none is the result only when every id is empty. The
+// combination is strongest-outcome, never last-id-wins.
+func strongestSessionState(states ...session.SessionState) session.SessionState {
+	best := session.SessionStateNone
+	for _, state := range states {
+		if sessionStateRank(state) > sessionStateRank(best) {
+			best = state
+		}
+	}
+	return best
+}
+
+// sessionStateRank orders the four outcomes for combination.
+func sessionStateRank(state session.SessionState) int {
+	switch state {
+	case session.SessionStateLive:
+		return 3
+	case session.SessionStateIndeterminate:
+		return 2
+	case session.SessionStateQuiet:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// classifyGoalManagerSessionID classifies the manager session id a goal page
+// records. An empty id is none. A malformed (non-UUID) id cannot be proven
+// dead, so it is indeterminate rather than probed: the card suppresses Resume
+// instead of offering it.
+func classifyGoalManagerSessionID(
+	ctx context.Context,
+	sessionID string,
+	params session.ClassifyParams,
+) session.SessionState {
+	if sessionID == "" {
+		return session.SessionStateNone
+	}
+	if err := uuid.Validate(sessionID); err != nil {
+		return session.SessionStateIndeterminate
+	}
+	params.SessionID = sessionID
+	return session.ClassifySessionState(ctx, params)
 }
 
 // goalsFolderName returns the first discovered *Goals folder name, or the

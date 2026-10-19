@@ -864,9 +864,18 @@ var _ = Describe("Mutation service edge branches", func() {
 		})
 
 		It("approves a todo task before failing on the unavailable starter", func() {
+			// An explicit missing launcher makes WorkOn fail in sessionPair
+			// before its own status write, so the approval's status: next is
+			// still on disk when RunTask returns.
+			writeFile(filepath.Join(h.dir, "24 Tasks", taskOneID+".md"),
+				"---\nstatus: todo\nphase: todo\nlauncher: missing-launcher\n---\n\n# Task One\n")
 			_, err := h.service.RunTask(ctx, "personal", taskOneID)
 			Expect(httpStatus(err)).To(Equal(500))
-			Expect(h.readTask(taskOneID)).To(ContainSubstring("phase: planning"))
+			content := h.readTask(taskOneID)
+			Expect(content).To(ContainSubstring("phase: planning"))
+			Expect(content).To(ContainSubstring("status: next"))
+			Expect(content).To(ContainSubstring("approved_by: operator"))
+			Expect(content).To(ContainSubstring("approved_at:"))
 		})
 	})
 
