@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.97.3
 
 - fix: Classify a goal card against both session ids its page records, so a goal armed by a live manager session no longer offers Resume — `goalResponse` now classifies `claude_session_id` and `manager_session_id` independently and combines the outcomes strongest-first (`live` > `indeterminate` > `quiet` > `none`); a malformed manager id reads `indeterminate` rather than being probed, and `location` comes from the first live id in the fixed order own-then-manager with no fall-through when that id has no store location. The four-outcome contract, task-card classification and the goal's starting marker and activity date are unchanged.
 
