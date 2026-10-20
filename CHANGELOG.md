@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.98.0
 
 - feat: Group goals and topics by phase, exactly as tasks are — `GoalResponse` and `TopicResponse` now carry `phase` (read from the page's own frontmatter, null when it carries none), and the board no longer groups by status at all: `currentGroupBy` is gone, `setView()` and `parseURLParams()` no longer derive a grouping, and `renderGoals()` / `renderTopics()` bucket on `displayPhase(...)` like `renderTasks()`. A goal or topic with no phase lands in the "—" column instead of being guessed into a workflow stage, so the 21-of-313 phased goals and 2-of-18 phased topics in private-personal sit in their own columns while the rest stay visibly unphased. The superseded Python backend's response models carry the same field, so its integration harness renders the same board. Goal cards are no longer draggable: their column is now a phase the board does not write (`vault-cli goal approve` owns todo → planning), and status changes stay on the card menu.
 
