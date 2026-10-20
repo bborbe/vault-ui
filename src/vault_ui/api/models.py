@@ -136,6 +136,7 @@ class GoalResponse(BaseModel):
     id: str
     title: str
     status: str | None
+    phase: str | None = None  # From frontmatter: the goal's phase, the board's column
     priority: int | str | None
     obsidian_url: str
     defer_date: str | None
@@ -169,6 +170,7 @@ class TopicResponse(BaseModel):
     id: str
     title: str
     status: str
+    phase: str | None = None  # From the topic's own frontmatter; absent on most
     vault: str  # Vault name this topic belongs to
     obsidian_url: str
 

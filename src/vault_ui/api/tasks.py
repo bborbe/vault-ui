@@ -979,6 +979,7 @@ def _goal_to_response(
         id=goal.id,
         title=goal.title,
         status=goal.status,
+        phase=goal.phase,
         priority=goal.priority,
         obsidian_url=obsidian_url,
         defer_date=goal.defer_date,
@@ -1253,6 +1254,7 @@ def _topic_to_response(topic: Topic, vault_config: VaultConfig) -> TopicResponse
         id=topic.id,
         title=topic.title,
         status=topic.status,
+        phase=topic.phase,
         vault=vault_config.name,
         obsidian_url=_topic_url(vault_config, topic.id),
     )
