@@ -173,9 +173,10 @@ def test_handle_drop_sends_answers_only_when_present() -> None:
 
 
 def test_handle_drop_other_transitions_stay_promptless() -> None:
-    """No transition other than todo -> planning opens the approve modal."""
+    """No transition other than todo -> planning opens the approve modal.
+
+    Only task cards are draggable, so the drop path holds exactly one approve
+    call site; goal and topic cards carry no drop path to prompt from."""
     body = _function_body(APP_JS, "handleDrop")
     assert body.count("askApprove(") == 1
-    # The goal path never prompts.
-    goal_branch = body[body.index("if (goal) {") :]
-    assert "askApprove(" not in goal_branch
+    assert "if (goal) {" not in body

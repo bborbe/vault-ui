@@ -54,6 +54,7 @@ class Goal:
     claude_session_id: str | None  # From frontmatter: Claude Code session UUID or display name
     assignee: str | None  # From frontmatter: Person assigned to the goal
     status: str | None = None  # From frontmatter: goal status (same enum as task status)
+    phase: str | None = None  # From frontmatter: goal phase (same enum as task phase)
     priority: int | str | None = None  # From frontmatter: 1-3 or "low"/"medium"/"high"/"highest"
     defer_date: str | None = None  # From frontmatter: YYYY-MM-DD
     target_date: str | None = None  # From frontmatter: YYYY-MM-DD
@@ -71,6 +72,7 @@ class Topic:
     title: str  # vault-cli emits no title for topics; falls back to the name
     status: str  # From the topic's own frontmatter
     vault: str  # Vault name this topic belongs to
+    phase: str | None = None  # From the topic's own frontmatter; absent on most
 
 
 @dataclass
@@ -134,6 +136,7 @@ class GoalResponse(BaseModel):
     id: str
     title: str
     status: str | None
+    phase: str | None = None  # From frontmatter: the goal's phase, the board's column
     priority: int | str | None
     obsidian_url: str
     defer_date: str | None
@@ -167,6 +170,7 @@ class TopicResponse(BaseModel):
     id: str
     title: str
     status: str
+    phase: str | None = None  # From the topic's own frontmatter; absent on most
     vault: str  # Vault name this topic belongs to
     obsidian_url: str
 

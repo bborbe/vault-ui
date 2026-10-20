@@ -36,12 +36,19 @@ pytestmark = pytest.mark.integration
 # reaching a `completed` topic at all is what proves it asks vault-cli for
 # `--all` rather than the bare `topic list` (which filters to in_progress).
 TOPICS = [
-    Topic(id="Manager Layer", title="Manager Layer", status="in_progress", vault="TestVault"),
+    Topic(
+        id="Manager Layer",
+        title="Manager Layer",
+        status="in_progress",
+        vault="TestVault",
+        phase="execution",
+    ),
     Topic(
         id="Notification System",
         title="Notification System",
         status="completed",
         vault="TestVault",
+        phase="done",
     ),
 ]
 
@@ -210,21 +217,24 @@ def test_topics_toggle_exists_and_activates(live_server, page):
     )
 
 
-def test_topics_render_each_own_status(live_server, page):
-    """SC1: each topic renders the status from its own frontmatter.
+def test_topics_render_each_own_status_and_phase_column(live_server, page):
+    """SC1: each topic renders the status from its own frontmatter, in the
+    column its own phase names.
 
-    Both values are asserted because either one alone is satisfiable by a
+    Both status values are asserted because either one alone is satisfiable by a
     constant: `in_progress` is what a placeholder would print, and a `completed`
     topic can only appear at all if the endpoint asked vault-cli for `--all`.
+    Both phases are asserted for the same reason — a board that ignored `phase`
+    would drop both cards into the "—" column and still render.
     """
     page.goto(f"{live_server}/?view=topics&vault=TestVault")
     expect(page.locator(".topic-card")).to_have_count(2)
 
     cards = {c["id"]: c for c in _topic_cards(page)}
     assert cards["Manager Layer"]["status"] == "in_progress"
-    assert cards["Manager Layer"]["column"] == "cards-in_progress"
+    assert cards["Manager Layer"]["column"] == "cards-execution"
     assert cards["Notification System"]["status"] == "completed"
-    assert cards["Notification System"]["column"] == "cards-completed"
+    assert cards["Notification System"]["column"] == "cards-done"
 
 
 def test_opening_a_topic_lists_its_goals_and_tasks(live_server, page):
@@ -301,5 +311,5 @@ def test_topic_title_opens_obsidian_and_the_button_opens_the_detail(live_server,
 def test_vault_without_topics_folder_renders_empty(live_server_no_topics, page):
     """SC3: no topics folder renders an empty view, not an error."""
     page.goto(f"{live_server_no_topics}/?view=topics&vault=TestVault")
-    expect(page.locator(".kanban-column[data-status]").first).to_be_visible()
+    expect(page.locator(".kanban-column[data-phase]").first).to_be_visible()
     expect(page.locator(".topic-card")).to_have_count(0)

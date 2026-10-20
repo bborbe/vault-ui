@@ -89,12 +89,16 @@ def test_goal_menu_routes() -> None:
     assert "patchStatus('goal'" in fn_body
 
 
-def test_hold_status_column_is_filter_conditional() -> None:
-    """Hold/Aborted status columns render only when that status is in the active filter."""
-    assert "id: 'hold', label: 'Hold'" in APP_JS
-    assert "currentStatuses.includes('hold')" in APP_JS
-    assert "id: 'aborted', label: 'Aborted'" in APP_JS
-    assert "currentStatuses.includes('aborted')" in APP_JS
+def test_no_status_columns_are_built() -> None:
+    """Every view groups by phase, so no status column is ever constructed.
+
+    The status *filter* still narrows the fetched rows; only the status *columns*
+    are gone. A regression that rebuilt them would show up as a `data-status`
+    column being created in renderColumnHeaders."""
+    assert "STATUS_COLUMNS" not in APP_JS
+    assert "div.dataset.status" not in APP_JS
+    # The stale-status cleanup stays: a legacy DOM must not keep dead columns.
+    assert "querySelectorAll('[data-status]')" in APP_JS
 
 
 def test_priority_chip_replaces_goal_meta_line() -> None:

@@ -19,7 +19,6 @@ let goalsCache = {}; // Map of goal ID -> goal data (mirrors tasksCache)
 let topicsCache = {};
 let currentView = 'tasks'; // 'tasks' | 'goals' | 'topics' — synced to ?view= URL param, default 'tasks'
 let currentSort = 'default'; // 'default' | 'priority' | 'modified' — column sort key, synced to ?sort= URL param
-let currentGroupBy = 'phase'; // 'phase' | 'status' — derived from currentView (tasks→phase, goals→status); not user-selectable
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
 let startingGoals = new Set(); // Track goals currently being started (mirrors startingTasks)
@@ -79,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (h2) h2.textContent = 'Execution';
     }
     parseURLParams();
-    renderColumnHeaders();  // builds the column DOM based on currentGroupBy + currentView
+    renderColumnHeaders();  // builds the column DOM for currentView (always phase columns)
     loadVaults();
     setupEventListeners();
     connectWebSocket();
@@ -161,11 +160,11 @@ function parseURLParams() {
         currentSort = 'default';
     }
 
-    // Grouping is derived from view: tasks→phase, goals→status.
-    // The groupBy UI selector + URL param were removed (the cross-axis combinations
-    // weren't useful: tasks-by-status duplicates the status filter dropdown; goals-by-phase
-    // is meaningless since goals have no phase).
-    currentGroupBy = currentView === 'tasks' ? 'phase' : 'status';
+    // Every view groups by phase. Goals and topics carry a `phase:` of their own,
+    // so all three views read the same six columns and the same discriminator.
+    // There is no groupBy state to set: the selector and its URL param were
+    // removed long ago (the cross-axis combinations weren't useful) and are not
+    // coming back.
 }
 
 function setupEventListeners() {
@@ -903,11 +902,10 @@ async function handleDrop(e) {
     const itemId = e.dataTransfer.getData('text/plain');
     const targetKey = e.currentTarget.id.replace('cards-', '');
 
-    // Detect goal vs task by cache lookup. Tasks-view drops resolve via
-    // tasksCache (column id is the phase); Goals-view drops resolve via
-    // goalsCache (column id is the status).
+    // Only task cards are draggable: a task's column is its phase, and the drop
+    // writes that phase. Goal and topic cards are not draggable (see
+    // createGoalCard) — their column is a phase the board does not write.
     const task = tasksCache[itemId];
-    const goal = goalsCache[itemId];
 
     if (task) {
         // Dropping into the Done column is a completed-targeting close-out —
@@ -940,26 +938,6 @@ async function handleDrop(e) {
             applyOptimisticWrite('task', task.vault, itemId, { phase: (await response.json()).phase }, true);
         } catch (error) {
             console.error('Failed to update task phase:', error);
-            showToast(error.message, true);
-        }
-        return;
-    }
-
-    if (goal) {
-        // Dropping into the Completed column is a completed-targeting close-out —
-        // reason-free (abort-only contract); the PATCH body carries no
-        // close-out fields.
-        try {
-            const body = { status: targetKey };
-            const response = await fetch(`/api/goals/${encodeURIComponent(itemId)}/status?vault=${encodeURIComponent(goal.vault)}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            if (!response.ok) throw new Error(await parseErrorResponse(response));
-            applyOptimisticWrite('goal', goal.vault, itemId, { status: (await response.json()).new_status }, true);
-        } catch (error) {
-            console.error('Failed to update goal status:', error);
             showToast(error.message, true);
         }
         return;
@@ -1030,6 +1008,19 @@ async function loadTasks() {
     }
 }
 
+// The phase columns a card can be placed in, in board order. `in_progress` is
+// the legacy alias for `execution` and renders in that column.
+const BOARD_PHASES = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'];
+
+// displayPhase resolves a card's `phase:` to a column id. An absent or
+// unrecognized value has no column of its own and takes the caller's fallback —
+// `todo` for tasks, `unknown` for goals and topics, which may legitimately carry
+// no phase at all.
+function displayPhase(phase, fallback) {
+    const resolved = phase === 'in_progress' ? 'execution' : phase;
+    return resolved && BOARD_PHASES.includes(resolved) ? resolved : fallback;
+}
+
 // Render the board from the tasks cache, ordered by the active sort key.
 // Split out of loadTasks so a sort change can re-render without refetching.
 function renderTasks() {
@@ -1063,22 +1054,10 @@ function renderTasks() {
 
     // Populate cards: active first, then upcoming, then hold at the bottom;
     // recently-completed always at bottom of done.
-    const validPhases = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'];
     [...activeTasks, ...upcomingTasks, ...holdTasks].forEach(task => {
-        let containerId;
-        if (currentGroupBy === 'status') {
-            // Status-mode for tasks: status is the column discriminator.
-            // Tasks without a matching status land in the first column
-            // (in_progress) as a fallback — tasks should always have a
-            // status, but defensiveness costs nothing here.
-            const taskStatus = task.status || 'in_progress';
-            containerId = `cards-${taskStatus}`;
-        } else {
-            // phase-mode: existing behavior — in_progress → execution alias.
-            const displayPhase = task.phase === 'in_progress' ? 'execution' : task.phase;
-            const phase = displayPhase && validPhases.includes(displayPhase) ? displayPhase : 'todo';
-            containerId = `cards-${phase}`;
-        }
+        // Phase is the column discriminator. A task with no usable phase falls
+        // back to Todo — every task has a stage, and Todo is the honest one.
+        const containerId = `cards-${displayPhase(task.phase, 'todo')}`;
         const container = document.getElementById(containerId);
         if (container) {
             const card = createTaskCard(task);
@@ -1137,10 +1116,9 @@ async function loadGoals() {
 function renderGoals() {
     const goals = Object.values(goalsCache);
 
-    // Clear all cards containers that match the active grouping's columns.
-    const containerIds = currentGroupBy === 'status'
-        ? ['in_progress', 'next', 'backlog', 'completed', 'hold', 'aborted']
-        : ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'];
+    // Clear every phase container, including the "—" one goals without a phase
+    // land in.
+    const containerIds = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'];
     containerIds.forEach(id => {
         const container = document.getElementById(`cards-${id}`);
         if (container) container.innerHTML = '';
@@ -1161,18 +1139,10 @@ function renderGoals() {
     const activeGoals = goals.filter(g => g.status !== 'hold' && !g.upcoming);
 
     [...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal => {
-        let containerId;
-        if (currentGroupBy === 'status') {
-            // Status-mode for goals: status is the column discriminator
-            // (same as tasks in status-mode). Goals should always have
-            // a status; missing status → 'in_progress' as fallback.
-            const goalStatus = goal.status || 'in_progress';
-            containerId = `cards-${goalStatus}`;
-        } else {
-            // phase-mode for goals: goals don't have a phase field,
-            // so they all land in the "—" column.
-            containerId = 'cards-unknown';
-        }
+        // Phase is the column discriminator, exactly as for tasks. A goal with
+        // no phase has no stage to be placed in, so it lands in "—" rather than
+        // being guessed into Todo the way an unphased task is.
+        const containerId = `cards-${displayPhase(goal.phase, 'unknown')}`;
         const container = document.getElementById(containerId);
         if (container) {
             const card = createGoalCard(goal);
@@ -1182,8 +1152,8 @@ function renderGoals() {
 }
 
 // Topics are the containers every manager loop is scoped to. They carry a
-// `status:` of their own, in the same enum tasks and goals use, so the board
-// groups them into status columns exactly as the Goals view does.
+// `status:` of their own and, like goals, a `phase:` — so the board groups them
+// into phase columns exactly as the Tasks and Goals views do.
 async function loadTopics() {
     try {
         const params = new URLSearchParams();
@@ -1217,14 +1187,14 @@ async function loadTopics() {
     }
 }
 
-// Render the topics board from the topics cache. Topics have no phase, so they
-// always land in status columns; the status filter is applied here because the
-// endpoint returns the full set by design (see loadTopics).
+// Render the topics board from the topics cache, grouped by phase exactly as
+// tasks and goals are. The status filter is applied here because the endpoint
+// returns the full set by design (see loadTopics).
 function renderTopics() {
     const topics = Object.values(topicsCache)
         .filter(t => currentStatuses.includes(t.status || 'in_progress'));
 
-    ['in_progress', 'next', 'backlog', 'completed', 'hold', 'aborted'].forEach(id => {
+    ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'].forEach(id => {
         const container = document.getElementById(`cards-${id}`);
         if (container) container.innerHTML = '';
     });
@@ -1232,7 +1202,9 @@ function renderTopics() {
     topics.sort((a, b) => (a.title || a.id).localeCompare(b.title || b.id));
 
     topics.forEach(topic => {
-        const container = document.getElementById(`cards-${topic.status || 'in_progress'}`);
+        // A topic without a phase has no stage to be placed in, so it lands in
+        // "—" rather than being guessed into a workflow column.
+        const container = document.getElementById(`cards-${displayPhase(topic.phase, 'unknown')}`);
         if (container) container.appendChild(createTopicCard(topic));
     });
 }
@@ -1804,21 +1776,13 @@ function createGoalCard(goal) {
     card.className = 'task-card goal-card';
     card.dataset.goalId = goal.id;
     card.dataset.kind = 'goal';
-    card.draggable = true;
+    // Not draggable. A goal's column is its phase, and the board does not write
+    // goal phases — `vault-cli goal approve` owns the todo → planning
+    // transition, so a drop would have to bypass that approval. Status changes
+    // stay on the card menu.
+    card.draggable = false;
     if (goal.status === 'hold') card.classList.add('on-hold');
     if (goal.upcoming) card.classList.add('upcoming');
-
-    // Drag handlers — mirror createTaskCard, set dataTransfer to the goal id
-    // so handleDrop can detect goal-vs-task via cache lookup (goalsCache hit
-    // → goal status update; tasksCache hit → task phase update).
-    card.addEventListener('dragstart', (e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', goal.id);
-        card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', () => {
-        card.classList.remove('dragging');
-    });
 
     const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
 
@@ -3032,8 +2996,7 @@ function removeGoalCard(goalId) {
 function setView(newView) {
     if (newView !== 'tasks' && newView !== 'goals' && newView !== 'topics') return;
     currentView = newView;
-    // Grouping follows the view: tasks→phase, goals/topics→status. No user override.
-    currentGroupBy = newView === 'tasks' ? 'phase' : 'status';
+    // Every view groups by phase — tasks, goals and topics alike. No user override.
     // Reset the status filter to the kind-aware default when toggling views so
     // that switching from Tasks (in_progress + completed) to Goals/Topics doesn't
     // leave BACKLOG / NEXT columns empty (and vice versa). The operator can still
@@ -3053,85 +3016,52 @@ function renderColumnHeaders() {
     const board = document.querySelector('.kanban-board');
     if (!board) return;
 
-    if (currentGroupBy === 'status') {
-        // Show status columns, hide phase columns.
-        board.classList.add('status-mode');
-        // Remove any pre-existing status columns (idempotent).
-        board.querySelectorAll('[data-status]').forEach(el => el.remove());
-        // Insert status columns at the start of the board (in canonical enum order).
-        // Visible status columns (left → right, time-progression).
-        // Hold + aborted are hidden by DEFAULT (rare edge states), but must get a
-        // column when the operator explicitly filters them in — otherwise a held /
-        // aborted goal is fetched but has no column to render into and silently
-        // vanishes (its card, and thus its Resume action, becomes unreachable).
-        const STATUS_COLUMNS = [
-            { id: 'backlog', label: 'Backlog' },
-            { id: 'next', label: 'Next' },
-            { id: 'in_progress', label: 'In Progress' },
-            { id: 'completed', label: 'Completed' },
-        ];
-        if (currentStatuses.includes('hold')) {
-            STATUS_COLUMNS.push({ id: 'hold', label: 'Hold' });
+    // Every view groups by phase, so the phase columns are the only ones there
+    // are: the static ones from index.html, plus the "—" column for items that
+    // carry no phase at all. No status columns are ever built.
+    board.classList.remove('status-mode');
+    board.querySelectorAll('[data-status]').forEach(el => el.remove());
+
+    // Restore phase column headers from data-phase attribute (in case they were
+    // mutated). The header text comes from a fixed map.
+    const PHASE_HEADERS = {
+        'todo': 'Todo',
+        'planning': 'Planning',
+        'in_progress': 'Execution',
+        'execution': 'Execution',
+        'ai_review': 'AI Review',
+        'human_review': 'Human Review',
+        'done': 'Done',
+    };
+    board.querySelectorAll('.kanban-column[data-phase]').forEach(col => {
+        const phase = col.dataset.phase;
+        const h2 = col.querySelector('h2');
+        if (h2 && PHASE_HEADERS[phase]) {
+            h2.textContent = PHASE_HEADERS[phase];
+            h2.dataset.columnHeader = phase;
         }
-        if (currentStatuses.includes('aborted')) {
-            STATUS_COLUMNS.push({ id: 'aborted', label: 'Aborted' });
-        }
-        STATUS_COLUMNS.forEach(col => {
+    });
+
+    // Goals and topics carry a phase of their own, but most existing pages do
+    // not — 22 of 313 goals and 2 of 18 topics in private-personal today. Those
+    // land in the "—" column rather than being guessed into a workflow stage.
+    // The Tasks view never gets it: every task has a phase, and an unphased one
+    // falls back to Todo.
+    const unknownCol = board.querySelector('.kanban-column[data-phase="unknown"]');
+    if (currentView === 'goals' || currentView === 'topics') {
+        if (!unknownCol) {
             const div = document.createElement('div');
             div.className = 'kanban-column';
-            div.dataset.status = col.id;
-            div.innerHTML = `<h2 data-column-header="${col.id}">${col.label}</h2><div class="cards" id="cards-${col.id}"></div>`;
+            div.dataset.phase = 'unknown';
+            div.innerHTML = '<h2 data-column-header="unknown">—</h2><div class="cards" id="cards-unknown"></div>';
             board.appendChild(div);
-        });
-        // Add the "—" (unknown) column ONLY for goals view under status mode
-        // — no, actually under status mode EVERY goal has a status, so no
-        // "—" column. Reserved for the phase-on-goals fallback below.
-    } else {
-        // phase mode: hide status columns, show phase columns
-        board.classList.remove('status-mode');
-        board.querySelectorAll('[data-status]').forEach(el => el.remove());
-        // Restore phase column headers from data-phase attribute (in case
-        // they were mutated). The header text comes from a fixed map.
-        const PHASE_HEADERS = {
-            'todo': 'Todo',
-            'planning': 'Planning',
-            'in_progress': 'Execution',
-            'execution': 'Execution',
-            'ai_review': 'AI Review',
-            'human_review': 'Human Review',
-            'done': 'Done',
-        };
-        board.querySelectorAll('.kanban-column[data-phase]').forEach(col => {
-            const phase = col.dataset.phase;
-            const h2 = col.querySelector('h2');
-            if (h2 && PHASE_HEADERS[phase]) {
-                h2.textContent = PHASE_HEADERS[phase];
-                h2.dataset.columnHeader = phase;
-            }
-        });
-
-        // For goals view under phase mode, add the "—" column (only if
-        // any goal might lack a phase). The column exists permanently
-        // under ?view=goals&groupBy=phase; the column is removed under
-        // other combinations.
-        const unknownCol = board.querySelector('.kanban-column[data-phase="unknown"]');
-        if (currentView === 'goals') {
-            if (!unknownCol) {
-                const div = document.createElement('div');
-                div.className = 'kanban-column';
-                div.dataset.phase = 'unknown';
-                div.innerHTML = '<h2 data-column-header="unknown">—</h2><div class="cards" id="cards-unknown"></div>';
-                board.appendChild(div);
-            }
-        } else {
-            // Tasks view: never show the "—" column
-            if (unknownCol) unknownCol.remove();
         }
+    } else if (unknownCol) {
+        unknownCol.remove();
     }
-    // Status columns are destroyed and recreated on every call (status mode);
-    // re-wire drop handlers so goal drag-and-drop survives a view switch.
-    // Idempotent for the surviving static phase columns (addEventListener
-    // de-dups identical named-handler triples).
+    // Column layouts are rebuilt on every call; re-wire drop handlers so task
+    // drag-and-drop survives a view switch. Idempotent for the surviving static
+    // phase columns (addEventListener de-dups identical named-handler triples).
     setupDragAndDrop();
 }
 

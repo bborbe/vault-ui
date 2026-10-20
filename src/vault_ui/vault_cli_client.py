@@ -459,6 +459,7 @@ class VaultCLIClient:
             title=str(data.get("title", topic_id)),
             status=str(data.get("status", "unknown")),
             vault=str(data.get("vault") or self._vault_name),
+            phase=data.get("phase") or None,
         )
 
     def _parse_topic_detail(self, data: dict[str, Any]) -> TopicDetail:
@@ -517,6 +518,7 @@ class VaultCLIClient:
             claude_session_id=data.get("claude_session_id") or None,
             assignee=data.get("assignee") or None,
             status=data.get("status"),
+            phase=data.get("phase") or None,
             priority=priority,
             defer_date=data.get("defer_date"),
             target_date=data.get("target_date"),
