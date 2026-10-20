@@ -74,9 +74,14 @@ type TaskResponse struct {
 
 // GoalResponse is the wire shape of a goal card.
 type GoalResponse struct {
-	ID                   string   `json:"id"`
-	Title                string   `json:"title"`
-	Status               *string  `json:"status"`
+	ID     string  `json:"id"`
+	Title  string  `json:"title"`
+	Status *string `json:"status"`
+	// Phase is the goal's own `phase:` frontmatter value, on the same terms as
+	// TaskResponse.Phase: the key is always emitted and is null when the goal
+	// carries none. The board groups goals into phase columns, exactly as it
+	// groups tasks, so a goal without a phase lands in the "—" column.
+	Phase                *string  `json:"phase"`
 	Priority             any      `json:"priority"`
 	ObsidianURL          string   `json:"obsidian_url"`
 	DeferDate            *string  `json:"defer_date"`
@@ -99,11 +104,15 @@ type GoalResponse struct {
 
 // TopicResponse is the wire shape of a topic list entry.
 type TopicResponse struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	Vault       string `json:"vault"`
-	ObsidianURL string `json:"obsidian_url"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	// Phase is the topic's own `phase:` frontmatter value, on the same terms as
+	// GoalResponse.Phase: always emitted, null when the topic carries none, and
+	// the board's column discriminator for the Topics view.
+	Phase       *string `json:"phase"`
+	Vault       string  `json:"vault"`
+	ObsidianURL string  `json:"obsidian_url"`
 }
 
 // TopicDetailResponse is the wire shape of a single topic and the work it

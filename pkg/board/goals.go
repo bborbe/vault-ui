@@ -163,6 +163,7 @@ func (b *board) goalResponse(
 		ID:                   item.Name,
 		Title:                item.Name,
 		Status:               &item.Status,
+		Phase:                strPtr(item.Phase),
 		Priority:             priorityValue(item.Priority),
 		ObsidianURL:          obsidianURL(vault.VaultName, goalsFolder+"/"+item.Name+".md"),
 		DeferDate:            strPtr(item.DeferDate),

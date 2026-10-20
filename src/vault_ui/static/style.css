@@ -1303,22 +1303,7 @@ h1 {
     outline-offset: -2px;
 }
 
-/* Status-mode: hide phase columns, show status columns */
-.kanban-board.status-mode [data-phase] {
-    display: none;
-}
-
-.kanban-board.status-mode [data-status] {
-    display: flex; /* override the kanban-board default */
-}
-
-/* Status columns are added dynamically; default style matches phase columns */
-.kanban-board [data-status] .cards {
-    min-height: 100px;
-    padding: 0.5rem;
-}
-
-/* "—" column for goals-without-phase under groupBy=phase on Goals view */
+/* "—" column for goals and topics that carry no phase */
 .kanban-column[data-phase="unknown"] h2 {
     color: #9ca3af;
     font-style: italic;

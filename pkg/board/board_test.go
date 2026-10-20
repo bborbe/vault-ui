@@ -799,7 +799,7 @@ var _ = Describe("ListGoals", func() {
 	It("filters by status and assignee", func() {
 		h := newHarness()
 		h.list.items["23 Goals"] = []ops.TaskListItem{
-			{Name: "GoalOne", Status: "in_progress", Assignee: "alice"},
+			{Name: "GoalOne", Status: "in_progress", Assignee: "alice", Phase: "planning"},
 			{Name: "GoalTwo", Status: "completed"},
 		}
 		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{
@@ -809,9 +809,24 @@ var _ = Describe("ListGoals", func() {
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].ID).To(Equal("GoalOne"))
 		Expect(responses[0].TargetDate).To(BeNil())
+		// The goal's phase is served so the board can group goals into phase
+		// columns exactly as it groups tasks.
+		Expect(responses[0].Phase).NotTo(BeNil())
+		Expect(*responses[0].Phase).To(Equal("planning"))
 		Expect(responses[0].ObsidianURL).To(Equal(
 			"obsidian://open?vault=Personal&file=23%20Goals/GoalOne.md",
 		))
+	})
+
+	// A goal with no phase carries a null phase, not an invented one: the board
+	// renders it in the "—" column rather than guessing a workflow stage.
+	It("serves a null phase for a goal that carries none", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{{Name: "GoalOne", Status: "in_progress"}}
+		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Phase).To(BeNil())
 	})
 
 	// An unrecognised goal status reaches the renderer as an empty string.
@@ -1044,13 +1059,19 @@ var _ = Describe("goal session-id combination", func() {
 var _ = Describe("ListTopics", func() {
 	It("lists topics from the configured folder", func() {
 		h := newHarness()
-		h.list.items["23 Topics"] = []ops.TaskListItem{{Name: "TopicOne", Status: "in_progress"}}
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "TopicOne", Status: "in_progress", Phase: "execution"},
+		}
 		responses, err := h.board.ListTopics(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].ObsidianURL).To(Equal(
 			"obsidian://open?vault=Personal&file=23%20Topics/TopicOne.md",
 		))
+		// The topic's phase is served for the same reason the goal's is: the
+		// Topics view groups by phase, exactly as the Tasks view does.
+		Expect(responses[0].Phase).NotTo(BeNil())
+		Expect(*responses[0].Phase).To(Equal("execution"))
 	})
 
 	It("contributes nothing for a vault without a topics folder", func() {

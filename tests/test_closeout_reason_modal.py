@@ -211,9 +211,13 @@ def test_handle_drop_task_done_reason_free() -> None:
     assert "body.reason" not in body
 
 
-def test_handle_drop_goal_completed_reason_free() -> None:
-    """Goal drops into the 'completed' column are reason-free — no prompt, no close-out fields."""
+def test_handle_drop_has_no_goal_status_write() -> None:
+    """Goal cards are not draggable, so no drop can write a goal status.
+
+    Their column is their phase, and the board does not write goal phases
+    (`vault-cli goal approve` owns todo → planning). Status changes stay on the
+    card menu, which is where the abort close-out gate already lives."""
     body = _function_body(APP_JS, "handleDrop")
     assert "askCloseOut('goal', 'complete')" not in body
-    assert "const body = { status: targetKey };" in body
-    assert "body.reason" not in body
+    assert "const body = { status: targetKey };" not in body
+    assert "/api/goals/" not in body

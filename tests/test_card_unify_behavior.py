@@ -73,14 +73,19 @@ def test_clear_session_single_delete_from_kind() -> None:
     assert "startsWith('-')" in body  # arg-injection guard on merged clear path
 
 
-def test_handle_drop_cache_routing_preserved() -> None:
-    """handleDrop still resolves goal-vs-task by cache lookup: tasksCache hit → phase
-    PATCH, goalsCache hit → status PATCH."""
-    body = _slice("async function handleDrop", 2400)
+def test_handle_drop_routes_tasks_only() -> None:
+    """handleDrop resolves a dropped card from tasksCache only: a task's column is
+    its phase and the drop PATCHes that phase.
+
+    Goal and topic cards are no longer draggable — since every view is grouped by
+    phase, their column is a phase the board does not write (`vault-cli goal
+    approve` owns todo → planning) — so there is no goal status PATCH on the drop
+    path at all."""
+    body = _slice("async function handleDrop", 2100)
     assert "tasksCache[itemId]" in body
-    assert "goalsCache[itemId]" in body
+    assert "goalsCache[itemId]" not in body
     assert "/phase?vault=" in body
-    assert "/status?vault=" in body
+    assert "/status?vault=" not in body
 
 
 def test_card_onclicks_point_at_merged_functions() -> None:
