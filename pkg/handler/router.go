@@ -57,7 +57,11 @@ func CreateHTTPRouter(
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/phase").
 		Handler(NewTaskPhaseHandler(m))
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/flag").
-		Handler(NewTaskFlagHandler(m))
+		Handler(NewFlagHandler(m, "task"))
+	router.Methods(http.MethodPatch).Path("/api/goals/{goal_id}/flag").
+		Handler(NewFlagHandler(m, "goal"))
+	router.Methods(http.MethodPatch).Path("/api/topics/{topic_id}/flag").
+		Handler(NewFlagHandler(m, "topic"))
 	router.Methods(http.MethodPatch).Path("/api/goals/{goal_id}/status").
 		Handler(NewGoalStatusHandler(m))
 	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/execute-command").

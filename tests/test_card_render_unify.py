@@ -14,6 +14,20 @@ def _slice(marker: str, length: int) -> str:
     return APP_JS[start : start + length]
 
 
+def _function_body(name: str) -> str:
+    """The whole body of a top-level function, up to the next top-level function.
+
+    A fixed character window silently under-covers a builder longer than the
+    window, so a guard like "the flag markup is not inlined here" would only
+    inspect the head of the function and pass regardless.
+    """
+    marker = f"function {name}("
+    start = APP_JS.find(marker)
+    assert start != -1, f"function not found: {name}"
+    end = APP_JS.find("\nfunction ", start + len(marker))
+    return APP_JS[start:] if end == -1 else APP_JS[start:end]
+
+
 def test_session_button_helper_shared() -> None:
     """One session-button helper gates all three labels off session id + durable flag,
     and both card renderers call it instead of inlining the three-way gate."""
@@ -54,11 +68,22 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
     assert 'href="${goal.obsidian_url}"' in body  # title link preserved inline
 
 
-def test_flag_control_present_on_task_cards() -> None:
-    """Task cards carry a flag toggle and the flagged class + toggle function."""
+def test_flag_control_present_on_all_card_kinds() -> None:
+    """Every card kind carries the flag toggle through one shared helper, so the
+    gesture does not depend on which kind the card happens to be."""
+    assert "function flagButtonHtml(kind, item)" in APP_JS
     assert "toggleFlag(" in APP_JS
     assert "classList.add('flagged')" in APP_JS
-    assert "task.flag ? '🚩' : '⚑'" in APP_JS
+    assert "🚩" in APP_JS and "⚑" in APP_JS
+    for call in (
+        "flagButtonHtml('task', task)",
+        "flagButtonHtml('goal', goal)",
+        "flagButtonHtml('topic', topic)",
+    ):
+        assert call in APP_JS, call
+    # The markup lives only in the helper: no card builder inlines it.
+    for builder in ("createTaskCard", "createGoalCard", "createTopicCard"):
+        assert 'class="flag-btn' not in _function_body(builder), builder
 
 
 def test_flag_check_leads_every_sort_mode() -> None:

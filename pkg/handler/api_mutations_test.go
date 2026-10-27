@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/gorilla/mux"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -56,8 +57,12 @@ var _ = Describe("Mutation handlers", func() {
 				http.MethodPatch, "/api/tasks/TaskOne/assign-to-me"),
 			Entry("task phase", handler.NewTaskPhaseHandler(&fakeMutations{}),
 				http.MethodPatch, "/api/tasks/TaskOne/phase"),
-			Entry("task flag", handler.NewTaskFlagHandler(&fakeMutations{}),
+			Entry("task flag", handler.NewFlagHandler(&fakeMutations{}, "task"),
 				http.MethodPatch, "/api/tasks/TaskOne/flag"),
+			Entry("goal flag", handler.NewFlagHandler(&fakeMutations{}, "goal"),
+				http.MethodPatch, "/api/goals/GoalOne/flag"),
+			Entry("topic flag", handler.NewFlagHandler(&fakeMutations{}, "topic"),
+				http.MethodPatch, "/api/topics/TopicOne/flag"),
 			Entry("task status", handler.NewTaskStatusHandler(&fakeMutations{}),
 				http.MethodPatch, "/api/tasks/TaskOne/status"),
 			Entry("goal status", handler.NewGoalStatusHandler(&fakeMutations{}),
@@ -187,16 +192,66 @@ var _ = Describe("Mutation handlers", func() {
 
 	It("writes the flag body", func() {
 		recorder := doRequest(
-			handler.NewTaskFlagHandler(&fakeMutations{
-				updateTaskFlag: func(
+			handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
 					_ context.Context, _, _ string, req api.UpdateFlagRequest,
 				) (api.FlagUpdateResponse, error) {
 					return api.FlagUpdateResponse{Status: "success", TaskID: "TaskOne", Flag: true}, nil
 				},
-			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
+			}, "task"), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
 		)
 		Expect(recorder.Code).To(Equal(http.StatusAccepted))
 		Expect(recorder.Body.String()).To(ContainSubstring(`"flag":true`))
+	})
+
+	It("reads the route's own path var and overrides a client-supplied kind", func() {
+		// The route pattern is what supplies the id, and the kind must come from
+		// the route — never from the body, which a client controls.
+		var gotKind, gotID string
+		router := mux.NewRouter()
+		router.Methods(http.MethodPatch).Path("/api/goals/{goal_id}/flag").
+			Handler(handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
+					_ context.Context, _, id string, req api.UpdateFlagRequest,
+				) (api.FlagUpdateResponse, error) {
+					gotKind, gotID = req.Kind, id
+					return api.FlagUpdateResponse{Status: "success", TaskID: id, Flag: true}, nil
+				},
+			}, "goal"))
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPatch, "/api/goals/GoalOne/flag?vault=personal",
+			strings.NewReader(`{"kind":"task","flag":true}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		Expect(gotKind).To(Equal("goal"))
+		Expect(gotID).To(Equal("GoalOne"))
+	})
+
+	It("reads topic_id on the topic flag route", func() {
+		var gotKind, gotID string
+		router := mux.NewRouter()
+		router.Methods(http.MethodPatch).Path("/api/topics/{topic_id}/flag").
+			Handler(handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
+					_ context.Context, _, id string, req api.UpdateFlagRequest,
+				) (api.FlagUpdateResponse, error) {
+					gotKind, gotID = req.Kind, id
+					return api.FlagUpdateResponse{Status: "success", TaskID: id, Flag: true}, nil
+				},
+			}, "topic"))
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPatch, "/api/topics/TopicOne/flag?vault=personal",
+			strings.NewReader(`{"flag":true}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		Expect(recorder.Code).To(Equal(http.StatusAccepted))
+		Expect(gotKind).To(Equal("topic"))
+		Expect(gotID).To(Equal("TopicOne"))
 	})
 
 	It("writes the assign-to-me body", func() {
@@ -334,26 +389,26 @@ var _ = Describe("Mutation handler success paths", func() {
 
 	It("500s an unclassified service error", func() {
 		recorder := doRequest(
-			handler.NewTaskFlagHandler(&fakeMutations{
-				updateTaskFlag: func(
+			handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
 					context.Context, string, string, api.UpdateFlagRequest,
 				) (api.FlagUpdateResponse, error) {
 					return api.FlagUpdateResponse{}, errors.New("boom")
 				},
-			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
+			}, "task"), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
 		)
 		Expect(recorder.Code).To(Equal(http.StatusInternalServerError))
 	})
 
 	It("422s a malformed body", func() {
 		recorder := doRequest(
-			handler.NewTaskFlagHandler(&fakeMutations{
-				updateTaskFlag: func(
+			handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
 					context.Context, string, string, api.UpdateFlagRequest,
 				) (api.FlagUpdateResponse, error) {
 					return api.FlagUpdateResponse{}, nil
 				},
-			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{`,
+			}, "task"), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{`,
 		)
 		Expect(recorder.Code).To(Equal(http.StatusUnprocessableEntity))
 	})

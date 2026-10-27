@@ -177,6 +177,7 @@ func (b *board) goalResponse(
 		Blocked:              len(blockers) > 0,
 		Blockers:             blockers,
 		Upcoming:             row.upcoming,
+		Flag:                 item.Flag,
 		ActivityDate: dateTimeString(activity.ComputeActivityDateWith(
 			ctx,
 			b.transcriptProbe(),

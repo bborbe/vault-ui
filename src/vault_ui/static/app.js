@@ -1179,6 +1179,10 @@ async function loadTopics() {
         topics.forEach(topic => {
             topicsCache[`${topic.vault}\u0000${topic.id}`] = topic;
         });
+        // Re-apply any flag write still in flight, exactly as the task and goal
+        // loaders do, so a refetch cannot revert a value the server has not
+        // caught up with yet.
+        overlayPendingWrites('topic', topicsCache);
 
         renderTopics();
     } catch (error) {
@@ -1221,6 +1225,7 @@ function createTopicCard(topic) {
     card.dataset.vault = topic.vault;
 
     const title = topic.title || topic.id;
+    if (topic.flag) card.classList.add('flagged');
     card.innerHTML = `
         <div class="card-header">
             <div class="card-title">
@@ -1229,6 +1234,7 @@ function createTopicCard(topic) {
         </div>
         <div class="card-footer">
             <span class="status-badge">${escapeHtml(topic.status || '')}</span>
+            ${flagButtonHtml('topic', topic)}
             <button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>
         </div>`;
 
@@ -1355,8 +1361,11 @@ function applyOptimisticWrite(kind, vault, id, fields, expectsFrame) {
     entry.outstanding += 1;
     entry.expectsFrame = entry.expectsFrame || expectsFrame;
 
-    const cache = kind === 'goal' ? goalsCache : tasksCache;
-    const item = cache[id];
+    const cache = kind === 'goal' ? goalsCache : kind === 'topic' ? topicsCache : tasksCache;
+    // The topics cache is keyed by vault + id (topics may share a name across
+    // vaults); tasks and goals are keyed by id alone.
+    const cacheKey = kind === 'topic' ? `${vault}\u0000${id}` : id;
+    const item = cache[cacheKey];
     if (item && item.vault === vault) {
         Object.assign(item, fields);
     }
@@ -1365,6 +1374,8 @@ function applyOptimisticWrite(kind, vault, id, fields, expectsFrame) {
         renderTasks();
     } else if (currentView === 'goals') {
         renderGoals();
+    } else if (currentView === 'topics') {
+        renderTopics();
     }
 }
 
@@ -1375,7 +1386,11 @@ function applyOptimisticWrite(kind, vault, id, fields, expectsFrame) {
 function overlayPendingWrites(kind, cache) {
     pendingWrites.forEach((entry, key) => {
         if (entry.kind !== kind) return;
-        const item = cache[entry.id];
+        // Same keying as applyOptimisticWrite: the topics cache is vault-keyed,
+        // tasks and goals are id-keyed. Looking a topic up by entry.id alone can
+        // never hit, which would let a refetch revert the optimistic value.
+        const cacheKey = kind === 'topic' ? `${entry.vault}\u0000${entry.id}` : entry.id;
+        const item = cache[cacheKey];
         if (!item || item.vault !== entry.vault) return;
         const caughtUp = Object.keys(entry.fields).every(f => item[f] === entry.fields[f]);
         if (caughtUp && !entry.expectsFrame) {
@@ -1415,7 +1430,7 @@ function consumePendingWriteFrame(type, kind, vault, id, data) {
         return true;
     }
     const key = pendingWriteKey(kind, vault, id);
-    if (type === 'task_updated' || type === 'goal_updated') {
+    if (type === 'task_updated' || type === 'goal_updated' || type === 'topic_updated') {
         const entry = pendingWrites.get(key);
         if (!entry) return false;
         entry.outstanding -= 1;
@@ -1653,6 +1668,16 @@ function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButton
     `;
 }
 
+// The flag control, shared by all three card kinds. kind selects the route
+// family the toggle writes to; the markup and the gesture are identical so the
+// operator's "picked for today" toggle does not depend on which kind the card
+// happens to be. Emitted unconditionally — a kind guard here would satisfy the
+// markup counts while leaving a kind without the control.
+function flagButtonHtml(kind, item) {
+    const flagged = item.flag === true;
+    return `<button class="flag-btn ${flagged ? 'flagged' : ''}" onclick="toggleFlag('${kind}', '${escapeJsAttr(item.id)}', '${escapeJsAttr(item.vault)}', ${flagged})" title="${flagged ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${flagged ? '🚩' : '⚑'}</button>`;
+}
+
 // Shared "blocked by" badge for task and goal cards. Renders nothing when the
 // item is not blocked (no markup at all, so an unblocked card's HTML is
 // unchanged); otherwise a clickable pill naming the still-open blockers and
@@ -1743,9 +1768,8 @@ function createTaskCard(task) {
         : `<a class="assign-to-me-link" onclick="assignToMe('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
 
     const startButton = sessionButtonHtml('task', task);
-    const flagButton = `<button class="flag-btn ${task.flag ? 'flagged' : ''}" onclick="toggleFlag('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}', ${task.flag})" title="${task.flag ? 'Unflag — not picked for today' : 'Flag — picked for today'}">${task.flag ? '🚩' : '⚑'}</button>`;
     const footerLeft = `
-        ${flagButton}
+        ${flagButtonHtml('task', task)}
         ${holdBadge}
         ${assigneeBadge}
         ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
@@ -1756,15 +1780,19 @@ function createTaskCard(task) {
     return card;
 }
 
-async function toggleFlag(taskId, vault, current) {
-    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/flag?vault=${encodeURIComponent(vault)}`, {
+// The route family is derived from kind — never hardcoded to /api/tasks — so
+// the same control drives a goal and a topic card. A topic route publishes its
+// own frame, so expectsFrame is true for every kind.
+async function toggleFlag(kind, itemId, vault, current) {
+    const route = kind === 'goal' ? 'goals' : kind === 'topic' ? 'topics' : 'tasks';
+    const response = await fetch(`/api/${route}/${encodeURIComponent(itemId)}/flag?vault=${encodeURIComponent(vault)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flag: !current }),
+        body: JSON.stringify({ kind: kind, flag: !current }),
     });
     if (response.ok) {
         const result = await response.json();
-        applyOptimisticWrite('task', vault, taskId, { flag: result.flag }, true);
+        applyOptimisticWrite(kind, vault, itemId, { flag: result.flag }, true);
     } else {
         const err = await response.json().catch(() => ({}));
         alert(`Failed to update flag: ${err.detail || response.status}`);
@@ -1783,6 +1811,7 @@ function createGoalCard(goal) {
     card.draggable = false;
     if (goal.status === 'hold') card.classList.add('on-hold');
     if (goal.upcoming) card.classList.add('upcoming');
+    if (goal.flag) card.classList.add('flagged');
 
     const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
 
@@ -1800,6 +1829,7 @@ function createGoalCard(goal) {
     const startButton = sessionButtonHtml('goal', goal);
     const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + escapeJsAttr(goal.id) + '\')">⋮</button>';
     const footerLeft = `
+        ${flagButtonHtml('goal', goal)}
         ${holdBadge}
         ${goal.assignee
             ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
@@ -2944,7 +2974,15 @@ function handleTaskUpdate(data) {
     // Dispatch by kind — only re-fetch the active view's data.
     // This is the spec AC#9 invariant: editing a task does NOT trigger
     // a goals re-fetch, and vice versa.
-    if (kind === 'goal') {
+    if (kind === 'topic') {
+        // Topics are re-read whole: the cache is keyed by vault + id and the
+        // board renders every phase column from it, so a single-item patch
+        // would have to reproduce that keying for no gain.
+        if (currentView === 'topics') {
+            loadTopics();
+        }
+        // else: user is on Tasks or Goals view, ignore the topic event
+    } else if (kind === 'goal') {
         if (currentView === 'goals') {
             if (type === 'deleted') {
                 removeGoalCard(id);

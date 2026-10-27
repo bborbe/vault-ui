@@ -6908,7 +6908,15 @@ def test_list_topics_returns_topic_response_key_set(test_client_with_topics: Tes
     assert response.status_code == 200
     topics = response.json()
     assert [t["id"] for t in topics] == ["Manager Layer", "Work Approval"]
-    assert set(topics[0]) == {"id", "title", "status", "phase", "vault", "obsidian_url"}
+    assert set(topics[0]) == {
+        "id",
+        "title",
+        "status",
+        "phase",
+        "vault",
+        "obsidian_url",
+        "flag",
+    }
     assert [t["status"] for t in topics] == ["in_progress", "completed"]
 
 

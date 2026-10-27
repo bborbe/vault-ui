@@ -13,18 +13,21 @@ import (
 )
 
 type EventPublisher struct {
-	PublishGoalUpdatedStub        func(context.Context, string, string)
-	publishGoalUpdatedMutex       sync.RWMutex
-	publishGoalUpdatedArgsForCall []EventPublisherPublishGoalUpdatedArgs
-	PublishTaskUpdatedStub        func(context.Context, string, string)
-	publishTaskUpdatedMutex       sync.RWMutex
-	publishTaskUpdatedArgsForCall []EventPublisherPublishTaskUpdatedArgs
-	PublishWriteFailedStub        func(context.Context, string, string, string, string)
-	publishWriteFailedMutex       sync.RWMutex
-	publishWriteFailedArgsForCall []EventPublisherPublishWriteFailedArgs
-	invocations                   map[string][][]interface{}
-	callOrder                     []string
-	invocationsMutex              sync.RWMutex
+	PublishGoalUpdatedStub         func(context.Context, string, string)
+	publishGoalUpdatedMutex        sync.RWMutex
+	publishGoalUpdatedArgsForCall  []EventPublisherPublishGoalUpdatedArgs
+	PublishTaskUpdatedStub         func(context.Context, string, string)
+	publishTaskUpdatedMutex        sync.RWMutex
+	publishTaskUpdatedArgsForCall  []EventPublisherPublishTaskUpdatedArgs
+	PublishTopicUpdatedStub        func(context.Context, string, string)
+	publishTopicUpdatedMutex       sync.RWMutex
+	publishTopicUpdatedArgsForCall []EventPublisherPublishTopicUpdatedArgs
+	PublishWriteFailedStub         func(context.Context, string, string, string, string)
+	publishWriteFailedMutex        sync.RWMutex
+	publishWriteFailedArgsForCall  []EventPublisherPublishWriteFailedArgs
+	invocations                    map[string][][]interface{}
+	callOrder                      []string
+	invocationsMutex               sync.RWMutex
 }
 
 // EventPublisherPublishGoalUpdatedArgs holds the arguments of one call to PublishGoalUpdated.
@@ -36,6 +39,13 @@ type EventPublisherPublishGoalUpdatedArgs struct {
 
 // EventPublisherPublishTaskUpdatedArgs holds the arguments of one call to PublishTaskUpdated.
 type EventPublisherPublishTaskUpdatedArgs struct {
+	Arg1 context.Context
+	Arg2 string
+	Arg3 string
+}
+
+// EventPublisherPublishTopicUpdatedArgs holds the arguments of one call to PublishTopicUpdated.
+type EventPublisherPublishTopicUpdatedArgs struct {
 	Arg1 context.Context
 	Arg2 string
 	Arg3 string
@@ -123,6 +133,44 @@ func (fake *EventPublisher) PublishTaskUpdatedArgs() []EventPublisherPublishTask
 	defer fake.publishTaskUpdatedMutex.RUnlock()
 	args := make([]EventPublisherPublishTaskUpdatedArgs, len(fake.publishTaskUpdatedArgsForCall))
 	copy(args, fake.publishTaskUpdatedArgsForCall)
+	return args
+}
+
+func (fake *EventPublisher) PublishTopicUpdated(arg1 context.Context, arg2 string, arg3 string) {
+	fake.publishTopicUpdatedMutex.Lock()
+	fake.publishTopicUpdatedArgsForCall = append(fake.publishTopicUpdatedArgsForCall, EventPublisherPublishTopicUpdatedArgs{arg1, arg2, arg3})
+	stub := fake.PublishTopicUpdatedStub
+	fake.recordInvocation("PublishTopicUpdated", []interface{}{arg1, arg2, arg3})
+	fake.publishTopicUpdatedMutex.Unlock()
+	if stub != nil {
+		stub(arg1, arg2, arg3)
+	}
+}
+
+func (fake *EventPublisher) PublishTopicUpdatedCallCount() int {
+	fake.publishTopicUpdatedMutex.RLock()
+	defer fake.publishTopicUpdatedMutex.RUnlock()
+	return len(fake.publishTopicUpdatedArgsForCall)
+}
+
+func (fake *EventPublisher) PublishTopicUpdatedCalls(stub func(context.Context, string, string)) {
+	fake.publishTopicUpdatedMutex.Lock()
+	defer fake.publishTopicUpdatedMutex.Unlock()
+	fake.PublishTopicUpdatedStub = stub
+}
+
+func (fake *EventPublisher) PublishTopicUpdatedArgsForCall(i int) (context.Context, string, string) {
+	fake.publishTopicUpdatedMutex.RLock()
+	defer fake.publishTopicUpdatedMutex.RUnlock()
+	argsForCall := fake.publishTopicUpdatedArgsForCall[i]
+	return argsForCall.Arg1, argsForCall.Arg2, argsForCall.Arg3
+}
+
+func (fake *EventPublisher) PublishTopicUpdatedArgs() []EventPublisherPublishTopicUpdatedArgs {
+	fake.publishTopicUpdatedMutex.RLock()
+	defer fake.publishTopicUpdatedMutex.RUnlock()
+	args := make([]EventPublisherPublishTopicUpdatedArgs, len(fake.publishTopicUpdatedArgsForCall))
+	copy(args, fake.publishTopicUpdatedArgsForCall)
 	return args
 }
 

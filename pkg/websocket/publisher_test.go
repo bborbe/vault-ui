@@ -41,6 +41,13 @@ var _ = Describe("MutationPublisher", func() {
 			To(Equal(websocket.GoalUpdatedFrame("personal", "GoalOne")))
 	})
 
+	It("broadcasts exactly the topic-updated frame", func() {
+		publisher.PublishTopicUpdated(ctx, "personal", "TopicOne")
+		Expect(manager.BroadcastCallCount()).To(Equal(1))
+		Expect(manager.BroadcastArgsForCall(0)).
+			To(Equal(websocket.TopicUpdatedFrame("personal", "TopicOne")))
+	})
+
 	It("broadcasts exactly the write-failed frame", func() {
 		publisher.PublishWriteFailed(ctx, "personal", "goal", "GoalOne", "permission denied")
 		Expect(manager.BroadcastCallCount()).To(Equal(1))
