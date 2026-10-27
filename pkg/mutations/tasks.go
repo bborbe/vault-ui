@@ -711,6 +711,13 @@ func (s *service) approveOwnerGuard(
 func (s *service) UpdateFlag(
 	ctx context.Context, vault, itemID string, req api.UpdateFlagRequest,
 ) (api.FlagUpdateResponse, error) {
+	kind := req.Kind
+	if kind == "" {
+		kind = "task"
+	}
+	if guard := requireSafeID(itemID, kind+"_id"); guard != nil {
+		return api.FlagUpdateResponse{}, guard
+	}
 	resolved, ok, err := s.vaultByName(ctx, vault)
 	if err != nil {
 		return api.FlagUpdateResponse{}, err
@@ -718,11 +725,7 @@ func (s *service) UpdateFlag(
 	if !ok {
 		return api.FlagUpdateResponse{}, newHTTPError(404, unknownVault(vault))
 	}
-	kind := req.Kind
-	if kind == "" {
-		kind = "task"
-	}
-	ops, ok := s.flagOps(resolved, kind)
+	target, ok := s.flagTarget(resolved, kind, itemID)
 	if !ok {
 		return api.FlagUpdateResponse{}, newHTTPError(400, "unknown kind: "+kind)
 	}
@@ -732,14 +735,14 @@ func (s *service) UpdateFlag(
 	}
 	write := func(ctx context.Context) error {
 		if flag && !selftestSkipFlagWrite() {
-			if setErr := ops.FrontmatterSet.Execute(
+			if setErr := target.ops.FrontmatterSet.Execute(
 				ctx, resolved.Path, itemID, "flag", "true", "", "",
 			); setErr != nil {
 				return newHTTPError(500, setErr.Error())
 			}
 			return nil
 		}
-		if clearErr := ops.FrontmatterClear.Execute(
+		if clearErr := target.ops.FrontmatterClear.Execute(
 			ctx, resolved.Path, itemID, "flag",
 		); clearErr != nil {
 			return newHTTPError(500, clearErr.Error())
@@ -747,7 +750,7 @@ func (s *service) UpdateFlag(
 		return nil
 	}
 	if err := s.enqueueWrite(
-		ctx, resolved, kind, itemID, write, s.itemWritten(resolved, kind, itemID),
+		ctx, resolved, kind, itemID, write, target.written,
 	); err != nil {
 		return api.FlagUpdateResponse{}, err
 	}

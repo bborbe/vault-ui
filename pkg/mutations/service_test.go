@@ -42,6 +42,7 @@ const (
 	taskThreeID = "TaskThree"
 	taskFourID  = "TaskFour"
 	goalThreeID = "GoalThree"
+	topicOneID  = "TopicOne"
 	uuidOne     = "11111111-1111-1111-1111-111111111111"
 	uuidTwo     = "22222222-2222-2222-2222-222222222222"
 )
@@ -138,6 +139,8 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Task Two\n")
 	writeFile(filepath.Join(goalsDir, goalOneID+".md"),
 		"---\nstatus: in_progress\n---\n\n# Goal One\n")
+	writeFile(filepath.Join(dir, "23 Topics", topicOneID+".md"),
+		"---\nstatus: in_progress\nphase: execution\n---\n\n# Topic One\n\n## Goals\n")
 	writeFile(filepath.Join(goalsDir, goalTwoID+".md"),
 		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Goal Two\n")
 	writeFile(filepath.Join(tasksDir, "Task With Space.md"),
@@ -236,6 +239,7 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 		}
 		taskStore := storage.NewTaskStorage(storageConfig)
 		goalStore := storage.NewGoalStorage(storageConfig)
+		topicStore := storage.NewTopicStorage(storageConfig)
 		dailyStore := storage.NewDailyNoteStorage(storageConfig)
 		publisher := ops.NewEscalationPublisher("", "", nil)
 		clock := libtime.NewCurrentDateTime()
@@ -256,6 +260,8 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, nil, nil),
 			GoalDefer:        ops.NewGoalDeferOperation(goalStore, clock),
 			GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, clock),
+			TopicSet:         ops.NewTopicSetOperation(topicStore),
+			TopicClear:       ops.NewTopicClearOperation(topicStore),
 		}
 	}
 }
@@ -362,6 +368,13 @@ func (h *harness) readGoal(goalID string) string {
 	return string(content)
 }
 
+// readTopic returns the topic file's frontmatter body.
+func (h *harness) readTopic(topicID string) string {
+	content, err := os.ReadFile(filepath.Join(h.dir, "23 Topics", topicID+".md"))
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return string(content)
+}
+
 // writeLauncherTask writes a task carrying a live session and the given extra
 // frontmatter lines into the harness vault's tasks dir.
 func (h *harness) writeLauncherTask(name string, extra ...string) {
@@ -461,6 +474,63 @@ var _ = Describe("Mutation service", func() {
 				ctx, "nope", taskOneID, api.UpdateFlagRequest{},
 			)
 			Expect(httpStatus(err)).To(Equal(404))
+		})
+
+		It("400s an id beginning with '-' before any vault operation", func() {
+			_, err := h.service.UpdateFlag(
+				ctx, "personal", "-GoalOne", api.UpdateFlagRequest{Kind: "goal"},
+			)
+			Expect(httpStatus(err)).To(Equal(400))
+		})
+
+		It("400s an unknown kind", func() {
+			_, err := h.service.UpdateFlag(
+				ctx, "personal", taskOneID, api.UpdateFlagRequest{Kind: "bogus"},
+			)
+			Expect(httpStatus(err)).To(Equal(400))
+			Expect(err.Error()).To(ContainSubstring("unknown kind: bogus"))
+		})
+
+		It("sets and clears a goal's flag through the goal operations", func() {
+			result, err := h.service.UpdateFlag(
+				ctx, "personal", goalOneID, api.UpdateFlagRequest{Kind: "goal"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Flag).To(BeTrue())
+			h.drain()
+			Expect(h.readGoal(goalOneID)).To(ContainSubstring("flag:"))
+			Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(1))
+			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+
+			off := false
+			_, err = h.service.UpdateFlag(
+				ctx, "personal", goalOneID, api.UpdateFlagRequest{Kind: "goal", Flag: &off},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			h.drain()
+			Expect(h.readGoal(goalOneID)).NotTo(ContainSubstring("flag:"))
+		})
+
+		It("sets and clears a topic's flag through the topic operations", func() {
+			result, err := h.service.UpdateFlag(
+				ctx, "personal", topicOneID, api.UpdateFlagRequest{Kind: "topic"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Flag).To(BeTrue())
+			h.drain()
+			Expect(h.readTopic(topicOneID)).To(ContainSubstring("flag:"))
+			Expect(h.publisher.PublishTopicUpdatedCallCount()).To(Equal(1))
+			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
+			Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(0))
+
+			off := false
+			_, err = h.service.UpdateFlag(
+				ctx, "personal", topicOneID, api.UpdateFlagRequest{Kind: "topic", Flag: &off},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			h.drain()
+			Expect(h.readTopic(topicOneID)).NotTo(ContainSubstring("flag:"))
+			Expect(h.publisher.PublishTopicUpdatedCallCount()).To(Equal(2))
 		})
 	})
 

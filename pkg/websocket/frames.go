@@ -99,7 +99,7 @@ type writeFailedFrame struct {
 }
 
 // WriteFailedFrame builds the frame for a failed queued write. itemKind is
-// "task" or "goal".
+// "task", "goal" or "topic".
 func WriteFailedFrame(vault, itemKind, itemID, reason string) []byte {
 	return marshal(writeFailedFrame{
 		Type:     "write_failed",

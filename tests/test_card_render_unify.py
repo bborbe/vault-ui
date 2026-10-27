@@ -14,6 +14,20 @@ def _slice(marker: str, length: int) -> str:
     return APP_JS[start : start + length]
 
 
+def _function_body(name: str) -> str:
+    """The whole body of a top-level function, up to the next top-level function.
+
+    A fixed character window silently under-covers a builder longer than the
+    window, so a guard like "the flag markup is not inlined here" would only
+    inspect the head of the function and pass regardless.
+    """
+    marker = f"function {name}("
+    start = APP_JS.find(marker)
+    assert start != -1, f"function not found: {name}"
+    end = APP_JS.find("\nfunction ", start + len(marker))
+    return APP_JS[start:] if end == -1 else APP_JS[start:end]
+
+
 def test_session_button_helper_shared() -> None:
     """One session-button helper gates all three labels off session id + durable flag,
     and both card renderers call it instead of inlining the three-way gate."""
@@ -69,8 +83,7 @@ def test_flag_control_present_on_all_card_kinds() -> None:
         assert call in APP_JS, call
     # The markup lives only in the helper: no card builder inlines it.
     for builder in ("createTaskCard", "createGoalCard", "createTopicCard"):
-        body = _slice(f"function {builder}", 3400)
-        assert 'class="flag-btn' not in body, builder
+        assert 'class="flag-btn' not in _function_body(builder), builder
 
 
 def test_flag_check_leads_every_sort_mode() -> None:

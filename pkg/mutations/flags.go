@@ -35,6 +35,16 @@ type flagOps struct {
 	FrontmatterClear flagClearOperation
 }
 
+// flagTarget is one kind's resolved flag write: the frontmatter operations the
+// write body runs, and the post-write side-effect. Both are resolved in the
+// same switch so a kind cannot write through one family and publish another —
+// the failure mode when they are two independent switches with a silent
+// default.
+type flagTarget struct {
+	ops     flagOps
+	written func(context.Context)
+}
+
 // taskFlagSet adapts the task FrontmatterSetOperation — which takes the flag
 // provenance actor and a force flag — to the common flag-set shape. The actor
 // stays "operator" and force stays false, exactly as the task-only flag path
@@ -46,44 +56,43 @@ type taskFlagSet struct {
 func (t taskFlagSet) Execute(
 	ctx context.Context, vaultPath, itemName, key, value, reason, gateSuccessor string,
 ) error {
-	return t.op.Execute(ctx, vaultPath, itemName, key, value, reason, gateSuccessor, "operator", false)
+	return t.op.Execute(
+		ctx, vaultPath, itemName, key, value, reason, gateSuccessor, "operator", false,
+	)
 }
 
-// flagOps resolves the frontmatter operations one kind's flag writes go
-// through. An unknown kind reports false so the caller can answer 400.
-func (s *service) flagOps(vault vaultconfig.Vault, kind string) (flagOps, bool) {
+// flagTarget resolves the frontmatter operations and post-write side-effect one
+// kind's flag writes go through. An unknown kind reports false so the caller
+// can answer 400.
+func (s *service) flagTarget(
+	vault vaultconfig.Vault, kind, itemID string,
+) (flagTarget, bool) {
 	set := s.opsForVault(vault)
 	switch kind {
 	case "task":
-		return flagOps{
-			FrontmatterSet:   taskFlagSet{op: set.FrontmatterSet},
-			FrontmatterClear: set.FrontmatterClear,
+		return flagTarget{
+			ops: flagOps{
+				FrontmatterSet:   taskFlagSet{op: set.FrontmatterSet},
+				FrontmatterClear: set.FrontmatterClear,
+			},
+			written: s.taskWritten(vault, itemID),
 		}, true
 	case "goal":
-		return flagOps{
-			FrontmatterSet:   set.GoalSet,
-			FrontmatterClear: set.GoalClear,
+		return flagTarget{
+			ops: flagOps{
+				FrontmatterSet:   set.GoalSet,
+				FrontmatterClear: set.GoalClear,
+			},
+			written: s.goalWritten(vault, itemID),
 		}, true
 	case "topic":
-		return flagOps{
-			FrontmatterSet:   set.TopicSet,
-			FrontmatterClear: set.TopicClear,
+		return flagTarget{
+			ops: flagOps{
+				FrontmatterSet:   set.TopicSet,
+				FrontmatterClear: set.TopicClear,
+			},
+			written: s.topicWritten(vault, itemID),
 		}, true
 	}
-	return flagOps{}, false
-}
-
-// itemWritten is the post-write side-effect of the flag route for one kind: the
-// kind's own cache invalidation, page-index dirty mark and update frame.
-func (s *service) itemWritten(
-	vault vaultconfig.Vault, kind, itemID string,
-) func(context.Context) {
-	switch kind {
-	case "goal":
-		return s.goalWritten(vault, itemID)
-	case "topic":
-		return s.topicWritten(vault, itemID)
-	default:
-		return s.taskWritten(vault, itemID)
-	}
+	return flagTarget{}, false
 }
