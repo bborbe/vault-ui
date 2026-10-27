@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.98.1
 - chore: bump Go toolchain directive to 1.27.3
 
 ## v0.98.0
