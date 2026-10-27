@@ -995,6 +995,7 @@ def _goal_to_response(
         upcoming=upcoming,
         activity_date=activity_date,
         session_state=session_state,
+        flag=goal.flag,
     )
 
 
@@ -1257,6 +1258,7 @@ def _topic_to_response(topic: Topic, vault_config: VaultConfig) -> TopicResponse
         phase=topic.phase,
         vault=vault_config.name,
         obsidian_url=_topic_url(vault_config, topic.id),
+        flag=topic.flag,
     )
 
 
@@ -2504,6 +2506,78 @@ async def update_task_flag(
         )
 
     return {"status": "success", "task_id": task_id, "flag": request.flag}
+
+
+@router.patch("/goals/{goal_id}/flag")
+async def update_goal_flag(
+    vault: str,
+    goal_id: str,
+    request: UpdateFlagRequest,
+) -> dict[str, str | bool]:
+    """Set or clear the goal's flag (picked-for-today marker).
+
+    Same contract as the task route: the flag is written through vault-cli's
+    validated field path, and the change is broadcast so open boards re-render.
+    ``vault-cli goal set`` takes no ``--by``, so a goal flag carries no
+    ``flag_set_by`` — the task route is the only one that records an actor.
+    """
+    try:
+        get_vault_config(vault)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Unknown vault: {vault}") from e
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        if request.flag:
+            await client.set_goal_field(goal_id, "flag", "true")
+        else:
+            await client.clear_goal_field(goal_id, "flag")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if _connection_manager:
+        await _connection_manager.broadcast(
+            {"type": "goal_updated", "goal_id": goal_id, "item_kind": "goal", "vault": vault}
+        )
+
+    return {"status": "success", "task_id": goal_id, "flag": request.flag}
+
+
+@router.patch("/topics/{topic_id}/flag")
+async def update_topic_flag(
+    vault: str,
+    topic_id: str,
+    request: UpdateFlagRequest,
+) -> dict[str, str | bool]:
+    """Set or clear the topic's flag (picked-for-today marker).
+
+    Same contract as the goal route; ``vault-cli topic set`` takes no ``--by``,
+    so a topic flag carries no ``flag_set_by`` either.
+    """
+    try:
+        get_vault_config(vault)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Unknown vault: {vault}") from e
+
+    try:
+        client = get_vault_cli_client_for_vault(vault)
+        if request.flag:
+            await client.set_topic_field(topic_id, "flag", "true")
+        else:
+            await client.clear_topic_field(topic_id, "flag")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if _connection_manager:
+        await _connection_manager.broadcast(
+            {"type": "topic_updated", "task_id": topic_id, "item_kind": "topic", "vault": vault}
+        )
+
+    return {"status": "success", "task_id": topic_id, "flag": request.flag}
 
 
 @router.patch("/goals/{goal_id}/status")

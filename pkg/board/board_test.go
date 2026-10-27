@@ -1056,6 +1056,26 @@ var _ = Describe("goal session-id combination", func() {
 	})
 })
 
+var _ = Describe("goal flag mapping", func() {
+	It("carries the flag from the goal row onto the response", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{
+			{Name: "FlaggedGoal", Status: "in_progress", Flag: true},
+			{Name: "PlainGoal", Status: "in_progress"},
+		}
+		responses, err := h.board.ListGoals(
+			context.Background(), board.GoalQuery{UpcomingHours: 8},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(2))
+		byID := map[string]bool{}
+		for _, response := range responses {
+			byID[response.ID] = response.Flag
+		}
+		Expect(byID).To(Equal(map[string]bool{"FlaggedGoal": true, "PlainGoal": false}))
+	})
+})
+
 var _ = Describe("ListTopics", func() {
 	It("lists topics from the configured folder", func() {
 		h := newHarness()
@@ -1072,6 +1092,25 @@ var _ = Describe("ListTopics", func() {
 		// Topics view groups by phase, exactly as the Tasks view does.
 		Expect(responses[0].Phase).NotTo(BeNil())
 		Expect(*responses[0].Phase).To(Equal("execution"))
+	})
+
+	It("carries the flag from the topic row onto the response", func() {
+		// The write path sets the frontmatter field; this is the read half that
+		// makes the card's flag control show it. Without it the two halves can
+		// drift and every topic would render unflagged.
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Flagged", Status: "in_progress", Flag: true},
+			{Name: "Plain", Status: "in_progress"},
+		}
+		responses, err := h.board.ListTopics(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(2))
+		byID := map[string]bool{}
+		for _, response := range responses {
+			byID[response.ID] = response.Flag
+		}
+		Expect(byID).To(Equal(map[string]bool{"Flagged": true, "Plain": false}))
 	})
 
 	It("contributes nothing for a vault without a topics folder", func() {

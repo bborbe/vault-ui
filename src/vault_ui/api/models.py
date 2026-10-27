@@ -62,6 +62,7 @@ class Goal:
     obsidian_url: str | None = None  # obsidian://open?vault=...&file=... (built by API layer)
     modified_date: datetime | None = None  # File modification time
     blocked_by: list[str] | None = None  # From frontmatter: List of blocking goal wikilinks
+    flag: bool = False  # From frontmatter: true if the goal is flagged (picked for today)
 
 
 @dataclass
@@ -73,6 +74,7 @@ class Topic:
     status: str  # From the topic's own frontmatter
     vault: str  # Vault name this topic belongs to
     phase: str | None = None  # From the topic's own frontmatter; absent on most
+    flag: bool = False  # From frontmatter: true if the topic is flagged (picked for today)
 
 
 @dataclass
@@ -160,6 +162,9 @@ class GoalResponse(BaseModel):
     # Live/quiet/indeterminate classification of the claude session, from
     # transcript recency (see activity.py). None when no session id.
     session_state: str | None = None
+    # The same picked-for-today marker a task carries. Always emitted, so a
+    # cleared flag reads back as false rather than vanishing from the payload.
+    flag: bool = False
 
 
 class TopicResponse(BaseModel):
@@ -173,6 +178,8 @@ class TopicResponse(BaseModel):
     phase: str | None = None  # From the topic's own frontmatter; absent on most
     vault: str  # Vault name this topic belongs to
     obsidian_url: str
+    # Same marker as GoalResponse.flag: always emitted, false when cleared.
+    flag: bool = False
 
 
 class TopicDetailResponse(BaseModel):

@@ -1179,6 +1179,10 @@ async function loadTopics() {
         topics.forEach(topic => {
             topicsCache[`${topic.vault}\u0000${topic.id}`] = topic;
         });
+        // Re-apply any flag write still in flight, exactly as the task and goal
+        // loaders do, so a refetch cannot revert a value the server has not
+        // caught up with yet.
+        overlayPendingWrites('topic', topicsCache);
 
         renderTopics();
     } catch (error) {
@@ -1382,7 +1386,11 @@ function applyOptimisticWrite(kind, vault, id, fields, expectsFrame) {
 function overlayPendingWrites(kind, cache) {
     pendingWrites.forEach((entry, key) => {
         if (entry.kind !== kind) return;
-        const item = cache[entry.id];
+        // Same keying as applyOptimisticWrite: the topics cache is vault-keyed,
+        // tasks and goals are id-keyed. Looking a topic up by entry.id alone can
+        // never hit, which would let a refetch revert the optimistic value.
+        const cacheKey = kind === 'topic' ? `${entry.vault}\u0000${entry.id}` : entry.id;
+        const item = cache[cacheKey];
         if (!item || item.vault !== entry.vault) return;
         const caughtUp = Object.keys(entry.fields).every(f => item[f] === entry.fields[f]);
         if (caughtUp && !entry.expectsFrame) {

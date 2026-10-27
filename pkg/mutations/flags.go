@@ -49,6 +49,12 @@ type flagTarget struct {
 // provenance actor and a force flag — to the common flag-set shape. The actor
 // stays "operator" and force stays false, exactly as the task-only flag path
 // wrote them before the kinds were unified.
+//
+// This is the one deliberate behavioural difference between the kinds: the
+// entity family (EntitySetOperation) has no actor parameter, so a goal or topic
+// flag is written without flag_set_by/flag_set_at while a task flag records
+// "operator". Nothing in this repo reads those keys for goals or topics; they
+// exist so a task's flag can be told apart from an unattributed write.
 type taskFlagSet struct {
 	op ops.FrontmatterSetOperation
 }

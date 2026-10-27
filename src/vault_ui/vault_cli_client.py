@@ -384,6 +384,41 @@ class VaultCLIClient:
         if proc.returncode != 0:
             raise RuntimeError(f"vault-cli goal clear failed: {stderr.decode().strip()}")
 
+    async def set_topic_field(self, topic_id: str, key: str, value: str) -> None:
+        """Call vault-cli topic set <topic_id> <key> <value>."""
+        proc = await asyncio.create_subprocess_exec(
+            self._vault_cli_path,
+            "topic",
+            "set",
+            topic_id,
+            key,
+            value,
+            "--vault",
+            self._vault_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"vault-cli topic set failed: {stderr.decode().strip()}")
+
+    async def clear_topic_field(self, topic_id: str, key: str) -> None:
+        """Call vault-cli topic clear <topic_id> <key>."""
+        proc = await asyncio.create_subprocess_exec(
+            self._vault_cli_path,
+            "topic",
+            "clear",
+            topic_id,
+            key,
+            "--vault",
+            self._vault_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"vault-cli topic clear failed: {stderr.decode().strip()}")
+
     def _parse_task(self, data: dict[str, Any]) -> Task:
         """Parse vault-cli JSON task object into Task dataclass."""
         modified_date: datetime | None = None
@@ -460,6 +495,7 @@ class VaultCLIClient:
             status=str(data.get("status", "unknown")),
             vault=str(data.get("vault") or self._vault_name),
             phase=data.get("phase") or None,
+            flag=bool(data.get("flag", False)),
         )
 
     def _parse_topic_detail(self, data: dict[str, Any]) -> TopicDetail:
@@ -525,4 +561,5 @@ class VaultCLIClient:
             completed_date=data.get("completed_date"),
             modified_date=modified_date,
             blocked_by=blocked_by,
+            flag=bool(data.get("flag", False)),
         )

@@ -85,4 +85,21 @@ var _ = Describe("Frames", func() {
 			}))
 		})
 	})
+
+	Describe("TopicUpdatedFrame", func() {
+		// The identifier rides under task_id, not topic_id: the client reads
+		// `data.goal_id || data.task_id`, so a topic_id key would leave the id
+		// empty and the frame would never resolve to a card.
+		It("carries the topic id under task_id and the topic item_kind", func() {
+			var frame map[string]string
+			Expect(json.Unmarshal(websocket.TopicUpdatedFrame("personal", "TopicOne"), &frame)).
+				To(Succeed())
+			Expect(frame).To(Equal(map[string]string{
+				"type":      "topic_updated",
+				"task_id":   "TopicOne",
+				"item_kind": "topic",
+				"vault":     "personal",
+			}))
+		})
+	})
 })
