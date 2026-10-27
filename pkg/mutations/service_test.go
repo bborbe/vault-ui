@@ -435,9 +435,9 @@ var _ = Describe("Mutation service", func() {
 		ctx = context.Background()
 	})
 
-	Describe("UpdateTaskFlag", func() {
+	Describe("UpdateFlag", func() {
 		It("writes flag true with the operator actor and publishes", func() {
-			result, err := h.service.UpdateTaskFlag(
+			result, err := h.service.UpdateFlag(
 				ctx, "personal", taskOneID, api.UpdateFlagRequest{},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -449,7 +449,7 @@ var _ = Describe("Mutation service", func() {
 
 		It("clears the flag when false", func() {
 			flag := false
-			result, err := h.service.UpdateTaskFlag(
+			result, err := h.service.UpdateFlag(
 				ctx, "personal", taskTwoID, api.UpdateFlagRequest{Flag: &flag},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -457,7 +457,7 @@ var _ = Describe("Mutation service", func() {
 		})
 
 		It("404s an unknown vault", func() {
-			_, err := h.service.UpdateTaskFlag(
+			_, err := h.service.UpdateFlag(
 				ctx, "nope", taskOneID, api.UpdateFlagRequest{},
 			)
 			Expect(httpStatus(err)).To(Equal(404))
@@ -1059,7 +1059,7 @@ var _ = Describe("Mutation service remaining branches", func() {
 	})
 
 	It("202s update-task-flag for an unknown task and publishes write_failed", func() {
-		result, err := h.service.UpdateTaskFlag(
+		result, err := h.service.UpdateFlag(
 			ctx, "personal", "Missing", api.UpdateFlagRequest{},
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -1188,8 +1188,8 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 			Expect(err).NotTo(HaveOccurred())
 			return h
 		}, "24 Tasks", taskOneID),
-		Entry("UpdateTaskFlag", func() *harness {
-			_, err := h.service.UpdateTaskFlag(
+		Entry("UpdateFlag", func() *harness {
+			_, err := h.service.UpdateFlag(
 				ctx, "personal", taskOneID, api.UpdateFlagRequest{},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -1411,7 +1411,7 @@ var _ = Describe("Mutation service enqueue failure", func() {
 		Entry("task flag",
 			func() string { return h.readTask(taskOneID) },
 			func() error {
-				_, e := service.UpdateTaskFlag(
+				_, e := service.UpdateFlag(
 					ctx, "personal", taskOneID, api.UpdateFlagRequest{},
 				)
 				return e

@@ -64,6 +64,7 @@ func newHTTPError(status int, detail string) *HTTPError {
 type EventPublisher interface {
 	PublishTaskUpdated(ctx context.Context, vault, taskID string)
 	PublishGoalUpdated(ctx context.Context, vault, goalID string)
+	PublishTopicUpdated(ctx context.Context, vault, topicID string)
 	PublishWriteFailed(ctx context.Context, vault, itemKind, itemID, reason string)
 }
 
@@ -145,8 +146,8 @@ type Service interface {
 	UpdateTaskPhase(
 		ctx context.Context, vault, taskID string, req api.UpdatePhaseRequest,
 	) (api.PhaseUpdateResponse, error)
-	UpdateTaskFlag(
-		ctx context.Context, vault, taskID string, req api.UpdateFlagRequest,
+	UpdateFlag(
+		ctx context.Context, vault, itemID string, req api.UpdateFlagRequest,
 	) (api.FlagUpdateResponse, error)
 	UpdateGoalStatus(
 		ctx context.Context, vault, goalID string, req api.UpdateStatusRequest,

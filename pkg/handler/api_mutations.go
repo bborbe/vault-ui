@@ -349,9 +349,12 @@ func NewTaskPhaseHandler(m mutations.Service) http.Handler {
 	})
 }
 
-// NewTaskFlagHandler returns the PATCH /api/tasks/{task_id}/flag handler. The
-// write is queued, so the handler answers 202 with the requested flag value.
-func NewTaskFlagHandler(m mutations.Service) http.Handler {
+// NewFlagHandler returns the flag handler for one kind ("task", "goal" or
+// "topic"), shared by PATCH /api/tasks/{task_id}/flag, /api/goals/{goal_id}/flag
+// and /api/topics/{topic_id}/flag. Kind is the route's own discriminator, so
+// the body never has to guess it. The write is queued, so the handler answers
+// 202 with the requested flag value.
+func NewFlagHandler(m mutations.Service, kind string) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		vault, ok := requireVault(resp, req)
 		if !ok {
@@ -361,7 +364,8 @@ func NewTaskFlagHandler(m mutations.Service) http.Handler {
 		if !decodeBody(resp, req, &body) {
 			return
 		}
-		result, err := m.UpdateTaskFlag(req.Context(), vault, pathVar(req, "task_id"), body)
+		body.Kind = kind
+		result, err := m.UpdateFlag(req.Context(), vault, pathVar(req, kind+"_id"), body)
 		if err != nil {
 			writeMutationError(resp, err)
 			return

@@ -56,6 +56,7 @@ func (b *board) ListTopics(ctx context.Context, vaults []string) ([]api.TopicRes
 				Title:       item.Name,
 				Status:      item.Status,
 				Phase:       strPtr(item.Phase),
+				Flag:        item.Flag,
 				Vault:       vault.Name,
 				ObsidianURL: topicURL(vault, item.Name),
 			})

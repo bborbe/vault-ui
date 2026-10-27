@@ -11,6 +11,7 @@ import "context"
 type MutationPublisher interface {
 	PublishTaskUpdated(ctx context.Context, vault, taskID string)
 	PublishGoalUpdated(ctx context.Context, vault, goalID string)
+	PublishTopicUpdated(ctx context.Context, vault, topicID string)
 	PublishWriteFailed(ctx context.Context, vault, itemKind, itemID, reason string)
 }
 
@@ -29,6 +30,10 @@ func (p *mutationPublisher) PublishTaskUpdated(_ context.Context, vault, taskID 
 
 func (p *mutationPublisher) PublishGoalUpdated(_ context.Context, vault, goalID string) {
 	p.manager.Broadcast(GoalUpdatedFrame(vault, goalID))
+}
+
+func (p *mutationPublisher) PublishTopicUpdated(_ context.Context, vault, topicID string) {
+	p.manager.Broadcast(TopicUpdatedFrame(vault, topicID))
 }
 
 func (p *mutationPublisher) PublishWriteFailed(

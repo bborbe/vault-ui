@@ -56,8 +56,12 @@ var _ = Describe("Mutation handlers", func() {
 				http.MethodPatch, "/api/tasks/TaskOne/assign-to-me"),
 			Entry("task phase", handler.NewTaskPhaseHandler(&fakeMutations{}),
 				http.MethodPatch, "/api/tasks/TaskOne/phase"),
-			Entry("task flag", handler.NewTaskFlagHandler(&fakeMutations{}),
+			Entry("task flag", handler.NewFlagHandler(&fakeMutations{}, "task"),
 				http.MethodPatch, "/api/tasks/TaskOne/flag"),
+			Entry("goal flag", handler.NewFlagHandler(&fakeMutations{}, "goal"),
+				http.MethodPatch, "/api/goals/GoalOne/flag"),
+			Entry("topic flag", handler.NewFlagHandler(&fakeMutations{}, "topic"),
+				http.MethodPatch, "/api/topics/TopicOne/flag"),
 			Entry("task status", handler.NewTaskStatusHandler(&fakeMutations{}),
 				http.MethodPatch, "/api/tasks/TaskOne/status"),
 			Entry("goal status", handler.NewGoalStatusHandler(&fakeMutations{}),
@@ -187,13 +191,13 @@ var _ = Describe("Mutation handlers", func() {
 
 	It("writes the flag body", func() {
 		recorder := doRequest(
-			handler.NewTaskFlagHandler(&fakeMutations{
-				updateTaskFlag: func(
+			handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
 					_ context.Context, _, _ string, req api.UpdateFlagRequest,
 				) (api.FlagUpdateResponse, error) {
 					return api.FlagUpdateResponse{Status: "success", TaskID: "TaskOne", Flag: true}, nil
 				},
-			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
+			}, "task"), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
 		)
 		Expect(recorder.Code).To(Equal(http.StatusAccepted))
 		Expect(recorder.Body.String()).To(ContainSubstring(`"flag":true`))
@@ -334,26 +338,26 @@ var _ = Describe("Mutation handler success paths", func() {
 
 	It("500s an unclassified service error", func() {
 		recorder := doRequest(
-			handler.NewTaskFlagHandler(&fakeMutations{
-				updateTaskFlag: func(
+			handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
 					context.Context, string, string, api.UpdateFlagRequest,
 				) (api.FlagUpdateResponse, error) {
 					return api.FlagUpdateResponse{}, errors.New("boom")
 				},
-			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
+			}, "task"), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{}`,
 		)
 		Expect(recorder.Code).To(Equal(http.StatusInternalServerError))
 	})
 
 	It("422s a malformed body", func() {
 		recorder := doRequest(
-			handler.NewTaskFlagHandler(&fakeMutations{
-				updateTaskFlag: func(
+			handler.NewFlagHandler(&fakeMutations{
+				updateFlag: func(
 					context.Context, string, string, api.UpdateFlagRequest,
 				) (api.FlagUpdateResponse, error) {
 					return api.FlagUpdateResponse{}, nil
 				},
-			}), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{`,
+			}, "task"), http.MethodPatch, "/api/tasks/TaskOne/flag?vault=personal", `{`,
 		)
 		Expect(recorder.Code).To(Equal(http.StatusUnprocessableEntity))
 	})

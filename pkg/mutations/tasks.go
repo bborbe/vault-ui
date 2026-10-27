@@ -703,10 +703,13 @@ func (s *service) approveOwnerGuard(
 	)
 }
 
-// UpdateTaskFlag queues a set or clear of a task's flag (picked-for-today
-// marker). The route answers 202 before the vault is written.
-func (s *service) UpdateTaskFlag(
-	ctx context.Context, vault, taskID string, req api.UpdateFlagRequest,
+// UpdateFlag queues a set or clear of an item's flag (picked-for-today
+// marker). Kind selects the frontmatter operation family — "task", "goal" or
+// "topic" — and every kind shares one write body: the per-kind fork lives only
+// in which operations the kind resolves to, never in the set/clear calls
+// themselves. The route answers 202 before the vault is written.
+func (s *service) UpdateFlag(
+	ctx context.Context, vault, itemID string, req api.UpdateFlagRequest,
 ) (api.FlagUpdateResponse, error) {
 	resolved, ok, err := s.vaultByName(ctx, vault)
 	if err != nil {
@@ -715,33 +718,40 @@ func (s *service) UpdateTaskFlag(
 	if !ok {
 		return api.FlagUpdateResponse{}, newHTTPError(404, unknownVault(vault))
 	}
+	kind := req.Kind
+	if kind == "" {
+		kind = "task"
+	}
+	ops, ok := s.flagOps(resolved, kind)
+	if !ok {
+		return api.FlagUpdateResponse{}, newHTTPError(400, "unknown kind: "+kind)
+	}
 	flag := true
 	if req.Flag != nil {
 		flag = *req.Flag
 	}
 	write := func(ctx context.Context) error {
-		set := s.opsForVault(resolved)
 		if flag && !selftestSkipFlagWrite() {
-			if setErr := set.FrontmatterSet.Execute(
-				ctx, resolved.Path, taskID, "flag", "true", "", "", "operator", false,
+			if setErr := ops.FrontmatterSet.Execute(
+				ctx, resolved.Path, itemID, "flag", "true", "", "",
 			); setErr != nil {
 				return newHTTPError(500, setErr.Error())
 			}
 			return nil
 		}
-		if clearErr := set.FrontmatterClear.Execute(
-			ctx, resolved.Path, taskID, "flag",
+		if clearErr := ops.FrontmatterClear.Execute(
+			ctx, resolved.Path, itemID, "flag",
 		); clearErr != nil {
 			return newHTTPError(500, clearErr.Error())
 		}
 		return nil
 	}
 	if err := s.enqueueWrite(
-		ctx, resolved, "task", taskID, write, s.taskWritten(resolved, taskID),
+		ctx, resolved, kind, itemID, write, s.itemWritten(resolved, kind, itemID),
 	); err != nil {
 		return api.FlagUpdateResponse{}, err
 	}
-	return api.FlagUpdateResponse{Status: "success", TaskID: taskID, Flag: flag}, nil
+	return api.FlagUpdateResponse{Status: "success", TaskID: itemID, Flag: flag}, nil
 }
 
 // UpdateTaskStatus queues a task's status update via the task card menu. The

@@ -37,6 +37,16 @@ type goalUpdatedFrame struct {
 	Vault    string `json:"vault"`
 }
 
+// topicUpdatedFrame is the frame a topic mutation broadcasts. Like the watcher
+// frame, the identifier key is task_id — the client already reads that key for
+// every kind whose frame does not carry a family-specific one.
+type topicUpdatedFrame struct {
+	Type     string `json:"type"`
+	TaskID   string `json:"task_id"`
+	ItemKind string `json:"item_kind"`
+	Vault    string `json:"vault"`
+}
+
 // WatcherFrame builds the frame for a vault watcher event. type carries the
 // change event (modified/created/deleted); item_kind carries the entity type.
 func WatcherFrame(event ops.WatchEvent) []byte {
@@ -64,6 +74,16 @@ func GoalUpdatedFrame(vault, goalID string) []byte {
 		Type:     "goal_updated",
 		GoalID:   goalID,
 		ItemKind: "goal",
+		Vault:    vault,
+	})
+}
+
+// TopicUpdatedFrame builds the frame for a topic mutation.
+func TopicUpdatedFrame(vault, topicID string) []byte {
+	return marshal(topicUpdatedFrame{
+		Type:     "topic_updated",
+		TaskID:   topicID,
+		ItemKind: "topic",
 		Vault:    vault,
 	})
 }

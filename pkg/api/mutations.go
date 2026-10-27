@@ -6,11 +6,15 @@ package api
 
 import "github.com/bborbe/vault-cli/pkg/domain"
 
-// UpdateFlagRequest is the body of PATCH /api/tasks/{id}/flag. The flag
-// defaults to true when the body omits it, matching the Python
-// `flag: bool = True` model, so a nil Flag means "true".
+// UpdateFlagRequest is the body of PATCH /api/{tasks,goals,topics}/{id}/flag.
+// Kind names the entity family the route addresses ("task", "goal" or
+// "topic"); the handler fills it from the route, and an empty Kind means
+// "task" so a pre-change client keeps working. The flag defaults to true when
+// the body omits it, matching the Python `flag: bool = True` model, so a nil
+// Flag means "true".
 type UpdateFlagRequest struct {
-	Flag *bool `json:"flag"`
+	Kind string `json:"kind"`
+	Flag *bool  `json:"flag"`
 }
 
 // UpdatePhaseRequest is the body of PATCH /api/tasks/{id}/phase. Answers is a

@@ -54,11 +54,23 @@ def test_goal_wrapper_keeps_onhold_and_dataset() -> None:
     assert 'href="${goal.obsidian_url}"' in body  # title link preserved inline
 
 
-def test_flag_control_present_on_task_cards() -> None:
-    """Task cards carry a flag toggle and the flagged class + toggle function."""
+def test_flag_control_present_on_all_card_kinds() -> None:
+    """Every card kind carries the flag toggle through one shared helper, so the
+    gesture does not depend on which kind the card happens to be."""
+    assert "function flagButtonHtml(kind, item)" in APP_JS
     assert "toggleFlag(" in APP_JS
     assert "classList.add('flagged')" in APP_JS
-    assert "task.flag ? '🚩' : '⚑'" in APP_JS
+    assert "🚩" in APP_JS and "⚑" in APP_JS
+    for call in (
+        "flagButtonHtml('task', task)",
+        "flagButtonHtml('goal', goal)",
+        "flagButtonHtml('topic', topic)",
+    ):
+        assert call in APP_JS, call
+    # The markup lives only in the helper: no card builder inlines it.
+    for builder in ("createTaskCard", "createGoalCard", "createTopicCard"):
+        body = _slice(f"function {builder}", 3400)
+        assert 'class="flag-btn' not in body, builder
 
 
 def test_flag_check_leads_every_sort_mode() -> None:

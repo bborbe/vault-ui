@@ -28,7 +28,7 @@ type fakeMutations struct {
 	updateTaskPhase func(
 		context.Context, string, string, api.UpdatePhaseRequest,
 	) (api.PhaseUpdateResponse, error)
-	updateTaskFlag func(
+	updateFlag func(
 		context.Context, string, string, api.UpdateFlagRequest,
 	) (api.FlagUpdateResponse, error)
 	updateGoalStatus func(
@@ -106,10 +106,10 @@ func (f *fakeMutations) UpdateTaskPhase(
 	return f.updateTaskPhase(ctx, vault, taskID, req)
 }
 
-func (f *fakeMutations) UpdateTaskFlag(
-	ctx context.Context, vault, taskID string, req api.UpdateFlagRequest,
+func (f *fakeMutations) UpdateFlag(
+	ctx context.Context, vault, itemID string, req api.UpdateFlagRequest,
 ) (api.FlagUpdateResponse, error) {
-	return f.updateTaskFlag(ctx, vault, taskID, req)
+	return f.updateFlag(ctx, vault, itemID, req)
 }
 
 func (f *fakeMutations) UpdateGoalStatus(

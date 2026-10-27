@@ -97,6 +97,10 @@ type GoalResponse struct {
 	Upcoming             bool     `json:"upcoming"`
 	ActivityDate         *string  `json:"activity_date"`
 	SessionState         *string  `json:"session_state"`
+	// Flag is the same picked-for-today marker a task carries. The key is always
+	// emitted (no omitempty), so a cleared flag reads back as "flag": false
+	// rather than vanishing from the payload.
+	Flag bool `json:"flag"`
 	// Location is the location the attention store reports for the goal's live
 	// session, on the same terms as TaskResponse.Location.
 	Location *string `json:"location"`
@@ -110,9 +114,12 @@ type TopicResponse struct {
 	// Phase is the topic's own `phase:` frontmatter value, on the same terms as
 	// GoalResponse.Phase: always emitted, null when the topic carries none, and
 	// the board's column discriminator for the Topics view.
-	Phase       *string `json:"phase"`
-	Vault       string  `json:"vault"`
-	ObsidianURL string  `json:"obsidian_url"`
+	Phase *string `json:"phase"`
+	// Flag is the same picked-for-today marker a task and a goal carry, on the
+	// same terms as GoalResponse.Flag: always emitted, false when cleared.
+	Flag        bool   `json:"flag"`
+	Vault       string `json:"vault"`
+	ObsidianURL string `json:"obsidian_url"`
 }
 
 // TopicDetailResponse is the wire shape of a single topic and the work it
