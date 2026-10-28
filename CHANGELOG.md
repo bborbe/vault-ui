@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.99.1
 
 - fix: Hide the "—" column on the Goals and Topics boards while it holds no cards — the lane exists only for pages that carry no `phase`, so once a vault's goals and topics all have one it rendered as a permanently empty sixth column. `syncUnknownColumn()` toggles a `hidden` class (new `.kanban-column.hidden` rule) at the end of `renderGoals()`, `renderTopics()` and `renderColumnHeaders()`, and from `removeGoalCard()` — the one path that drops a card without re-rendering, so a websocket `deleted` frame cannot leave the lane visible-but-empty — so the lane still appears the moment a card lands in it. The Tasks view is unchanged — it never builds the column.
 
