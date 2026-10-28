@@ -3041,6 +3041,9 @@ function removeGoalCard(goalId) {
     const card = document.querySelector(`[data-goal-id="${goalId}"]`);
     if (card) card.remove();
     if (goalsCache[goalId]) delete goalsCache[goalId];
+    // A deletion is the one render path that bypasses renderGoals(), so without
+    // this the "—" lane would stay visible-but-empty after its last card went.
+    syncUnknownColumn();
 }
 
 function setView(newView) {
