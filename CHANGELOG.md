@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Hide the "—" column on the Goals and Topics boards while it holds no cards — the lane exists only for pages that carry no `phase`, so once a vault's goals and topics all have one it rendered as a permanently empty sixth column. `syncUnknownColumn()` toggles a `hidden` class (new `.kanban-column.hidden` rule) at the end of `renderGoals()`, `renderTopics()` and `renderColumnHeaders()`, so the lane still appears the moment a card lands in it. The Tasks view is unchanged — it never builds the column.
+
 ## v0.99.0
 
 - feat: Carry the "picked for today" flag on goal and topic cards, not just tasks — the flag path is now one `kind`-parameterized mutation (`UpdateFlag`) behind a shared `PATCH /api/{tasks,goals,topics}/{id}/flag` handler, writing through the kind's own frontmatter operations with a single set call and a single clear call in the write body; `GoalResponse` and `TopicResponse` gained the `flag` field (always emitted, no `omitempty`), `pkg/board/goals.go` and `pkg/board/topics.go` map `item.Flag` from the row they already read, and a new `topicWritten` side-effect publishes a `topic_updated` frame so a topic card refreshes after its write. In the UI one `flagButtonHtml(kind, item)` helper is called by all three card builders and `toggleFlag` derives its route and optimistic cache from `kind`, so the control no longer hardcodes `/api/tasks`. The task flag behaves exactly as before.

@@ -1149,6 +1149,17 @@ function renderGoals() {
             container.appendChild(card);
         }
     });
+    syncUnknownColumn();
+}
+
+// The "—" column exists only for goals and topics that carry no phase. Once the
+// last unphased page gains one it is a dead lane on the board, so hide it while
+// it holds nothing — the Tasks view never shows it at all.
+function syncUnknownColumn() {
+    const column = document.querySelector('.kanban-column[data-phase="unknown"]');
+    if (!column) return;
+    const cards = document.getElementById('cards-unknown');
+    column.classList.toggle('hidden', !cards || cards.children.length === 0);
 }
 
 // Topics are the containers every manager loop is scoped to. They carry a
@@ -1211,6 +1222,7 @@ function renderTopics() {
         const container = document.getElementById(`cards-${displayPhase(topic.phase, 'unknown')}`);
         if (container) container.appendChild(createTopicCard(topic));
     });
+    syncUnknownColumn();
 }
 
 // A topic card: the topic's own status (never a placeholder), and the SAME two
@@ -3097,6 +3109,8 @@ function renderColumnHeaders() {
     } else if (unknownCol) {
         unknownCol.remove();
     }
+    // Hide the "—" lane until a card actually lands in it.
+    syncUnknownColumn();
     // Column layouts are rebuilt on every call; re-wire drop handlers so task
     // drag-and-drop survives a view switch. Idempotent for the surviving static
     // phase columns (addEventListener de-dups identical named-handler triples).
