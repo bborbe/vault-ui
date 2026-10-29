@@ -43,6 +43,7 @@ type taskRow struct {
 	started           *string
 	sessionState      *string
 	location          *string
+	jumpPane          *string
 	openQuestions     []domain.OpenQuestion
 }
 
@@ -101,6 +102,7 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 			visibleTask.started = row.started
 			visibleTask.sessionState = row.sessionState
 			visibleTask.location = row.location
+			visibleTask.jumpPane = row.jumpPane
 			visibleTask.openQuestions = row.openQuestions
 			responses = append(responses, b.taskResponse(vault, visibleTask, row.activityDate))
 		}
@@ -273,7 +275,46 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 			openQuestions: openQuestionsFor(openQuestions, item.Name),
 		})
 	}
+	b.attachJumpPanes(ctx, rows)
 	return rows, nil
+}
+
+// attachJumpPanes resolves the panes of the live rows in one batch and stores
+// each live row's pane on the row. A nil Panes dependency leaves every row's
+// jumpPane nil, which is the feature-inert configuration. Only live rows are
+// resolved: a headless worker is live but has no terminal.
+func (b *board) attachJumpPanes(ctx context.Context, rows []taskSnapshotRow) {
+	if b.panes == nil {
+		return
+	}
+	seen := make(map[string]bool, len(rows))
+	sessionIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		sessionID := row.item.ClaudeSessionID
+		if !isLiveRow(row) || sessionID == "" || seen[sessionID] {
+			continue
+		}
+		seen[sessionID] = true
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if len(sessionIDs) == 0 {
+		return
+	}
+	panes := b.panes.ResolveAll(ctx, sessionIDs)
+	for i := range rows {
+		if !isLiveRow(rows[i]) {
+			continue
+		}
+		if paneID, ok := panes[rows[i].item.ClaudeSessionID]; ok {
+			value := paneID
+			rows[i].jumpPane = &value
+		}
+	}
+}
+
+// isLiveRow reports whether the row's classified session state is live.
+func isLiveRow(row taskSnapshotRow) bool {
+	return row.sessionState != nil && *row.sessionState == string(session.SessionStateLive)
 }
 
 // refreshTaskRows re-derives the session-dependent fields of rows that were
@@ -304,6 +345,8 @@ func (b *board) refreshTaskRows(
 
 	refreshed := make([]taskSnapshotRow, len(rows))
 	copy(refreshed, rows)
+	seen := make(map[string]bool, len(rows))
+	sessionIDs := make([]string, 0, len(rows))
 	for i := range refreshed {
 		item := refreshed[i].item
 		refreshed[i].started = b.sessionStarted(vault.Name, item.Name)
@@ -325,6 +368,14 @@ func (b *board) refreshTaskRows(
 		refreshed[i].location = liveLocationPtr(
 			state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
 		)
+		// The row was copied, so a row that leaves live keeps the pointer it was
+		// copied with unless it is cleared here. Clear it first, then collect the
+		// ids to resolve in one batch after the pass.
+		refreshed[i].jumpPane = nil
+		if isLiveRow(refreshed[i]) && item.ClaudeSessionID != "" && !seen[item.ClaudeSessionID] {
+			seen[item.ClaudeSessionID] = true
+			sessionIDs = append(sessionIDs, item.ClaudeSessionID)
+		}
 		refreshed[i].activityDate = activity.ComputeActivityDateWith(
 			ctx,
 			b.transcriptProbe(),
@@ -333,6 +384,18 @@ func (b *board) refreshTaskRows(
 			projectDir,
 			projectsRoot,
 		)
+	}
+	if b.panes != nil && len(sessionIDs) > 0 {
+		panes := b.panes.ResolveAll(ctx, sessionIDs)
+		for i := range refreshed {
+			if !isLiveRow(refreshed[i]) {
+				continue
+			}
+			if paneID, ok := panes[refreshed[i].item.ClaudeSessionID]; ok {
+				value := paneID
+				refreshed[i].jumpPane = &value
+			}
+		}
 	}
 	return refreshed, nil
 }
@@ -468,6 +531,7 @@ func (b *board) patchTaskRows(
 			started:       b.sessionStarted(vault.Name, item.Name),
 			sessionState:  rows[at].sessionState,
 			location:      rows[at].location,
+			jumpPane:      rows[at].jumpPane,
 			activityDate:  rows[at].activityDate,
 			openQuestions: questions,
 		}
@@ -789,6 +853,7 @@ func (b *board) taskResponse(
 		ActivityDate:         dateTimeString(activityDate),
 		SessionState:         row.sessionState,
 		Location:             row.location,
+		JumpPane:             row.jumpPane,
 		OpenQuestions:        openQuestions,
 	}
 }

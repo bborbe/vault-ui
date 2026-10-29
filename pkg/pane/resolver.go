@@ -48,6 +48,19 @@ type ResolverParams struct {
 // Resolver resolves a live session id to its WezTerm pane id.
 type Resolver interface {
 	Resolve(ctx context.Context, sessionID string) (string, bool)
+	// ResolveAll resolves every id in sessionIDs in one batch: it reads the
+	// registry once and runs `wezterm cli list` once for the whole batch. The
+	// result is keyed by the caller's own session id — not the registry's, which
+	// may be longer — and an id that resolves to nothing is simply absent. An
+	// empty input, a failed listing and a cancelled context all yield an empty
+	// non-nil map; the signature carries no error on purpose.
+	ResolveAll(ctx context.Context, sessionIDs []string) map[string]string
+}
+
+// weztermPane is one entry of `wezterm cli list --format json`.
+type weztermPane struct {
+	PaneID int    `json:"pane_id"`
+	Title  string `json:"title"`
 }
 
 type resolver struct {
@@ -111,52 +124,80 @@ func (r *resolver) Resolve(ctx context.Context, sessionID string) (string, bool)
 		return "", false
 	}
 
-	env := BuildSubprocessEnv(os.Environ(), r.homeDir, r.bundleDir, PidAlive)
-	output, err := r.exec(ctx, env, weztermBinary(r.bundleDir), "cli", "list", "--format", "json")
+	panes, err := r.listPanes(ctx)
 	if err != nil {
 		logDebug("[PaneResolver] wezterm cli list failed for session %s: %v", sessionID, err)
 		return "", false
 	}
 
-	var panes []struct {
-		PaneID int    `json:"pane_id"`
-		Title  string `json:"title"`
-	}
-	if unmarshalErr := json.Unmarshal(output, &panes); unmarshalErr != nil {
-		logDebug(
-			"[PaneResolver] cannot parse wezterm cli list output for session %s: %v",
-			sessionID,
-			unmarshalErr,
-		)
+	paneID, ok := matchPaneID(panes, name)
+	if !ok {
+		logDebug("[PaneResolver] no unambiguous pane titled %q for session %s", name, sessionID)
 		return "", false
 	}
+	return paneID, true
+}
 
-	matches := make([]int, 0, 1)
-	for _, weztermPane := range panes {
-		if stripStatusGlyph(weztermPane.Title) == name {
-			matches = append(matches, weztermPane.PaneID)
+// ResolveAll resolves every id in sessionIDs in one batch. It reads the
+// registry once and runs `wezterm cli list` once, and only when at least one id
+// has a registry name. The result is keyed by the caller's own id; an id that
+// resolves to nothing is absent, never present with an empty value. Every
+// failure yields an empty non-nil map.
+func (r *resolver) ResolveAll(ctx context.Context, sessionIDs []string) map[string]string {
+	resolved := map[string]string{}
+	if len(sessionIDs) == 0 {
+		return resolved
+	}
+
+	registry := r.registryNames(ctx, r.registryDir)
+	type candidate struct {
+		sessionID string
+		name      string
+	}
+	candidates := make([]candidate, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		if sessionID == "" {
+			continue
+		}
+		name, ok := candidateNameFrom(registry, sessionID)
+		if !ok {
+			continue
+		}
+		candidates = append(candidates, candidate{sessionID: sessionID, name: name})
+	}
+	if len(candidates) == 0 {
+		return resolved
+	}
+
+	panes, err := r.listPanes(ctx)
+	if err != nil {
+		logDebug("[PaneResolver] wezterm cli list failed for %d session(s): %v", len(candidates), err)
+		return resolved
+	}
+
+	for _, entry := range candidates {
+		if paneID, ok := matchPaneID(panes, entry.name); ok {
+			resolved[entry.sessionID] = paneID
 		}
 	}
-	if len(matches) != 1 {
-		logDebug(
-			"[PaneResolver] %d pane(s) titled %q for session %s",
-			len(matches),
-			name,
-			sessionID,
-		)
-		return "", false
-	}
-
-	return strconv.Itoa(matches[0]), true
+	return resolved
 }
 
 // candidateName returns the stripped name of the single registry entry whose
 // session id has sessionID as a case-insensitive prefix, or ("", false) when
 // there is no such entry, more than one, or the name is empty.
 func (r *resolver) candidateName(ctx context.Context, sessionID string) (string, bool) {
+	return candidateNameFrom(r.registryNames(ctx, r.registryDir), sessionID)
+}
+
+// candidateNameFrom applies the registry-name rule to an already-read registry:
+// exactly one entry whose session id has sessionID as a case-insensitive prefix,
+// with its status glyph stripped, and a non-empty result. It is shared by the
+// single and batch paths so the two cannot drift.
+func candidateNameFrom(registry map[string]string, sessionID string) (string, bool) {
 	prefix := strings.ToLower(sessionID)
 	names := make([]string, 0, 1)
-	for id, entryName := range r.registryNames(ctx, r.registryDir) {
+	for id, entryName := range registry {
 		if strings.HasPrefix(strings.ToLower(id), prefix) {
 			names = append(names, entryName)
 		}
@@ -169,6 +210,38 @@ func (r *resolver) candidateName(ctx context.Context, sessionID string) (string,
 		return "", false
 	}
 	return name, true
+}
+
+// matchPaneID applies the pane-title rule: exactly one pane whose
+// glyph-stripped title equals name resolves; zero or several resolve nothing.
+// It is shared by the single and batch paths so the two cannot drift.
+func matchPaneID(panes []weztermPane, name string) (string, bool) {
+	matches := make([]int, 0, 1)
+	for _, weztermPane := range panes {
+		if stripStatusGlyph(weztermPane.Title) == name {
+			matches = append(matches, weztermPane.PaneID)
+		}
+	}
+	if len(matches) != 1 {
+		return "", false
+	}
+	return strconv.Itoa(matches[0]), true
+}
+
+// listPanes runs `wezterm cli list --format json` once and decodes its output.
+// ctx is threaded to r.exec exactly as the click path does, so the configured
+// timeout still bounds the call.
+func (r *resolver) listPanes(ctx context.Context) ([]weztermPane, error) {
+	env := BuildSubprocessEnv(os.Environ(), r.homeDir, r.bundleDir, PidAlive)
+	output, err := r.exec(ctx, env, weztermBinary(r.bundleDir), "cli", "list", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	var panes []weztermPane
+	if unmarshalErr := json.Unmarshal(output, &panes); unmarshalErr != nil {
+		return nil, errors.Wrap(ctx, unmarshalErr, "parse wezterm cli list output")
+	}
+	return panes, nil
 }
 
 // weztermBinary returns the absolute wezterm path when the app bundle holds the

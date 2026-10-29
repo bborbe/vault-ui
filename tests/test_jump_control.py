@@ -1,9 +1,11 @@
 """Static + integration assertions for the card's jump control.
 
-The board tells the operator a session is live but gives no way to reach it;
-the contract this renders against is live session state plus a task kind. A live
-task card carries a ``.jump-btn`` sibling beside the ``● Live`` badge, and
-clicking it POSTs to the jump route without navigating.
+The board tells the operator a session is live but gives no way to reach it.
+The contract this renders against is pane availability plus a task kind: a live
+task card carries a ``.jump-btn`` sibling beside the ``● Live`` badge only when
+its payload carries a ``jump_pane``, and clicking it POSTs to the jump route
+without navigating. A headless session is live but has no terminal, so its card
+renders the badge and nothing else.
 
 The static assertions below slice ``sessionButtonHtml`` as text — that is the
 only way this repo can inspect ``app.js`` (no ``package.json``, no node). They
@@ -41,14 +43,11 @@ def _slice(marker: str, length: int) -> str:
 
 
 def test_jump_control_rendered_inside_session_button_helper() -> None:
-    """The control is emitted from ``sessionButtonHtml`` on live session state for
-    a task card — not merely present somewhere else in the file."""
+    """The control is emitted from ``sessionButtonHtml`` for a task card whose
+    live session actually resolves to a pane — not merely present elsewhere."""
     body = _slice("function sessionButtonHtml", 4000)
     assert 'class="jump-btn"' in body
-    assert "jump_pane" not in body  # the control is gated on live session state, not pane data
-    assert (
-        "jump_pane" not in APP_JS
-    )  # whole file: keeps the go-cutover guard's -S baseline a fixed point
+    assert "item.jump_pane" in body  # gated on pane availability, not live state alone
     assert "kind !== 'task'" in body  # a goal card has no jump route
 
 
@@ -92,6 +91,8 @@ def test_jump_handler_does_not_read_the_success_body() -> None:
 
 LIVE_ID = "aaaaaaaa-0000-0000-0000-0000000000aa"
 LIVE_PANE = "7"
+# A live session with no WezTerm pane: live (fresh transcript) but headless.
+HEADLESS_ID = "bbbbbbbb-0000-0000-0000-0000000000bb"
 
 
 def _write_transcript(root: Path, session_id: str, age_seconds: int) -> None:
@@ -111,6 +112,7 @@ def jump_server(tmp_path, monkeypatch):
     control renders from live session state alone."""
     projects_root = tmp_path / "claude-projects"
     _write_transcript(projects_root, LIVE_ID, 30)
+    _write_transcript(projects_root, HEADLESS_ID, 30)
     monkeypatch.setattr("vault_ui.activity._claude_projects_root", lambda: projects_root)
 
     task = Task(
@@ -135,9 +137,33 @@ def jump_server(tmp_path, monkeypatch):
         completed_date=None,
         goals=None,
     )
+    # Same fixture shape, its own session id, a fresh transcript so it classifies
+    # live — but deliberately absent from _pane_map, so it has no terminal pane.
+    headless_task = Task(
+        id="Headless Task",
+        title="Headless Task",
+        status="in_progress",
+        phase="execution",
+        project_path=None,
+        content="",
+        description=None,
+        modified_date=datetime.now(tz=UTC) - timedelta(seconds=30),
+        defer_date=None,
+        planned_date=None,
+        due_date=None,
+        priority=1,
+        category=None,
+        recurring=None,
+        claude_session_id=HEADLESS_ID,
+        claude_session_started=None,
+        assignee="bborbe",
+        blocked_by=None,
+        completed_date=None,
+        goals=None,
+    )
 
     client = MagicMock()
-    client.list_tasks = AsyncMock(return_value=[task])
+    client.list_tasks = AsyncMock(return_value=[task, headless_task])
     client.list_goals = AsyncMock(return_value=[])
     client.show_task = AsyncMock(return_value=task)
 
@@ -193,8 +219,9 @@ def jump_server(tmp_path, monkeypatch):
 
 
 @pytest.mark.integration
-def test_clicking_jump_posts_to_the_route_without_navigating(jump_server, page):
-    """Clicking the control fires POST /api/tasks/<id>/jump and the page stays put."""
+def test_jump_follows_pane_availability(jump_server, page):
+    """A live card with a pane offers the control and posts without navigating; a
+    live headless card (no pane) offers no control at all."""
     requests = []
 
     def _track(request):
@@ -204,14 +231,23 @@ def test_clicking_jump_posts_to_the_route_without_navigating(jump_server, page):
     page.on("request", _track)
     page.goto(f"{jump_server}/?status=in_progress&view=tasks")
     card = page.locator(".task-card").filter(has_text="Live Task")
+    headless = page.locator(".task-card").filter(has_text="Headless Task")
     before = page.url
 
+    # Tab half: exactly one control on the board, on the pane-bearing card.
+    assert page.locator(".jump-btn").count() == 1
+    assert card.locator(".jump-btn").count() == 1
     card.locator(".jump-btn").click()
 
-    assert requests, "no request reached the jump route"
+    assert len(requests) == 1, "expected exactly one request to the jump route"
     method, url = requests[0]
     assert method == "POST"
     assert "/api/tasks/" in url and "/jump" in url
     # The board must not reload or navigate — a reload would scroll it.
     assert page.url == before
     assert card.locator(".live-badge").count() == 1
+
+    # Headless half: live, but with no terminal pane, so no control and no jump.
+    assert headless.locator(".jump-btn").count() == 0
+    assert headless.locator(".live-badge").count() == 1
+    assert not any("Headless" in request_url for _, request_url in requests)

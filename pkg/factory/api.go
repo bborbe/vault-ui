@@ -26,7 +26,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/queue"
@@ -145,7 +144,7 @@ func CreateAPIHandler(
 	loader config.Loader,
 	configPath string,
 	cache statuscache.Cache,
-	paneResolver mutations.PaneResolver,
+	paneResolver pane.Resolver,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
@@ -165,7 +164,12 @@ func CreateAPIHandler(
 		Sessions:  sessionSnapshot,
 		Index:     pageIndex,
 		PageIndex: pageIndex,
-		HomeDir:   homeDir,
+		// The pane resolver is wired here, not just into the mutation service: the
+		// board uses it to stamp each live card's jump_pane. Left nil, the field is
+		// always null, the frontend renders no jump control on any card, and every
+		// test still passes — so this line is what makes the feature real.
+		Panes:   paneResolver,
+		HomeDir: homeDir,
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, locks, homeDir,

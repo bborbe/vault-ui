@@ -227,21 +227,23 @@ that branch's work and reports a false alarm.
 cd ~/Documents/workspaces/vault-ui
 git fetch origin
 # The static tree intentionally changed with lazy pane resolution (spec 025), so the
-# parity baseline for the frontend moved with it. Resolve that baseline as the commit
-# that removed the frontend's `jump_pane` read — a fixed point: `-S` only matches
-# commits that change the token's count in app.js, and it stays at zero afterwards
-# (tests/test_jump_control.py forbids it anywhere in app.js):
-BASELINE=$(git log --format=%h -1 -S'jump_pane' origin/master -- src/vault_ui/static/app.js)
+# parity baseline for the frontend moved with it. v0.82.0 is the release that landed
+# that work, so it is a stable tag rather than a `-S'jump_pane'` pickaxe anchor: the
+# frontend reads `jump_pane` again (the list response now carries it), so a pickaxe on
+# that token re-anchors on the newer commit and the guard would silently change
+# meaning.
+BASELINE=v0.82.0
 git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 ```
 
 Prints nothing. The frontend changed once, deliberately, with lazy pane resolution, and
-this guard derives its baseline from the commit that removed the frontend's `jump_pane`
-read, so it keeps meaning "nothing has changed the static tree since parity was last
-re-established" — a change merged into the static tree since then shows up here. That
-commit is the baseline rather than simply the last commit that touched `app.js` because
-the latter would re-anchor on every later frontend change, so the guard could never
-report one.
+this guard derives its baseline from the release that landed it, so it keeps meaning
+"nothing has changed the static tree since parity was last re-established" — a change
+merged into the static tree since then shows up here. A tag is the baseline rather than
+simply the last commit that touched `app.js` because the latter would re-anchor on every
+later frontend change, so the guard could never report one; and it replaces the
+`-S'jump_pane'` pickaxe anchor, which is no longer a fixed point now that the frontend
+reads the field again.
 
 Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
 work: step 1's `git pull` has already brought any merged change in, so that comparison

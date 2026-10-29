@@ -33,17 +33,33 @@ import (
 // liveSessionID is the session id the pane specs resolve.
 const liveSessionID = "11111111-1111-1111-1111-111111111111"
 
-// recordingPaneResolver records every session id handed to Resolve, so a spec
-// can prove a list read never resolves a pane and a jump does.
+// recordingPaneResolver records single-session Resolve calls and batch
+// ResolveAll calls separately, so a spec can tell a list read's one batch from
+// a jump's one single-session resolve.
 type recordingPaneResolver struct {
-	panes map[string]string
-	calls []string
+	panes        map[string]string
+	resolveCalls []string
+	allCalls     [][]string
 }
 
 func (r *recordingPaneResolver) Resolve(_ context.Context, sessionID string) (string, bool) {
-	r.calls = append(r.calls, sessionID)
+	r.resolveCalls = append(r.resolveCalls, sessionID)
 	pane, ok := r.panes[sessionID]
 	return pane, ok
+}
+
+func (r *recordingPaneResolver) ResolveAll(
+	_ context.Context,
+	sessionIDs []string,
+) map[string]string {
+	r.allCalls = append(r.allCalls, append([]string(nil), sessionIDs...))
+	resolved := map[string]string{}
+	for _, sessionID := range sessionIDs {
+		if pane, ok := r.panes[sessionID]; ok {
+			resolved[sessionID] = pane
+		}
+	}
+	return resolved
 }
 
 // paneFixture builds a vault holding one live task, so the board classifies it
@@ -122,8 +138,15 @@ func listKeys(body string) []string {
 	return keys
 }
 
+// listElements decodes a JSON array body into its element maps.
+func listElements(body string) []map[string]any {
+	var elements []map[string]any
+	Expect(json.Unmarshal([]byte(body), &elements)).To(Succeed())
+	return elements
+}
+
 var _ = Describe("Lazy pane resolution", func() {
-	It("resolves no panes on a list read and one pane on a jump", func() {
+	It("resolves panes in one batch on a list read and one session on a jump", func() {
 		loader, configPath, homeDir, _ := paneFixture()
 		recorder := &recordingPaneResolver{
 			panes: map[string]string{liveSessionID: "7"},
@@ -137,14 +160,18 @@ var _ = Describe("Lazy pane resolution", func() {
 		)
 		Expect(listRecorder.Code).To(Equal(http.StatusOK))
 		// Fixture guard: the task must classify live, otherwise the board would
-		// never have resolved a pane even before this change.
+		// never resolve a pane at all.
 		Expect(listRecorder.Body.String()).To(ContainSubstring(`"session_state":"live"`))
-		Expect(recorder.calls).To(BeEmpty())
+		// The list read makes at most one batch call and never a single-session
+		// resolve: one shell-out per build, not one per session.
+		Expect(recorder.allCalls).To(HaveLen(1))
+		Expect(recorder.allCalls[0]).To(Equal([]string{liveSessionID}))
+		Expect(recorder.resolveCalls).To(BeEmpty())
 
 		// Positive control: the same resolver fires once on a real jump, so the
-		// zero-call assertion above cannot pass with a dead double. The status
-		// is deliberately not asserted: the pane resolves before the jump
-		// credential is read, and no credential exists under the temp home.
+		// assertions above cannot pass with a dead double. The status is
+		// deliberately not asserted: the pane resolves before the jump credential
+		// is read, and no credential exists under the temp home.
 		jumpRecorder := httptest.NewRecorder()
 		handler.ServeHTTP(
 			jumpRecorder,
@@ -152,26 +179,57 @@ var _ = Describe("Lazy pane resolution", func() {
 				http.MethodPost, "/api/tasks/LiveTask/jump?vault=personal", nil,
 			),
 		)
-		Expect(recorder.calls).To(HaveLen(1))
-		Expect(recorder.calls[0]).To(Equal(liveSessionID))
+		Expect(recorder.resolveCalls).To(HaveLen(1))
+		Expect(recorder.resolveCalls[0]).To(Equal(liveSessionID))
 	})
 
-	It("carries no pane-bearing key in any list response", func() {
+	It("carries jump_pane on a live task only when a pane resolves", func() {
+		loader, configPath, homeDir, _ := paneFixture()
+
+		withPane := &recordingPaneResolver{
+			panes: map[string]string{liveSessionID: "7"},
+		}
+		handler := paneHandler(loader, configPath, homeDir, withPane)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, "/api/tasks?vault=personal", nil),
+		)
+		Expect(recorder.Code).To(Equal(http.StatusOK))
+		elements := listElements(recorder.Body.String())
+		Expect(elements).To(HaveLen(1))
+		Expect(elements[0]).To(HaveKeyWithValue("jump_pane", "7"))
+
+		withoutPane := &recordingPaneResolver{panes: map[string]string{}}
+		handler = paneHandler(loader, configPath, homeDir, withoutPane)
+		recorder = httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, "/api/tasks?vault=personal", nil),
+		)
+		Expect(recorder.Code).To(Equal(http.StatusOK))
+		elements = listElements(recorder.Body.String())
+		Expect(elements).To(HaveLen(1))
+		// The key is always emitted; a live card with no pane carries null.
+		Expect(elements[0]).To(HaveKey("jump_pane"))
+		Expect(elements[0]["jump_pane"]).To(BeNil())
+	})
+
+	It("carries no pane-bearing key in a goal list response", func() {
 		loader, configPath, _ := apiFixture()
 		handler := newTestAPIHandler(loader, configPath)
 
-		for _, target := range []string{"/api/tasks?vault=personal", "/api/goals?vault=personal"} {
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
-			Expect(recorder.Code).To(Equal(http.StatusOK), "%s", target)
+		target := "/api/goals?vault=personal"
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		Expect(recorder.Code).To(Equal(http.StatusOK), "%s", target)
 
-			keys := listKeys(recorder.Body.String())
-			Expect(keys).NotTo(BeEmpty(), "%s", target)
-			for _, key := range keys {
-				Expect(strings.Contains(strings.ToLower(key), "pane")).To(
-					BeFalse(), "%s carries %q", target, key,
-				)
-			}
+		keys := listKeys(recorder.Body.String())
+		Expect(keys).NotTo(BeEmpty(), "%s", target)
+		for _, key := range keys {
+			Expect(strings.Contains(strings.ToLower(key), "pane")).To(
+				BeFalse(), "%s carries %q", target, key,
+			)
 		}
 	})
 })
