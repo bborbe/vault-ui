@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -1111,6 +1112,107 @@ var _ = Describe("ListTopics", func() {
 			byID[response.ID] = response.Flag
 		}
 		Expect(byID).To(Equal(map[string]bool{"Flagged": true, "Plain": false}))
+	})
+
+	It("classifies a manager-armed topic as live when the store lists it", func() {
+		const managerID = "33333333-3333-3333-3333-333333333333"
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Armed", Status: "in_progress", ManagerSessionID: managerID},
+		}
+		h.signals.registry = []heartbeat.Session{{ID: managerID}}
+		h.build()
+
+		responses, err := h.board.ListTopics(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("live"))
+	})
+
+	It("classifies a manager-armed topic as quiet when its transcript is stale", func() {
+		const managerID = "44444444-4444-4444-4444-444444444444"
+		stale := libtime.DateTime(baseTime.Add(-time.Hour))
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Armed", Status: "in_progress", ManagerSessionID: managerID},
+		}
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{managerID: &stale},
+		}
+		h.build()
+
+		responses, err := h.board.ListTopics(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("quiet"))
+	})
+
+	It("serializes a topic with no manager id as session_state null", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Plain", Status: "in_progress"},
+		}
+		responses, err := h.board.ListTopics(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).To(BeNil())
+
+		encoded, err := json.Marshal(responses)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"session_state":null`))
+	})
+
+	It("keeps a manager-armed topic indeterminate when the store is unreachable", func() {
+		const managerID = "55555555-5555-5555-5555-555555555555"
+		stale := libtime.DateTime(baseTime.Add(-time.Hour))
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Armed", Status: "in_progress", ManagerSessionID: managerID},
+		}
+		h.signals.unknown = true
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{managerID: &stale},
+		}
+		h.build()
+
+		responses, err := h.board.ListTopics(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("indeterminate"))
+	})
+
+	It("serves the topic payload field set", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "TopicOne", Status: "in_progress", Phase: "execution"},
+		}
+		responses, err := h.board.ListTopics(context.Background(), nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		encoded, err := json.Marshal(responses)
+		Expect(err).NotTo(HaveOccurred())
+		var rows []map[string]json.RawMessage
+		Expect(json.Unmarshal(encoded, &rows)).To(Succeed())
+		Expect(rows).NotTo(BeEmpty())
+
+		fields := make([]string, 0, len(rows[0]))
+		for field := range rows[0] {
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		Expect(fields).To(Equal([]string{
+			"flag",
+			"id",
+			"obsidian_url",
+			"phase",
+			"session_state",
+			"status",
+			"title",
+			"vault",
+		}))
 	})
 
 	It("contributes nothing for a vault without a topics folder", func() {

@@ -138,12 +138,22 @@ Every topic is returned, completed ones included — the endpoint always passes
 Each topic carries the status read from that topic's own file, and a vault with
 no topics folder contributes an empty list rather than an error.
 
+Each topic also carries `session_state`: `live` when the manager session the
+page records in `manager_session_id` is provably running, `indeterminate` when
+the id is set but its state cannot be proven, `quiet` when it is provably not
+running, and `null` when the page records no `manager_session_id`. It uses the
+same four outcomes and signal order as the task paragraph above; a topic
+records only the manager id, so its outcome is that single id's outcome.
+
 ```json
 [
   {
     "id": "Manager Layer",
     "title": "Manager Layer",
     "status": "in_progress",
+    "phase": "execution",
+    "session_state": null,
+    "flag": false,
     "vault": "personal",
     "obsidian_url": "obsidian://open?vault=personal&file=23%20Topics/Manager%20Layer.md"
   }
