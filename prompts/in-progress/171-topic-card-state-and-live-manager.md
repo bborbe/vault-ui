@@ -1,5 +1,5 @@
 ---
-status: failed
+status: approved
 spec: [036-topic-card-state-and-topic-liveness]
 created: "2026-10-29T00:00:00Z"
 queued: "2026-10-29T13:00:18Z"
