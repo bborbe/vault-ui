@@ -10,12 +10,13 @@ and replaces a running service, so it sits deliberately outside the pipeline: sp
 every service restart, plist edit and tool reinstall out of `prompts/`.
 
 Parity is proven before you start — `make parity` compares the Go and Python backends
-across all 25 routes, the error shapes, the write path and the WebSocket frames, and
-was last re-established when spec 025 moved the frontend and the task-list body
-(lazy pane resolution). This runbook is about the switch, not about re-establishing
-that. If step 1 pulls code that moves the Go backend or the static tree past what
-parity last covered, the claim no longer covers what you are deploying — re-run
-`make parity` (in the container; see § Known limits).
+across all 25 routes, the error shapes, the write path and the WebSocket frames. It was
+last re-established in `v0.100.0`, when the card's jump control began following pane
+availability and moved both the task-list body and the static tree; before that, spec 025
+re-established it for lazy pane resolution (`v0.82.0`). This runbook is about the switch,
+not about re-establishing that. If step 1 pulls code that moves the Go backend or the
+static tree past what parity last covered, the claim no longer covers what you are
+deploying — re-run `make parity` (in the container; see § Known limits).
 
 The executable blocks assume the repo is at `~/Documents/workspaces/vault-ui` and the Go
 binary at `~/Documents/workspaces/go/bin/vault-ui`; substitute your own paths if your
@@ -220,8 +221,8 @@ is in the vault's `[[vault-ui]]` page.
 
 ## 6. Regression guard
 
-Run this **from a checkout on `master`** — on a feature branch the diff also contains
-that branch's work and reports a false alarm.
+Run this after a fresh `git fetch origin`. The command compares two refs, so the branch
+you happen to be on does not change the result — only a stale `origin/master` can.
 
 ```bash
 cd ~/Documents/workspaces/vault-ui
