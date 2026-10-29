@@ -91,8 +91,8 @@ make build
 ```
 
 **Be on `master` first, from a clean tree.** The parity claim above is pinned to a
-`master` commit and step 6's guard assumes a `master` checkout — a build taken from a
-feature branch is code nothing in this runbook has verified. Check `git status` first:
+`master` commit, and a build taken from a feature branch is code nothing in this runbook
+has verified. Check `git status` first:
 `git checkout` carries uncommitted work across the switch rather than discarding it, so
 a dirty tree does not lose edits, it produces a master build containing them.
 
@@ -244,6 +244,17 @@ fixed point only while it is the most recent static-tree release. `v0.82.0` — 
 that first removed the frontend's `jump_pane` read — stopped being one the moment later
 frontend work merged on top of it, which is why the guard must name the newest such
 release rather than the one that started the sequence.
+
+A stale baseline and a real regression print identically here, so read the commits behind
+the diff before deciding which you have:
+
+```bash
+git log --oneline "$BASELINE"..origin/master -- src/vault_ui/static/
+```
+
+If the newest commit is a deliberate frontend change whose parity was re-established
+(`make parity` green), move `BASELINE` to the release that landed it. If it is not, treat
+the diff as the regression this guard exists to catch.
 
 Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
 work: step 1's `git pull` has already brought any merged change in, so that comparison
