@@ -7,6 +7,7 @@ created: "2026-10-29T14:05:00Z"
 queued: "2026-10-29T15:13:53Z"
 started: "2026-10-29T15:13:56Z"
 completed: "2026-10-29T15:20:46Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/198
 branch: dark-factory/172-jira-badge-field
 ---
 
