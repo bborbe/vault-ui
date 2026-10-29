@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Stop the topic card rendering a status badge that contradicts its phase column, and surface topic liveness — the card's column is its `phase`, while the badge printed the different `status` axis, so a page carrying `phase: todo` + `status: in_progress` sat in TODO while its subtitle said `in_progress`; the badge is gone (task and goal cards render none for the same reason) and the topic's own status stays visible in the detail modal and still drives the status filter. `GET /api/topics` now carries `session_state` (always emitted, null when the page records no `manager_session_id`), classified through the shared `classifyManagerSessionID` helper, and a topic card renders a display-only `topic-live-badge` when and only when it is `live` — no take-over control, no `onclick`/`role`/`tabindex`, and its own CSS class so it cannot inherit `.live-badge`'s pointer and hover affordances.
+
 ## v0.100.0
 
 - feat: Gate the card's jump control on pane availability instead of live session state — `GET /api/tasks` carries a Go-only `jump_pane` again, resolved once per snapshot build (and once per session-generation refresh) through a new batch `pane.Resolver.ResolveAll` that reads the registry and runs a single `wezterm cli list` for the whole live set rather than one shell-out per session; a live card whose session has no WezTerm pane (a headless worker) now renders the Live badge with no jump control, so the operator no longer clicks into a guaranteed `409 no pane resolves for this session`, while the click path keeps resolving fresh so a recycled pane id cannot jump to the wrong tab. `/api/goals` still carries no pane-bearing key, and the parity harness keeps stripping `jump_pane` from both sides because the two backends resolve it differently.

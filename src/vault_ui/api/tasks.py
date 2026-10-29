@@ -1256,6 +1256,7 @@ def _topic_to_response(topic: Topic, vault_config: VaultConfig) -> TopicResponse
         title=topic.title,
         status=topic.status,
         phase=topic.phase,
+        session_state=topic.session_state,
         vault=vault_config.name,
         obsidian_url=_topic_url(vault_config, topic.id),
         flag=topic.flag,

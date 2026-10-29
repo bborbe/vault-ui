@@ -113,3 +113,13 @@ def test_cachebust_token_bumped() -> None:
     assert re.search(r"app\.js\?v=\S+", INDEX_HTML)
     assert "app.js?v=2026-08-19-board-sort" not in INDEX_HTML
     assert "app.js?v=2026-08-25-closeout-abort-only" not in INDEX_HTML
+    assert "app.js?v=2026-10-29-jump-pane-gating" not in INDEX_HTML
+
+
+def test_topic_card_drops_status_badge_and_gates_the_live_indicator() -> None:
+    """The topic card renders no status badge — its column is its phase — and
+    shows the display-only live indicator only when the session is live."""
+    body = _function_body("createTopicCard")
+    assert "status-badge" not in body
+    assert "session_state === 'live'" in body
+    assert "topic-live-badge" in body

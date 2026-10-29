@@ -75,6 +75,14 @@ class Topic:
     vault: str  # Vault name this topic belongs to
     phase: str | None = None  # From the topic's own frontmatter; absent on most
     flag: bool = False  # From frontmatter: true if the topic is flagged (picked for today)
+    # Live/quiet/indeterminate classification of the manager session.
+    #
+    # DIVERGENCE from the Go backend: Go classifies this from the page's
+    # ``manager_session_id``. This superseded harness sets it directly, because
+    # ``_parse_topic`` never reads that field — so the Python backend always
+    # sends ``null`` while the frontend branch stays exercisable via a directly
+    # constructed Topic.
+    session_state: str | None = None
 
 
 @dataclass
@@ -176,6 +184,9 @@ class TopicResponse(BaseModel):
     title: str
     status: str
     phase: str | None = None  # From the topic's own frontmatter; absent on most
+    # Same terms as TaskResponse.session_state: null when the page records no
+    # manager id. This harness always sends null (see Topic.session_state).
+    session_state: str | None = None
     vault: str  # Vault name this topic belongs to
     obsidian_url: str
     # Same marker as GoalResponse.flag: always emitted, false when cleared.
