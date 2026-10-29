@@ -1,7 +1,10 @@
 ---
-spec: ["036-topic-card-state-and-topic-liveness"]
-status: draft
+status: rejected
+originalStatus: draft
+spec: [036-topic-card-state-and-topic-liveness]
 created: "2026-10-29T13:03:19Z"
+rejected: "2026-10-29T13:06:12Z"
+rejectedReason: 'duplicate: spec 036 was implemented by prompt 171 (hand-authored, audited); this auto-generated prompt appeared because generation fired before the spec was marked prompted'
 ---
 
 <!-- Generation note for the reviewer (not an instruction to the executor):
