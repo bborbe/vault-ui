@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.101.1
 
 - docs: Pin the cutover regression guard's baseline to `v0.100.0` — § 6 claimed `v0.82.0` printed nothing, but that tag stopped being a fixed point as soon as later frontend work merged on top of it. The baseline is now defined as the release at which parity was last re-established, the triage for a non-empty diff is written down beside the command, and the rule for moving it forward requires a fresh `make parity` first.
 
