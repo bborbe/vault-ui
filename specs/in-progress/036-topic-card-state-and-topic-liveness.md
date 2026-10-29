@@ -1,6 +1,8 @@
 ---
-status: approved
+status: prompted
 approved: "2026-10-29T12:59:56Z"
+generating: "2026-10-29T13:00:43Z"
+prompted: "2026-10-29T13:01:04Z"
 branch: dark-factory/topic-card-state-and-topic-liveness
 ---
 

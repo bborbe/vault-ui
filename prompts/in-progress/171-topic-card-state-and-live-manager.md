@@ -1,8 +1,10 @@
 ---
-status: approved
+status: failed
 spec: [036-topic-card-state-and-topic-liveness]
 created: "2026-10-29T00:00:00Z"
 queued: "2026-10-29T13:00:18Z"
+completed: "2026-10-29T13:00:44Z"
+lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/171-topic-card-state-and-live-manager"; uncommitted changes: specs/in-progress/036-topic-card-state-and-topic-liveness.md'
 ---
 
 # Topic cards stop contradicting their column and show a live manager
