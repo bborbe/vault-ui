@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - fix: Stop the topic card rendering a status badge that contradicts its phase column, and surface topic liveness — the card's column is its `phase`, while the badge printed the different `status` axis, so a page carrying `phase: todo` + `status: in_progress` sat in TODO while its subtitle said `in_progress`; the badge is gone (task and goal cards render none for the same reason) and the topic's own status stays visible in the detail modal and still drives the status filter. `GET /api/topics` now carries `session_state` (always emitted, null when the page records no `manager_session_id`), classified through the shared `classifyManagerSessionID` helper, and a topic card renders a display-only `topic-live-badge` when and only when it is `live` — no take-over control, no `onclick`/`role`/`tabindex`, and its own CSS class so it cannot inherit `.live-badge`'s pointer and hover affordances.
-- docs: Pin the cutover regression guard's baseline to `v0.100.0` — § 6 claimed `v0.82.0` printed nothing, but that tag stopped being a fixed point as soon as later frontend work merged on top of it. The guard now names the release that last landed a static-tree change, and the rule for moving it forward is written down beside the command.
+- docs: Pin the cutover regression guard's baseline to `v0.100.0` — § 6 claimed `v0.82.0` printed nothing, but that tag stopped being a fixed point as soon as later frontend work merged on top of it. The baseline is now defined as the release at which parity was last re-established, the triage for a non-empty diff is written down beside the command, and the rule for moving it forward requires a fresh `make parity` first.
 
 ## v0.100.0
 

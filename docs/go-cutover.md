@@ -228,9 +228,9 @@ you happen to be on does not change the result — only a stale `origin/master` 
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git fetch origin
-# The static tree changes only deliberately, so the baseline is the release that last
-# landed a frontend change — currently v0.100.0, which made the card's jump control
-# follow pane availability (the list response carries `jump_pane` again). A tag is a
+# The baseline is the release at which parity was last re-established — currently
+# v0.100.0, which made the card's jump control follow pane availability (the list
+# response carries `jump_pane` again) and moved the static tree with it. A tag is a
 # stable baseline where the old `-S'jump_pane'` pickaxe anchor is not: that token now
 # appears in more than one commit, so the pickaxe re-anchors and the guard silently
 # changes meaning.
@@ -238,20 +238,10 @@ BASELINE=v0.100.0
 git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 ```
 
-Prints nothing while the baseline covers the newest static-tree change — true right after
-a release that landed it, and false as soon as a further frontend change merges ahead of
-the next release. The guard means "nothing has changed the static tree since parity was
-last re-established", so such a change is the signal rather than a failure: it prints here
-until the release that lands it. When a static-tree change lands **and its parity is
-re-established**, move `BASELINE` to the release that lands it: a tag stays a fixed point
-only while it is the most recent static-tree release, and advancing it over an unreviewed
-change clears the guard permanently. `v0.82.0` — the release that first removed the
-frontend's `jump_pane` read — stopped being one the moment later frontend work merged on
-top of it, which is why the guard must name the newest such release rather than the one
-that started the sequence.
-
-A stale baseline and a real regression print identically here, so read the commits behind
-the diff before deciding which you have:
+Prints nothing while the baseline also covers the newest static-tree change. Once a
+frontend change lands after that release it prints here, and that print is the guard
+working rather than a false alarm — a stale baseline and a real regression look identical,
+so read the commits behind the diff before deciding which you have:
 
 ```bash
 cd ~/Documents/workspaces/vault-ui
@@ -259,9 +249,15 @@ BASELINE=v0.100.0
 git log --oneline "$BASELINE"..origin/master -- src/vault_ui/static/
 ```
 
-If the newest commit is a deliberate frontend change whose parity was re-established
-(`make parity` green), move `BASELINE` to the release that landed it. If it is not, treat
-the diff as the regression this guard exists to catch.
+If the newest commit is a deliberate frontend change, re-establish parity (`make parity`,
+in the container) and then move `BASELINE` — **in both blocks** — to the release that
+lands it: a tag stays a fixed point only while it is both the most recent static-tree
+release and a parity re-establishment, and advancing it over an unverified tree clears
+the guard permanently. If the newest commit is not a deliberate change, treat the diff as
+the regression this guard exists to catch. `v0.82.0` — the release that first removed the
+frontend's `jump_pane` read — stopped being a fixed point the moment later frontend work
+merged on top of it, which is why the guard must name the newest such release rather than
+the one that started the sequence.
 
 Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
 work: step 1's `git pull` has already brought any merged change in, so that comparison
