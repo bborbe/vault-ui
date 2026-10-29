@@ -1,7 +1,8 @@
 ---
-spec: ["036-topic-card-state-and-topic-liveness"]
-status: draft
+status: approved
+spec: [036-topic-card-state-and-topic-liveness]
 created: "2026-10-29T00:00:00Z"
+queued: "2026-10-29T13:00:18Z"
 ---
 
 # Topic cards stop contradicting their column and show a live manager
@@ -92,17 +93,23 @@ cards render no status badge for exactly this reason.
    - Remove the `<span class="status-badge">…</span>` from the card footer entirely.
    - Add a display-only live indicator as the first child of `.card-footer`, rendered only
      when `topic.session_state === 'live'`, using the existing `liveBadgeLabel(null)` for the
-     text. It carries no `onclick`, no `role="button"` and no `tabindex`: a topic has no
-     take-over route, so the badge must not look like one.
+     text.
+   - **Use a distinct class, `topic-live-badge`, not `live-badge`.** `.live-badge` is
+     contractually the take-over control: `cursor: pointer` and hover/active shades
+     (`src/vault_ui/static/style.css:773-786`), and `role="button" tabindex="0"
+     onclick="takeOverSession(...)"` in `sessionButtonHtml` (`src/vault_ui/static/app.js:1582`),
+     pinned by `tests/test_live_badge_location.py:60-73`. A topic has no take-over route, so
+     reusing that class would render a control that lies. The indicator carries no `onclick`,
+     no `role="button"` and no `tabindex`.
    - Add a comment recording why the status badge is gone: the column is the topic's phase,
      the badge showed a different axis, and task and goal cards show no status badge either.
    - Leave `renderTopics`, `flagButtonHtml` and the detail button untouched.
 
 7. `src/vault_ui/static/style.css` — delete the now-unused `.topic-card .status-badge` rule
    (keep `.topic-modal-header .status-badge` — the modal still shows the status). Add a
-   `.topic-card .live-badge` rule that removes the pointer affordance the shared `.live-badge`
-   carries (`cursor: default`) and neutralises its hover shade, because the topic badge is not
-   clickable.
+   `.topic-live-badge` rule with the live pill's colours (green-200 on green-700, the same
+   values as `.live-badge`), but `cursor: default` and **no** `:hover` / `:active` /
+   `:focus-visible` shade — the topic indicator is not clickable.
 
 8. `src/vault_ui/static/index.html` — bump the `app.js?v=…` cache-buster token to
    `2026-10-29-topic-card-state`. An un-bumped token is how this repo has previously shipped a
@@ -112,15 +119,18 @@ cards render no status badge for exactly this reason.
 
 9. Tests — update the ones this change invalidates and cover the new behaviour:
    - `tests/test_topics_view.py`: change the `_topic_cards` helper to report the card's
-     `.live-badge` text instead of `.status-badge`. Rename
+     `.topic-live-badge` text instead of `.status-badge`. Rename
      `test_topics_render_each_own_status_and_phase_column` to
      `test_topic_cards_carry_no_status_badge_and_sit_in_their_phase_column`, asserting that no
      topic card carries a `.status-badge` and that each card sits in the column its `phase`
      names. Add a third fixture topic carrying `session_state="live"` and assert that exactly
-     that card renders a `.live-badge` while the other two render none. Bump the card-count
-     assertion at ~line 231 from `to_have_count(2)` to `to_have_count(3)`, and rewrite the
-     docstring of `test_opening_a_topic_shows_its_own_status` (~line 260), which currently
-     says "The card renders the status too" — the card no longer does.
+     that card renders a `.topic-live-badge` while the other two render none. Bump the
+     card-count assertion at ~line 231 from `to_have_count(2)` to `to_have_count(3)`, and
+     rewrite the docstring of `test_opening_a_topic_shows_its_own_status` (~line 260), which
+     currently says "The card renders the status too" — the card no longer does.
+   - `tests/test_card_render_unify.py` (runs in `make precommit`): add static assertions on
+     `createTopicCard`'s body using the existing `_function_body(name)` helper — it contains no
+     `status-badge`, and it does contain the `session_state === 'live'` gate.
    - `tests/test_api.py`: add `"session_state"` to the topic key set in
      `test_list_topics_returns_topic_response_key_set`.
    - `pkg/board/board_test.go` in the `ListTopics` Describe block: add a case where a topic
