@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.101.0
 
 - fix: Stop the topic card rendering a status badge that contradicts its phase column, and surface topic liveness — the card's column is its `phase`, while the badge printed the different `status` axis, so a page carrying `phase: todo` + `status: in_progress` sat in TODO while its subtitle said `in_progress`; the badge is gone (task and goal cards render none for the same reason) and the topic's own status stays visible in the detail modal and still drives the status filter. `GET /api/topics` now carries `session_state` (always emitted, null when the page records no `manager_session_id`), classified through the shared `classifyManagerSessionID` helper, and a topic card renders a display-only `topic-live-badge` when and only when it is `live` — no take-over control, no `onclick`/`role`/`tabindex`, and its own CSS class so it cannot inherit `.live-badge`'s pointer and hover affordances.
 
