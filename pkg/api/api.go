@@ -66,6 +66,11 @@ type TaskResponse struct {
 	// backend cannot emit it — and null unless the session is live and the store
 	// carried a non-empty location.
 	Location *string `json:"location"`
+	// JumpPane is the WezTerm pane the card's live session resolves to, so the
+	// card can offer a jump only when one exists. It is Go-only (see the package
+	// doc) and null unless the session is live and exactly one pane's title
+	// matches its registry name — the same rule the jump endpoint applies.
+	JumpPane *string `json:"jump_pane"`
 	// OpenQuestions is the task's Open Questions section, in section order. It is
 	// Go-only (see the package doc) and always non-nil, so it serialises as []
 	// rather than null and a task with no such section still carries the key.

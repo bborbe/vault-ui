@@ -304,10 +304,11 @@ wait_for() {
 }
 
 normalize() {
-  # `jump_pane` is intentionally absent from the Go backend's task responses
-  # (spec 025 — a session's pane is resolved when the jump control is clicked,
-  # never on a list read). The Python reference still emits it, so it is removed
-  # from BOTH sides before comparison.
+  # Both backends now emit `jump_pane` on a live task, but their resolution paths
+  # differ (the Go board batches the lookup per snapshot build; the Python
+  # reference resolves per request), so the values can legitimately differ. It is
+  # removed from BOTH sides to keep the comparison honest rather than pinning a
+  # value neither backend guarantees.
   #
   # `open_questions` is likewise Go-only: the task payload carries the task's
   # Open Questions section so a UI can ask for answers to whatever the task is
@@ -587,8 +588,9 @@ else
 fi
 
 # Static assets: byte identity (query strings ignored for path resolution).
-# `app.js` changed on purpose with spec 025 — the frontend no longer reads the
-# removed `jump_pane` field. This stays a live comparison of the two backends'
+# `app.js` changed on purpose with spec 025, and again when the jump control
+# began following pane availability — both backends now emit `jump_pane` and the
+# frontend reads it. This stays a live comparison of the two backends'
 # served bytes, not a stored baseline: the Python backend mounts
 # `src/vault_ui/static/` and the Go binary embeds the same tree, so a frontend
 # edit moves both sides together and there is no pinned hash to re-baseline here.

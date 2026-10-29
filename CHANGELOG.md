@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Gate the card's jump control on pane availability instead of live session state — `GET /api/tasks` carries a Go-only `jump_pane` again, resolved once per snapshot build (and once per session-generation refresh) through a new batch `pane.Resolver.ResolveAll` that reads the registry and runs a single `wezterm cli list` for the whole live set rather than one shell-out per session; a live card whose session has no WezTerm pane (a headless worker) now renders the Live badge with no jump control, so the operator no longer clicks into a guaranteed `409 no pane resolves for this session`, while the click path keeps resolving fresh so a recycled pane id cannot jump to the wrong tab. `/api/goals` still carries no pane-bearing key, and the parity harness keeps stripping `jump_pane` from both sides because the two backends resolve it differently.
+
 ## v0.99.1
 
 - fix: Hide the "—" column on the Goals and Topics boards while it holds no cards — the lane exists only for pages that carry no `phase`, so once a vault's goals and topics all have one it rendered as a permanently empty sixth column. `syncUnknownColumn()` toggles a `hidden` class (new `.kanban-column.hidden` rule) at the end of `renderGoals()`, `renderTopics()` and `renderColumnHeaders()`, and from `removeGoalCard()` — the one path that drops a card without re-rendering, so a websocket `deleted` frame cannot leave the lane visible-but-empty — so the lane still appears the moment a card lands in it. The Tasks view is unchanged — it never builds the column.

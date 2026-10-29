@@ -90,6 +90,14 @@ type SessionProbe interface {
 	Generation() uint64
 }
 
+// PanesResolver resolves live session ids to WezTerm pane ids in one batch.
+// pkg/pane.Resolver satisfies it.
+type PanesResolver interface {
+	// ResolveAll returns the pane id each session id resolves to, keyed by the
+	// caller's own id. An id that resolves to nothing is absent from the map.
+	ResolveAll(ctx context.Context, sessionIDs []string) map[string]string
+}
+
 // Deps are the board's injected dependencies.
 type Deps struct {
 	Vaults  VaultsProvider
@@ -109,7 +117,12 @@ type Deps struct {
 	// PageIndex serves a vault's task pages, which the board reads for the one
 	// derived field its list rows do not carry: a task's Open Questions section.
 	PageIndex pageindex.PageIndex
-	HomeDir   string
+	// Panes resolves the pane of each live session so a card can offer a jump
+	// only when one exists. A nil value means no panes: every card carries a null
+	// jump_pane, and the feature is inert. Production wires it in
+	// pkg/factory/api.go; leaving it nil there ships the feature silently dead.
+	Panes   PanesResolver
+	HomeDir string
 }
 
 // Board is the read-only board service.
@@ -135,6 +148,7 @@ type board struct {
 	sessions  SessionProbe
 	index     IndexRevisions
 	pageIndex pageindex.PageIndex
+	panes     PanesResolver
 	homeDir   string
 	snapshot  *taskSnapshotStore
 	bodies    *taskBodyCache
@@ -152,6 +166,7 @@ func New(deps Deps) Board {
 		sessions:  deps.Sessions,
 		index:     deps.Index,
 		pageIndex: deps.PageIndex,
+		panes:     deps.Panes,
 		homeDir:   deps.HomeDir,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{

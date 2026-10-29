@@ -284,6 +284,127 @@ var _ = Describe("Resolver", func() {
 		}),
 	)
 
+	Describe("ResolveAll", func() {
+		It("resolves a batch with exactly one exec call", func() {
+			resolver, execRec, registryRec := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"Alpha"},{"pane_id":8,"title":"Beta"}]`,
+				nil,
+				map[string]string{"id-a": "Alpha", "id-b": "Beta"},
+			)
+
+			got := resolver.ResolveAll(context.Background(), []string{"id-a", "id-b"})
+
+			Expect(got).To(Equal(map[string]string{"id-a": "7", "id-b": "8"}))
+			Expect(execRec.snapshot()).To(HaveLen(1))
+			Expect(registryRec.snapshot()).To(HaveLen(1))
+		})
+
+		It("keys the map by the caller's id, not the longer registry id", func() {
+			resolver, _, _ := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"✳ Fleet Manager"}]`,
+				nil,
+				map[string]string{fullSessionID: "Fleet Manager"},
+			)
+
+			// The board looks up by claude_session_id, which may be a prefix.
+			got := resolver.ResolveAll(context.Background(), []string{"e0930886"})
+
+			Expect(got).To(HaveKey("e0930886"))
+			Expect(got["e0930886"]).To(Equal("7"))
+			Expect(got).NotTo(HaveKey(fullSessionID))
+		})
+
+		It("maps two sessions resolving to the same pane to it", func() {
+			resolver, _, _ := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"Fleet"}]`,
+				nil,
+				map[string]string{"id-a": "Fleet", "id-b": "Fleet"},
+			)
+
+			got := resolver.ResolveAll(context.Background(), []string{"id-a", "id-b"})
+
+			Expect(got).To(Equal(map[string]string{"id-a": "7", "id-b": "7"}))
+		})
+
+		It("leaves zero-match and ambiguous sessions absent", func() {
+			resolver, execRec, _ := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"Fleet"},`+
+					`{"pane_id":8,"title":"Twice"},{"pane_id":9,"title":"Twice"}]`,
+				nil,
+				map[string]string{"id-a": "Fleet", "id-b": "Nobody", "id-c": "Twice"},
+			)
+
+			got := resolver.ResolveAll(
+				context.Background(), []string{"id-a", "id-b", "id-c"},
+			)
+
+			Expect(got).To(Equal(map[string]string{"id-a": "7"}))
+			Expect(execRec.snapshot()).To(HaveLen(1))
+		})
+
+		It("leaves an id with no registry entry absent", func() {
+			resolver, execRec, _ := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"Fleet"}]`,
+				nil,
+				map[string]string{"id-a": "Fleet"},
+			)
+
+			got := resolver.ResolveAll(context.Background(), []string{"id-a", "unknown"})
+
+			Expect(got).To(Equal(map[string]string{"id-a": "7"}))
+			Expect(execRec.snapshot()).To(HaveLen(1))
+		})
+
+		It("makes no exec call when no session has a registry name", func() {
+			resolver, execRec, registryRec := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"Fleet"}]`,
+				nil,
+				map[string]string{},
+			)
+
+			got := resolver.ResolveAll(context.Background(), []string{"id-a", "id-b"})
+
+			Expect(got).To(BeEmpty())
+			Expect(execRec.snapshot()).To(BeEmpty())
+			Expect(registryRec.snapshot()).To(HaveLen(1))
+		})
+
+		It("returns an empty map and makes no exec call for empty input", func() {
+			resolver, execRec, _ := newResolver(
+				baseParams(),
+				`[{"pane_id":7,"title":"Fleet"}]`,
+				nil,
+				map[string]string{fullSessionID: "Fleet"},
+			)
+
+			Expect(resolver.ResolveAll(context.Background(), nil)).NotTo(BeNil())
+			Expect(resolver.ResolveAll(context.Background(), nil)).To(BeEmpty())
+			Expect(resolver.ResolveAll(context.Background(), []string{})).To(BeEmpty())
+			Expect(execRec.snapshot()).To(BeEmpty())
+		})
+
+		It("returns an empty map when the listing fails", func() {
+			resolver, execRec, _ := newResolver(
+				baseParams(),
+				``,
+				errors.New("exit status 1"),
+				map[string]string{fullSessionID: "Fleet"},
+			)
+
+			got := resolver.ResolveAll(context.Background(), []string{fullSessionID})
+
+			Expect(got).NotTo(BeNil())
+			Expect(got).To(BeEmpty())
+			Expect(execRec.snapshot()).To(HaveLen(1))
+		})
+	})
+
 	It("runs the bundle's wezterm by absolute path when the bundle holds it", func() {
 		// exec resolves a bare name against the board's own PATH, which under
 		// launchd lacks the bundle dir, so the bare name is never found there.

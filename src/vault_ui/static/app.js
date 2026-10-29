@@ -1581,10 +1581,12 @@ function sessionButtonHtml(kind, item) {
         // lost — that is the accepted trade-off, stated in the confirm dialog.
         const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">${liveBadgeLabel(item.location)}</span>`;
         // Jump control — a sibling of the badge, never a second handler on it: the
-        // badge's click ENDS the session, so navigation must not ride on it. Offered
-        // on live session state alone, and only for tasks: a goal card has no jump
-        // route. Route: POST /tasks/{id}/jump.
-        if (kind !== 'task') {
+        // badge's click ENDS the session, so navigation must not ride on it. It
+        // follows pane availability, not session state: a headless session is live
+        // but has no terminal, so offering the control would only fail after the
+        // click. It is also task-only — a goal card has no jump route. Route:
+        // POST /tasks/{id}/jump.
+        if (kind !== 'task' || !item.jump_pane) {
             return liveBadge;
         }
         return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}')" title="Jump to this session's terminal pane">↗</span>`;

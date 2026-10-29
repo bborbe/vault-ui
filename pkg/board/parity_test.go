@@ -55,6 +55,7 @@ var _ = Describe("task-list payload parity", func() {
 			"flag",
 			"goals",
 			"id",
+			"jump_pane",
 			"location",
 			"modified_date",
 			"obsidian_url",
