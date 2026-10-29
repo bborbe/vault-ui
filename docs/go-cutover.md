@@ -226,24 +226,23 @@ that branch's work and reports a false alarm.
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git fetch origin
-# The static tree intentionally changed with lazy pane resolution (spec 025), so the
-# parity baseline for the frontend moved with it. v0.82.0 is the release that landed
-# that work, so it is a stable tag rather than a `-S'jump_pane'` pickaxe anchor: the
-# frontend reads `jump_pane` again (the list response now carries it), so a pickaxe on
-# that token re-anchors on the newer commit and the guard would silently change
-# meaning.
-BASELINE=v0.82.0
+# The static tree changes only deliberately, so the baseline is the release that last
+# landed a frontend change — currently v0.100.0, which made the card's jump control
+# follow pane availability (the list response carries `jump_pane` again). A tag is a
+# stable baseline where the old `-S'jump_pane'` pickaxe anchor is not: that token now
+# appears in more than one commit, so the pickaxe re-anchors and the guard silently
+# changes meaning.
+BASELINE=v0.100.0
 git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 ```
 
-Prints nothing. The frontend changed once, deliberately, with lazy pane resolution, and
-this guard derives its baseline from the release that landed it, so it keeps meaning
-"nothing has changed the static tree since parity was last re-established" — a change
-merged into the static tree since then shows up here. A tag is the baseline rather than
-simply the last commit that touched `app.js` because the latter would re-anchor on every
-later frontend change, so the guard could never report one; and it replaces the
-`-S'jump_pane'` pickaxe anchor, which is no longer a fixed point now that the frontend
-reads the field again.
+Prints nothing. The guard means "nothing has changed the static tree since parity was
+last re-established", so any change merged into the static tree after that release shows
+up here. When one lands, move `BASELINE` to the release that lands it: a tag stays a
+fixed point only while it is the most recent static-tree release. `v0.82.0` — the release
+that first removed the frontend's `jump_pane` read — stopped being one the moment later
+frontend work merged on top of it, which is why the guard must name the newest such
+release rather than the one that started the sequence.
 
 Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
 work: step 1's `git pull` has already brought any merged change in, so that comparison
