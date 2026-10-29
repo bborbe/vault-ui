@@ -10,12 +10,14 @@ and replaces a running service, so it sits deliberately outside the pipeline: sp
 every service restart, plist edit and tool reinstall out of `prompts/`.
 
 Parity is proven before you start — `make parity` compares the Go and Python backends
-across all 25 routes, the error shapes, the write path and the WebSocket frames, and
-was last re-established when spec 025 moved the frontend and the task-list body
-(lazy pane resolution). This runbook is about the switch, not about re-establishing
-that. If step 1 pulls code that moves the Go backend or the static tree past what
-parity last covered, the claim no longer covers what you are deploying — re-run
-`make parity` (in the container; see § Known limits).
+across all 25 routes, the error shapes, the write path and the WebSocket frames. It was
+last re-established in `v0.100.0`, when the card's jump control began following pane
+availability and moved both the task-list body and the static tree; the previous
+static-tree re-establishment was spec 025's lazy pane resolution (`v0.82.0`). This
+runbook is about the switch, not about re-establishing that. If step 1 pulls code that
+moves the Go backend or the static tree past what parity last covered, the claim no
+longer covers what you are deploying — re-run `make parity` (in the container; see
+§ Known limits).
 
 The executable blocks assume the repo is at `~/Documents/workspaces/vault-ui` and the Go
 binary at `~/Documents/workspaces/go/bin/vault-ui`; substitute your own paths if your
@@ -90,8 +92,8 @@ make build
 ```
 
 **Be on `master` first, from a clean tree.** The parity claim above is pinned to a
-`master` commit and step 6's guard assumes a `master` checkout — a build taken from a
-feature branch is code nothing in this runbook has verified. Check `git status` first:
+`master` commit, and a build taken from a feature branch is code nothing in this runbook
+has verified. Check `git status` first:
 `git checkout` carries uncommitted work across the switch rather than discarding it, so
 a dirty tree does not lose edits, it produces a master build containing them.
 
@@ -220,30 +222,42 @@ is in the vault's `[[vault-ui]]` page.
 
 ## 6. Regression guard
 
-Run this **from a checkout on `master`** — on a feature branch the diff also contains
-that branch's work and reports a false alarm.
+Run this after a fresh `git fetch origin`. The command compares two refs, so the branch
+you happen to be on does not change the result — only a stale `origin/master` can.
 
 ```bash
 cd ~/Documents/workspaces/vault-ui
 git fetch origin
-# The static tree intentionally changed with lazy pane resolution (spec 025), so the
-# parity baseline for the frontend moved with it. v0.82.0 is the release that landed
-# that work, so it is a stable tag rather than a `-S'jump_pane'` pickaxe anchor: the
-# frontend reads `jump_pane` again (the list response now carries it), so a pickaxe on
-# that token re-anchors on the newer commit and the guard would silently change
-# meaning.
-BASELINE=v0.82.0
+# The baseline is the release at which parity was last re-established — currently
+# v0.100.0, which made the card's jump control follow pane availability (the list
+# response carries `jump_pane` again) and moved the static tree with it. A tag is a
+# stable baseline where the old `-S'jump_pane'` pickaxe anchor is not: that token now
+# appears in more than one commit, so the pickaxe re-anchors and the guard silently
+# changes meaning.
+BASELINE=v0.100.0
 git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 ```
 
-Prints nothing. The frontend changed once, deliberately, with lazy pane resolution, and
-this guard derives its baseline from the release that landed it, so it keeps meaning
-"nothing has changed the static tree since parity was last re-established" — a change
-merged into the static tree since then shows up here. A tag is the baseline rather than
-simply the last commit that touched `app.js` because the latter would re-anchor on every
-later frontend change, so the guard could never report one; and it replaces the
-`-S'jump_pane'` pickaxe anchor, which is no longer a fixed point now that the frontend
-reads the field again.
+Prints nothing while the baseline also covers the newest static-tree change. Once a
+frontend change lands after that release it prints here, and that print is the guard
+working rather than a false alarm — a stale baseline and a real regression look identical,
+so read the commits behind the diff before deciding which you have:
+
+```bash
+cd ~/Documents/workspaces/vault-ui
+BASELINE=v0.100.0
+git log --oneline "$BASELINE"..origin/master -- src/vault_ui/static/
+```
+
+If the newest commit is a deliberate frontend change, re-establish parity (`make parity`,
+in the container) and then move `BASELINE` — **in both blocks** — to the release that
+lands it: a tag stays a fixed point only while it is both the most recent static-tree
+release and a parity re-establishment, and advancing it over an unverified tree clears
+the guard permanently. If the newest commit is not a deliberate change, treat the diff as
+the regression this guard exists to catch. `v0.82.0` — the release that first removed the
+frontend's `jump_pane` read — stopped being a fixed point the moment later frontend work
+merged on top of it, which is why the guard must name the newest such release rather than
+the one that started the sequence.
 
 Diffing against the *working tree* instead (`git diff origin/master -- …`) would not
 work: step 1's `git pull` has already brought any merged change in, so that comparison
