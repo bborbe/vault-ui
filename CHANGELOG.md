@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.100.0
 
 - feat: Gate the card's jump control on pane availability instead of live session state — `GET /api/tasks` carries a Go-only `jump_pane` again, resolved once per snapshot build (and once per session-generation refresh) through a new batch `pane.Resolver.ResolveAll` that reads the registry and runs a single `wezterm cli list` for the whole live set rather than one shell-out per session; a live card whose session has no WezTerm pane (a headless worker) now renders the Live badge with no jump control, so the operator no longer clicks into a guaranteed `409 no pane resolves for this session`, while the click path keeps resolving fresh so a recycled pane id cannot jump to the wrong tab. `/api/goals` still carries no pane-bearing key, and the parity harness keeps stripping `jump_pane` from both sides because the two backends resolve it differently.
 
