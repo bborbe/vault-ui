@@ -1767,8 +1767,17 @@ function createTaskCard(task) {
         card.classList.remove('dragging');
     });
 
-    // Extract Jira issue info
-    const { title, issueKey, issueUrl } = extractJiraIssue(task.title);
+    // Extract Jira issue info. The heading always comes from the title: the
+    // helper strips the matched key out of the title it returns, so feeding it
+    // the bare `jira` value would blank the card's heading. The badge prefers
+    // the task's own `jira:` frontmatter and falls back to the title's key;
+    // running the same helper over that source keeps the project-domain mapping
+    // and the key regex in one place.
+    const { title } = extractJiraIssue(task.title);
+    const jiraSource = typeof task.jira === 'string' && task.jira.trim() !== ''
+        ? task.jira
+        : task.title;
+    const { issueKey, issueUrl } = extractJiraIssue(jiraSource);
 
     // On-hold badge (if status is hold) — signals the task is parked/blocked
     const holdBadge = task.status === 'hold'

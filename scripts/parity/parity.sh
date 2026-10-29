@@ -320,11 +320,17 @@ normalize() {
   # say where it runs, and the superseded Python backend cannot emit it. Leaving
   # it in makes every task-list and goal-list case diverge.
   #
+  # `jira` is Go-only on the same terms as `location`: the task body carries the
+  # task page's own `jira:` frontmatter value so the card badges the task's own
+  # ticket, and the superseded Python backend cannot emit it. It is removed from
+  # both sides rather than compared, so the new key cannot make every task-list
+  # case diverge.
+  #
   # Every other key stays compared: widening this filter would silently drop the
   # safety net for the routes this change does not touch.
   jq -S 'if type == "array"
-         then map(if type == "object" then del(.jump_pane, .open_questions, .location) else . end)
-         elif type == "object" then del(.jump_pane, .open_questions, .location)
+         then map(if type == "object" then del(.jump_pane, .open_questions, .location, .jira) else . end)
+         elif type == "object" then del(.jump_pane, .open_questions, .location, .jira)
          else . end' "$1" 2>/dev/null || cat "$1"
 }
 

@@ -44,6 +44,7 @@ type taskRow struct {
 	sessionState      *string
 	location          *string
 	jumpPane          *string
+	jira              *string
 	openQuestions     []domain.OpenQuestion
 }
 
@@ -103,6 +104,7 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 			visibleTask.sessionState = row.sessionState
 			visibleTask.location = row.location
 			visibleTask.jumpPane = row.jumpPane
+			visibleTask.jira = row.jira
 			visibleTask.openQuestions = row.openQuestions
 			responses = append(responses, b.taskResponse(vault, visibleTask, row.activityDate))
 		}
@@ -238,7 +240,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 
 	// One ListPages for the whole vault, attached to the rows so the request
 	// path never reads a page — the same precompute the other fields get.
-	openQuestions := b.openQuestionsByTask(ctx, vault)
+	pageFields := b.taskPageFieldsByTask(ctx, vault)
 
 	rows := make([]taskSnapshotRow, 0, len(items))
 	for _, item := range items {
@@ -254,6 +256,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 			LiveIDsUnknown:     liveIDsUnknown,
 			TranscriptMtime:    b.transcriptProbe(),
 		})
+		fields := taskPageFieldsFor(pageFields, item.Name)
 		rows = append(rows, taskSnapshotRow{
 			item:         item,
 			vault:        vault,
@@ -272,7 +275,8 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 				projectDir,
 				projectsRoot,
 			),
-			openQuestions: openQuestionsFor(openQuestions, item.Name),
+			jira:          fields.jira,
+			openQuestions: fields.openQuestions,
 		})
 	}
 	b.attachJumpPanes(ctx, rows)
@@ -533,6 +537,7 @@ func (b *board) patchTaskRows(
 			location:      rows[at].location,
 			jumpPane:      rows[at].jumpPane,
 			activityDate:  rows[at].activityDate,
+			jira:          pageJira(page),
 			openQuestions: questions,
 		}
 	}
@@ -674,28 +679,38 @@ func pageOpenQuestions(ctx context.Context, page *domain.Page) ([]domain.OpenQue
 	return questions, nil
 }
 
-// openQuestionsByTask returns each task page's Open Questions, keyed by the
-// page's file name. It is one ListPages per vault — never one per task, which
-// would put a vault walk on the board's hottest path. That listing is the same
-// snapshot opsProvider.List already takes (pkg/factory/api.go builds it as
-// ops.NewListOperation(p.pageIndex)), so it costs no extra I/O: the board is
-// not reading pages for the first time, it is reading the snapshot a second
-// time for a field the list rows do not carry.
+// taskPageFields is the per-task state the board derives from a task page that
+// the list rows do not carry: the Open Questions section and the page's own
+// `jira:` frontmatter value.
+type taskPageFields struct {
+	openQuestions []domain.OpenQuestion
+	jira          *string
+}
+
+// taskPageFieldsByTask returns each task page's Open Questions and `jira:`
+// frontmatter value, keyed by the page's file name. It is one ListPages per
+// vault — never one per task, which would put a vault walk on the board's
+// hottest path. That listing is the same snapshot opsProvider.List already
+// takes (pkg/factory/api.go builds it as ops.NewListOperation(p.pageIndex)), so
+// it costs no extra I/O: the board is not reading pages for the first time, it
+// is reading the snapshot a second time for fields the list rows do not carry.
+// Both fields come off that one listing; a second listing for the Jira value
+// would double the walk this helper exists to avoid.
 //
 // A failure is not fatal to a board read: it is logged and every task carries
-// an empty list rather than the whole task list failing.
-func (b *board) openQuestionsByTask(
+// an empty list and a nil Jira rather than the whole task list failing.
+func (b *board) taskPageFieldsByTask(
 	ctx context.Context, vault Vault,
-) map[string][]domain.OpenQuestion {
-	byName := map[string][]domain.OpenQuestion{}
+) map[string]taskPageFields {
+	byName := map[string]taskPageFields{}
 	if b.pageIndex == nil {
-		// A board built without a page index carries no open questions, on the
-		// same terms as any other failure here: degrade, never fail the read.
+		// A board built without a page index carries no page-derived fields, on
+		// the same terms as any other failure here: degrade, never fail the read.
 		return byName
 	}
 	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.TasksFolder)
 	if err != nil {
-		glog.Warningf("list pages for open questions in vault %s: %v", vault.Name, err)
+		glog.Warningf("list pages for task fields in vault %s: %v", vault.Name, err)
 		return byName
 	}
 	for _, page := range pages {
@@ -715,20 +730,35 @@ func (b *board) openQuestionsByTask(
 			)
 			continue
 		}
-		byName[page.FileMetadata.Name] = questions
+		byName[page.FileMetadata.Name] = taskPageFields{
+			openQuestions: questions,
+			jira:          pageJira(page),
+		}
 	}
 	return byName
 }
 
-// openQuestionsFor returns the task's open questions, never nil, so the field
-// serialises as [] rather than null.
-func openQuestionsFor(
-	byName map[string][]domain.OpenQuestion, name string,
-) []domain.OpenQuestion {
-	if questions, ok := byName[name]; ok && questions != nil {
-		return questions
+// taskPageFieldsFor returns the task's page-derived fields. The Open Questions
+// are never nil, so the field serialises as [] rather than null; a page absent
+// from the listing carries a nil Jira, which serialises as null.
+func taskPageFieldsFor(byName map[string]taskPageFields, name string) taskPageFields {
+	fields := byName[name]
+	if fields.openQuestions == nil {
+		fields.openQuestions = []domain.OpenQuestion{}
 	}
-	return []domain.OpenQuestion{}
+	return fields
+}
+
+// pageJira returns a page's `jira:` frontmatter value as a nullable string,
+// verbatim and unparsed: in the vaults it is as often a full browse URL as a
+// bare key, and the frontend finds the key in either. It is nil when the page
+// carries no value, the same nil-for-empty shape the other pointer fields use.
+func pageJira(page *domain.Page) *string {
+	value := page.GetString("jira")
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // visibleRow applies the completed/deferred visibility rules, returning the row
@@ -854,6 +884,7 @@ func (b *board) taskResponse(
 		SessionState:         row.sessionState,
 		Location:             row.location,
 		JumpPane:             row.jumpPane,
+		Jira:                 row.jira,
 		OpenQuestions:        openQuestions,
 	}
 }

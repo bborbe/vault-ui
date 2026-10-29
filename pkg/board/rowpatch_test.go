@@ -172,6 +172,26 @@ var _ = Describe("row patch", func() {
 		Expect(patched[0].OpenQuestions[0].Text).To(Equal("Which vault?"))
 	})
 
+	It("re-derives the Jira value of a changed page from its own content", func() {
+		h := newHarness(item("Alpha"))
+
+		_, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+
+		h.index.setPages(pageWithFrontmatter(
+			"Alpha",
+			map[string]any{"status": "todo", "jira": "BRO-22339"},
+			"",
+		))
+		h.index.markPages("Alpha.md")
+
+		patched, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(patched).To(HaveLen(1))
+		Expect(patched[0].Jira).NotTo(BeNil())
+		Expect(*patched[0].Jira).To(Equal("BRO-22339"))
+	})
+
 	It("recomputes a dependent row's blockers when its blocker's page changes", func() {
 		h := newHarness(
 			item("Alpha"),

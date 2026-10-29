@@ -405,15 +405,16 @@ func BenchmarkBuildTaskRows(b *testing.B) {
 		}
 	})
 
-	// open_questions is the Open Questions section: one page listing per
+	// open_questions is the page-derived fields section — the Open Questions
+	// section and the `jira:` value off the same page: one page listing per
 	// iteration, exactly as buildTaskRows makes it, then the lookup per item.
 	b.Run("open_questions", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			byName := bd.openQuestionsByTask(ctx, vault)
+			byName := bd.taskPageFieldsByTask(ctx, vault)
 			for _, item := range items {
-				benchSink.questions = openQuestionsFor(byName, item.Name)
+				benchSink.questions = taskPageFieldsFor(byName, item.Name).openQuestions
 			}
 		}
 	})
