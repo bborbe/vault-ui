@@ -36,6 +36,7 @@ type taskSnapshotRow struct {
 	sessionState  *string
 	location      *string
 	jumpPane      *string
+	jira          *string
 	activityDate  *libtime.DateTime
 	openQuestions []domain.OpenQuestion
 }

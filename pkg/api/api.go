@@ -71,6 +71,12 @@ type TaskResponse struct {
 	// doc) and null unless the session is live and exactly one pane's title
 	// matches its registry name — the same rule the jump endpoint applies.
 	JumpPane *string `json:"jump_pane"`
+	// Jira is the task page's own `jira:` frontmatter value, carried verbatim —
+	// in the vaults it is as often a bare key as a full browse URL. It is Go-only
+	// (see the package doc) and always emitted, null when the page carries no
+	// `jira:` key, so a card can badge the task's own ticket rather than the key
+	// guessed from its title.
+	Jira *string `json:"jira"`
 	// OpenQuestions is the task's Open Questions section, in section order. It is
 	// Go-only (see the package doc) and always non-nil, so it serialises as []
 	// rather than null and a task with no such section still carries the key.

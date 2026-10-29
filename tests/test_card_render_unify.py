@@ -51,11 +51,20 @@ def test_shared_card_shell_used_by_both_kinds() -> None:
 
 
 def test_task_wrapper_keeps_urgency_and_jira() -> None:
-    """The task wrapper still carries urgency-tier + Jira-badge logic."""
-    body = _slice("function createTaskCard", 3400)
+    """The task wrapper still carries urgency-tier + Jira-badge logic, and the
+    badge prefers the task's own `jira` frontmatter while the heading stays
+    title-derived.
+
+    Both assertions are load-bearing: the `extractJiraIssue(task.title)` one
+    catches a naive `extractJiraIssue(task.jira || task.title)`, which satisfies
+    a `task.jira`-only check while blanking the card's heading, because the
+    helper strips the matched key out of the title it returns.
+    """
+    body = _function_body("createTaskCard")
     assert "getUrgencyTier(task)" in body
     assert "urgency-overdue" in body
     assert "extractJiraIssue(task.title)" in body
+    assert "task.jira" in body
     assert "cardShellHtml('task'" in body
 
 

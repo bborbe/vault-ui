@@ -101,6 +101,14 @@ answer is withheld, so `text` is the question alone. `open_questions` is a
 Go-only field: the superseded Python backend does not emit it, and the parity
 harness strips it from both sides before comparing.
 
+Each task also carries `jira`: the task page's own `jira:` frontmatter value,
+verbatim and unparsed (a bare key or a full browse URL), or `null` when the page
+carries none. The card uses it for its Jira badge, so a task carrying
+`jira: BRO-22339` under a title naming a different ticket badges its own. It is
+Go-only on the same terms as `open_questions`: the superseded Python backend
+does not emit it, and the parity harness strips it from both sides before
+comparing.
+
 ### `PATCH /api/tasks/{id}/phase`
 
 Moves a task to `phase` and mirrors its `status`. The body carries `phase`

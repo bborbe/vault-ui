@@ -370,6 +370,19 @@ func page(name, content string) *domain.Page {
 	)
 }
 
+// pageWithFrontmatter builds one in-memory vault page with the given frontmatter,
+// so a test can exercise a key the fixed {"status": "todo"} of page does not
+// carry.
+func pageWithFrontmatter(
+	name string, frontmatter map[string]any, content string,
+) *domain.Page {
+	return domain.NewPage(
+		frontmatter,
+		domain.FileMetadata{Name: name},
+		domain.Content(content),
+	)
+}
+
 // build (re)constructs the board from the current fakes, so a test can mutate a
 // fake and rebuild.
 func (h *harness) build() {
@@ -1472,6 +1485,67 @@ var _ = Describe("ListTasks open_questions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].OpenQuestions).To(BeEmpty())
+	})
+})
+
+var _ = Describe("ListTasks jira", func() {
+	// The value is carried verbatim, never parsed or normalised on the Go side:
+	// in the vaults it is as often a full browse URL as a bare key, and the
+	// frontend's extractJiraIssue finds the key in either.
+	for _, testCase := range []struct {
+		name        string
+		frontmatter map[string]any
+		expected    string
+		present     bool
+	}{
+		{
+			name:        "a bare key",
+			frontmatter: map[string]any{"status": "todo", "jira": "BRO-22339"},
+			expected:    "BRO-22339",
+			present:     true,
+		},
+		{
+			name: "a full browse URL",
+			frontmatter: map[string]any{
+				"status": "todo",
+				"jira":   "https://seibertgroup.atlassian.net/browse/BRO-22339",
+			},
+			expected: "https://seibertgroup.atlassian.net/browse/BRO-22339",
+			present:  true,
+		},
+		{
+			name:        "no jira key",
+			frontmatter: map[string]any{"status": "todo"},
+		},
+	} {
+		It("carries "+testCase.name+" from the task page", func() {
+			h := newHarness(item("TaskOne"))
+			h.pageIndex.ListPagesReturns(
+				[]*domain.Page{pageWithFrontmatter("TaskOne", testCase.frontmatter, "")}, nil,
+			)
+
+			responses, err := h.board.ListTasks(
+				context.Background(), board.TaskQuery{UpcomingHours: 8},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(responses).To(HaveLen(1))
+			if !testCase.present {
+				Expect(responses[0].Jira).To(BeNil())
+				return
+			}
+			Expect(responses[0].Jira).NotTo(BeNil())
+			Expect(*responses[0].Jira).To(Equal(testCase.expected))
+		})
+	}
+
+	It("carries null rather than failing when the pages cannot be listed", func() {
+		h := newHarness(item("TaskOne"))
+		h.pageIndex.ListPagesReturns(nil, errors.New("boom"))
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Jira).To(BeNil())
 	})
 })
 

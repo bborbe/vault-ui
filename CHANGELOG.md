@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Badge a task card from the task page's own `jira:` frontmatter instead of guessing the ticket from the card title — `GET /api/tasks` now carries a Go-only `jira` field (the value verbatim, `null` when the page has none), read off the same single per-vault `ListPages` snapshot that already serves `open_questions` and recomputed on the incremental row patch, so a task carrying `jira: BRO-22339` under a title naming a different ticket badges the right issue and a task whose title carries no key can still show one; the card's heading stays title-derived, and the parity harness strips `jira` from both sides like the other Go-only fields.
+
 ## v0.101.1
 
 - docs: Pin the cutover regression guard's baseline to `v0.100.0` — § 6 claimed `v0.82.0` printed nothing, but that tag stopped being a fixed point as soon as later frontend work merged on top of it. The baseline is now defined as the release at which parity was last re-established, the triage for a non-empty diff is written down beside the command, and the rule for moving it forward requires a fresh `make parity` first.
