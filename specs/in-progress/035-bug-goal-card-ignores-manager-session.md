@@ -175,5 +175,5 @@ None. The change reads operator-written frontmatter (never user input), adds no 
 - Do not add `manager_session_id` to `task show` (`TaskDetail`) in vault-cli — the consumer reads the list model.
 - Do not add a `manager_session_id` field to `api.GoalResponse` — nothing reads it; the badge renders from `session_state`. If a consumer appears, that is a separate spec.
 - Do not change the attention store, its heartbeat contract, or the session registry.
-- Do not add `session_state` to topic cards — the sibling surfaces `manager_session_id` on topic pages too, but `TopicResponse` has no `session_state` and no consumer exists today.
+- Do not add `session_state` to topic cards **in this spec** — the sibling surfaces `manager_session_id` on topic pages too, but `TopicResponse` has no `session_state` and no consumer existed when this spec was written. A consumer now exists: the topic card's display-only live indicator is specced separately by `036-topic-card-state-and-topic-liveness`.
 - Do not correct a stale manager id whose successor never re-armed the goal — that data accuracy belongs to claude-supervisor, whose contract calls the field evidence of *who*, never of *alive*.
