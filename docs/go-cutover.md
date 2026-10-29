@@ -238,15 +238,17 @@ BASELINE=v0.100.0
 git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 ```
 
-Prints nothing. The guard means "nothing has changed the static tree since parity was
-last re-established", so any change merged into the static tree after that release shows
-up here. When a static-tree change lands **and its parity is re-established**, move
-`BASELINE` to the release that lands it: a tag stays a fixed point only while it is the
-most recent static-tree release, and advancing it over an unreviewed change clears the
-guard permanently. `v0.82.0` — the release that first removed the frontend's `jump_pane`
-read — stopped being one the moment later frontend work merged on top of it, which is
-why the guard must name the newest such release rather than the one that started the
-sequence.
+Prints nothing while the baseline covers the newest static-tree change — true right after
+a release that landed it, and false as soon as a further frontend change merges ahead of
+the next release. The guard means "nothing has changed the static tree since parity was
+last re-established", so such a change is the signal rather than a failure: it prints here
+until the release that lands it. When a static-tree change lands **and its parity is
+re-established**, move `BASELINE` to the release that lands it: a tag stays a fixed point
+only while it is the most recent static-tree release, and advancing it over an unreviewed
+change clears the guard permanently. `v0.82.0` — the release that first removed the
+frontend's `jump_pane` read — stopped being one the moment later frontend work merged on
+top of it, which is why the guard must name the newest such release rather than the one
+that started the sequence.
 
 A stale baseline and a real regression print identically here, so read the commits behind
 the diff before deciding which you have:
