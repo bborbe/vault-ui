@@ -7,6 +7,7 @@ package board
 import (
 	"context"
 	stderrors "errors"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/api"
+	"github.com/bborbe/vault-ui/pkg/cleanup"
+	"github.com/bborbe/vault-ui/pkg/session"
 )
 
 // topicSectionHeading is the heading whose bullets carry a topic's tracked work.
@@ -39,6 +42,10 @@ func (b *board) ListTopics(ctx context.Context, vaults []string) ([]api.TopicRes
 	}
 	selected := b.selectVaults(all, vaults)
 
+	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	liveIDsUnknown := !b.signals.LiveIDsKnown()
+	resumeIDs := b.signals.ResumeSessionIDs(ctx)
+
 	responses := make([]api.TopicResponse, 0, len(selected))
 	for _, vault := range selected {
 		if vault.TopicsFolder == "" {
@@ -50,15 +57,30 @@ func (b *board) ListTopics(ctx context.Context, vaults []string) ([]api.TopicRes
 		if listErr != nil {
 			return nil, errors.Wrapf(ctx, listErr, "list topics for vault %s", vault.Name)
 		}
+
+		projectDir := cleanup.DeriveClaudeProjectDir(b.homeDir, vault.Path, vault.SessionProjectDir)
+		projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
+		params := session.ClassifyParams{
+			ProjectDir:         projectDir,
+			ProjectsRoot:       projectsRoot,
+			Now:                b.clock.Now().UTC(),
+			LiveWindow:         session.DefaultLiveWindow,
+			ResumeSessionIDs:   resumeIDs,
+			RegistrySessionIDs: registryIDs,
+			LiveIDsUnknown:     liveIDsUnknown,
+			TranscriptMtime:    b.transcriptProbe(),
+		}
+
 		for _, item := range items {
 			responses = append(responses, api.TopicResponse{
-				ID:          item.Name,
-				Title:       item.Name,
-				Status:      item.Status,
-				Phase:       strPtr(item.Phase),
-				Flag:        item.Flag,
-				Vault:       vault.Name,
-				ObsidianURL: topicURL(vault, item.Name),
+				ID:           item.Name,
+				Title:        item.Name,
+				Status:       item.Status,
+				Phase:        strPtr(item.Phase),
+				SessionState: sessionStatePtr(classifyManagerSessionID(ctx, item.ManagerSessionID, params)),
+				Flag:         item.Flag,
+				Vault:        vault.Name,
+				ObsidianURL:  topicURL(vault, item.Name),
 			})
 		}
 	}

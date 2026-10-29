@@ -1225,11 +1225,20 @@ function renderTopics() {
     syncUnknownColumn();
 }
 
-// A topic card: the topic's own status (never a placeholder), and the SAME two
-// affordances a task or goal card carries — the title opens the page in
-// Obsidian, a footer button opens the tracked-work detail. Shipped the other
-// way round at first (title → detail, icon → Obsidian), the reverse of the
-// board's established pattern, and the operator caught it in review.
+// A topic card: the SAME two affordances a task or goal card carries — the
+// title opens the page in Obsidian, a footer button opens the tracked-work
+// detail. Shipped the other way round at first (title → detail, icon →
+// Obsidian), the reverse of the board's established pattern, and the operator
+// caught it in review.
+//
+// No status badge: the card sits in the column its `phase` names, and the badge
+// rendered a second, different axis (`status`) in the same affordance — so the
+// two contradicted each other whenever a page's status and phase differed. Task
+// and goal cards render no status badge for exactly this reason. The topic's
+// own status stays visible in the detail modal and still drives the status
+// filter. The live indicator is display-only — a topic has no take-over route,
+// so it deliberately does NOT reuse the `.live-badge` take-over control's class
+// and carries no onclick, role or tabindex.
 function createTopicCard(topic) {
     const card = document.createElement('div');
     card.className = 'task-card topic-card';
@@ -1245,7 +1254,7 @@ function createTopicCard(topic) {
             </div>
         </div>
         <div class="card-footer">
-            <span class="status-badge">${escapeHtml(topic.status || '')}</span>
+            ${topic.session_state === 'live' ? `<span class="topic-live-badge">${liveBadgeLabel(null)}</span>` : ''}
             ${flagButtonHtml('topic', topic)}
             <button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>
         </div>`;

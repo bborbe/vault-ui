@@ -50,6 +50,16 @@ TOPICS = [
         vault="TestVault",
         phase="done",
     ),
+    # The only topic carrying a manager session that classifies live. It proves
+    # the indicator is per-card, not a constant on every topic card.
+    Topic(
+        id="Manager Armed",
+        title="Manager Armed",
+        status="in_progress",
+        vault="TestVault",
+        phase="planning",
+        session_state="live",
+    ),
 ]
 
 # The detail body mirrors a real topic page: a `## Goals` section holding BOTH a
@@ -204,7 +214,8 @@ def _topic_cards(page) -> list[dict]:
     return page.evaluate(
         """() => [...document.querySelectorAll('.topic-card')].map(c => ({
             id: c.dataset.topicId,
-            status: c.querySelector('.status-badge')?.textContent,
+            live: c.querySelector('.topic-live-badge')?.textContent,
+            hasStatusBadge: !!c.querySelector('.status-badge'),
             column: c.closest('[id^=cards-]')?.id,
         }))"""
     )
@@ -217,24 +228,28 @@ def test_topics_toggle_exists_and_activates(live_server, page):
     )
 
 
-def test_topics_render_each_own_status_and_phase_column(live_server, page):
-    """SC1: each topic renders the status from its own frontmatter, in the
-    column its own phase names.
+def test_topic_cards_carry_no_status_badge_and_sit_in_their_phase_column(live_server, page):
+    """SC1: no topic card carries a status badge, each sits in the column its
+    own phase names, and only the live-session topic shows an indicator.
 
-    Both status values are asserted because either one alone is satisfiable by a
-    constant: `in_progress` is what a placeholder would print, and a `completed`
-    topic can only appear at all if the endpoint asked vault-cli for `--all`.
-    Both phases are asserted for the same reason — a board that ignored `phase`
-    would drop both cards into the "—" column and still render.
+    The badge is gone because it rendered `status` in the same slot the column
+    already speaks to, so the two contradicted each other whenever a page's
+    status and phase differed. Each phase is asserted separately — a board that
+    ignored `phase` would drop the cards into the "—" column and still render.
     """
     page.goto(f"{live_server}/?view=topics&vault=TestVault")
-    expect(page.locator(".topic-card")).to_have_count(2)
+    expect(page.locator(".topic-card")).to_have_count(3)
 
     cards = {c["id"]: c for c in _topic_cards(page)}
-    assert cards["Manager Layer"]["status"] == "in_progress"
+    for card in cards.values():
+        assert card["hasStatusBadge"] is False
     assert cards["Manager Layer"]["column"] == "cards-execution"
-    assert cards["Notification System"]["status"] == "completed"
     assert cards["Notification System"]["column"] == "cards-done"
+    assert cards["Manager Armed"]["column"] == "cards-planning"
+    # Exactly the fixture topic with session_state="live" shows the indicator.
+    assert cards["Manager Armed"]["live"] is not None
+    assert cards["Manager Layer"]["live"] is None
+    assert cards["Notification System"]["live"] is None
 
 
 def test_opening_a_topic_lists_its_goals_and_tasks(live_server, page):
@@ -260,10 +275,9 @@ def test_opening_a_topic_lists_its_goals_and_tasks(live_server, page):
 def test_opening_a_topic_shows_its_own_status(live_server, page):
     """SC4: the detail view carries the topic's own status, not only its work.
 
-    The card renders the status too, but the modal is where the operator lands
-    after clicking through — so it must not be the one screen about a single
-    topic that omits that topic's status. Both topics are asserted: a constant
-    would satisfy only one of the two.
+    The card no longer renders the status (its column speaks for phase), so the
+    modal is the only place the topic's own status stays visible — it must not
+    omit it. Both topics are asserted: a constant would satisfy only one.
     """
     page.goto(f"{live_server}/?view=topics&vault=TestVault")
 

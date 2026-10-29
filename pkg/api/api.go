@@ -120,6 +120,10 @@ type TopicResponse struct {
 	// GoalResponse.Phase: always emitted, null when the topic carries none, and
 	// the board's column discriminator for the Topics view.
 	Phase *string `json:"phase"`
+	// SessionState classifies the topic's manager session id on the same terms
+	// as GoalResponse.SessionState: always emitted, null when the topic page
+	// records no manager id.
+	SessionState *string `json:"session_state"`
 	// Flag is the same picked-for-today marker a task and a goal carry, on the
 	// same terms as GoalResponse.Flag: always emitted, false when cleared.
 	Flag        bool   `json:"flag"`

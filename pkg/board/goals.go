@@ -145,7 +145,7 @@ func (b *board) goalResponse(
 	ownParams := params
 	ownParams.SessionID = item.ClaudeSessionID
 	ownState := session.ClassifySessionState(ctx, ownParams)
-	managerState := classifyGoalManagerSessionID(ctx, item.ManagerSessionID, params)
+	managerState := classifyManagerSessionID(ctx, item.ManagerSessionID, params)
 	state := strongestSessionState(ownState, managerState)
 
 	// The location comes from the first live id in a fixed order: the goal's own
@@ -218,11 +218,11 @@ func sessionStateRank(state session.SessionState) int {
 	}
 }
 
-// classifyGoalManagerSessionID classifies the manager session id a goal page
-// records. An empty id is none. A malformed (non-UUID) id cannot be proven
+// classifyManagerSessionID classifies the manager session id a goal or a topic
+// page records. An empty id is none. A malformed (non-UUID) id cannot be proven
 // dead, so it is indeterminate rather than probed: the card suppresses Resume
 // instead of offering it.
-func classifyGoalManagerSessionID(
+func classifyManagerSessionID(
 	ctx context.Context,
 	sessionID string,
 	params session.ClassifyParams,

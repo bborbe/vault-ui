@@ -1,10 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [036-topic-card-state-and-topic-liveness]
+summary: Topic cards no longer render a status badge (they sit in their phase column) and show a display-only live indicator when the topic's manager session is live; GET /api/topics now carries session_state classified from manager_session_id, with both backends emitting the same field set.
+execution_id: vault-ui-topic-card-state-exec-171-topic-card-state-and-live-manager
+dark-factory-version: v0.198.7
 created: "2026-10-29T00:00:00Z"
 queued: "2026-10-29T13:00:18Z"
-completed: "2026-10-29T13:00:44Z"
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/171-topic-card-state-and-live-manager"; uncommitted changes: specs/in-progress/036-topic-card-state-and-topic-liveness.md'
+started: "2026-10-29T13:01:41Z"
+completed: "2026-10-29T13:05:16Z"
 ---
 
 # Topic cards stop contradicting their column and show a live manager

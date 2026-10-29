@@ -70,6 +70,9 @@ card's outcome is the strongest of them, in this order:
 
 The combination is strongest-outcome, never last-id-wins.
 
+A topic page records only `manager_session_id`, so a topic's outcome is that
+single id's outcome.
+
 `location` comes from the first id whose outcome is `live`, in the fixed order
 `claude_session_id` then `manager_session_id`. If that id is live but the store
 reports no location — because it was classified live by transcript recency or

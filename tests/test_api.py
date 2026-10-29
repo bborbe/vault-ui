@@ -6913,6 +6913,7 @@ def test_list_topics_returns_topic_response_key_set(test_client_with_topics: Tes
         "title",
         "status",
         "phase",
+        "session_state",
         "vault",
         "obsidian_url",
         "flag",
