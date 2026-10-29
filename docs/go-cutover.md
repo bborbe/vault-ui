@@ -12,11 +12,12 @@ every service restart, plist edit and tool reinstall out of `prompts/`.
 Parity is proven before you start — `make parity` compares the Go and Python backends
 across all 25 routes, the error shapes, the write path and the WebSocket frames. It was
 last re-established in `v0.100.0`, when the card's jump control began following pane
-availability and moved both the task-list body and the static tree; before that, spec 025
-re-established it for lazy pane resolution (`v0.82.0`). This runbook is about the switch,
-not about re-establishing that. If step 1 pulls code that moves the Go backend or the
-static tree past what parity last covered, the claim no longer covers what you are
-deploying — re-run `make parity` (in the container; see § Known limits).
+availability and moved both the task-list body and the static tree; the previous
+static-tree re-establishment was spec 025's lazy pane resolution (`v0.82.0`). This
+runbook is about the switch, not about re-establishing that. If step 1 pulls code that
+moves the Go backend or the static tree past what parity last covered, the claim no
+longer covers what you are deploying — re-run `make parity` (in the container; see
+§ Known limits).
 
 The executable blocks assume the repo is at `~/Documents/workspaces/vault-ui` and the Go
 binary at `~/Documents/workspaces/go/bin/vault-ui`; substitute your own paths if your
@@ -239,16 +240,20 @@ git diff --stat "$BASELINE" origin/master -- src/vault_ui/static/
 
 Prints nothing. The guard means "nothing has changed the static tree since parity was
 last re-established", so any change merged into the static tree after that release shows
-up here. When one lands, move `BASELINE` to the release that lands it: a tag stays a
-fixed point only while it is the most recent static-tree release. `v0.82.0` — the release
-that first removed the frontend's `jump_pane` read — stopped being one the moment later
-frontend work merged on top of it, which is why the guard must name the newest such
-release rather than the one that started the sequence.
+up here. When a static-tree change lands **and its parity is re-established**, move
+`BASELINE` to the release that lands it: a tag stays a fixed point only while it is the
+most recent static-tree release, and advancing it over an unreviewed change clears the
+guard permanently. `v0.82.0` — the release that first removed the frontend's `jump_pane`
+read — stopped being one the moment later frontend work merged on top of it, which is
+why the guard must name the newest such release rather than the one that started the
+sequence.
 
 A stale baseline and a real regression print identically here, so read the commits behind
 the diff before deciding which you have:
 
 ```bash
+cd ~/Documents/workspaces/vault-ui
+BASELINE=v0.100.0
 git log --oneline "$BASELINE"..origin/master -- src/vault_ui/static/
 ```
 
