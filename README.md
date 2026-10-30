@@ -56,7 +56,7 @@ The board has a top-of-board toggle that switches between the **Tasks** view (de
 - Click the toggle to switch views — the URL is updated to `?view=tasks` or `?view=goals` and the new view's data is fetched.
 - Deep-link to a specific view: open `http://127.0.0.1:8000/?view=goals` to land directly in the Goals view (no flash through the Tasks view).
 - Goal cards are read-only — they link back to the goal file in Obsidian. To edit a goal, click the title (or the "Open in Obsidian →" link) and edit in the vault.
-- Vault, status, and assignee filters apply to both views.
+- Vault, status, and live-session filters apply to all three views — Tasks, Goals and Topics; the assignee filter applies to Tasks and Goals only.
 
 Toggle sits above the columns:
 
@@ -68,9 +68,8 @@ The active view is encoded in the URL as `?view=tasks` or `?view=goals` and surv
 
 ## API
 
-The HTTP API is served under `/api`. The task endpoint is documented below; the
-goal endpoints exist alongside it, and two topic endpoints serve the vault
-hierarchy.
+The HTTP API is served under `/api`. The task, goal, and topic endpoint groups
+are documented below; a topic detail endpoint serves the vault hierarchy.
 
 ### `GET /api/tasks`
 
@@ -109,6 +108,26 @@ Go-only on the same terms as `open_questions`: the superseded Python backend
 does not emit it, and the parity harness strips it from both sides before
 comparing.
 
+### `GET /api/goals`
+
+Lists goals from one or more vaults.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `vault` | no | Vault name; repeatable, or comma-separated. Omit for every configured vault. |
+| `status` | no | Comma-separated statuses to keep. Omit to keep every status. |
+| `assignee` | no | Comma-separated assignee names to keep. An empty value matches unassigned goals. |
+| `upcoming_hours` | no | Width of the "upcoming" window for deferred goals, 0–168 hours (default 8). `0` hides deferred goals entirely. |
+| `session_live` | no | `true` keeps only goals whose `session_state` is `live` — a Claude session the board can prove is running right now. Default `false`. |
+
+Each goal carries `session_state`: the strongest of its own `claude_session_id`
+and its `manager_session_id` — `live` when either is provably running,
+`indeterminate` when an id is set but its state cannot be proven, `quiet` when
+the recorded ids are provably not running, and `null` when the page records
+neither. It uses the same four outcomes and signal order as the task paragraph
+above; a goal that records only a manager id classifies from that id rather than
+serialising `null`.
+
 ### `PATCH /api/tasks/{id}/phase`
 
 Moves a task to `phase` and mirrors its `status`. The body carries `phase`
@@ -140,6 +159,7 @@ Lists a vault's topics.
 | Parameter | Required | Description |
 |---|---|---|
 | `vault` | no | Vault name; repeatable, or comma-separated. Omit for every configured vault. |
+| `session_live` | no | `true` keeps only topics whose `session_state` is `live` — a Claude session the board can prove is running right now. Default `false`. |
 
 Every topic is returned, completed ones included — the endpoint always passes
 `--all` to `vault-cli topic list`, whose bare form filters to `in_progress`.

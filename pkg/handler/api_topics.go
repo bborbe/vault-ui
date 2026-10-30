@@ -15,7 +15,11 @@ import (
 // NewTopicsHandler returns the GET /api/topics handler.
 func NewTopicsHandler(b board.Board) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		result, err := b.ListTopics(req.Context(), req.URL.Query()["vault"])
+		query := req.URL.Query()
+		result, err := b.ListTopics(req.Context(), board.TopicQuery{
+			Vaults:      query["vault"],
+			SessionLive: parseBool(first(query["session_live"])),
+		})
 		if err != nil {
 			writeBoardError(resp, err)
 			return
