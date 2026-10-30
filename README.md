@@ -56,7 +56,7 @@ The board has a top-of-board toggle that switches between the **Tasks** view (de
 - Click the toggle to switch views — the URL is updated to `?view=tasks` or `?view=goals` and the new view's data is fetched.
 - Deep-link to a specific view: open `http://127.0.0.1:8000/?view=goals` to land directly in the Goals view (no flash through the Tasks view).
 - Goal cards are read-only — they link back to the goal file in Obsidian. To edit a goal, click the title (or the "Open in Obsidian →" link) and edit in the vault.
-- Vault, status, assignee, and live-session filters apply to both views.
+- Vault, status, assignee, and live-session filters apply to all three views — Tasks, Goals and Topics.
 
 Toggle sits above the columns:
 
