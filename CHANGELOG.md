@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.102.0
 
 - feat: Apply the "Live session" toolbar filter to the Goals and Topics views as well as Tasks — `GET /api/goals` and `GET /api/topics` now accept the same `session_live` query parameter the task endpoint already accepted, and both loaders send it, so one control filters all three boards instead of only Tasks.
 
