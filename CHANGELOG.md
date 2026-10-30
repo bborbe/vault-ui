@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Apply the "Live session" toolbar filter to the Goals and Topics views as well as Tasks — `GET /api/goals` and `GET /api/topics` now accept the same `session_live` query parameter the task endpoint already accepted, and both loaders send it, so one control filters all three boards instead of only Tasks.
+
 ## v0.101.2
 
 - fix: Badge a task card from the task page's own `jira:` frontmatter instead of guessing the ticket from the card title — `GET /api/tasks` now carries a Go-only `jira` field (the value verbatim, `null` when the page has none), read off the same single per-vault `ListPages` snapshot that already serves `open_questions` and recomputed on the incremental row patch, so a task carrying `jira: BRO-22339` under a title naming a different ticket badges the right issue and a task whose title carries no key can still show one; the card's heading stays title-derived, and the parity harness strips `jira` from both sides like the other Go-only fields.

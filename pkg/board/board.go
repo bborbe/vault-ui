@@ -134,7 +134,7 @@ type Board interface {
 	// held body when one exists for the current snapshot generation.
 	ListTasksBody(ctx context.Context, query TaskQuery) (TaskListBody, error)
 	ListGoals(ctx context.Context, query GoalQuery) ([]api.GoalResponse, error)
-	ListTopics(ctx context.Context, vaults []string) ([]api.TopicResponse, error)
+	ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicResponse, error)
 	ShowTopic(ctx context.Context, vault, topicID string) (api.TopicDetailResponse, error)
 }
 
@@ -214,6 +214,15 @@ type GoalQuery struct {
 	Statuses      []string
 	Assignees     []string
 	UpcomingHours int
+	// SessionLive keeps only goals whose session_state is live when true.
+	SessionLive bool
+}
+
+// TopicQuery is the parsed query for GET /api/topics.
+type TopicQuery struct {
+	Vaults []string
+	// SessionLive keeps only topics whose session_state is live when true.
+	SessionLive bool
 }
 
 // UnknownVaultError reports a vault name the config does not know. Its message

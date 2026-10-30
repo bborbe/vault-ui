@@ -37,6 +37,7 @@ type fakeBoard struct {
 	gotVaults     []string
 	gotTaskQuery  board.TaskQuery
 	gotGoalQuery  board.GoalQuery
+	gotTopicQuery board.TopicQuery
 	gotTopicVault string
 	gotTopicID    string
 }
@@ -70,8 +71,10 @@ func (f *fakeBoard) ListGoals(_ context.Context, query board.GoalQuery) ([]api.G
 	return f.goals, f.err
 }
 
-func (f *fakeBoard) ListTopics(_ context.Context, vaults []string) ([]api.TopicResponse, error) {
-	f.gotVaults = vaults
+func (f *fakeBoard) ListTopics(
+	_ context.Context, query board.TopicQuery,
+) ([]api.TopicResponse, error) {
+	f.gotTopicQuery = query
 	return f.topics, f.err
 }
 
@@ -194,6 +197,17 @@ var _ = Describe("API router", func() {
 		Expect(fake.gotTaskQuery.Goals).To(Equal([]string{"g"}))
 		Expect(fake.gotTaskQuery.UpcomingHours).To(Equal(12))
 		Expect(fake.gotTaskQuery.SessionLive).To(BeTrue())
+	})
+
+	It("passes the session_live filter through to the goals query", func() {
+		doGet(router, "/api/goals?session_live=true")
+		Expect(fake.gotGoalQuery.SessionLive).To(BeTrue())
+	})
+
+	It("passes the vault and session_live filter through to the topics query", func() {
+		doGet(router, "/api/topics?vault=personal&session_live=true")
+		Expect(fake.gotTopicQuery.Vaults).To(Equal([]string{"personal"}))
+		Expect(fake.gotTopicQuery.SessionLive).To(BeTrue())
 	})
 
 	It("defaults upcoming_hours to 8", func() {

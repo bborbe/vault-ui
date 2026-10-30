@@ -53,6 +53,16 @@ func (b *board) ListGoals(ctx context.Context, query GoalQuery) ([]api.GoalRespo
 		}
 		responses = append(responses, rows...)
 	}
+
+	if query.SessionLive {
+		live := make([]api.GoalResponse, 0, len(responses))
+		for _, response := range responses {
+			if response.SessionState != nil && *response.SessionState == string(session.SessionStateLive) {
+				live = append(live, response)
+			}
+		}
+		responses = live
+	}
 	return responses, nil
 }
 

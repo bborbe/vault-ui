@@ -1090,6 +1090,11 @@ async function loadGoals() {
         // Upcoming-window cutoff (hours ahead) — 0 hides all deferred goals
         params.set('upcoming_hours', String(upcomingHours));
 
+        // Live-session filter — server-side, mirroring the task fetch.
+        if (currentLiveOnly) {
+            params.set('session_live', 'true');
+        }
+
         const response = await fetch(`/api/goals?${params.toString()}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -1174,6 +1179,11 @@ async function loadTopics() {
             currentVault.forEach(v => params.append('vault', v));
         } else {
             params.set('vault', currentVault);
+        }
+
+        // Live-session filter — server-side, mirroring the task fetch.
+        if (currentLiveOnly) {
+            params.set('session_live', 'true');
         }
 
         // Deliberately no `status` param: the endpoint returns every topic (it

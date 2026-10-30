@@ -35,12 +35,12 @@ func (e TopicNotFoundError) Error() string {
 }
 
 // ListTopics reproduces GET /api/topics.
-func (b *board) ListTopics(ctx context.Context, vaults []string) ([]api.TopicResponse, error) {
+func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicResponse, error) {
 	all, err := b.vaults.Vaults(ctx)
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "list vaults")
 	}
-	selected := b.selectVaults(all, vaults)
+	selected := b.selectVaults(all, query.Vaults)
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
 	liveIDsUnknown := !b.signals.LiveIDsKnown()
@@ -83,6 +83,16 @@ func (b *board) ListTopics(ctx context.Context, vaults []string) ([]api.TopicRes
 				ObsidianURL:  topicURL(vault, item.Name),
 			})
 		}
+	}
+
+	if query.SessionLive {
+		live := make([]api.TopicResponse, 0, len(responses))
+		for _, response := range responses {
+			if response.SessionState != nil && *response.SessionState == string(session.SessionStateLive) {
+				live = append(live, response)
+			}
+		}
+		responses = live
 	}
 	return responses, nil
 }

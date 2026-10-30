@@ -24,6 +24,7 @@ func NewGoalsHandler(b board.Board) http.Handler {
 			Statuses:      query["status"],
 			Assignees:     query["assignee"],
 			UpcomingHours: hours,
+			SessionLive:   parseBool(first(query["session_live"])),
 		})
 		if err != nil {
 			writeBoardError(resp, err)

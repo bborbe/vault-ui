@@ -882,6 +882,36 @@ var _ = Describe("ListGoals", func() {
 		Expect(upcoming["Soon"]).To(BeTrue())
 		Expect(upcoming["Past"]).To(BeFalse())
 	})
+
+	It("keeps only live goals when SessionLive is set", func() {
+		const (
+			liveID  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+			quietID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		)
+		stale := libtime.DateTime(baseTime.Add(-time.Hour))
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{
+			{Name: "Live", Status: "in_progress", ClaudeSessionID: liveID},
+			{Name: "Quiet", Status: "in_progress", ClaudeSessionID: quietID},
+			{Name: "None", Status: "in_progress"},
+		}
+		h.signals.registry = []heartbeat.Session{{ID: liveID}}
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{quietID: &stale},
+		}
+		h.build()
+
+		live, err := h.board.ListGoals(context.Background(), board.GoalQuery{
+			UpcomingHours: 8, SessionLive: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(live).To(HaveLen(1))
+		Expect(live[0].ID).To(Equal("Live"))
+
+		all, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(all).To(HaveLen(3))
+	})
 })
 
 var _ = Describe("goal session-id combination", func() {
@@ -1096,7 +1126,7 @@ var _ = Describe("ListTopics", func() {
 		h.list.items["23 Topics"] = []ops.TaskListItem{
 			{Name: "TopicOne", Status: "in_progress", Phase: "execution"},
 		}
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].ObsidianURL).To(Equal(
@@ -1117,7 +1147,7 @@ var _ = Describe("ListTopics", func() {
 			{Name: "Flagged", Status: "in_progress", Flag: true},
 			{Name: "Plain", Status: "in_progress"},
 		}
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(2))
 		byID := map[string]bool{}
@@ -1136,7 +1166,7 @@ var _ = Describe("ListTopics", func() {
 		h.signals.registry = []heartbeat.Session{{ID: managerID}}
 		h.build()
 
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].SessionState).NotTo(BeNil())
@@ -1155,7 +1185,7 @@ var _ = Describe("ListTopics", func() {
 		}
 		h.build()
 
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].SessionState).NotTo(BeNil())
@@ -1167,7 +1197,7 @@ var _ = Describe("ListTopics", func() {
 		h.list.items["23 Topics"] = []ops.TaskListItem{
 			{Name: "Plain", Status: "in_progress"},
 		}
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].SessionState).To(BeNil())
@@ -1190,7 +1220,7 @@ var _ = Describe("ListTopics", func() {
 		}
 		h.build()
 
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].SessionState).NotTo(BeNil())
@@ -1202,7 +1232,7 @@ var _ = Describe("ListTopics", func() {
 		h.list.items["23 Topics"] = []ops.TaskListItem{
 			{Name: "TopicOne", Status: "in_progress", Phase: "execution"},
 		}
-		responses, err := h.board.ListTopics(context.Background(), nil)
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 
 		encoded, err := json.Marshal(responses)
@@ -1243,9 +1273,39 @@ var _ = Describe("ListTopics", func() {
 			Index:     h.index,
 			PageIndex: h.pageIndex,
 		})
-		responses, err := service.ListTopics(context.Background(), nil)
+		responses, err := service.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(BeEmpty())
+	})
+
+	It("keeps only live topics when SessionLive is set", func() {
+		const (
+			liveID  = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+			quietID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+		)
+		stale := libtime.DateTime(baseTime.Add(-time.Hour))
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Live", Status: "in_progress", ManagerSessionID: liveID},
+			{Name: "Quiet", Status: "in_progress", ManagerSessionID: quietID},
+			{Name: "None", Status: "in_progress"},
+		}
+		h.signals.registry = []heartbeat.Session{{ID: liveID}}
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{quietID: &stale},
+		}
+		h.build()
+
+		live, err := h.board.ListTopics(context.Background(), board.TopicQuery{
+			SessionLive: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(live).To(HaveLen(1))
+		Expect(live[0].ID).To(Equal("Live"))
+
+		all, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(all).To(HaveLen(3))
 	})
 })
 
