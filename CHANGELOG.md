@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.103.0
 
 - refactor: Collapse the three board renderers and three card builders into one config-driven unified card template and one board renderer, with each kind contributing only a `CARD_CONFIG` entry and a data mapper, so the topic board gains the shared status filter, the flag-first sort and the active → upcoming → hold bucketing it never had while keeping only the affordances its API supports (flag, open note, detail and a display-only live indicator), task and goal cards are unchanged, and the `app.js` cache-bust token is bumped so already-open boards fetch the new script.
 
