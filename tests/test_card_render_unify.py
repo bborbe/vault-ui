@@ -338,6 +338,7 @@ def test_cachebust_token_bumped() -> None:
     assert "app.js?v=2026-08-19-board-sort" not in INDEX_HTML
     assert "app.js?v=2026-08-25-closeout-abort-only" not in INDEX_HTML
     assert "app.js?v=2026-10-29-jump-pane-gating" not in INDEX_HTML
+    assert "app.js?v=2026-10-30-live-session-filter" not in INDEX_HTML
 
 
 def test_task_card_keeps_urgency_and_jira() -> None:

@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-10-31T14:00:56Z"
 generating: "2026-10-31T14:27:24Z"
 prompted: "2026-10-31T14:27:24Z"
+verifying: "2026-10-31T16:46:54Z"
 branch: dark-factory/unify-board-renderer-and-card-template
 ---
 

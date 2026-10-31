@@ -132,5 +132,15 @@ arrow-function assigned to a variable is invisible to these lanes.
 ## Browser lane
 
 The static lane cannot see rendering. `tests/test_card_parity.py` is the
-integration proof that all three boards actually render the shared template;
-run it with `make test-integration`.
+integration proof that all three boards actually render the shared template —
+the topic card's slot set, the display-only live indicator, flag-first and
+hold-sink ordering, the topic-only status filter, and the unchanged task/goal
+slots.
+
+It is integration-marked, so `make test` deselects it (and the YOLO container
+has no Chromium). Run it on the host:
+
+```
+uv run playwright install chromium   # once
+make test-integration
+```
