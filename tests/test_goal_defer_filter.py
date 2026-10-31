@@ -24,24 +24,40 @@ def test_load_goals_sends_upcoming_hours() -> None:
     )
 
 
+def _slice_function_body(source: str, fn_name: str) -> str:
+    """Return the body of the named function (without outer braces)."""
+    pattern = re.compile(
+        rf"^(?:async\s+)?function\s+{re.escape(fn_name)}\s*\([^)]*\)\s*\{{",
+        re.MULTILINE,
+    )
+    m = pattern.search(source)
+    assert m is not None, f"function {fn_name} not found"
+    i = m.end()
+    depth = 1
+    while i < len(source) and depth > 0:
+        c = source[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return source[m.end() : i - 1]
+
+
 def test_create_goal_card_greys_upcoming() -> None:
-    """createGoalCard() adds 'upcoming' CSS class when goal.upcoming is true."""
+    """The goal mapper carries goal.upcoming and the shared builder adds the
+    'upcoming' CSS class from it."""
     with open("src/vault_ui/static/app.js") as f:
         app_js = f.read()
 
-    # Find the createGoalCard function body
-    create_goal_match = re.search(
-        r"function createGoalCard\(goal\)\s*\{.*?\n\}",
-        app_js,
-        re.DOTALL,
+    mapper_body = _slice_function_body(app_js, "mapGoalCard")
+    assert "goal.upcoming" in mapper_body, (
+        "mapGoalCard must carry goal.upcoming into the view-model"
     )
-    assert create_goal_match is not None, "createGoalCard function not found"
-    create_goal_body = create_goal_match.group(0)
 
-    # Verify upcoming class is added
-    assert "if (goal.upcoming) card.classList.add('upcoming')" in create_goal_body, (
-        "createGoalCard must add 'upcoming' class when goal.upcoming is true, "
-        "mirroring createTaskCard"
+    builder_body = _slice_function_body(app_js, "createCard")
+    assert "if (view.upcoming) card.classList.add('upcoming')" in builder_body, (
+        "createCard must add 'upcoming' class when view.upcoming is true, mirroring the task card"
     )
 
 

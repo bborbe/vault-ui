@@ -71,7 +71,6 @@ def test_session_button_live_badge_keeps_take_over_affordance() -> None:
 
 
 def test_session_button_serves_both_card_kinds() -> None:
-    """``sessionButtonHtml`` is called for tasks and goals, so the one label
-    change reaches both kinds with no goal-specific branch."""
-    assert "sessionButtonHtml('task', task)" in APP_JS
-    assert "sessionButtonHtml('goal', goal)" in APP_JS
+    """``sessionButtonHtml`` is called kind-first from the shared card builder,
+    so the one label change reaches both kinds with no goal-specific branch."""
+    assert "sessionButtonHtml(kind, item)" in APP_JS

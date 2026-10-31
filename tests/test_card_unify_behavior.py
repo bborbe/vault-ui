@@ -92,7 +92,7 @@ def test_card_onclicks_point_at_merged_functions() -> None:
     """The task and goal card buttons call the merged functions with their kind."""
     # runSession is called via sessionButtonHtml which uses template literal with ${kind}
     assert "runSession('${kind}'" in APP_JS
-    # showMenu is called via cardShellHtml (task) and inline (goal) using escaped quotes
+    # showMenu is called via the shared card builder using escaped quotes
     assert "runTask('" not in APP_JS
     assert "runGoal('" not in APP_JS
     assert "showTaskMenu(event," not in APP_JS
@@ -110,24 +110,25 @@ def test_onclick_js_string_args_escape_titles() -> None:
     # Every inline-onclick JS-string argument is escapeJsAttr-wrapped.
     # live badge + starting badge + jump control + runSession + the shared flag toggle
     assert APP_JS.count("escapeJsAttr(item.id)") == 5
-    assert APP_JS.count("escapeJsAttr(id)") == 1  # task showMenu (cardShellHtml)
-    assert APP_JS.count("escapeJsAttr(goal.id)") == 2  # goal showMenu + assignGoalToMe
+    # The shared builder wraps its view-model values: menu + assign-to-me id,
+    # the assign-to-me vault, and the clickable assignee badge.
+    assert APP_JS.count("escapeJsAttr(view.id)") == 2
+    assert APP_JS.count("escapeJsAttr(view.vault)") == 1
+    assert APP_JS.count("escapeJsAttr(view.assignee)") == 1
     for wrapped in (
-        "escapeJsAttr(task.id)",
-        "escapeJsAttr(task.vault)",
-        "escapeJsAttr(task.assignee)",
-        "escapeJsAttr(goal.id)",
-        "escapeJsAttr(goal.vault)",
+        "escapeJsAttr(view.id)",
+        "escapeJsAttr(view.vault)",
+        "escapeJsAttr(view.assignee)",
     ):
         assert wrapped in APP_JS, wrapped
     # No raw title interpolation left in an onclick JS-string slot.
     for leaked in (
         "runSession('${kind}', '${item.id}')",
         "takeOverSession('${kind}', '${item.id}')",
-        "assignToMe('${escapeHtml(task.id)}'",
-        "toggleFlag('${escapeHtml(task.id)}'",
-        "filterByAssignee('${escapeHtml(task.assignee)}')",
+        "assignToMe('${escapeHtml(view.id)}'",
+        "toggleFlag('${escapeHtml(view.id)}'",
+        "filterByAssignee('${escapeHtml(view.assignee)}')",
     ):
         assert leaked not in APP_JS, leaked
     # escapeHtml stays only for pure HTML-attribute (title=) contexts, not onclick args.
-    assert "Filter by ' + escapeHtml(task.assignee)" in APP_JS
+    assert "Filter by ' + escapeHtml(view.assignee)" in APP_JS

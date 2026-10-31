@@ -904,7 +904,7 @@ async function handleDrop(e) {
 
     // Only task cards are draggable: a task's column is its phase, and the drop
     // writes that phase. Goal and topic cards are not draggable (see
-    // createGoalCard) — their column is a phase the board does not write.
+    // CARD_CONFIG) — their column is a phase the board does not write.
     const task = tasksCache[itemId];
 
     if (task) {
@@ -1060,7 +1060,7 @@ function renderTasks() {
         const containerId = `cards-${displayPhase(task.phase, 'todo')}`;
         const container = document.getElementById(containerId);
         if (container) {
-            const card = createTaskCard(task);
+            const card = createCard('task', task);
             container.appendChild(card);
         }
     });
@@ -1068,7 +1068,7 @@ function renderTasks() {
     const doneContainer = document.getElementById('cards-done');
     if (doneContainer) {
         recentlyCompletedTasks.forEach(task => {
-            doneContainer.appendChild(createTaskCard(task));
+            doneContainer.appendChild(createCard('task', task));
         });
     }
 }
@@ -1150,7 +1150,7 @@ function renderGoals() {
         const containerId = `cards-${displayPhase(goal.phase, 'unknown')}`;
         const container = document.getElementById(containerId);
         if (container) {
-            const card = createGoalCard(goal);
+            const card = createCard('goal', goal);
             container.appendChild(card);
         }
     });
@@ -1230,49 +1230,9 @@ function renderTopics() {
         // A topic without a phase has no stage to be placed in, so it lands in
         // "—" rather than being guessed into a workflow column.
         const container = document.getElementById(`cards-${displayPhase(topic.phase, 'unknown')}`);
-        if (container) container.appendChild(createTopicCard(topic));
+        if (container) container.appendChild(createCard('topic', topic));
     });
     syncUnknownColumn();
-}
-
-// A topic card: the SAME two affordances a task or goal card carries — the
-// title opens the page in Obsidian, a footer button opens the tracked-work
-// detail. Shipped the other way round at first (title → detail, icon →
-// Obsidian), the reverse of the board's established pattern, and the operator
-// caught it in review.
-//
-// No status badge: the card sits in the column its `phase` names, and the badge
-// rendered a second, different axis (`status`) in the same affordance — so the
-// two contradicted each other whenever a page's status and phase differed. Task
-// and goal cards render no status badge for exactly this reason. The topic's
-// own status stays visible in the detail modal and still drives the status
-// filter. The live indicator is display-only — a topic has no take-over route,
-// so it deliberately does NOT reuse the `.live-badge` take-over control's class
-// and carries no onclick, role or tabindex.
-function createTopicCard(topic) {
-    const card = document.createElement('div');
-    card.className = 'task-card topic-card';
-    card.dataset.topicId = topic.id;
-    card.dataset.vault = topic.vault;
-
-    const title = topic.title || topic.id;
-    if (topic.flag) card.classList.add('flagged');
-    card.innerHTML = `
-        <div class="card-header">
-            <div class="card-title">
-                <a href="${escapeHtml(topic.obsidian_url)}" class="task-title-link topic-title-link" title="Open in Obsidian">${escapeHtml(title)}</a>
-            </div>
-        </div>
-        <div class="card-footer">
-            ${topic.session_state === 'live' ? `<span class="topic-live-badge">${liveBadgeLabel(null)}</span>` : ''}
-            ${flagButtonHtml('topic', topic)}
-            <button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>
-        </div>`;
-
-    card.querySelector('.topic-detail-btn').addEventListener('click', () => {
-        openTopicDetail(topic);
-    });
-    return card;
 }
 
 // Fetch and show a topic's tracked work. Entries are resolved server-side into
@@ -1631,9 +1591,6 @@ function sessionButtonHtml(kind, item) {
     return `<button class="${buttonClass}" onclick="runSession('${kind}', '${escapeJsAttr(item.id)}')"${buttonDisabled ? ' disabled' : ''}${buttonTitle}>${buttonLabel}</button>`;
 }
 
-// Shared card body: menu button + title block + footer skeleton. The kind-specific
-// footer-left content (badges/assignee), card classes, dataset, urgency/on-hold, and
-// drag wiring stay in the thin createTaskCard/createGoalCard wrappers.
 // Age of the last activity on a card, as a single largest unit with no decimals.
 // The server resolves the timestamp (newer of task file mtime and Claude session
 // transcript mtime); this only formats it. Glanceable staleness, not precision —
@@ -1676,8 +1633,227 @@ function titleWithIconHtml(title) {
     return `${escapeHtml(head)}<span class="title-tail">${escapeHtml(tail)}<span class="obsidian-icon">↗</span></span>`;
 }
 
-function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButtonHtml, blockedHtml, jiraHtml) {
-    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'' + kind + '\', \'' + escapeJsAttr(id) + '\')">⋮</button>';
+// Which affordances a card kind carries and how its board places it. The card
+// template reads this map and never branches on the kind name; a kind's
+// differences live here and in its data mapper, nowhere else. See
+// docs/frontend-card-render.md.
+const CARD_CONFIG = {
+    task: {
+        map: mapTaskCard,
+        fallbackColumn: 'todo',
+        statusFilter: false,
+        draggable: true,
+        idDataset: 'taskId',
+        kindDataset: null,
+        vaultDataset: false,
+        extraClass: '',
+        titleLinkExtraClass: '',
+        assignCall: 'assignToMe',
+        assigneeClickable: true,
+        holdTitle: 'On hold — blocked, not actively worked',
+        slots: {
+            noteLink: true,
+            flag: true,
+            hold: true,
+            assignee: true,
+            priority: true,
+            activityAge: true,
+            blocked: true,
+            jira: true,
+            live: false,
+            session: true,
+            menu: true,
+            detail: false,
+        },
+    },
+    goal: {
+        map: mapGoalCard,
+        fallbackColumn: 'unknown',
+        statusFilter: false,
+        draggable: false,
+        idDataset: 'goalId',
+        kindDataset: 'goal',
+        vaultDataset: false,
+        extraClass: 'goal-card',
+        titleLinkExtraClass: '',
+        assignCall: 'assignGoalToMe',
+        assigneeClickable: false,
+        holdTitle: 'On hold — paused, not actively worked',
+        slots: {
+            noteLink: true,
+            flag: true,
+            hold: true,
+            assignee: true,
+            priority: true,
+            activityAge: true,
+            blocked: true,
+            jira: true,
+            live: false,
+            session: true,
+            menu: true,
+            detail: false,
+        },
+    },
+    topic: {
+        map: mapTopicCard,
+        fallbackColumn: 'unknown',
+        statusFilter: true,
+        draggable: false,
+        idDataset: 'topicId',
+        kindDataset: null,
+        vaultDataset: true,
+        extraClass: 'topic-card',
+        titleLinkExtraClass: 'topic-title-link',
+        assignCall: null,
+        assigneeClickable: false,
+        holdTitle: 'On hold — paused, not actively worked',
+        slots: {
+            noteLink: true,
+            flag: true,
+            hold: false,
+            assignee: false,
+            priority: false,
+            activityAge: false,
+            blocked: false,
+            jira: false,
+            live: true,
+            session: false,
+            menu: false,
+            detail: true,
+        },
+    },
+};
+
+// Each mapper turns one kind's API response into the common card view-model.
+// Data only — no markup, no innerHTML, no element construction. The heading is
+// already Jira-stripped for tasks and goals; the topic falls back to its id.
+function mapTaskCard(task) {
+    // The heading always comes from the title: the helper strips the matched key
+    // out of the title it returns, so feeding it the bare `jira` value would
+    // blank the card's heading. The badge prefers the task's own `jira:`
+    // frontmatter and falls back to the title's key; running the same helper
+    // over that source keeps the project-domain mapping and the key regex in
+    // one place.
+    const { title } = extractJiraIssue(task.title);
+    const jiraSource = typeof task.jira === 'string' && task.jira.trim() !== ''
+        ? task.jira
+        : task.title;
+    const { issueKey, issueUrl } = extractJiraIssue(jiraSource);
+    return {
+        id: task.id,
+        vault: task.vault,
+        title: title,
+        obsidianUrl: task.obsidian_url,
+        status: task.status,
+        phase: task.phase,
+        flag: task.flag === true,
+        live: false,
+        hold: task.status === 'hold',
+        upcoming: task.upcoming,
+        recentlyCompleted: task.recently_completed,
+        urgencyTier: getUrgencyTier(task),
+        assignee: task.assignee || '',
+        priority: task.priority,
+        activityDate: task.activity_date || null,
+        blockers: task.blockers || [],
+        jiraKey: issueKey || '',
+        jiraUrl: issueUrl || '',
+    };
+}
+
+function mapGoalCard(goal) {
+    // A goal response carries no `jira` field, so the badge and the heading both
+    // come from the title.
+    const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
+    return {
+        id: goal.id,
+        vault: goal.vault,
+        title: title,
+        obsidianUrl: goal.obsidian_url,
+        status: goal.status,
+        phase: goal.phase,
+        flag: goal.flag === true,
+        live: false,
+        hold: goal.status === 'hold',
+        upcoming: goal.upcoming,
+        recentlyCompleted: false,
+        urgencyTier: null,
+        assignee: goal.assignee || '',
+        priority: goal.priority,
+        activityDate: goal.activity_date || null,
+        blockers: goal.blockers || [],
+        jiraKey: issueKey || '',
+        jiraUrl: issueUrl || '',
+    };
+}
+
+function mapTopicCard(topic) {
+    // A topic response carries exactly these eight wire keys. Everything else a
+    // task or goal card renders is absent by design, so it is returned empty —
+    // an absent field renders no badge, never the literal `undefined`.
+    return {
+        id: topic.id,
+        vault: topic.vault,
+        title: topic.title || topic.id,
+        obsidianUrl: topic.obsidian_url,
+        status: topic.status,
+        phase: topic.phase,
+        flag: topic.flag === true,
+        live: topic.session_state === 'live',
+        hold: false,
+        upcoming: false,
+        recentlyCompleted: false,
+        urgencyTier: null,
+        assignee: '',
+        priority: null,
+        activityDate: null,
+        blockers: [],
+        jiraKey: '',
+        jiraUrl: '',
+    };
+}
+
+// The one card template. Every kind is described by its CARD_CONFIG entry and
+// its data mapper; this function branches on config fields, never on a kind
+// name. See docs/frontend-card-render.md for the contract.
+function createCard(kind, item) {
+    const config = CARD_CONFIG[kind];
+    const view = config.map(item);
+
+    const card = document.createElement('div');
+    card.className = 'task-card' + (config.extraClass ? ' ' + config.extraClass : '');
+    card.draggable = config.draggable;
+    card.dataset[config.idDataset] = view.id;
+    if (config.kindDataset !== null) card.dataset.kind = config.kindDataset;
+    if (config.vaultDataset) card.dataset.vault = view.vault;
+
+    if (config.draggable) {
+        card.addEventListener('dragstart', (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', item.id);
+            card.classList.add('dragging');
+        });
+
+        card.addEventListener('dragend', () => {
+            card.classList.remove('dragging');
+        });
+    }
+
+    // Urgency border — task-only data; the goal and topic mappers return null.
+    if (view.urgencyTier === 0) card.classList.add('urgency-overdue');
+    else if (view.urgencyTier === 1) card.classList.add('urgency-today');
+    else if (view.urgencyTier === 2) card.classList.add('urgency-scheduled');
+    // tier 3 / null: no class, default appearance.
+
+    if (view.upcoming) card.classList.add('upcoming');
+    if (view.recentlyCompleted) card.classList.add('recently-completed');
+    if (view.hold) card.classList.add('on-hold');
+    if (view.flag) card.classList.add('flagged');
+
+    const menuButton = config.slots.menu
+        ? `<button class="menu-btn" onclick="showMenu(event, \'${kind}\', \'${escapeJsAttr(view.id)}\')">⋮</button>`
+        : '';
+
     // The blocked badge gets its own row rather than a slot in card-footer-left.
     // In the footer it competed with the action button for a fixed-width row:
     // `.card-footer` is flex+nowrap and `.card-footer-left` had no min-width:0,
@@ -1685,20 +1861,72 @@ function cardShellHtml(kind, id, obsidianUrl, title, footerLeftHtml, startButton
     // ▶ Start past the card edge, where it was clipped (observed 2026-09-11 on a
     // 298px card: badge 246px + actions 90px). Its own row gives it the full
     // card width; the CSS keeps ellipsis as a backstop for multi-blocker labels.
-    return `
+    const blockedHtml = config.slots.blocked && view.blockers.length
+        ? `<div class="card-blocked">${blockedBadgeHtml(kind, item)}</div>`
+        : '';
+
+    const jiraHtml = config.slots.jira && view.jiraKey && view.jiraUrl
+        ? `<div class="card-jira">
+             <a href="${view.jiraUrl}" class="jira-badge" target="_blank" title="Open in Jira">
+               <span class="jira-icon">🔖</span><span>${escapeHtml(view.jiraKey)}</span>
+             </a>
+           </div>`
+        : '';
+
+    const liveIndicator = config.slots.live && view.live
+        ? `<span class="topic-live-badge">${liveBadgeLabel(null)}</span>`
+        : '';
+    const flagButton = config.slots.flag ? flagButtonHtml(kind, item) : '';
+    const holdBadge = config.slots.hold && view.hold
+        ? `<span class="hold-badge" title="${config.holdTitle}">⏸ HOLD</span>`
+        : '';
+
+    let assigneeBlock = '';
+    if (config.slots.assignee) {
+        const isActiveFilter = currentAssignees.includes(view.assignee);
+        if (view.assignee) {
+            if (config.assigneeClickable) {
+                assigneeBlock = `<span class="assignee-badge clickable ${isActiveFilter ? 'active' : ''}" onclick="filterByAssignee('${escapeJsAttr(view.assignee)}')" title="${isActiveFilter ? 'Clear filter' : 'Filter by ' + escapeHtml(view.assignee)}">
+             <span class="assignee-icon">👤</span><span>${escapeHtml(view.assignee)}</span>
+           </span>`;
+            } else {
+                assigneeBlock = `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(view.assignee)}</span></span>`;
+            }
+        } else {
+            assigneeBlock = `<a class="assign-to-me-link" onclick="${config.assignCall}('${escapeJsAttr(view.id)}', '${escapeJsAttr(view.vault)}')" title="Assign this ${kind} to me">+ Assign to me</a>`;
+        }
+    }
+
+    const priorityChip = config.slots.priority && view.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(view.priority))}">P${escapeHtml(String(view.priority))}</span>` : '';
+    const detailButton = config.slots.detail
+        ? '<button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>'
+        : '';
+
+    const footerLeft = `${liveIndicator}${flagButton}${holdBadge}${assigneeBlock}${priorityChip}${detailButton}`;
+    // Age rides with the action so it can't be orphaned on its own wrapped row.
+    const cardActions = `${config.slots.activityAge ? activityAgeHtml(view.activityDate) : ''}${config.slots.session ? sessionButtonHtml(kind, item) : ''}`;
+
+    card.innerHTML = `
         ${menuButton}
         <div class="card-content">
             <h3 class="task-title">
-                <a href="${obsidianUrl}" class="task-title-link" title="Open in Obsidian">${titleWithIconHtml(title)}</a>
+                <a href="${escapeHtml(view.obsidianUrl)}" class="task-title-link${config.titleLinkExtraClass ? ' ' + config.titleLinkExtraClass : ''}" title="Open in Obsidian">${titleWithIconHtml(view.title)}</a>
             </h3>
         </div>
-        ${blockedHtml ? `<div class="card-blocked">${blockedHtml}</div>` : ''}
-        ${jiraHtml ? `<div class="card-jira">${jiraHtml}</div>` : ''}
+        ${blockedHtml}
+        ${jiraHtml}
         <div class="card-footer">
-            <div class="card-footer-left">${footerLeftHtml}</div>
-            <div class="card-actions">${startButtonHtml}</div>
+            <div class="card-footer-left">${footerLeft}</div>
+            <div class="card-actions">${cardActions}</div>
         </div>
     `;
+
+    if (config.slots.detail) {
+        card.querySelector('.topic-detail-btn').addEventListener('click', () => {
+            openTopicDetail(item);
+        });
+    }
+    return card;
 }
 
 // The flag control, shared by all three card kinds. kind selects the route
@@ -1748,80 +1976,6 @@ function navigateToBlocker(kind, name) {
     }
 }
 
-function createTaskCard(task) {
-    const card = document.createElement('div');
-    card.className = 'task-card';
-    card.draggable = true;
-    card.dataset.taskId = task.id;
-
-    // Apply urgency border class
-    const tier = getUrgencyTier(task);
-    if (tier === 0) card.classList.add('urgency-overdue');
-    else if (tier === 1) card.classList.add('urgency-today');
-    else if (tier === 2) card.classList.add('urgency-scheduled');
-    // tier === 3: no class, default appearance
-
-    if (task.upcoming) card.classList.add('upcoming');
-    if (task.recently_completed) card.classList.add('recently-completed');
-    if (task.status === 'hold') card.classList.add('on-hold');
-    if (task.flag) card.classList.add('flagged');
-
-    // Drag handlers
-    card.addEventListener('dragstart', (e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', task.id);
-        card.classList.add('dragging');
-    });
-
-    card.addEventListener('dragend', () => {
-        card.classList.remove('dragging');
-    });
-
-    // Extract Jira issue info. The heading always comes from the title: the
-    // helper strips the matched key out of the title it returns, so feeding it
-    // the bare `jira` value would blank the card's heading. The badge prefers
-    // the task's own `jira:` frontmatter and falls back to the title's key;
-    // running the same helper over that source keeps the project-domain mapping
-    // and the key regex in one place.
-    const { title } = extractJiraIssue(task.title);
-    const jiraSource = typeof task.jira === 'string' && task.jira.trim() !== ''
-        ? task.jira
-        : task.title;
-    const { issueKey, issueUrl } = extractJiraIssue(jiraSource);
-
-    // On-hold badge (if status is hold) — signals the task is parked/blocked
-    const holdBadge = task.status === 'hold'
-        ? '<span class="hold-badge" title="On hold — blocked, not actively worked">⏸ HOLD</span>'
-        : '';
-
-    // Jira issue badge (if present)
-    const jiraBadge = issueKey && issueUrl
-        ? `<a href="${issueUrl}" class="jira-badge" target="_blank" title="Open in Jira">
-             <span class="jira-icon">🔖</span><span>${escapeHtml(issueKey)}</span>
-           </a>`
-        : '';
-
-    // Assignee badge (if present) - clickable to filter
-    const isActiveFilter = currentAssignees.includes(task.assignee);
-    const assigneeBadge = task.assignee
-        ? `<span class="assignee-badge clickable ${isActiveFilter ? 'active' : ''}" onclick="filterByAssignee('${escapeJsAttr(task.assignee)}')" title="${isActiveFilter ? 'Clear filter' : 'Filter by ' + escapeHtml(task.assignee)}">
-             <span class="assignee-icon">👤</span><span>${escapeHtml(task.assignee)}</span>
-           </span>`
-        : `<a class="assign-to-me-link" onclick="assignToMe('${escapeJsAttr(task.id)}', '${escapeJsAttr(task.vault)}')" title="Assign this task to me">+ Assign to me</a>`;
-
-    const startButton = sessionButtonHtml('task', task);
-    const footerLeft = `
-        ${flagButtonHtml('task', task)}
-        ${holdBadge}
-        ${assigneeBadge}
-        ${task.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(task.priority))}">P${escapeHtml(String(task.priority))}</span>` : ''}
-    `;
-    // Age rides with the action so it can't be orphaned on its own wrapped row.
-    const cardActions = `${activityAgeHtml(task.activity_date)}${startButton}`;
-    card.innerHTML = cardShellHtml('task', task.id, task.obsidian_url, title, footerLeft, cardActions, blockedBadgeHtml('task', task), jiraBadge);
-    return card;
-}
-
 // The route family is derived from kind — never hardcoded to /api/tasks — so
 // the same control drives a goal and a topic card. A topic route publishes its
 // own frame, so expectsFrame is true for every kind.
@@ -1839,65 +1993,6 @@ async function toggleFlag(kind, itemId, vault, current) {
         const err = await response.json().catch(() => ({}));
         alert(`Failed to update flag: ${err.detail || response.status}`);
     }
-}
-
-function createGoalCard(goal) {
-    const card = document.createElement('div');
-    card.className = 'task-card goal-card';
-    card.dataset.goalId = goal.id;
-    card.dataset.kind = 'goal';
-    // Not draggable. A goal's column is its phase, and the board does not write
-    // goal phases — `vault-cli goal approve` owns the todo → planning
-    // transition, so a drop would have to bypass that approval. Status changes
-    // stay on the card menu.
-    card.draggable = false;
-    if (goal.status === 'hold') card.classList.add('on-hold');
-    if (goal.upcoming) card.classList.add('upcoming');
-    if (goal.flag) card.classList.add('flagged');
-
-    const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
-
-    const holdBadge = goal.status === 'hold'
-        ? '<span class="hold-badge" title="On hold — paused, not actively worked">⏸ HOLD</span>'
-        : '';
-
-    // Jira issue badge (if present)
-    const jiraBadge = issueKey && issueUrl
-        ? `<a href="${issueUrl}" class="jira-badge" target="_blank" title="Open in Jira">
-             <span class="jira-icon">🔖</span><span>${escapeHtml(issueKey)}</span>
-           </a>`
-        : '';
-
-    const startButton = sessionButtonHtml('goal', goal);
-    const menuButton = '<button class="menu-btn" onclick="showMenu(event, \'goal\', \'' + escapeJsAttr(goal.id) + '\')">⋮</button>';
-    const footerLeft = `
-        ${flagButtonHtml('goal', goal)}
-        ${holdBadge}
-        ${goal.assignee
-            ? `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(goal.assignee)}</span></span>`
-            : `<a class="assign-to-me-link" onclick="assignGoalToMe('${escapeJsAttr(goal.id)}', '${escapeJsAttr(goal.vault)}')" title="Assign this goal to me">+ Assign to me</a>`}
-        ${goal.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(goal.priority))}">P${escapeHtml(String(goal.priority))}</span>` : ''}
-    `;
-    // Same grouping as the task card — see the comment there.
-    const cardActions = `${activityAgeHtml(goal.activity_date)}${startButton}`;
-    // Built once — the row wrapper and its content both need it, and calling the
-    // builder twice per card was a needless repeat (flagged in the #73 review).
-    const blockedBadge = blockedBadgeHtml('goal', goal);
-    card.innerHTML = `
-        ${menuButton}
-        <div class="card-content">
-            <h3 class="task-title">
-                <a href="${goal.obsidian_url}" class="task-title-link" title="Open in Obsidian">${titleWithIconHtml(title)}</a>
-            </h3>
-        </div>
-        ${blockedBadge ? `<div class="card-blocked">${blockedBadge}</div>` : ''}
-        ${jiraBadge ? `<div class="card-jira">${jiraBadge}</div>` : ''}
-        <div class="card-footer">
-            <div class="card-footer-left">${footerLeft}</div>
-            <div class="card-actions">${cardActions}</div>
-        </div>
-    `;
-    return card;
 }
 
 async function runSession(kind, id) {

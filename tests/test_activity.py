@@ -30,6 +30,29 @@ STYLE_CSS = (REPO_ROOT / "src" / "vault_ui" / "static" / "style.css").read_text(
 
 SESSION_ID = "e0930886-0843-4ca9-adfa-58819443c032"
 
+
+def _slice_function_body(source: str, fn_name: str) -> str:
+    """Return the body of the named function (without outer braces)."""
+    import re
+
+    pattern = re.compile(
+        rf"^(?:async\s+)?function\s+{re.escape(fn_name)}\s*\([^)]*\)\s*\{{",
+        re.MULTILINE,
+    )
+    m = pattern.search(source)
+    assert m is not None, f"function {fn_name} not found"
+    i = m.end()
+    depth = 1
+    while i < len(source) and depth > 0:
+        c = source[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return source[m.end() : i - 1]
+
+
 # Real observed `ps` rows (truncated for brevity, flag order preserved): a
 # headless launch (--session-id), an interactive resume (--resume <uuid>), a
 # resume by name (no uuid), and a bare session (no session flag at all).
@@ -194,16 +217,21 @@ def test_formatter_uses_single_largest_unit() -> None:
 
 
 def test_task_card_renders_activity_age() -> None:
-    """The badge is wired into the task card footer and carries a hover timestamp."""
+    """The badge is wired into the shared card footer from the view-model, and
+    the task mapper fills activityDate from the raw field."""
     assert "function activityAgeHtml" in APP_JS
-    assert "activityAgeHtml(task.activity_date)" in APP_JS
+    assert "activityAgeHtml(view.activityDate)" in APP_JS
     assert 'class="activity-age"' in APP_JS
     assert "Last activity:" in APP_JS
+    mapper = _slice_function_body(APP_JS, "mapTaskCard")
+    assert "activityDate: task.activity_date || null" in mapper
 
 
 def test_goal_card_renders_activity_age() -> None:
     """Goal cards carry the same badge — staleness matters there too."""
-    assert "activityAgeHtml(goal.activity_date)" in APP_JS
+    assert "activityAgeHtml(view.activityDate)" in APP_JS
+    mapper = _slice_function_body(APP_JS, "mapGoalCard")
+    assert "activityDate: goal.activity_date || null" in mapper
 
 
 def test_activity_age_styled_small_and_grey() -> None:

@@ -40,14 +40,13 @@ def _slice_function(source: str, fn_name: str) -> str:
 
 
 def test_blocked_badge_builder_exists_and_both_cards_call_it_kind_first() -> None:
-    """A shared builder exists and both card renderers call it kind-first, the
-    same convention as sessionButtonHtml."""
+    """A shared builder exists and the single card builder calls it kind-first,
+    the same convention as sessionButtonHtml."""
     body = _slice_function(APP_JS, "blockedBadgeHtml")
     assert "item.blocked" in body
-    # Task card calls it kind-first with the task object.
-    assert "blockedBadgeHtml('task', task)" in APP_JS
-    # Goal card calls it kind-first with the goal object.
-    assert "blockedBadgeHtml('goal', goal)" in APP_JS
+    # The shared card builder calls it kind-first with the raw item.
+    builder = _slice_function(APP_JS, "createCard")
+    assert "blockedBadgeHtml(kind, item)" in builder
 
 
 def test_blocked_badge_gated_on_flag_and_literal_text() -> None:

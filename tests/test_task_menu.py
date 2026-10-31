@@ -61,10 +61,11 @@ def test_hold_resume_route_via_patch_status() -> None:
 
 
 def test_goal_card_has_menu() -> None:
-    """Goal cards render a lifecycle menu button wired to showMenu."""
+    """Goal cards render a lifecycle menu button wired to showMenu; the shared
+    builder interpolates the kind, so the goal card reaches the goal menu."""
     assert "function showMenu(event, kind, id)" in APP_JS
     # The .js file contains \' escape sequences for quotes inside string literals
-    assert "showMenu(event, \\'goal\\'" in APP_JS
+    assert "showMenu(event, \\'${kind}\\'" in APP_JS
 
 
 def test_goal_menu_items_present() -> None:
@@ -103,10 +104,9 @@ def test_no_status_columns_are_built() -> None:
 
 def test_priority_chip_replaces_goal_meta_line() -> None:
     """Priority renders as a compact footer chip on both cards, not a standalone row."""
-    # Both task and goal cards emit a priority-chip when priority is set
-    assert APP_JS.count("priority-chip") >= 2
-    assert "task.priority ?" in APP_JS
-    assert "goal.priority ?" in APP_JS
+    # The shared builder emits one priority-chip, gated on the view-model.
+    assert APP_JS.count("priority-chip") >= 1
+    assert "view.priority ?" in APP_JS
     # The old standalone goal "Priority: N" line is gone
     assert 'class="goal-meta">Priority:' not in APP_JS
 
