@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [037-unify-board-renderer-and-card-template]
+summary: Added a 7-test Playwright card-parity suite proving the unified template across all three boards, bumped the app.js cache-bust token, added the stale-token guard, documented the browser lane, and recorded the unification in CHANGELOG
+execution_id: vault-ui-card-unify-exec-176-spec-037-playwright-parity-and-ship
+dark-factory-version: v0.198.7
 created: "2026-10-31T14:14:00Z"
 queued: "2026-10-31T14:27:21Z"
+started: "2026-10-31T16:42:11Z"
+completed: "2026-10-31T16:46:54Z"
+branch: dark-factory/176-spec-037-playwright-parity-and-ship
 ---
 
 # Browser proof for card parity, plus the cache-bust bump and CHANGELOG
