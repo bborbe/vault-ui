@@ -34,52 +34,56 @@ def _slice_function(source: str, fn_name: str) -> str:
 
 
 def test_goal_card_has_only_one_obsidian_anchor() -> None:
-    """createGoalCard must render exactly one obsidian:// link — the title link.
+    """The shared card builder must render exactly one obsidian:// link — the
+    title link.
 
     Spec AC#9: redundant 'Open in Obsidian →' affordance below the title is
     removed. A Jira badge `<a>` (BRO-NNNN → Jira) is allowed and matches the
     task-card pattern — it points to atlassian.net, not obsidian://.
     """
-    body = _slice_function(APP_JS, "createGoalCard")
-    # Only one anchor should target goal.obsidian_url (the title link).
-    # A Jira badge anchor targeting ${issueUrl} is intentional and additive.
+    body = _slice_function(APP_JS, "createCard")
+    # Only one anchor should target the view-model's obsidianUrl (the title
+    # link). A Jira badge anchor targeting view.jiraUrl is intentional and
+    # additive.
     obsidian_anchor_pattern = re.compile(
-        r"<a\s+[^>]*href=\"\$\{goal\.obsidian_url\}\"", re.IGNORECASE
+        r"<a\s+[^>]*href=\"\$\{[^}]*obsidianUrl[^}]*\}\"", re.IGNORECASE
     )
     obsidian_anchors = obsidian_anchor_pattern.findall(body)
     assert len(obsidian_anchors) == 1, (
-        f"createGoalCard must render exactly 1 obsidian:// anchor (the title "
+        f"createCard must render exactly 1 obsidian:// anchor (the title "
         f"link), found {len(obsidian_anchors)}. Spec AC#9: redundant 'Open in "
         f"Obsidian →' link below the title must be removed."
     )
 
     # Belt-and-braces: the literal string "Open in Obsidian →" must NOT
-    # appear inside createGoalCard (the spec reviewer's NIT).
+    # appear inside the builder (the spec reviewer's NIT).
     assert "Open in Obsidian →" not in body, (
-        "createGoalCard still contains the 'Open in Obsidian →' string — "
+        "createCard still contains the 'Open in Obsidian →' string — "
         "spec NIT: redundant affordance below the title must be removed"
     )
 
     # And the .open-in-obsidian class is no longer interpolated into the card.
     assert "open-in-obsidian" not in body or body.count("open-in-obsidian") <= 1, (
-        "createGoalCard references 'open-in-obsidian' more than once — "
+        "createCard references 'open-in-obsidian' more than once — "
         "expected zero or one (CSS class on the link element, which is removed)."
     )
 
 
 def test_goal_card_title_link_preserves_obsidian_url() -> None:
-    """The title link in createGoalCard still points to obsidian:// (AC#10
-    regression guard — removing the redundant link MUST NOT touch the
-    title link)."""
-    body = _slice_function(APP_JS, "createGoalCard")
-    # The title link pattern: <a href="${goal.obsidian_url}" class="task-title-link" ...>
-    assert 'href="${goal.obsidian_url}"' in body
+    """The title link still points to obsidian:// (AC#10 regression guard —
+    removing the redundant link MUST NOT touch the title link)."""
+    body = _slice_function(APP_JS, "createCard")
+    assert "obsidianUrl" in body
     assert "task-title-link" in body
-    # The title is still escaped. It now goes through titleWithIconHtml(),
-    # which applies escapeHtml to both halves of the split it makes (see
+    # The title is still escaped. It goes through titleWithIconHtml(), which
+    # applies escapeHtml to both halves of the split it makes (see
     # test_title_with_icon_helper_escapes_both_halves) rather than the title
     # being escaped inline here.
-    assert "titleWithIconHtml(title)" in body or "escapeHtml(title)" in body
+    assert "titleWithIconHtml(view.title)" in body
+
+    # The goal mapper is what reads the backend's field.
+    mapper = _slice_function(APP_JS, "mapGoalCard")
+    assert "goal.obsidian_url" in mapper
 
 
 def test_title_with_icon_helper_escapes_both_halves() -> None:
@@ -124,17 +128,17 @@ def test_load_tasks_still_appends_goal_param() -> None:
 
 
 def test_no_new_innerhtml_write_in_goal_card() -> None:
-    """Security guard: createGoalCard must not introduce a NEW innerHTML
-    write site beyond the existing one (spec Security / Abuse Cases row 1).
+    """Security guard: the shared card builder has exactly one innerHTML write
+    site (spec Security / Abuse Cases row 1).
 
-    The cleanup is a deletion (remove the redundant link), not a rewrite
-    of the card construction. Concretely: there must be exactly ONE
-    `card.innerHTML =` assignment inside createGoalCard.
+    The cleanup is a deletion (remove the redundant link), not a rewrite of
+    the card construction. Concretely: there must be exactly ONE
+    `card.innerHTML =` assignment inside the builder.
     """
-    body = _slice_function(APP_JS, "createGoalCard")
+    body = _slice_function(APP_JS, "createCard")
     write_sites = re.findall(r"card\.innerHTML\s*=", body)
     assert len(write_sites) == 1, (
-        f"createGoalCard must have exactly 1 innerHTML write site, "
+        f"createCard must have exactly 1 innerHTML write site, "
         f"found {len(write_sites)}. Spec Security row 1: cleanup must be "
         f"a deletion, not a rewrite."
     )

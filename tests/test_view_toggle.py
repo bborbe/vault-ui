@@ -60,10 +60,32 @@ def test_app_js_update_url_emits_view_param() -> None:
     assert "params.set('view', currentView)" in APP_JS
 
 
+def _object_body(source: str, key: str) -> str:
+    """Return the body of the object literal declared as ``key: { ... }``."""
+    marker = key + ": {"
+    start = source.find(marker)
+    assert start != -1, f"object not found: {key}"
+    i = source.index("{", start)
+    depth = 0
+    while i < len(source):
+        c = source[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return source[source.index("{", start) + 1 : i]
+        i += 1
+    raise AssertionError(f"unbalanced braces for object {key}")
+
+
 def test_app_js_create_goal_card_reuses_task_card_class() -> None:
-    """createGoalCard reuses .task-card class so existing CSS applies."""
-    assert "function createGoalCard" in APP_JS
-    assert "task-card goal-card" in APP_JS
+    """The goal card still reuses .task-card so existing CSS applies: the
+    shared builder composes the base class and the goal config adds its own."""
+    assert "function createCard(kind, item)" in APP_JS
+    goal_entry = _object_body(APP_JS, "goal")
+    assert "extraClass: 'goal-card'" in goal_entry
+    assert "card.className = 'task-card'" in APP_JS
 
 
 def test_app_js_goal_card_obsidian_url_uses_backend_field() -> None:

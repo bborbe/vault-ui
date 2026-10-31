@@ -1,10 +1,14 @@
 ---
-status: failed
+status: completed
 spec: [037-unify-board-renderer-and-card-template]
+summary: Collapsed the three forked card renderers into one CARD_CONFIG-driven createCard builder with per-kind data mappers, re-targeted the static suites, and documented the card contract.
+execution_id: vault-ui-card-unify-exec-174-spec-037-card-template-config-and-mappers
+dark-factory-version: v0.198.7
 created: "2026-10-31T14:10:00Z"
 queued: "2026-10-31T14:27:15Z"
-completed: "2026-10-31T14:28:53Z"
-lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/174-spec-037-card-template-config-and-mappers"; uncommitted changes: specs/in-progress/037-unify-board-renderer-and-card-template.md'
+started: "2026-10-31T16:33:35Z"
+completed: "2026-10-31T16:39:12Z"
+branch: dark-factory/174-spec-037-card-template-config-and-mappers
 ---
 
 # One card template, one config map, three data mappers
