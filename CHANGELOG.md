@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.102.1
 
 - refactor: Render all three boards through one `renderBoard(kind, items)` in `src/vault_ui/static/app.js`, with `renderTasks()`, `renderGoals()` and `renderTopics()` reduced to a single delegation call each — the renderer clears the columns, applies the kind's `statusFilter` and `fallbackColumn` from `CARD_CONFIG`, sorts through `sortBoardItems`, and buckets active → upcoming → hold with `recently_completed` pinned to the bottom of Done; the topic kind gains a `defaultSortCompare` branch (title, then id) so it inherits the flag-first sort pipeline and the hold/upcoming ordering the other two boards already had, and the inline `localeCompare` sort in `renderTopics()` is gone.
 
