@@ -1021,56 +1021,61 @@ function displayPhase(phase, fallback) {
     return resolved && BOARD_PHASES.includes(resolved) ? resolved : fallback;
 }
 
+// The one board renderer. Every kind delegates here with its cache contents;
+// per-kind differences come from CARD_CONFIG, never from a branch on the kind.
+function renderBoard(kind, items) {
+    const config = CARD_CONFIG[kind];
+
+    // Clear every phase container, including the "—" one goals and topics
+    // without a phase land in. The Tasks view has no such column; the
+    // getElementById null-guard covers it.
+    ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'].forEach(id => {
+        const container = document.getElementById(`cards-${id}`);
+        if (container) container.innerHTML = '';
+    });
+
+    // The topics endpoint returns every topic by design, so its status filter
+    // is applied here; the task and goal endpoints filter server-side, so
+    // their config leaves this off. slice() keeps the caller's array intact.
+    const visible = config.statusFilter
+        ? items.filter(item => currentStatuses.includes(item.status || 'in_progress'))
+        : items.slice();
+
+    // Every kind goes through the one sort pipeline: flag-first, then the
+    // kind's own profile (see defaultSortCompare).
+    visible.sort((a, b) => sortBoardItems(a, b, kind));
+
+    // recently_completed is a task-only field; for goals and topics the
+    // filter is empty and the bucketing below sees every item.
+    const pinned = visible.filter(item => item.recently_completed);
+    const rest = visible.filter(item => !item.recently_completed);
+
+    // Hold takes precedence over upcoming so a held item with a future
+    // defer_date still sinks to the bottom (parked, not actionable now).
+    const holdItems = rest.filter(item => item.status === 'hold');
+    const upcomingItems = rest.filter(item => item.status !== 'hold' && item.upcoming);
+    const activeItems = rest.filter(item => item.status !== 'hold' && !item.upcoming);
+
+    [...activeItems, ...upcomingItems, ...holdItems].forEach(item => {
+        const container = document.getElementById(
+            `cards-${displayPhase(item.phase, config.fallbackColumn)}`
+        );
+        if (container) container.appendChild(createCard(kind, item));
+    });
+
+    // Recently completed always go to the done lane, at the very bottom.
+    if (pinned.length > 0) {
+        const doneContainer = document.getElementById('cards-done');
+        if (doneContainer) pinned.forEach(item => doneContainer.appendChild(createCard(kind, item)));
+    }
+
+    syncUnknownColumn();
+}
+
 // Render the board from the tasks cache, ordered by the active sort key.
 // Split out of loadTasks so a sort change can re-render without refetching.
 function renderTasks() {
-    const tasks = Object.values(tasksCache);
-
-    // Clear existing cards
-    ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done'].forEach(phase => {
-        const container = document.getElementById(`cards-${phase}`);
-        if (container) {
-            container.innerHTML = '';
-        }
-    });
-
-    // Sort tasks by the active sort key (see sortBoardItems). The default
-    // order is urgency tier first (0=overdue, 1=due-today, 2=scheduled, 3=none),
-    // then by priority within each tier (high=1, medium=2, low=3, null=999).
-    tasks.sort((a, b) => sortBoardItems(a, b, 'task'));
-
-    // Split tasks into buckets that fix column ordering: active → upcoming → hold,
-    // with recently_completed pinned to the bottom of the Done lane.
-    // Hold takes precedence over upcoming so a hold task with a future defer_date
-    // still sinks to the bottom (parked/blocked, not actionable now).
-    const recentlyCompletedTasks = tasks.filter(t => t.recently_completed);
-    const holdTasks = tasks.filter(t => !t.recently_completed && t.status === 'hold');
-    const upcomingTasks = tasks.filter(
-        t => !t.recently_completed && t.status !== 'hold' && t.upcoming
-    );
-    const activeTasks = tasks.filter(
-        t => !t.recently_completed && t.status !== 'hold' && !t.upcoming
-    );
-
-    // Populate cards: active first, then upcoming, then hold at the bottom;
-    // recently-completed always at bottom of done.
-    [...activeTasks, ...upcomingTasks, ...holdTasks].forEach(task => {
-        // Phase is the column discriminator. A task with no usable phase falls
-        // back to Todo — every task has a stage, and Todo is the honest one.
-        const containerId = `cards-${displayPhase(task.phase, 'todo')}`;
-        const container = document.getElementById(containerId);
-        if (container) {
-            const card = createCard('task', task);
-            container.appendChild(card);
-        }
-    });
-    // Recently completed always go to done lane at the very bottom
-    const doneContainer = document.getElementById('cards-done');
-    if (doneContainer) {
-        recentlyCompletedTasks.forEach(task => {
-            doneContainer.appendChild(createCard('task', task));
-        });
-    }
+    renderBoard('task', Object.values(tasksCache));
 }
 
 async function loadGoals() {
@@ -1119,42 +1124,7 @@ async function loadGoals() {
 // Render the goals board from the goals cache, ordered by the active sort key.
 // Split out of loadGoals so a sort change can re-render without refetching.
 function renderGoals() {
-    const goals = Object.values(goalsCache);
-
-    // Clear every phase container, including the "—" one goals without a phase
-    // land in.
-    const containerIds = ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'];
-    containerIds.forEach(id => {
-        const container = document.getElementById(`cards-${id}`);
-        if (container) container.innerHTML = '';
-    });
-
-    // Sort goals by the active sort key (see sortBoardItems). The default
-    // order is priority (1=highest, null=999=last), then alphabetically
-    // by id within same priority, so cards in each column read top-down
-    // from most-important to least.
-    goals.sort((a, b) => sortBoardItems(a, b, 'goal'));
-
-    // Split goals into buckets so upcoming (deferred, within-window) and hold
-    // goals sink to the bottom of their column — mirrors the task bucketing
-    // (active → upcoming → hold). Hold takes precedence over upcoming so a
-    // held goal with a future defer_date still sinks.
-    const holdGoals = goals.filter(g => g.status === 'hold');
-    const upcomingGoals = goals.filter(g => g.status !== 'hold' && g.upcoming);
-    const activeGoals = goals.filter(g => g.status !== 'hold' && !g.upcoming);
-
-    [...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal => {
-        // Phase is the column discriminator, exactly as for tasks. A goal with
-        // no phase has no stage to be placed in, so it lands in "—" rather than
-        // being guessed into Todo the way an unphased task is.
-        const containerId = `cards-${displayPhase(goal.phase, 'unknown')}`;
-        const container = document.getElementById(containerId);
-        if (container) {
-            const card = createCard('goal', goal);
-            container.appendChild(card);
-        }
-    });
-    syncUnknownColumn();
+    renderBoard('goal', Object.values(goalsCache));
 }
 
 // The "—" column exists only for goals and topics that carry no phase. Once the
@@ -1212,27 +1182,10 @@ async function loadTopics() {
     }
 }
 
-// Render the topics board from the topics cache, grouped by phase exactly as
-// tasks and goals are. The status filter is applied here because the endpoint
-// returns the full set by design (see loadTopics).
+// Render the topics board from the topics cache. The status filter lives in
+// the shared renderer, gated on the kind's config (see loadTopics).
 function renderTopics() {
-    const topics = Object.values(topicsCache)
-        .filter(t => currentStatuses.includes(t.status || 'in_progress'));
-
-    ['todo', 'planning', 'execution', 'ai_review', 'human_review', 'done', 'unknown'].forEach(id => {
-        const container = document.getElementById(`cards-${id}`);
-        if (container) container.innerHTML = '';
-    });
-
-    topics.sort((a, b) => (a.title || a.id).localeCompare(b.title || b.id));
-
-    topics.forEach(topic => {
-        // A topic without a phase has no stage to be placed in, so it lands in
-        // "—" rather than being guessed into a workflow column.
-        const container = document.getElementById(`cards-${displayPhase(topic.phase, 'unknown')}`);
-        if (container) container.appendChild(createCard('topic', topic));
-    });
-    syncUnknownColumn();
+    renderBoard('topic', Object.values(topicsCache));
 }
 
 // Fetch and show a topic's tracked work. Entries are resolved server-side into
@@ -2567,6 +2520,11 @@ function defaultSortCompare(a, b, kind) {
         const pb = normalizePriority(b.priority);
         if (pa !== pb) return pa - pb;
         return (a.id || '').localeCompare(b.id || '');
+    }
+    if (kind === 'topic') {
+        // Topics carry no dates and no priority, so there is no urgency tier
+        // and no priority comparison: title first, id for a stable tiebreak.
+        return (a.title || a.id || '').localeCompare(b.title || b.id || '');
     }
     // Tasks: urgency tier (0=overdue, 1=due-today, 2=scheduled, 3=none), then
     // priority within each tier.

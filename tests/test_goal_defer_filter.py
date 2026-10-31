@@ -62,11 +62,18 @@ def test_create_goal_card_greys_upcoming() -> None:
 
 
 def test_load_goals_buckets_upcoming_to_bottom() -> None:
-    """loadGoals() renders active goals first, then upcoming, then hold — so deferred
-    (upcoming) goals sink to the bottom of their column, mirroring the task bucketing."""
+    """The shared renderer draws active goals first, then upcoming, then hold —
+    so deferred (upcoming) goals sink to the bottom of their column, mirroring
+    the task bucketing."""
     with open("src/vault_ui/static/app.js") as f:
         app_js = f.read()
 
-    assert "const upcomingGoals = goals.filter(" in app_js
-    assert "const activeGoals = goals.filter(" in app_js
-    assert "[...activeGoals, ...upcomingGoals, ...holdGoals].forEach(goal =>" in app_js
+    body = _slice_function_body(app_js, "renderBoard")
+    assert "const holdItems = rest.filter(item => item.status === 'hold')" in body
+    assert (
+        "const upcomingItems = rest.filter(item => item.status !== 'hold' && item.upcoming)" in body
+    )
+    assert (
+        "const activeItems = rest.filter(item => item.status !== 'hold' && !item.upcoming)" in body
+    )
+    assert "[...activeItems, ...upcomingItems, ...holdItems].forEach(" in body
