@@ -422,8 +422,13 @@ def test_flagged_topic_sorts_first_in_its_column(live_server, page):
 def test_topic_outside_status_filter_renders_no_card(live_server, page):
     """The topic board applies the shared status filter client-side."""
     page.goto(f"{live_server}/?view=topics&status=in_progress&vault=TestVault")
-    expect(page.locator('.topic-card[data-topic-id="Xylophone Abandoned"]')).to_have_count(0)
+    # Positive first: the board renders asynchronously, so a bare
+    # ``to_have_count(0)`` straight after ``goto`` would match the still-empty
+    # board and pass even if the filter were broken. Waiting for the in-filter
+    # card proves the render happened, which is what makes the absence mean
+    # something.
     expect(page.locator('.topic-card[data-topic-id="Mango Active"]')).to_have_count(1)
+    expect(page.locator('.topic-card[data-topic-id="Xylophone Abandoned"]')).to_have_count(0)
 
 
 def test_task_outside_status_filter_still_renders(live_server, page):
