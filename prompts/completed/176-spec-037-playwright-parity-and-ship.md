@@ -8,6 +8,7 @@ created: "2026-10-31T14:14:00Z"
 queued: "2026-10-31T14:27:21Z"
 started: "2026-10-31T16:42:11Z"
 completed: "2026-10-31T16:46:54Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/202
 branch: dark-factory/176-spec-037-playwright-parity-and-ship
 ---
 
