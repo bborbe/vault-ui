@@ -294,8 +294,15 @@ def _serve(tmp_path, monkeypatch):
     # anything.
     real_process_vault = tasks_api._process_vault
 
+    # An explicit superset, never ``None``: ``_process_vault`` reads ``None`` as
+    # "use the default allow-list" (todo/next/in_progress/hold/completed), which
+    # still drops the ``backlog`` fixture server-side and leaves the client
+    # assertion vacuous. Naming every status the fixtures carry is what makes
+    # the server-side filter genuinely absent.
+    every_fixture_status = ["backlog", "todo", "next", "in_progress", "hold", "completed"]
+
     async def _unfiltered_process_vault(vault_name, status_filter, *args, **kwargs):
-        return await real_process_vault(vault_name, None, *args, **kwargs)
+        return await real_process_vault(vault_name, every_fixture_status, *args, **kwargs)
 
     monkeypatch.setattr("vault_ui.api.tasks._process_vault", _unfiltered_process_vault)
 
@@ -329,6 +336,7 @@ def live_server(tmp_path, monkeypatch):
         finally:
             server.should_exit = True
             thread.join(timeout=10)
+            assert not thread.is_alive(), "uvicorn thread did not shut down within 10s"
 
 
 def _topic_card_ids(page, column_id: str) -> list[str]:
@@ -365,7 +373,7 @@ def test_topic_card_slot_set(live_server, page):
         ".activity-age",
         ".start-btn",
         ".resume-btn",
-        ".live-badge",
+        ".topic-live-badge",
         ".hold-badge",
         ".status-badge",
     ):
