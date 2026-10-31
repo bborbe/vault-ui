@@ -75,6 +75,15 @@ def _brace_body(source: str, open_index: int) -> str:
     raise AssertionError("unbalanced braces")
 
 
+def _all_function_bodies() -> dict[str, str]:
+    """Map every top-level function declaration to its body."""
+    pattern = re.compile(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", re.MULTILINE)
+    bodies: dict[str, str] = {}
+    for m in pattern.finditer(APP_JS):
+        bodies[m.group(1)] = _brace_body(APP_JS, APP_JS.index("{", m.end()))
+    return bodies
+
+
 def _object_body(source: str, key: str) -> str:
     """Find ``key: {`` and walk braces to the matching close."""
     marker = key + ": {"
@@ -141,16 +150,69 @@ def test_card_builder_reads_the_config_map() -> None:
 
 
 def test_boards_call_the_builder() -> None:
-    """Every board constructs cards through the shared builder."""
-    assert APP_JS.count("createCard('task', task)") == 2
-    assert APP_JS.count("createCard('goal', goal)") == 1
-    assert APP_JS.count("createCard('topic', topic)") == 1
+    """Every board constructs cards through the shared renderer, which calls the
+    shared builder once per placement site (loop and pinned tail)."""
+    body = _slice_function_body(APP_JS, "renderBoard")
+    assert body.count("createCard(kind, item)") == 2
     for gone in (
         "createTaskCard(",
         "createGoalCard(",
         "createTopicCard(",
     ):
         assert gone not in APP_JS, gone
+
+
+def test_one_board_renderer() -> None:
+    """Exactly one function clears the phase columns, so a second renderer
+    cannot be reintroduced unnoticed.
+
+    Deliberately a set of function names, not a count of the literal: a renamed
+    helper elsewhere would satisfy a count while leaving the fork in place.
+    """
+    clearing = {
+        name for name, body in _all_function_bodies().items() if "container.innerHTML = ''" in body
+    }
+    assert clearing == {"renderBoard"}, clearing
+
+
+def test_board_entry_points_only_delegate() -> None:
+    """Each per-kind entry point is a single delegation call and nothing else."""
+    for fn, kind, cache in (
+        ("renderTasks", "task", "tasksCache"),
+        ("renderGoals", "goal", "goalsCache"),
+        ("renderTopics", "topic", "topicsCache"),
+    ):
+        body = _slice_function_body(APP_JS, fn)
+        assert f"renderBoard('{kind}', Object.values({cache}))" in body, fn
+        for token in (
+            "filter(",
+            ".sort(",
+            "displayPhase",
+            "syncUnknownColumn",
+            "innerHTML",
+        ):
+            assert token not in body, (fn, token)
+
+
+def test_renderer_reads_the_config_map() -> None:
+    """The shared renderer takes every kind difference from the config entry
+    and the shared sort pipeline — no inline alphabetical sort."""
+    body = _slice_function_body(APP_JS, "renderBoard")
+    for token in (
+        "config.statusFilter",
+        "config.fallbackColumn",
+        "sortBoardItems",
+        "createCard(kind, item)",
+    ):
+        assert token in body, token
+    assert "localeCompare" not in body
+
+
+def test_renderer_has_no_kind_branch() -> None:
+    """No comparison against a kind name lives in the renderer."""
+    body = _slice_function_body(APP_JS, "renderBoard")
+    for token in ("=== 'task'", "=== 'goal'", "=== 'topic'"):
+        assert token not in body, token
 
 
 def test_config_map_declares_every_kind() -> None:

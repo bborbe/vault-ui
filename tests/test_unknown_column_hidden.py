@@ -6,11 +6,11 @@ sixth column, so `syncUnknownColumn()` toggles `hidden` on it whenever
 `#cards-unknown` is empty.
 
 Every path that can change the lane's membership must re-sync, or the lane goes
-stale in one direction or the other. This test pins those call sites: the two
-renderers, the header rebuild (which is what creates the lane), and the goal
-deletion path — the last one because it removes a card without re-rendering, and
-it is exactly the case that leaves an empty lane visible after a websocket
-`deleted` frame.
+stale in one direction or the other. This test pins those call sites: the shared
+renderer every kind delegates to, the header rebuild (which is what creates the
+lane), and the goal deletion path — the last one because it removes a card
+without re-rendering, and it is exactly the case that leaves an empty lane
+visible after a websocket `deleted` frame.
 
 This is a pure-static-source audit — no JS runtime, no Playwright — matching
 `test_goal_dragdrop_rewire.py`. It pins the wiring, not the pixels; the browser
@@ -59,13 +59,8 @@ def test_helper_null_guards_a_missing_column():
     assert "if (!column) return;" in body
 
 
-def test_render_goals_syncs_after_populating():
-    body = _slice_function_body(APP_JS, "renderGoals")
-    assert "syncUnknownColumn();" in body
-
-
-def test_render_topics_syncs_after_populating():
-    body = _slice_function_body(APP_JS, "renderTopics")
+def test_render_board_syncs_after_populating():
+    body = _slice_function_body(APP_JS, "renderBoard")
     assert "syncUnknownColumn();" in body
 
 

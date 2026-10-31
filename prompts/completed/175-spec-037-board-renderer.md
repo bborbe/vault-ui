@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [037-unify-board-renderer-and-card-template]
+summary: Unified the tasks, goals and topics boards behind one renderBoard(kind, items) renderer with thin per-kind delegating entry points and a topic sort profile.
+execution_id: vault-ui-card-unify-exec-175-spec-037-board-renderer
+dark-factory-version: v0.198.7
 created: "2026-10-31T14:12:00Z"
 queued: "2026-10-31T14:27:18Z"
+started: "2026-10-31T16:39:19Z"
+completed: "2026-10-31T16:42:06Z"
+branch: dark-factory/175-spec-037-board-renderer
 ---
 
 # One board renderer with per-kind entry points
