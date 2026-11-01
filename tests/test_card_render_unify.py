@@ -238,6 +238,19 @@ def test_config_map_declares_every_kind() -> None:
         assert f"{kind}: {{" in outer, kind
 
 
+def test_assignee_badge_is_clickable_wherever_its_slot_is_enabled() -> None:
+    """A kind that renders the assignee badge also makes it a filter control.
+
+    The badge is the same element on every kind, so a kind that shows it but
+    does not let it filter the board is a per-board difference the operator has
+    to relearn. Topic cards carry no assignee slot at all, so their value is
+    unreachable and stays false.
+    """
+    assert "assigneeClickable: true" in _object_body(APP_JS, "task")
+    assert "assigneeClickable: true" in _object_body(APP_JS, "goal")
+    assert "assigneeClickable: false" in _object_body(APP_JS, "topic")
+
+
 def test_topic_config_matches_the_operator_decision() -> None:
     """Topic cards keep flag/note/detail/live and drop the task-only controls.
 
@@ -267,6 +280,19 @@ def test_topic_config_matches_the_operator_decision() -> None:
     assert "draggable: false" in goal
     assert "fallbackColumn: 'todo'" in task
     assert "fallbackColumn: 'unknown'" in goal
+
+
+def test_load_goals_refreshes_the_assignee_toolbar() -> None:
+    """``loadGoals`` refreshes the toolbar the way ``loadTasks`` always has.
+
+    Without the refresh a goal badge click narrows the board while the header
+    selector keeps reading "All". The parity suite proves that end to end, but it
+    is ``integration``-marked and deselected by default, so this static guard is
+    what CI actually enforces — dropping either call must fail here.
+    """
+    body = _slice_function_body(APP_JS, "loadGoals")
+    assert "renderAssigneeDropdown()" in body
+    assert "updateAssigneeLabel()" in body
 
 
 def test_topic_mapper_reads_exactly_the_wire_keys() -> None:

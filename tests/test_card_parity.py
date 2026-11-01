@@ -17,6 +17,7 @@ these via the repo's pytest ``-m 'not integration'`` addopts, and this container
 has no Chromium.
 """
 
+import re
 import socket
 import threading
 import time
@@ -178,6 +179,25 @@ GOALS = [
         modified_date=datetime.now(UTC),
         blocked_by=["[[Open Goal Blocker]]"],
         flag=True,
+    ),
+    # A second goal so the assignee-badge click has something to filter away.
+    # With one goal the assertion would compare 1 against 1 and pass on a board
+    # that never filtered.
+    Goal(
+        id="Second Goal",
+        title="Second Goal",
+        claude_session_id=None,
+        assignee="Ada Lovelace",
+        status="in_progress",
+        phase="execution",
+        priority=None,
+        defer_date=None,
+        target_date=None,
+        completed_date=None,
+        obsidian_url=None,
+        modified_date=datetime.now(UTC),
+        blocked_by=None,
+        flag=False,
     ),
 ]
 
@@ -484,6 +504,9 @@ def test_task_and_goal_cards_keep_every_slot(live_server, page):
     ):
         expect(full.locator(present)).to_have_count(1)
     expect(full.locator(".start-btn, .resume-btn")).to_have_count(1)
+    task_badge = full.locator(".assignee-badge")
+    expect(task_badge).to_have_class(re.compile(r"\bclickable\b"))
+    expect(task_badge).to_have_attribute("onclick", re.compile(r"filterByAssignee"))
 
     held = page.locator('.task-card[data-task-id="Held Task"]')
     expect(held.locator(".hold-badge")).to_have_count(1)
@@ -515,8 +538,41 @@ def test_task_and_goal_cards_keep_every_slot(live_server, page):
         expect(goal.locator(present)).to_have_count(1)
     expect(goal.locator(".start-btn, .resume-btn")).to_have_count(1)
 
+    # The assignee badge is a filter control on both kinds — same element, same
+    # gesture. A goal badge that renders but does not filter is exactly the
+    # per-board difference this assertion exists to prevent. Asserted per board,
+    # because navigating to the goals view detaches the task-card locator.
+    goal_badge = goal.locator(".assignee-badge")
+    expect(goal_badge).to_have_class(re.compile(r"\bclickable\b"))
+    expect(goal_badge).to_have_attribute("onclick", re.compile(r"filterByAssignee"))
+
     # Same cheap guards on the goal board, then the goal's sentinel.
     for absent in (".count-badge", ".defer-date", ".target-date", ".due-date", ".status-badge"):
         expect(page.locator(f".task-card {absent}")).to_have_count(0)
     goal_html = goal.evaluate("el => el.innerHTML")
     assert GOAL_DEFER_SENTINEL not in goal_html
+
+
+def test_goal_assignee_badge_filters_the_board(live_server, page):
+    """Clicking a goal's assignee badge narrows the goals board.
+
+    Carrying the ``clickable`` class is not the behaviour — the click has to
+    filter. Two goals carry different assignees, so a badge that rendered as a
+    control but did nothing would leave both on the board and fail here.
+    """
+    page.goto(f"{live_server}/?view=goals&vault=TestVault")
+    expect(page.locator(".task-card")).to_have_count(2)
+
+    page.locator('.task-card[data-goal-id="Full Goal"] .assignee-badge').click()
+
+    expect(page.locator(".task-card")).to_have_count(1)
+    expect(page.locator('.task-card[data-goal-id="Full Goal"]')).to_have_count(1)
+    # The toolbar reflects the active filter, the way it does on the task board.
+    expect(page.locator("#assignee-selector-label")).to_have_text("Grace Hopper")
+
+    # filterByAssignee is a toggle. A one-way filter that never clears would
+    # satisfy every assertion above, so click it again and require the full
+    # board back.
+    page.locator('.task-card[data-goal-id="Full Goal"] .assignee-badge').click()
+    expect(page.locator(".task-card")).to_have_count(2)
+    expect(page.locator("#assignee-selector-label")).to_have_text("All")
