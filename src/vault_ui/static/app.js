@@ -1128,6 +1128,12 @@ async function loadGoals() {
         overlayPendingWrites('goal', goalsCache);
 
         renderGoals();
+
+        // Mirror loadTasks: the toolbar reflects the freshly loaded data. Without
+        // this a goal badge click narrows the board while the header selector
+        // keeps reading "All", so the only visible filter state is the badge.
+        renderAssigneeDropdown();
+        updateAssigneeLabel();
     } catch (error) {
         console.error('Failed to load goals:', error);
         showToast(error.message, true);
