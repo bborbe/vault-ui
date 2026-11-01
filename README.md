@@ -120,10 +120,10 @@ Lists goals from one or more vaults.
 | `upcoming_hours` | no | Width of the "upcoming" window for deferred goals, 0–168 hours (default 8). `0` hides deferred goals entirely. |
 | `session_live` | no | `true` keeps only goals whose `session_state` is `live` — a Claude session the board can prove is running right now. Default `false`. |
 
-Each goal carries `session_state`: the strongest of its own `claude_session_id`
-and its `manager_session_id` — `live` when either is provably running,
-`indeterminate` when an id is set but its state cannot be proven, `quiet` when
-the recorded ids are provably not running, and `null` when the page records
+Each goal carries `session_state`, derived from its `claude_session_id`: `live`
+when that session is provably running, `indeterminate` when the id is set but
+its state cannot be proven, `quiet` when it is provably not running, and `null`
+when the page records
 neither. It uses the same four outcomes and signal order as the task paragraph
 above; a goal that records only a manager id classifies from that id rather than
 serialising `null`.
@@ -167,11 +167,10 @@ Each topic carries the status read from that topic's own file, and a vault with
 no topics folder contributes an empty list rather than an error.
 
 Each topic also carries `session_state`: `live` when the manager session the
-page records in `manager_session_id` is provably running, `indeterminate` when
+page records in `claude_session_id` is provably running, `indeterminate` when
 the id is set but its state cannot be proven, `quiet` when it is provably not
-running, and `null` when the page records no `manager_session_id`. It uses the
-same four outcomes and signal order as the task paragraph above; a topic
-records only the manager id, so its outcome is that single id's outcome.
+running, and `null` when the page records no `claude_session_id`. It uses the
+same four outcomes and signal order as the task paragraph above.
 
 ```json
 [
