@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.104.0
 
 - fix: **the board classifies the one session id a goal or topic page records.** `manager_session_id` is retired — goals and topics write `claude_session_id`, the field the Resume button already keys on — so `pkg/board/goals.go` and `pkg/board/topics.go` classify `item.ClaudeSessionID` instead of combining it with a second id. `strongestSessionState` and `sessionStateRank` go with the combination they served, and `classifyManagerSessionID` becomes `classifySessionID`; it still guards the UUID, so a malformed id reads `indeterminate` rather than being probed and read live. A page that has not been migrated yet reads `none` — the fleet-wide migration is what guarantees every page carries the surviving field.
 
