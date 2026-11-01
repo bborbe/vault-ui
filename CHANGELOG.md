@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.103.2
 
 - fix: Make the goal card's assignee badge a filter control — `CARD_CONFIG.goal.assigneeClickable` flips to `true`, so clicking a goal's assignee narrows the board through the same `filterByAssignee` path a task card already uses, closing the last card difference the operator wanted removed (the topic card stays as shipped by the 2026-10-31 decision); `tests/test_card_render_unify.py` pins the flag for all three kinds and `tests/test_card_parity.py` asserts the rendered badge carries the `clickable` class and the `filterByAssignee` handler on both a task and a goal card, then clicks a goal badge and asserts the board narrows and the toolbar label follows — `loadGoals` now refreshes the assignee dropdown and label the way `loadTasks` always has, so the header no longer reads "All" over a filtered board.
 
