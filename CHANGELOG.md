@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Filter the topic board by assignee in the browser — `GET /api/topics` has no `assignee` parameter and no topic carries the field, so `renderBoard` applies `matchesAssigneeSelection` on the same client-side path as the status filter, where an empty selection matches everything and the empty-string "unassigned" token matches an item without an assignee exactly as the server treats a missing value; the toolbar control now narrows the topic board instead of only changing its own label, and a static guard in `tests/test_card_render_unify.py` covers the wiring because the Playwright parity suite is marked `integration` and `pyproject.toml` deselects it.
+
 ## v0.103.0
 
 - refactor: Collapse the three board renderers and three card builders into one config-driven unified card template and one board renderer, with each kind contributing only a `CARD_CONFIG` entry and a data mapper, so the topic board gains the shared status filter, the flag-first sort and the active → upcoming → hold bucketing it never had while keeping only the affordances its API supports (flag, open note, detail and a display-only live indicator), task and goal cards are unchanged, and the `app.js` cache-bust token is bumped so already-open boards fetch the new script.

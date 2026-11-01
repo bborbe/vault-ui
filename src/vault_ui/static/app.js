@@ -1021,6 +1021,16 @@ function displayPhase(phase, fallback) {
     return resolved && BOARD_PHASES.includes(resolved) ? resolved : fallback;
 }
 
+// Client-side mirror of the server's `assignee` filter, for kinds whose
+// endpoint has no such parameter (topics). An empty selection matches
+// everything; the empty string is the control's "unassigned" token, so an item
+// without an assignee matches only that token — exactly as the server treats a
+// missing value.
+function matchesAssigneeSelection(item) {
+    if (currentAssignees.length === 0) return true;
+    return currentAssignees.includes(item.assignee || '');
+}
+
 // The one board renderer. Every kind delegates here with its cache contents;
 // per-kind differences come from CARD_CONFIG, never from a branch on the kind.
 function renderBoard(kind, items) {
@@ -1034,11 +1044,14 @@ function renderBoard(kind, items) {
         if (container) container.innerHTML = '';
     });
 
-    // The topics endpoint returns every topic by design, so its status filter
-    // is applied here; the task and goal endpoints filter server-side, so
-    // their config leaves this off. slice() keeps the caller's array intact.
+    // The topics endpoint returns every topic by design and has no status or
+    // assignee parameter, so both filters are applied here; the task and goal
+    // endpoints filter server-side, so their config leaves this off. slice()
+    // keeps the caller's array intact.
     const visible = config.statusFilter
-        ? items.filter(item => currentStatuses.includes(item.status || 'in_progress'))
+        ? items
+              .filter(item => currentStatuses.includes(item.status || 'in_progress'))
+              .filter(matchesAssigneeSelection)
         : items.slice();
 
     // Every kind goes through the one sort pipeline: flag-first, then the

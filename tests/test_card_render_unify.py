@@ -215,6 +215,20 @@ def test_renderer_has_no_kind_branch() -> None:
         assert token not in body, token
 
 
+def test_renderer_applies_the_assignee_filter_client_side() -> None:
+    """The client-side assignee filter rides the renderer's filter branch.
+
+    ``/api/topics`` has no ``assignee`` parameter and no topic carries the
+    field, so the topic board filters assignee in the browser, next to the
+    status filter. This is the guard that runs in CI: the Playwright parity
+    suite is marked ``integration`` and ``pyproject.toml`` deselects it, so
+    without this assertion a reverted wiring ships green.
+    """
+    body = _slice_function_body(APP_JS, "renderBoard")
+    assert "matchesAssigneeSelection" in body
+    assert ".filter(matchesAssigneeSelection)" in body
+
+
 def test_config_map_declares_every_kind() -> None:
     """The CARD_CONFIG literal carries one entry per kind."""
     outer_start = APP_JS.find("const CARD_CONFIG = {")

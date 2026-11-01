@@ -431,6 +431,31 @@ def test_topic_outside_status_filter_renders_no_card(live_server, page):
     expect(page.locator('.topic-card[data-topic-id="Xylophone Abandoned"]')).to_have_count(0)
 
 
+def test_topic_board_applies_the_assignee_filter(live_server, page):
+    """The topic board filters by assignee client-side, like its status filter.
+
+    ``/api/topics`` has no ``assignee`` parameter and no topic carries the
+    field, so every named selection must yield zero cards. Before this was
+    wired the control changed its own label and filtered nothing — the one
+    place where Topics still diverged from Goals, which filters assignee
+    server-side.
+    """
+    # Positive control first: the empty string is the control's "unassigned"
+    # token, a real assignee selection that every fixture topic matches. It
+    # proves the client-side filter path renders the full set, so the zero
+    # below cannot be satisfied by a board that never rendered.
+    page.goto(f"{live_server}/?view=topics&vault=TestVault&assignee=")
+    expect(page.locator(".topic-card")).to_have_count(4)
+
+    # A named assignee matches no topic, and the endpoint still returns all
+    # four — so the zero is the client-side filter's doing, not an empty
+    # response. Waiting for the fetch keeps the assertion off the still-empty
+    # board that a fresh ``goto`` leaves behind.
+    with page.expect_response(lambda r: "/api/topics" in r.url):
+        page.goto(f"{live_server}/?view=topics&vault=TestVault&assignee=bborbe")
+    expect(page.locator(".topic-card")).to_have_count(0)
+
+
 def test_task_outside_status_filter_still_renders(live_server, page):
     """The task board leaves the client-side status filter off.
 
