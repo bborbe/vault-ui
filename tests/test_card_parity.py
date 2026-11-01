@@ -440,9 +440,19 @@ def test_topic_board_applies_the_assignee_filter(live_server, page):
     place where Topics still diverged from Goals, which filters assignee
     server-side.
     """
-    page.goto(f"{live_server}/?view=topics&vault=TestVault")
+    # Positive control first: the empty string is the control's "unassigned"
+    # token, a real assignee selection that every fixture topic matches. It
+    # proves the client-side filter path renders the full set, so the zero
+    # below cannot be satisfied by a board that never rendered.
+    page.goto(f"{live_server}/?view=topics&vault=TestVault&assignee=")
     expect(page.locator(".topic-card")).to_have_count(4)
-    page.goto(f"{live_server}/?view=topics&vault=TestVault&assignee=bborbe")
+
+    # A named assignee matches no topic, and the endpoint still returns all
+    # four — so the zero is the client-side filter's doing, not an empty
+    # response. Waiting for the fetch keeps the assertion off the still-empty
+    # board that a fresh ``goto`` leaves behind.
+    with page.expect_response(lambda r: "/api/topics" in r.url):
+        page.goto(f"{live_server}/?view=topics&vault=TestVault&assignee=bborbe")
     expect(page.locator(".topic-card")).to_have_count(0)
 
 
