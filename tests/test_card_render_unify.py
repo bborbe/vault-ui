@@ -282,6 +282,19 @@ def test_topic_config_matches_the_operator_decision() -> None:
     assert "fallbackColumn: 'unknown'" in goal
 
 
+def test_load_goals_refreshes_the_assignee_toolbar() -> None:
+    """``loadGoals`` refreshes the toolbar the way ``loadTasks`` always has.
+
+    Without the refresh a goal badge click narrows the board while the header
+    selector keeps reading "All". The parity suite proves that end to end, but it
+    is ``integration``-marked and deselected by default, so this static guard is
+    what CI actually enforces — dropping either call must fail here.
+    """
+    body = _slice_function_body(APP_JS, "loadGoals")
+    assert "renderAssigneeDropdown()" in body
+    assert "updateAssigneeLabel()" in body
+
+
 def test_topic_mapper_reads_exactly_the_wire_keys() -> None:
     """The topic mapper reads the topic response's eight keys and no others."""
     body = _slice_function_body(APP_JS, "mapTopicCard")

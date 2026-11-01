@@ -569,3 +569,10 @@ def test_goal_assignee_badge_filters_the_board(live_server, page):
     expect(page.locator('.task-card[data-goal-id="Full Goal"]')).to_have_count(1)
     # The toolbar reflects the active filter, the way it does on the task board.
     expect(page.locator("#assignee-selector-label")).to_have_text("Grace Hopper")
+
+    # filterByAssignee is a toggle. A one-way filter that never clears would
+    # satisfy every assertion above, so click it again and require the full
+    # board back.
+    page.locator('.task-card[data-goal-id="Full Goal"] .assignee-badge').click()
+    expect(page.locator(".task-card")).to_have_count(2)
+    expect(page.locator("#assignee-selector-label")).to_have_text("All")
