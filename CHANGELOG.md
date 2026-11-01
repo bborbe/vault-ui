@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Make the goal card's assignee badge a filter control — `CARD_CONFIG.goal.assigneeClickable` flips to `true`, so clicking a goal's assignee narrows the board through the same `filterByAssignee` path a task card already uses, closing the last card difference the operator wanted removed (the topic card stays as shipped by the 2026-10-31 decision); `tests/test_card_render_unify.py` pins the flag for all three kinds and `tests/test_card_parity.py` asserts the rendered badge carries the `clickable` class and the `filterByAssignee` handler on both a task and a goal card.
+
 ## v0.103.1
 
 - fix: Filter the topic board by assignee in the browser — `GET /api/topics` has no `assignee` parameter and no topic carries the field, so `renderBoard` applies `matchesAssigneeSelection` on the same client-side path as the status filter, where an empty selection matches everything and the empty-string "unassigned" token matches an item without an assignee exactly as the server treats a missing value; the toolbar control now narrows the topic board instead of only changing its own label, and a static guard in `tests/test_card_render_unify.py` covers the wiring because the Playwright parity suite is marked `integration` and `pyproject.toml` deselects it.

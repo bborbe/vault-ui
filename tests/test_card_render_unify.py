@@ -238,6 +238,19 @@ def test_config_map_declares_every_kind() -> None:
         assert f"{kind}: {{" in outer, kind
 
 
+def test_assignee_badge_is_clickable_wherever_its_slot_is_enabled() -> None:
+    """A kind that renders the assignee badge also makes it a filter control.
+
+    The badge is the same element on every kind, so a kind that shows it but
+    does not let it filter the board is a per-board difference the operator has
+    to relearn. Topic cards carry no assignee slot at all, so their value is
+    unreachable and stays false.
+    """
+    assert "assigneeClickable: true" in _object_body(APP_JS, "task")
+    assert "assigneeClickable: true" in _object_body(APP_JS, "goal")
+    assert "assigneeClickable: false" in _object_body(APP_JS, "topic")
+
+
 def test_topic_config_matches_the_operator_decision() -> None:
     """Topic cards keep flag/note/detail/live and drop the task-only controls.
 

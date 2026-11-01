@@ -1643,7 +1643,7 @@ const CARD_CONFIG = {
         extraClass: 'goal-card',
         titleLinkExtraClass: '',
         assignCall: 'assignGoalToMe',
-        assigneeClickable: false,
+        assigneeClickable: true,
         holdTitle: 'On hold — paused, not actively worked',
         slots: {
             noteLink: true,

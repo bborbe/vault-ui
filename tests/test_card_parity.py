@@ -17,6 +17,7 @@ these via the repo's pytest ``-m 'not integration'`` addopts, and this container
 has no Chromium.
 """
 
+import re
 import socket
 import threading
 import time
@@ -484,6 +485,9 @@ def test_task_and_goal_cards_keep_every_slot(live_server, page):
     ):
         expect(full.locator(present)).to_have_count(1)
     expect(full.locator(".start-btn, .resume-btn")).to_have_count(1)
+    task_badge = full.locator(".assignee-badge")
+    expect(task_badge).to_have_class(re.compile(r"\bclickable\b"))
+    expect(task_badge).to_have_attribute("onclick", re.compile(r"filterByAssignee"))
 
     held = page.locator('.task-card[data-task-id="Held Task"]')
     expect(held.locator(".hold-badge")).to_have_count(1)
@@ -514,6 +518,14 @@ def test_task_and_goal_cards_keep_every_slot(live_server, page):
     ):
         expect(goal.locator(present)).to_have_count(1)
     expect(goal.locator(".start-btn, .resume-btn")).to_have_count(1)
+
+    # The assignee badge is a filter control on both kinds — same element, same
+    # gesture. A goal badge that renders but does not filter is exactly the
+    # per-board difference this assertion exists to prevent. Asserted per board,
+    # because navigating to the goals view detaches the task-card locator.
+    goal_badge = goal.locator(".assignee-badge")
+    expect(goal_badge).to_have_class(re.compile(r"\bclickable\b"))
+    expect(goal_badge).to_have_attribute("onclick", re.compile(r"filterByAssignee"))
 
     # Same cheap guards on the goal board, then the goal's sentinel.
     for absent in (".count-badge", ".defer-date", ".target-date", ".due-date", ".status-badge"):
