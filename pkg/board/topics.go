@@ -77,7 +77,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 				Title:        item.Name,
 				Status:       item.Status,
 				Phase:        strPtr(item.Phase),
-				SessionState: sessionStatePtr(classifyManagerSessionID(ctx, item.ManagerSessionID, params)),
+				SessionState: sessionStatePtr(classifySessionID(ctx, item.ClaudeSessionID, params)),
 				Flag:         item.Flag,
 				Vault:        vault.Name,
 				ObsidianURL:  topicURL(vault, item.Name),

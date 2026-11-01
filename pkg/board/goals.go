@@ -152,21 +152,15 @@ func (b *board) goalResponse(
 		TranscriptMtime:    b.transcriptProbe(),
 	}
 
-	ownParams := params
-	ownParams.SessionID = item.ClaudeSessionID
-	ownState := session.ClassifySessionState(ctx, ownParams)
-	managerState := classifyManagerSessionID(ctx, item.ManagerSessionID, params)
-	state := strongestSessionState(ownState, managerState)
-
-	// The location comes from the first live id in a fixed order: the goal's own
-	// id, then its manager's. A live own id with no store location yields nil and
-	// does not fall through to the manager id.
+	// A goal page records the session serving it in `claude_session_id`, the same field a
+	// task uses for the session working it — the retired `manager_session_id` no longer
+	// exists, so there is one id to classify rather than two to combine. It goes through
+	// classifySessionID, not ClassifySessionState directly, so a malformed (non-UUID) id
+	// reads indeterminate instead of being probed.
+	ownState := classifySessionID(ctx, item.ClaudeSessionID, params)
 	var location *string
-	switch {
-	case ownState == session.SessionStateLive:
+	if ownState == session.SessionStateLive {
 		location = liveLocationPtr(ownState, b.signals.RegistryLocation(ctx, item.ClaudeSessionID))
-	case managerState == session.SessionStateLive:
-		location = liveLocationPtr(managerState, b.signals.RegistryLocation(ctx, item.ManagerSessionID))
 	}
 
 	return api.GoalResponse{
@@ -196,43 +190,16 @@ func (b *board) goalResponse(
 			projectDir,
 			projectsRoot,
 		)),
-		SessionState: sessionStatePtr(state),
+		SessionState: sessionStatePtr(ownState),
 		Location:     location,
 	}
 }
 
-// strongestSessionState combines per-id outcomes: live beats indeterminate,
-// which beats quiet. none is the result only when every id is empty. The
-// combination is strongest-outcome, never last-id-wins.
-func strongestSessionState(states ...session.SessionState) session.SessionState {
-	best := session.SessionStateNone
-	for _, state := range states {
-		if sessionStateRank(state) > sessionStateRank(best) {
-			best = state
-		}
-	}
-	return best
-}
-
-// sessionStateRank orders the four outcomes for combination.
-func sessionStateRank(state session.SessionState) int {
-	switch state {
-	case session.SessionStateLive:
-		return 3
-	case session.SessionStateIndeterminate:
-		return 2
-	case session.SessionStateQuiet:
-		return 1
-	default:
-		return 0
-	}
-}
-
-// classifyManagerSessionID classifies the manager session id a goal or a topic
-// page records. An empty id is none. A malformed (non-UUID) id cannot be proven
-// dead, so it is indeterminate rather than probed: the card suppresses Resume
-// instead of offering it.
-func classifyManagerSessionID(
+// classifySessionID classifies the session id a goal or a topic page records in
+// `claude_session_id`. An empty id is none. A malformed (non-UUID) id cannot be
+// proven dead, so it is indeterminate rather than probed: the card suppresses
+// Resume instead of offering it.
+func classifySessionID(
 	ctx context.Context,
 	sessionID string,
 	params session.ClassifyParams,
