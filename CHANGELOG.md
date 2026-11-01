@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: **the board classifies the one session id a goal or topic page records.** `manager_session_id` is retired — goals and topics write `claude_session_id`, the field the Resume button already keys on — so `pkg/board/goals.go` and `pkg/board/topics.go` classify `item.ClaudeSessionID` instead of combining it with a second id. `strongestSessionState` and `sessionStateRank` go with the combination they served, and `classifyManagerSessionID` becomes `classifySessionID`; it still guards the UUID, so a malformed id reads `indeterminate` rather than being probed and read live. A page that has not been migrated yet reads `none` — the fleet-wide migration is what guarantees every page carries the surviving field.
+
 ## v0.103.2
 
 - fix: Make the goal card's assignee badge a filter control — `CARD_CONFIG.goal.assigneeClickable` flips to `true`, so clicking a goal's assignee narrows the board through the same `filterByAssignee` path a task card already uses, closing the last card difference the operator wanted removed (the topic card stays as shipped by the 2026-10-31 decision); `tests/test_card_render_unify.py` pins the flag for all three kinds and `tests/test_card_parity.py` asserts the rendered badge carries the `clickable` class and the `filterByAssignee` handler on both a task and a goal card, then clicks a goal badge and asserts the board narrows and the toolbar label follows — `loadGoals` now refreshes the assignee dropdown and label the way `loadTasks` always has, so the header no longer reads "All" over a filtered board.

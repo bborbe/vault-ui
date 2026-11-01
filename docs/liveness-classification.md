@@ -16,7 +16,7 @@ it survives the Python backend's removal.
 | `live` | A Claude session for this card is running right now; the wall must not offer Resume. | The attention store lists the session id live, **or** the transcript was written within the five-minute window, **or** a live `--resume` / `--session-id` process pins the session id. |
 | `quiet` | The session ended and Resume is safe (vault-cli's per-session flock releases on process death). | A transcript exists and is older than the five-minute window, the store does not list the session, no live `--resume` / `--session-id` process matches, **and** the store answered. |
 | `indeterminate` | A session id is set but the session cannot be proven dead, so a Resume that cannot be honored must not be offered. | No transcript exists on this host (a manual terminal `/resume` in another cwd, a cloud/container session, or an entity-name session the resolver cannot match) — **or** the attention store could not be reached. |
-| none | The card carries no session id at all — neither its own `claude_session_id` nor a `manager_session_id`; a human task, nothing to classify. | Every recorded session id is empty — regardless of what the attention store holds. |
+| none | The card records no `claude_session_id` — a human task or an unmigrated page, nothing to classify. | The recorded session id is empty — regardless of what the attention store holds. |
 
 ## Signal order (checked first to last)
 
@@ -54,34 +54,23 @@ fires decides the outcome.
    would offer a corrupting Resume. When no process matches, the state is
    `quiet` — **unless the store could not be reached** (see below).
 
-## Multiple session ids on a card
+## The session id on a card
 
-A card may record more than one Claude session id. A goal records its own
-`claude_session_id` and, when a manager arms it, a `manager_session_id`. Every
-non-empty id is classified independently with the signal order above, and the
-card's outcome is the strongest of them, in this order:
-`live` > `indeterminate` > `quiet` > `none`.
+A card records one Claude session id, `claude_session_id`: on a task it names the
+session working it, on a goal or topic the manager serving it. There is no second
+id to combine, so that single id's outcome **is** the card's outcome, read with the
+signal order above: `live` > `indeterminate` > `quiet` > `none`.
 
-- `live` if any id is live — a stale manager id never downgrades a live own id,
-  and a stale own id never downgrades a live manager id.
-- otherwise `indeterminate` if any id is indeterminate.
-- otherwise `quiet` if any id is quiet.
-- `none` only when every id is empty.
+A goal page and a topic page record the same field and are classified the same
+way. A page that records no `claude_session_id` — a human task, or a page the
+migration has not reached yet — is `none`, and the card serialises `null`.
 
-The combination is strongest-outcome, never last-id-wins.
-
-A topic page records only `manager_session_id`, so a topic's outcome is that
-single id's outcome.
-
-`location` comes from the first id whose outcome is `live`, in the fixed order
-`claude_session_id` then `manager_session_id`. If that id is live but the store
+`location` comes from the id when its outcome is `live`. If it is live but the store
 reports no location — because it was classified live by transcript recency or
-the `ps` cross-check rather than by the store — `location` is null. It does not fall through
-to the next id.
+the `ps` cross-check rather than by the store — `location` is null.
 
 `claude_session_started` still reads its own page marker, and `activity_date`
-still derives from `claude_session_id` alone; a manager id supplies neither
-field.
+derives from `claude_session_id` alone.
 
 ## An unreachable store is "cannot tell", not "dead"
 

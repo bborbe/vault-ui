@@ -914,21 +914,20 @@ var _ = Describe("ListGoals", func() {
 	})
 })
 
-var _ = Describe("goal session-id combination", func() {
+var _ = Describe("goal session id", func() {
 	const (
-		ownID     = "11111111-1111-1111-1111-111111111111"
-		managerID = "22222222-2222-2222-2222-222222222222"
+		sessionID = "11111111-1111-1111-1111-111111111111"
+		retiredID = "22222222-2222-2222-2222-222222222222"
 	)
 
 	stale := libtime.DateTime(baseTime.Add(-time.Hour))
 	fresh := libtime.DateTime(baseTime)
 
-	goalItem := func(own, manager string) ops.TaskListItem {
+	goalItem := func(sessionID string) ops.TaskListItem {
 		return ops.TaskListItem{
-			Name:             "Goal",
-			Status:           "in_progress",
-			ClaudeSessionID:  own,
-			ManagerSessionID: manager,
+			Name:            "Goal",
+			Status:          "in_progress",
+			ClaudeSessionID: sessionID,
 		}
 	}
 
@@ -941,15 +940,15 @@ var _ = Describe("goal session-id combination", func() {
 		return responses[0]
 	}
 
-	DescribeTable("combines every recorded session id by strongest outcome",
+	DescribeTable("classifies the goal's claude_session_id",
 		func(
-			own, manager string,
+			sessionID string,
 			registry []heartbeat.Session,
 			mtimes map[string]*libtime.DateTime,
 			expected string,
 		) {
 			h := newHarness()
-			h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(own, manager)}
+			h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(sessionID)}
 			h.signals.registry = registry
 			h.sessions = &fakeProbe{mtimes: mtimes}
 			h.build()
@@ -962,30 +961,19 @@ var _ = Describe("goal session-id combination", func() {
 			Expect(response.SessionState).NotTo(BeNil())
 			Expect(*response.SessionState).To(Equal(expected))
 		},
-		Entry("own live, manager quiet", ownID, managerID,
-			[]heartbeat.Session{{ID: ownID}},
-			map[string]*libtime.DateTime{managerID: &stale}, "live"),
-		Entry("manager live, own quiet", ownID, managerID,
-			[]heartbeat.Session{{ID: managerID}},
-			map[string]*libtime.DateTime{ownID: &stale}, "live"),
-		Entry("own live, manager indeterminate", ownID, managerID,
-			[]heartbeat.Session{{ID: ownID}}, nil, "live"),
-		Entry("own empty, manager live", "", managerID,
-			[]heartbeat.Session{{ID: managerID}}, nil, "live"),
-		Entry("own empty, manager quiet", "", managerID, nil,
-			map[string]*libtime.DateTime{managerID: &stale}, "quiet"),
-		Entry("own quiet, manager indeterminate", ownID, managerID, nil,
-			map[string]*libtime.DateTime{ownID: &stale}, "indeterminate"),
-		Entry("both quiet", ownID, managerID, nil,
-			map[string]*libtime.DateTime{ownID: &stale, managerID: &stale}, "quiet"),
-		Entry("own live, manager empty", ownID, "",
-			[]heartbeat.Session{{ID: ownID}}, nil, "live"),
-		Entry("both empty", "", "", nil, nil, ""),
+		Entry("live when the store lists the id", sessionID,
+			[]heartbeat.Session{{ID: sessionID}}, nil, "live"),
+		Entry("live when the transcript is fresh", sessionID, nil,
+			map[string]*libtime.DateTime{sessionID: &fresh}, "live"),
+		Entry("quiet when the transcript is stale", sessionID, nil,
+			map[string]*libtime.DateTime{sessionID: &stale}, "quiet"),
+		Entry("indeterminate when no evidence answers", sessionID, nil, nil, "indeterminate"),
+		Entry("none when the page records no id", "", nil, nil, ""),
 	)
 
-	It("serializes the none state as null when neither id is set", func() {
+	It("serializes the none state as null when no id is set", func() {
 		h := newHarness()
-		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", "")}
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("")}
 		h.build()
 
 		response := listGoal(h)
@@ -995,10 +983,27 @@ var _ = Describe("goal session-id combination", func() {
 		Expect(string(encoded)).To(ContainSubstring(`"session_state":null`))
 	})
 
-	It("classifies a malformed manager id as indeterminate, never live or quiet", func() {
+	It("ignores the retired manager_session_id", func() {
+		// `manager_session_id` is gone. A page that has not been migrated yet
+		// reads as none rather than falling back — the fleet-wide migration is
+		// what guarantees every page carries the surviving field.
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{{
+			Name:             "Goal",
+			Status:           "in_progress",
+			ManagerSessionID: retiredID,
+		}}
+		h.signals.registry = []heartbeat.Session{{ID: retiredID}}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).To(BeNil())
+	})
+
+	It("classifies a malformed id as indeterminate, never live or quiet", func() {
 		const malformed = "not-a-uuid"
 		h := newHarness()
-		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", malformed)}
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(malformed)}
 		// A fresh transcript would make an unvalidated id read live; the UUID
 		// guard must win and suppress Resume instead.
 		h.sessions = &fakeProbe{
@@ -1012,12 +1017,12 @@ var _ = Describe("goal session-id combination", func() {
 		Expect(response.Location).To(BeNil())
 	})
 
-	It("keeps a manager-armed goal indeterminate when the attention store is unreachable", func() {
+	It("keeps an armed goal indeterminate when the attention store is unreachable", func() {
 		h := newHarness()
-		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", managerID)}
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(sessionID)}
 		h.signals.unknown = true
 		h.sessions = &fakeProbe{
-			mtimes: map[string]*libtime.DateTime{managerID: &stale},
+			mtimes: map[string]*libtime.DateTime{sessionID: &stale},
 		}
 		h.build()
 
@@ -1026,42 +1031,10 @@ var _ = Describe("goal session-id combination", func() {
 		Expect(*response.SessionState).To(Equal("indeterminate"))
 	})
 
-	It("takes location from the own id when both ids are live", func() {
+	It("takes the location from the id when the store knows it", func() {
 		h := newHarness()
-		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(ownID, managerID)}
-		h.signals.registry = []heartbeat.Session{
-			{ID: ownID, Location: "local"},
-			{ID: managerID, Location: "pod"},
-		}
-		h.build()
-
-		response := listGoal(h)
-		Expect(response.Location).NotTo(BeNil())
-		Expect(*response.Location).To(Equal("local"))
-	})
-
-	It("does not fall through to the manager id when the own id is live without a store location", func() {
-		h := newHarness()
-		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(ownID, managerID)}
-		// Own id is live by transcript recency, not in the store, so its
-		// RegistryLocation is empty. The manager id is live in the store with a
-		// location; the location must still be null, not the manager's.
-		h.signals.registry = []heartbeat.Session{{ID: managerID, Location: "pod"}}
-		h.sessions = &fakeProbe{
-			mtimes: map[string]*libtime.DateTime{ownID: &fresh},
-		}
-		h.build()
-
-		response := listGoal(h)
-		Expect(response.SessionState).NotTo(BeNil())
-		Expect(*response.SessionState).To(Equal("live"))
-		Expect(response.Location).To(BeNil())
-	})
-
-	It("takes location from the manager id when only the manager is live", func() {
-		h := newHarness()
-		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem("", managerID)}
-		h.signals.registry = []heartbeat.Session{{ID: managerID, Location: "pod"}}
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(sessionID)}
+		h.signals.registry = []heartbeat.Session{{ID: sessionID, Location: "pod"}}
 		h.build()
 
 		response := listGoal(h)
@@ -1071,20 +1044,35 @@ var _ = Describe("goal session-id combination", func() {
 		Expect(*response.Location).To(Equal("pod"))
 	})
 
-	It("keeps claude_session_started and activity_date tied to the own id", func() {
+	It("leaves the location null when the id is live but absent from the store", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{goalItem(sessionID)}
+		// Live by transcript recency, not in the store, so RegistryLocation is
+		// empty — the state is live but there is no pane to jump to.
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{sessionID: &fresh},
+		}
+		h.build()
+
+		response := listGoal(h)
+		Expect(response.SessionState).NotTo(BeNil())
+		Expect(*response.SessionState).To(Equal("live"))
+		Expect(response.Location).To(BeNil())
+	})
+
+	It("derives activity_date from the page's own id, never from a retired one", func() {
 		h := newHarness()
 		h.list.items["23 Goals"] = []ops.TaskListItem{{
-			Name:             "Goal",
-			Status:           "in_progress",
-			ManagerSessionID: managerID,
-			ModifiedDate:     "2026-10-04T11:00:00Z",
+			Name:            "Goal",
+			Status:          "in_progress",
+			ClaudeSessionID: sessionID,
+			ModifiedDate:    "2026-10-04T11:00:00Z",
 		}}
-		h.signals.registry = []heartbeat.Session{{ID: managerID}}
-		// The manager transcript is newer than the page's modified date. If
-		// either field derived from the manager id, activity_date would move to
-		// 12:00; it must stay at the page's modified date.
+		h.signals.registry = []heartbeat.Session{{ID: sessionID}}
+		// The transcript is newer than the page's modified date, so activity_date
+		// follows it to 12:00 — the page's id is the one that counts now.
 		h.sessions = &fakeProbe{
-			mtimes: map[string]*libtime.DateTime{managerID: &fresh},
+			mtimes: map[string]*libtime.DateTime{sessionID: &fresh},
 		}
 		h.cache.started["Goal"] = "2026-10-04T09:00:00Z"
 		h.build()
@@ -1092,11 +1080,12 @@ var _ = Describe("goal session-id combination", func() {
 		response := listGoal(h)
 		Expect(response.SessionState).NotTo(BeNil())
 		Expect(*response.SessionState).To(Equal("live"))
-		Expect(response.ClaudeSessionID).To(BeNil())
+		Expect(response.ClaudeSessionID).NotTo(BeNil())
+		Expect(*response.ClaudeSessionID).To(Equal(sessionID))
 		Expect(response.ClaudeSessionStarted).NotTo(BeNil())
 		Expect(*response.ClaudeSessionStarted).To(Equal("2026-10-04T09:00:00Z"))
 		Expect(response.ActivityDate).NotTo(BeNil())
-		Expect(*response.ActivityDate).To(Equal("2026-10-04T11:00:00Z"))
+		Expect(*response.ActivityDate).To(Equal("2026-10-04T12:00:00Z"))
 	})
 })
 
@@ -1157,11 +1146,11 @@ var _ = Describe("ListTopics", func() {
 		Expect(byID).To(Equal(map[string]bool{"Flagged": true, "Plain": false}))
 	})
 
-	It("classifies a manager-armed topic as live when the store lists it", func() {
+	It("classifies a topic as live when the store lists its id", func() {
 		const managerID = "33333333-3333-3333-3333-333333333333"
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{
-			{Name: "Armed", Status: "in_progress", ManagerSessionID: managerID},
+			{Name: "Armed", Status: "in_progress", ClaudeSessionID: managerID},
 		}
 		h.signals.registry = []heartbeat.Session{{ID: managerID}}
 		h.build()
@@ -1173,12 +1162,12 @@ var _ = Describe("ListTopics", func() {
 		Expect(*responses[0].SessionState).To(Equal("live"))
 	})
 
-	It("classifies a manager-armed topic as quiet when its transcript is stale", func() {
+	It("classifies a topic as quiet when its transcript is stale", func() {
 		const managerID = "44444444-4444-4444-4444-444444444444"
 		stale := libtime.DateTime(baseTime.Add(-time.Hour))
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{
-			{Name: "Armed", Status: "in_progress", ManagerSessionID: managerID},
+			{Name: "Armed", Status: "in_progress", ClaudeSessionID: managerID},
 		}
 		h.sessions = &fakeProbe{
 			mtimes: map[string]*libtime.DateTime{managerID: &stale},
@@ -1192,7 +1181,7 @@ var _ = Describe("ListTopics", func() {
 		Expect(*responses[0].SessionState).To(Equal("quiet"))
 	})
 
-	It("serializes a topic with no manager id as session_state null", func() {
+	It("serializes a topic with no session id as session_state null", func() {
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{
 			{Name: "Plain", Status: "in_progress"},
@@ -1207,12 +1196,29 @@ var _ = Describe("ListTopics", func() {
 		Expect(string(encoded)).To(ContainSubstring(`"session_state":null`))
 	})
 
-	It("keeps a manager-armed topic indeterminate when the store is unreachable", func() {
+	It("ignores the retired manager_session_id on a topic", func() {
+		// topics.go:80 reads ClaudeSessionID and nothing else — there is no fallback
+		// to the retired key, so a page the migration has not reached yet reads none.
+		const retiredID = "66666666-6666-6666-6666-666666666666"
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Retired", Status: "in_progress", ManagerSessionID: retiredID},
+		}
+		h.signals.registry = []heartbeat.Session{{ID: retiredID}}
+		h.build()
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).To(BeNil())
+	})
+
+	It("keeps a topic indeterminate when the store is unreachable", func() {
 		const managerID = "55555555-5555-5555-5555-555555555555"
 		stale := libtime.DateTime(baseTime.Add(-time.Hour))
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{
-			{Name: "Armed", Status: "in_progress", ManagerSessionID: managerID},
+			{Name: "Armed", Status: "in_progress", ClaudeSessionID: managerID},
 		}
 		h.signals.unknown = true
 		h.sessions = &fakeProbe{
@@ -1286,8 +1292,8 @@ var _ = Describe("ListTopics", func() {
 		stale := libtime.DateTime(baseTime.Add(-time.Hour))
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{
-			{Name: "Live", Status: "in_progress", ManagerSessionID: liveID},
-			{Name: "Quiet", Status: "in_progress", ManagerSessionID: quietID},
+			{Name: "Live", Status: "in_progress", ClaudeSessionID: liveID},
+			{Name: "Quiet", Status: "in_progress", ClaudeSessionID: quietID},
 			{Name: "None", Status: "in_progress"},
 		}
 		h.signals.registry = []heartbeat.Session{{ID: liveID}}
