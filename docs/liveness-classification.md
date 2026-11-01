@@ -54,32 +54,23 @@ fires decides the outcome.
    would offer a corrupting Resume. When no process matches, the state is
    `quiet` — **unless the store could not be reached** (see below).
 
-## Multiple session ids on a card
+## The session id on a card
 
 A card records one Claude session id, `claude_session_id`: on a task it names the
-session working it, on a goal or topic the manager serving it. That single id is
-classified with the signal order above:
-`live` > `indeterminate` > `quiet` > `none`.
+session working it, on a goal or topic the manager serving it. There is no second
+id to combine, so that single id's outcome **is** the card's outcome, read with the
+signal order above: `live` > `indeterminate` > `quiet` > `none`.
 
-- `live` if any id is live — a stale manager id never downgrades a live own id,
-  and a stale own id never downgrades a live manager id.
-- otherwise `indeterminate` if any id is indeterminate.
-- otherwise `quiet` if any id is quiet.
-- `none` only when every id is empty.
-
-The combination is strongest-outcome, never last-id-wins.
-
-A topic page records the same field, so a topic's outcome is that single id's
-outcome.
+A goal page and a topic page record the same field and are classified the same
+way. A page that records no `claude_session_id` — a human task, or a page the
+migration has not reached yet — is `none`, and the card serialises `null`.
 
 `location` comes from the id when its outcome is `live`. If it is live but the store
 reports no location — because it was classified live by transcript recency or
-the `ps` cross-check rather than by the store — `location` is null. It does not fall through
-to the next id.
+the `ps` cross-check rather than by the store — `location` is null.
 
 `claude_session_started` still reads its own page marker, and `activity_date`
-still derives from `claude_session_id` alone; a manager id supplies neither
-field.
+derives from `claude_session_id` alone.
 
 ## An unreachable store is "cannot tell", not "dead"
 

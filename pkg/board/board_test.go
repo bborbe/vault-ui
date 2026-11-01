@@ -1196,6 +1196,23 @@ var _ = Describe("ListTopics", func() {
 		Expect(string(encoded)).To(ContainSubstring(`"session_state":null`))
 	})
 
+	It("ignores the retired manager_session_id on a topic", func() {
+		// topics.go:80 reads ClaudeSessionID and nothing else — there is no fallback
+		// to the retired key, so a page the migration has not reached yet reads none.
+		const retiredID = "66666666-6666-6666-6666-666666666666"
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Retired", Status: "in_progress", ManagerSessionID: retiredID},
+		}
+		h.signals.registry = []heartbeat.Session{{ID: retiredID}}
+		h.build()
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).To(BeNil())
+	})
+
 	It("keeps a topic indeterminate when the store is unreachable", func() {
 		const managerID = "55555555-5555-5555-5555-555555555555"
 		stale := libtime.DateTime(baseTime.Add(-time.Hour))

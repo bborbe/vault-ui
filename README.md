@@ -125,8 +125,7 @@ when that session is provably running, `indeterminate` when the id is set but
 its state cannot be proven, `quiet` when it is provably not running, and `null`
 when the page records
 neither. It uses the same four outcomes and signal order as the task paragraph
-above; a goal that records only a manager id classifies from that id rather than
-serialising `null`.
+above.
 
 ### `PATCH /api/tasks/{id}/phase`
 
