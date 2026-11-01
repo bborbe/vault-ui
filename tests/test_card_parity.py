@@ -431,6 +431,21 @@ def test_topic_outside_status_filter_renders_no_card(live_server, page):
     expect(page.locator('.topic-card[data-topic-id="Xylophone Abandoned"]')).to_have_count(0)
 
 
+def test_topic_board_applies_the_assignee_filter(live_server, page):
+    """The topic board filters by assignee client-side, like its status filter.
+
+    ``/api/topics`` has no ``assignee`` parameter and no topic carries the
+    field, so every named selection must yield zero cards. Before this was
+    wired the control changed its own label and filtered nothing — the one
+    place where Topics still diverged from Goals, which filters assignee
+    server-side.
+    """
+    page.goto(f"{live_server}/?view=topics&vault=TestVault")
+    expect(page.locator(".topic-card")).to_have_count(4)
+    page.goto(f"{live_server}/?view=topics&vault=TestVault&assignee=bborbe")
+    expect(page.locator(".topic-card")).to_have_count(0)
+
+
 def test_task_outside_status_filter_still_renders(live_server, page):
     """The task board leaves the client-side status filter off.
 
