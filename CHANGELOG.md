@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.104.2
 
 - fix: session resolver caches transcript titles per file and reads only appended bytes, so the cleanup sweep no longer re-reads every transcript each pass
 
