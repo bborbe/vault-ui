@@ -7,6 +7,7 @@ created: "2026-11-02T20:33:54Z"
 queued: "2026-11-02T20:33:54Z"
 started: "2026-11-02T20:34:22Z"
 completed: "2026-11-02T20:39:32Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/207
 branch: dark-factory/177-session-resolver-title-cache
 ---
 
