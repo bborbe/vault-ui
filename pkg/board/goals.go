@@ -153,8 +153,8 @@ func (b *board) goalResponse(
 	}
 
 	// A goal page records the session serving it in `claude_session_id`, the same field a
-	// task uses for the session working it — the retired `manager_session_id` no longer
-	// exists, so there is one id to classify rather than two to combine. It goes through
+	// task uses for the session working it — one id to classify rather than two to
+	// combine. It goes through
 	// classifySessionID, not ClassifySessionState directly, so a malformed (non-UUID) id
 	// reads indeterminate instead of being probed.
 	ownState := classifySessionID(ctx, item.ClaudeSessionID, params)
