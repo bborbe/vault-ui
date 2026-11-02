@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.104.1
 
 - docs: the two remaining mentions of the retired `manager_session_id` are gone — `pkg/board/goals.go` explained the one-id classification by contrast with a field that no longer exists, and `src/vault_ui/api/models.py` described the superseded harness the same way. Both now name `claude_session_id` alone. Comment-only: no behaviour change, and the SC4 probe over `pkg`/`src` (excluding `_test.go`) now matches nothing.
 
