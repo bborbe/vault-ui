@@ -3,14 +3,10 @@
 // license that can be found in the LICENSE file.
 
 // Package api holds the wire request and response types for the vault-ui HTTP
-// API. The JSON field names are the contract the frozen frontend depends on and
-// match the Python models in src/vault_ui/api/models.py, except for the
-// deliberate Go-only additions named below. The Python backend is superseded
-// and cannot emit those, so scripts/parity/parity.sh's normalize() strips each
-// from both sides before comparing the two bodies.
+// API. The JSON field names are the contract the frozen frontend depends on.
 //
-// Nullability is load-bearing: a Python field that is None serializes as JSON
-// null, so nullable fields use pointer types and nullable lists stay nil so
+// Nullability is load-bearing: an unset field serializes as JSON null, so
+// nullable fields use pointer types and nullable lists stay nil so
 // encoding/json emits null rather than [].
 package api
 

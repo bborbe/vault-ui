@@ -50,7 +50,7 @@ type ExecuteCommandRequest struct {
 	GateSuccessor *string `json:"gate_successor"`
 }
 
-// SessionResponse mirrors src/vault_ui/api/models.py SessionResponse. The first
+// SessionResponse is the session payload the board renders. The first
 // four fields are always present; the trailing five are nullable and serialize
 // as JSON null when unset (no omitempty, so every key is emitted).
 type SessionResponse struct {

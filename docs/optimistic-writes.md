@@ -39,9 +39,9 @@ the writes that had not been applied yet, and those are counted in a log line pe
 vault. Durable persistence is the separate Bolt-snapshot task.
 
 The checks that stay on the request path are the ones whose bodies are part of
-the parity contract: request validation (missing vault, malformed body, an
-out-of-enum status and a malformed `answers` entry answer the FastAPI 422
-shape), an unknown vault, a dash-prefixed id, a missing close-out reason, an
+the API contract: request validation (missing vault, malformed body, an
+out-of-enum status and a malformed `answers` entry answer the 422 shape), an
+unknown vault, a dash-prefixed id, a missing close-out reason, an
 unset current user, and the three pre-write reads — assign-to-me's
 task-existence check (404), set-session's different-session overwrite check
 (409), and the phase route's owner check for the todo → planning move together
@@ -105,14 +105,8 @@ frame) clears when a re-read shows the server caught up. A WebSocket reconnect
 also drops the echo expectation and discards all pending state before its
 catch-up read.
 
-## Parity amendment
+## Write-status contract
 
-The Python backend is superseded and cannot answer 202, so
-`scripts/parity/parity.sh` dropped **only** the mutation status comparison. The
-route, read status, body, error, mutation body, mutation file-tree, WebSocket,
-static and traversal comparisons all remain. The mutation file-tree comparison
-now waits (up to 5 s, plus a 0.3 s settle) for the queued Go write before
-snapshotting, so a write may land up to 5 s after its 202; equality of the two
-trees is still required, though a write that diverges and lands more than 0.3 s
-after the trees first match is not caught. The self-test still proves a skipped
-write fails.
+A queued write answers **202**, never 200, so the client can tell "accepted" from
+"applied". The parity harness that once compared mutation statuses against the
+Python backend was removed with that backend.

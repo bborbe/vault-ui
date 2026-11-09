@@ -10,9 +10,9 @@ import (
 	"github.com/bborbe/vault-cli/pkg/ops"
 )
 
-// watcherFrame is the frame the Python backend broadcasts for a vault watcher
-// event (src/vault_ui/factory.py on_change). The identifier key is task_id even
-// for goals, themes, and objectives — the Python reuses the key here.
+// watcherFrame is the frame broadcast for a vault watcher event. The identifier
+// key is task_id even for goals, themes, and objectives — one key for every
+// kind.
 type watcherFrame struct {
 	Type     string `json:"type"`
 	TaskID   string `json:"task_id"`
