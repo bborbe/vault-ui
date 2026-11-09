@@ -1,6 +1,7 @@
 ---
-status: draft
-created: "2026-11-09T22:10:00+01:00"
+status: approved
+approved: "2026-11-09T21:27:43Z"
+branch: dark-factory/topic-card-data-parity
 ---
 
 ## Summary
