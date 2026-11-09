@@ -1,5 +1,5 @@
 ---
-status: idea
+status: completed
 tags:
     - dark-factory
     - spec
@@ -74,3 +74,18 @@ it ad hoc later.
 - **Not as part of spec 023.** Spec 023's scope is parity and the marker; a
   deletion of this size (Python modules, tests, packaging, Makefile targets)
   deserves its own prompt and its own review against the preconditions above.
+
+## Status
+
+Implemented by PR [#209](https://github.com/bborbe/vault-ui/pull/209) on 2026-11-09.
+The cutover ran the same day and the rollback window closed with no rollback.
+
+- `src/vault_ui/` now holds only `static/` and `static_embed.go`.
+- `tests/`, `pyproject.toml`, `uv.lock` and `scripts/parity/` are deleted; the
+  Makefile is Go-only.
+- Open questions resolved: `static/` stays where it is, because the Go build
+  imports it from there; `vault-ui` is the Go binary, so no console-script alias
+  is kept.
+- The parity harness was retired with the Python backend, so `make parity` is no
+  longer the removal gate — the Go suite plus the cutover verification are.
+

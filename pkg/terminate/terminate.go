@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package terminate holds the process-termination guards ported from
-// src/vault_ui/activity.py. It resolves a target from a fresh (uncached)
+// Package terminate holds the process-termination guards. It resolves a target from a fresh (uncached)
 // process scan immediately before signaling and never accepts a pid from the
 // caller: only a claude row carrying an exact session-pinning flag for the
 // target id is ever a target, and the take-over path signals a launch

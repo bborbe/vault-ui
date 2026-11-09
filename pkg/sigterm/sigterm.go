@@ -5,7 +5,7 @@
 // Package sigterm delivers SIGTERM to a process. It is the only place the Go
 // port sends a signal, kept deliberately small and separate from the guard
 // logic in pkg/terminate so the one irreversible action is trivially
-// reviewable. It reproduces _sigterm_pid from src/vault_ui/activity.py.
+// reviewable. It reproduces the retired backend's _sigterm_pid behaviour.
 package sigterm
 
 import (

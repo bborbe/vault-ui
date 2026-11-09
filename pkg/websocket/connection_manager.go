@@ -3,11 +3,10 @@
 // license that can be found in the LICENSE file.
 
 // Package websocket implements the live-update channel of the vault-ui HTTP
-// surface: a bounded, non-blocking connection manager and the JSON frames the
-// Python backend broadcasts for vault changes and board mutations. It mirrors
-// src/vault_ui/websocket/connection_manager.py, with two safety properties the
-// Python backend lacks — a concurrent-client cap and a per-client buffered send
-// queue so a slow client can never stall the watcher broadcast.
+// surface: a bounded, non-blocking connection manager and the JSON frames
+// broadcast for vault changes and board mutations. Two safety properties keep
+// it sound — a concurrent-client cap and a per-client buffered send queue so a
+// slow client can never stall the watcher broadcast.
 package websocket
 
 import (

@@ -23,8 +23,7 @@ Full system map: [recurring-task-creator/docs/system-map.md](https://github.com/
 
 ## Prerequisites
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager
+- Go 1.25+ (see `go.mod`)
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` command)
 - `vault-cli >= 0.156.0` on `PATH` (the flag toggle passes `--by operator`; older versions reject it with `unknown flag: --by`)
 - An Obsidian vault with tasks in frontmatter format
@@ -32,7 +31,7 @@ Full system map: [recurring-task-creator/docs/system-map.md](https://github.com/
 ## Installation
 
 ```bash
-uv sync --all-extras
+make build     # writes ~/Documents/workspaces/go/bin/vault-ui
 ```
 
 ## Usage
@@ -40,11 +39,6 @@ uv sync --all-extras
 Start server:
 ```bash
 make run
-```
-
-Or start with auto-reload on code changes:
-```bash
-make watch
 ```
 
 Then open http://127.0.0.1:8000
@@ -96,17 +90,14 @@ section in section order, each `{index, text}`. A task with no such section
 carries `[]`, never `null`. Answered items are **included**, not filtered out —
 the section is the source of truth for what the task is waiting on, and the UI
 is better placed to decide what an already-answered item means; only the item's
-answer is withheld, so `text` is the question alone. `open_questions` is a
-Go-only field: the superseded Python backend does not emit it, and the parity
-harness strips it from both sides before comparing.
+answer is withheld, so `text` is the question alone. `open_questions` is always
+present.
 
 Each task also carries `jira`: the task page's own `jira:` frontmatter value,
 verbatim and unparsed (a bare key or a full browse URL), or `null` when the page
 carries none. The card uses it for its Jira badge, so a task carrying
 `jira: BRO-22339` under a title naming a different ticket badges its own. It is
-Go-only on the same terms as `open_questions`: the superseded Python backend
-does not emit it, and the parity harness strips it from both sides before
-comparing.
+always present.
 
 ### `GET /api/goals`
 
@@ -147,9 +138,8 @@ one-line format cannot carry — a non-positive or repeated index, an empty
 answer, or one containing a line break, the ` → **` delimiter or `**` — is
 refused with HTTP 422 before the request is accepted.
 
-`answers` is a **Go-only request field**, like `open_questions` is a Go-only
-response field: the superseded Python backend never emits it and ignores it on
-the way in. Because it is request-only it needs no parity normalization.
+`answers` is a **request-only field**: it is accepted on the way in and never
+echoed back.
 
 ### `GET /api/topics`
 
@@ -232,13 +222,12 @@ Under `?view=goals&groupBy=phase`, goals without a `phase` field land in a singl
 ## Development
 
 ```bash
-make sync        # Install dependencies
 make format      # Format code
-make lint        # Lint code
-make typecheck   # Type check
+make vet         # Vet code
 make test        # Run tests
 make precommit   # Run all checks
 make build       # Build the Go binary
+make run         # Build and run
 ```
 
 ## Configuration

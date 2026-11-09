@@ -1,5 +1,12 @@
 # Cut over vault-ui from the Python backend to the Go binary
 
+> **Status: done — historical record.** The cutover was performed on 2026-11-09 and
+> the Python backend has since been deleted from this repo (`src/vault_ui/*.py`,
+> `tests/`, `pyproject.toml`, `uv.lock`, `scripts/parity/`). The `make parity`
+> steps, the § Rollback section and every `uv tool install` reference below can no
+> longer be executed — they describe the state before the removal. The current
+> service setup is documented in `docs/launchd-service.md`.
+
 The final step of the Go rewrite: repoint the launchd LaunchAgent from the
 uv-installed Python tool to the Go binary built from this repo. Until this runs,
 the board on `http://127.0.0.1:8000` is still served by Python.

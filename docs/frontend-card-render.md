@@ -112,35 +112,23 @@ The topic card's DOM wrappers changed with the unification: it used to nest
 `.card-actions`, like the other kinds. `.card-actions { margin-left: auto }`
 (`style.css`) pushes the detail button to the right edge of the footer.
 
-## Static-assertion lane
+## Test coverage
 
-`tests/test_card_render_unify.py` and the neighbouring static suites read
-`app.js` as text and slice function bodies with `_function_body` (up to the next
-top-level `function`) or `_slice_function_body` (brace walking). A helper must
-stay a top-level `function` declaration to remain assertable — a `const`
-arrow-function assigned to a variable is invisible to these lanes.
+The frontend's automated lanes were Python: `tests/test_card_render_unify.py`
+(static assertions over `app.js`) plus the Playwright suites
+`tests/test_card_parity.py` and `tests/test_board_sort.py`, run by
+`make test-integration`. All three were removed with the Python backend, so **no
+automated frontend lane remains**.
+
+A template change is therefore verified by loading the board and exercising the
+affected card in a browser — for a served asset, precommit-green is not proof
+that the page renders. A replacement lane, if added, should target the
+`src/vault_ui/static/` tree that the Go binary embeds at build time.
 
 ## Adding an affordance
 
 1. Edit the template once in `createCard`, gated on `config.slots.<name>`.
 2. Add the slot to each `CARD_CONFIG` entry that wants it.
 3. Fill the mapper with the data the affordance reads.
-4. Extend the static test (a new slot assertion, and a mapper field if the
-   view-model grew).
-5. Add the browser-level proof to `tests/test_card_parity.py`.
+4. Load the board and confirm every card kind that carries the slot renders it.
 
-## Browser lane
-
-The static lane cannot see rendering. `tests/test_card_parity.py` is the
-integration proof that all three boards actually render the shared template —
-the topic card's slot set, the display-only live indicator, flag-first and
-hold-sink ordering, the topic-only status filter, and the unchanged task/goal
-slots.
-
-It is integration-marked, so `make test` deselects it (and the YOLO container
-has no Chromium). Run it on the host:
-
-```
-uv run playwright install chromium   # once
-make test-integration
-```

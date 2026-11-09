@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- chore: remove the retired Python backend — the Go binary is the only implementation now, so `src/vault_ui/*.py`, `tests/`, `pyproject.toml`, `uv.lock` and the Go↔Python parity harness are deleted while `src/vault_ui/static/` and its `static_embed.go` stay (the binary embeds them); `make` becomes Go-only (build/format/vet/test/precommit/run), CI runs gofmt + `go vet` + `go test -race` instead of pytest/ruff/mypy, the wheel-release workflow is dropped, and the README plus the launchd, cutover, frontend-render and optimistic-write docs describe the binary instead of `uv tool install`
+
 ## v0.104.3
 
 - chore: restate the do-not-merge contract in the gate workflow

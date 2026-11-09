@@ -41,7 +41,7 @@ type ClassifyParams struct {
 	TranscriptMtime activity.TranscriptMtimeGetter
 }
 
-// ClassifySessionState reproduces src/vault_ui/activity.py classify_session_state.
+// ClassifySessionState classifies one session's liveness state.
 //
 // The three signals are checked in a fixed order: the attention store's live
 // session ids first (authoritative), then transcript recency within LiveWindow,

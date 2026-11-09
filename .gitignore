@@ -1,16 +1,10 @@
 # Local configuration (machine-specific, not committed)
 config.yaml
 
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+# Build output
+/build/
+/bin/
 
-# Virtual environments
-.venv
 /CLAUDE.md
 /.claude
 /.mcp-auth-*
@@ -21,5 +15,4 @@ wheels/
 /.dark-factory.log
 /prompts/log
 /specs/log
-/bin/
 /.dark-factory.daemon.out
