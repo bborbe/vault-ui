@@ -22,4 +22,4 @@ precommit: format vet test
 
 .PHONY: run
 run: build
-	$(HOME)/Documents/workspaces/go/bin/vault-ui
+	VAULT_UI_LISTEN=127.0.0.1:8000 $(HOME)/Documents/workspaces/go/bin/vault-ui
