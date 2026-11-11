@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.106.1
 
 - fix: Stop a killed session rendering `● Live` for the transcript-recency window — the attention store's read now carries every session id it has seen alongside the live set, and the classifier skips only the recency half of the transcript signal for a session the store has reported not live, so the card falls through to the `ps` cross-check and reads `quiet` instead of staying live for five more minutes. A never-seen session keeps recency, the missing-transcript `indeterminate` return and the `ps` cross-check stay unconditional, and an unreachable store still reads "cannot tell" rather than "dead".
 
