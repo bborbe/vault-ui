@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.106.0
 
 - feat: Render the six data slots on the topic card — `CARD_CONFIG.topic` enables `hold`, `assignee`, `priority`, `activityAge`, `blocked` and `jira` while keeping `noteLink`, `flag`, `live` and `detail`, `mapTopicCard` reads each from the topic payload instead of returning a constant (`hold` from `status === 'hold'`, the Jira badge through the same `extractJiraIssue` helper a task card uses), the "+ Assign to me" control is emitted only in the empty-assignee branch and only when `assignCall` is non-null so an unassigned topic shows none, `navigateToBlocker` resolves a topic blocker against the `topicId` dataset, and `pkg/board/jsasset` gains structural tests over the embedded asset
 - test: Lock the task and goal card definitions to `pkg/board/testdata/card-vectors-pre-change.json` — `TestTaskAndGoalCardDefinitionsMatchBaseline` asserts each kind's enabled slot set and each mapper's full key-to-source-expression map (naming the entry, mapper and key on divergence), excluding the `topic` entry and `mapTopicCard` because the topic-card change alters both by design
