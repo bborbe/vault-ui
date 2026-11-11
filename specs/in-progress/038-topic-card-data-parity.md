@@ -1,6 +1,7 @@
 ---
-status: approved
+status: verifying
 approved: "2026-11-09T21:27:43Z"
+verifying: "2026-11-11T07:23:14Z"
 branch: dark-factory/topic-card-data-parity
 ---
 
