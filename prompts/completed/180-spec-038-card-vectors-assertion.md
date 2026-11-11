@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [038-topic-card-data-parity]
+summary: Added a Go regression test that locks the task and goal CARD_CONFIG slot sets and mapper expression maps to the pre-change baseline, verified load-bearing for both slot and expression flips, and make precommit passes.
+execution_id: vault-ui-topic-card-parity-exec-180-spec-038-card-vectors-assertion
+dark-factory-version: v0.198.17
 created: "2026-11-10T07:10:00+01:00"
 queued: "2026-11-11T07:04:38Z"
+started: "2026-11-11T07:20:29Z"
+completed: "2026-11-11T07:23:13Z"
 ---
 
 # Assert the task and goal cards did not change
