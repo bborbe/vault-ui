@@ -78,8 +78,8 @@ func TestReturnedObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReturnedObject(mapTopicCard): %v", err)
 	}
-	if topic["assignee"] != "''" {
-		t.Fatalf("mapTopicCard assignee = %q, want ''", topic["assignee"])
+	if got := jsasset.CollapseWhitespace(topic["assignee"]); got != "topic.assignee || ''" {
+		t.Fatalf("mapTopicCard assignee = %q", got)
 	}
 }
 

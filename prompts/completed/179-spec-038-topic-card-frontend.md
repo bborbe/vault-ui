@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [038-topic-card-data-parity]
+summary: Enabled the six data slots on topic cards, made mapTopicCard read the payload fields, guarded the assign control on non-null assignCall, fixed the topic blocker resolver, bumped the asset token, and added structural Go tests plus docs/README/changelog updates
+execution_id: vault-ui-topic-card-parity-exec-179-spec-038-topic-card-frontend
+dark-factory-version: v0.198.17
 created: "2026-11-10T07:10:00+01:00"
 queued: "2026-11-11T07:04:38Z"
+started: "2026-11-11T07:17:33Z"
+completed: "2026-11-11T07:20:28Z"
 ---
 
 # Render the six data slots on topic cards
