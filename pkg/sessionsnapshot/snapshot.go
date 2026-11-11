@@ -47,6 +47,11 @@ type Snapshot interface {
 	// They come from the attention store (pkg/heartbeat), never from the harness
 	// session registry directory. Never nil.
 	RegistrySessionIDs(ctx context.Context) []string
+	// SeenSessionIDs returns every session id the last refresh's store read
+	// carried, live or not — the store's answer about a session it has seen, not
+	// the live set. Never nil. A refresh that could not reach the store keeps the
+	// previous ids, so "cannot tell" does not erase what the store knew.
+	SeenSessionIDs(ctx context.Context) []string
 	// RegistryLocation returns the location the last refresh's live set carried
 	// for sessionID, or "" when the session is not in that set or its location
 	// is empty.
@@ -77,10 +82,11 @@ type Snapshot interface {
 
 // Params carries the snapshot's injectable dependencies.
 type Params struct {
-	// Registry returns the live sessions and whether the source answered. A
-	// false second result is "cannot tell" (an unreachable attention store): the
-	// previous sessions are kept and marked unknown rather than cleared.
-	Registry func(ctx context.Context) ([]heartbeat.Session, bool)
+	// Registry returns one store read — the live sessions and the ids it has
+	// seen — and whether the source answered. A false second result is "cannot
+	// tell" (an unreachable attention store): the previous values are kept and
+	// marked unknown rather than cleared.
+	Registry func(ctx context.Context) (heartbeat.Listing, bool)
 	// Scanner produces fresh `ps` output; one scan runs per refresh.
 	Scanner session.ProcessScanner
 	// Probe returns a session transcript's mtime. Nil selects the snapshot's own
@@ -102,6 +108,7 @@ func NewSnapshot(params Params) Snapshot {
 		params:            params,
 		registryIDs:       []string{},
 		registryLocations: map[string]string{},
+		seenSessionIDs:    []string{},
 		liveKnown:         true,
 		resumeIDs:         []string{},
 		transcripts:       map[transcriptKey]transcriptEntry{},
@@ -134,6 +141,7 @@ type snapshot struct {
 	readsAtRefresh    uint64
 	registryIDs       []string
 	registryLocations map[string]string
+	seenSessionIDs    []string
 	liveKnown         bool
 	resumeIDs         []string
 	refreshedAt       *libtime.DateTime
@@ -166,6 +174,16 @@ func (s *snapshot) RegistrySessionIDs(_ context.Context) []string {
 	defer s.mu.Unlock()
 	s.reads++
 	return append([]string{}, s.registryIDs...)
+}
+
+// SeenSessionIDs returns a copy of every id the last refresh's store read
+// carried, live or not. The result is never nil and never aliases the internal
+// slice.
+func (s *snapshot) SeenSessionIDs(_ context.Context) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	return append([]string{}, s.seenSessionIDs...)
 }
 
 // RegistryLocation returns the location the last refresh's live set carried for
@@ -305,8 +323,9 @@ func (s *snapshot) indexedMtime(
 // RefreshOnce runs one `ps` scan and one live-id read and swaps both in
 // atomically, advancing Generation. A scan failure keeps the previous values
 // and returns the wrapped error without swapping. A live-id read that cannot
-// reach the store keeps the previous ids, marks them unknown and still swaps
-// the resume ids: "cannot tell" must not be served as "nothing is live".
+// reach the store keeps the previous live and seen ids, marks them unknown and
+// still swaps the resume ids: "cannot tell" must not be served as "nothing is
+// live".
 func (s *snapshot) RefreshOnce(ctx context.Context) error {
 	output, err := s.params.Scanner(ctx)
 	if err != nil {
@@ -318,14 +337,14 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 		return errors.Wrap(ctx, err, "refresh session snapshot")
 	}
 	resumeIDs := session.ParseLiveSessionIDs(output)
-	registrySessions, liveKnown := s.params.Registry(ctx)
+	registryListing, liveKnown := s.params.Registry(ctx)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if liveKnown {
-		registryIDs := make([]string, 0, len(registrySessions))
-		registryLocations := make(map[string]string, len(registrySessions))
-		for _, registrySession := range registrySessions {
+		registryIDs := make([]string, 0, len(registryListing.Live))
+		registryLocations := make(map[string]string, len(registryListing.Live))
+		for _, registrySession := range registryListing.Live {
 			registryIDs = append(registryIDs, registrySession.ID)
 			if registrySession.Location != "" {
 				registryLocations[registrySession.ID] = registrySession.Location
@@ -333,6 +352,7 @@ func (s *snapshot) RefreshOnce(ctx context.Context) error {
 		}
 		s.registryIDs = registryIDs
 		s.registryLocations = registryLocations
+		s.seenSessionIDs = append([]string{}, registryListing.SeenIDs...)
 	}
 	s.liveKnown = liveKnown
 	s.resumeIDs = append([]string{}, resumeIDs...)

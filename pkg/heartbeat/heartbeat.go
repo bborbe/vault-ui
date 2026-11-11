@@ -48,14 +48,15 @@ const sessionHeartbeatPath = "/api/1.0/session-heartbeat"
 
 // Store is the attention-controller's session-heartbeat API.
 type Store interface {
-	// LiveSessions returns the sessions the store currently reports live, with
-	// the location each one carries.
+	// LiveSessions returns one store read: the sessions the store currently
+	// reports live (with the location each one carries) and every session id the
+	// payload carried, live or not.
 	//
 	// The second result is false when the store could not be reached — "cannot
 	// tell", which a caller must never read as "nothing is live". A store that
-	// answers returns (sessions, true), and sessions may be empty: an answered
-	// store with no live sessions is not the same as an unreachable one.
-	LiveSessions(ctx context.Context) ([]Session, bool)
+	// answers returns (listing, true), and listing.Live may be empty: an
+	// answered store with no live sessions is not the same as an unreachable one.
+	LiveSessions(ctx context.Context) (Listing, bool)
 
 	// IsLive reports the store's verdict for one session. A 404 is
 	// (false, true): the session has never posted a heartbeat, so it is not
@@ -100,28 +101,46 @@ type Session struct {
 	Location string
 }
 
-// LiveSessions lists the store's live sessions. Every failure — a
-// transport error, a non-200 status, an unparseable body — is "cannot tell"
-// (nil, false), never an empty live set.
-func (s *store) LiveSessions(ctx context.Context) ([]Session, bool) {
+// Listing is one store read: both halves of the same session-heartbeat payload.
+type Listing struct {
+	// Live holds the rows the store reports live, with the location each one
+	// carries. It is exactly what LiveSessions returned before the seen ids were
+	// added.
+	Live []Session
+	// SeenIDs holds every non-empty session id in the payload, live or not. The
+	// store has answered about each of them, so "not in Live" is authoritative
+	// for every id here: a session the store has seen but no longer reports live
+	// is dead, not merely stale.
+	SeenIDs []string
+}
+
+// LiveSessions lists one store read: its live sessions and every id it has
+// seen. Every failure — a transport error, a non-200 status, an unparseable
+// body — is "cannot tell" (zero Listing, false), never an empty live set.
+func (s *store) LiveSessions(ctx context.Context) (Listing, bool) {
 	body, ok := s.get(ctx, s.baseURL+sessionHeartbeatPath)
 	if !ok {
-		return nil, false
+		return Listing{}, false
 	}
 
 	var rows []heartbeatRow
 	if err := json.Unmarshal(body, &rows); err != nil {
 		glog.V(4).Infof("[Heartbeat] Cannot parse session-heartbeat payload: %v", err)
-		return nil, false
+		return Listing{}, false
 	}
 
 	sessions := make([]Session, 0, len(rows))
+	seenIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
-		if row.Live && row.SessionID != "" {
+		if row.SessionID == "" {
+			continue
+		}
+		seenIDs = append(seenIDs, row.SessionID)
+		if row.Live {
 			sessions = append(sessions, Session{ID: row.SessionID, Location: row.Location})
 		}
 	}
-	return sessions, true
+	return Listing{Live: sessions, SeenIDs: seenIDs}, true
 }
 
 // IsLive reports whether the store lists one session as live. A 404 is

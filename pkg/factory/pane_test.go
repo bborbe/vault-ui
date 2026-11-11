@@ -112,7 +112,10 @@ func paneHandler(
 	// keeps current from the attention store with the session-state watcher.
 	// Seed it directly so the fixture's session id stays load-bearing.
 	sessionState := factory.CreateSessionState()
-	sessionState.Replace([]heartbeat.Session{{ID: liveSessionID}})
+	sessionState.Replace(heartbeat.Listing{
+		Live:    []heartbeat.Session{{ID: liveSessionID}},
+		SeenIDs: []string{liveSessionID},
+	})
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	Expect(sessionSnapshot.RefreshOnce(context.Background())).To(Succeed())
 

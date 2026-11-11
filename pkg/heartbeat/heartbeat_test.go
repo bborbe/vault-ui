@@ -35,10 +35,10 @@ var _ = Describe("Store", func() {
 			})
 			defer closeServer()
 
-			sessions, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeTrue())
-			Expect(sessions).To(ConsistOf(heartbeat.Session{ID: liveID, Location: "local"}))
+			Expect(listing.Live).To(ConsistOf(heartbeat.Session{ID: liveID, Location: "local"}))
 		})
 
 		It("returns an empty location for a live row with an empty location", func() {
@@ -47,10 +47,10 @@ var _ = Describe("Store", func() {
 			})
 			defer closeServer()
 
-			sessions, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeTrue())
-			Expect(sessions).To(Equal([]heartbeat.Session{{ID: liveID, Location: ""}}))
+			Expect(listing.Live).To(Equal([]heartbeat.Session{{ID: liveID, Location: ""}}))
 		})
 
 		It("returns an empty location for a live row with no location key", func() {
@@ -59,22 +59,41 @@ var _ = Describe("Store", func() {
 			})
 			defer closeServer()
 
-			sessions, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeTrue())
-			Expect(sessions).To(Equal([]heartbeat.Session{{ID: liveID, Location: ""}}))
+			Expect(listing.Live).To(Equal([]heartbeat.Session{{ID: liveID, Location: ""}}))
 		})
 
-		It("excludes a non-live row even when it carries a location", func() {
+		It("excludes a non-live row from Live but keeps its id in SeenIDs", func() {
 			store, closeServer := newStoreAt(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(`[{"session_id":"stale","live":false,"location":"pod"}]`))
 			})
 			defer closeServer()
 
-			sessions, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeTrue())
-			Expect(sessions).To(BeEmpty())
+			Expect(listing.Live).To(BeEmpty())
+			Expect(listing.SeenIDs).To(Equal([]string{"stale"}))
+		})
+
+		It("carries both halves of one payload and drops an empty session id", func() {
+			store, closeServer := newStoreAt(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`[
+					{"session_id":"` + liveID + `","live":true,"location":"local"},
+					{"session_id":"stale","live":false,"location":"pod"},
+					{"session_id":"","live":true,"location":"pod"}
+				]`))
+			})
+			defer closeServer()
+
+			listing, known := store.LiveSessions(context.Background())
+
+			Expect(known).To(BeTrue())
+			Expect(listing.Live).To(Equal([]heartbeat.Session{{ID: liveID, Location: "local"}}))
+			Expect(listing.SeenIDs).To(ConsistOf(liveID, "stale"))
+			Expect(listing.SeenIDs).NotTo(ContainElement(""))
 		})
 
 		It("returns an empty, known set for an answered store with no live sessions", func() {
@@ -83,10 +102,10 @@ var _ = Describe("Store", func() {
 			})
 			defer closeServer()
 
-			sessions, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeTrue(), "an answered store is not 'cannot tell'")
-			Expect(sessions).To(BeEmpty())
+			Expect(listing.Live).To(BeEmpty())
 		})
 
 		It("returns cannot-tell for a non-200 response", func() {
@@ -95,10 +114,10 @@ var _ = Describe("Store", func() {
 			})
 			defer closeServer()
 
-			sessions, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeFalse())
-			Expect(sessions).To(BeNil())
+			Expect(listing.Live).To(BeNil())
 		})
 
 		It("returns cannot-tell for an unparseable body", func() {
@@ -107,9 +126,10 @@ var _ = Describe("Store", func() {
 			})
 			defer closeServer()
 
-			_, known := store.LiveSessions(context.Background())
+			listing, known := store.LiveSessions(context.Background())
 
 			Expect(known).To(BeFalse())
+			Expect(listing).To(Equal(heartbeat.Listing{}))
 		})
 
 		It("returns cannot-tell for an unreachable store", func() {

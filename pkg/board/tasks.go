@@ -235,6 +235,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	seenIDs := b.signals.SeenSessionIDs(ctx)
 	liveIDsUnknown := !b.signals.LiveIDsKnown()
 	resumeIDs := b.signals.ResumeSessionIDs(ctx)
 
@@ -253,6 +254,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 			LiveWindow:         session.DefaultLiveWindow,
 			ResumeSessionIDs:   resumeIDs,
 			RegistrySessionIDs: registryIDs,
+			SeenSessionIDs:     seenIDs,
 			LiveIDsUnknown:     liveIDsUnknown,
 			TranscriptMtime:    b.transcriptProbe(),
 		})
@@ -344,6 +346,7 @@ func (b *board) refreshTaskRows(
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	seenIDs := b.signals.SeenSessionIDs(ctx)
 	liveIDsUnknown := !b.signals.LiveIDsKnown()
 	resumeIDs := b.signals.ResumeSessionIDs(ctx)
 
@@ -364,6 +367,7 @@ func (b *board) refreshTaskRows(
 				LiveWindow:         session.DefaultLiveWindow,
 				ResumeSessionIDs:   resumeIDs,
 				RegistrySessionIDs: registryIDs,
+				SeenSessionIDs:     seenIDs,
 				LiveIDsUnknown:     liveIDsUnknown,
 				TranscriptMtime:    b.transcriptProbe(),
 			},

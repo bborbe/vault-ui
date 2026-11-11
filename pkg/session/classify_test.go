@@ -86,6 +86,104 @@ var _ = Describe("ClassifySessionState", func() {
 			},
 			session.SessionStateQuiet,
 		),
+		Entry("store-seen-with-fresh-transcript-is-quiet",
+			func() session.ClassifyParams {
+				// The killed session: the store has answered about it and no
+				// longer reports it live, so the transcript written at the kill
+				// instant must not hold the card live.
+				writeTranscript(projectDir, sessionID, 0)
+				return session.ClassifyParams{
+					SessionID:      sessionID,
+					ProjectDir:     projectDir,
+					ProjectsRoot:   projects,
+					Now:            nowUTC(),
+					LiveWindow:     session.DefaultLiveWindow,
+					SeenSessionIDs: []string{sessionID},
+				}
+			},
+			session.SessionStateQuiet,
+		),
+		Entry("never-seen-with-fresh-transcript-is-live",
+			func() session.ClassifyParams {
+				// Recency remains the only signal for a session the store has
+				// never answered about.
+				writeTranscript(projectDir, sessionID, 0)
+				return session.ClassifyParams{
+					SessionID:      sessionID,
+					ProjectDir:     projectDir,
+					ProjectsRoot:   projects,
+					Now:            nowUTC(),
+					LiveWindow:     session.DefaultLiveWindow,
+					SeenSessionIDs: []string{"some-other-session"},
+				}
+			},
+			session.SessionStateLive,
+		),
+		Entry("unknown-store-with-fresh-transcript-is-live",
+			func() session.ClassifyParams {
+				// An unreachable store is "cannot tell", not "dead".
+				writeTranscript(projectDir, sessionID, 0)
+				return session.ClassifyParams{
+					SessionID:      sessionID,
+					ProjectDir:     projectDir,
+					ProjectsRoot:   projects,
+					Now:            nowUTC(),
+					LiveWindow:     session.DefaultLiveWindow,
+					LiveIDsUnknown: true,
+				}
+			},
+			session.SessionStateLive,
+		),
+		Entry("unknown-store-with-retained-seen-id-and-stale-transcript-is-indeterminate",
+			func() session.ClassifyParams {
+				// A store outage must not turn a retained seen id into quiet: the
+				// LiveIDsUnknown branch still answers "cannot tell".
+				writeTranscript(projectDir, sessionID, 3*time.Hour)
+				return session.ClassifyParams{
+					SessionID:      sessionID,
+					ProjectDir:     projectDir,
+					ProjectsRoot:   projects,
+					Now:            nowUTC(),
+					LiveWindow:     session.DefaultLiveWindow,
+					SeenSessionIDs: []string{sessionID},
+					LiveIDsUnknown: true,
+				}
+			},
+			session.SessionStateIndeterminate,
+		),
+		Entry("store-seen-with-stale-transcript-and-resume-process-is-live",
+			func() session.ClassifyParams {
+				// The ps cross-check stays unconditional: the guard must not break
+				// an open-but-idle session.
+				writeTranscript(projectDir, sessionID, 3*time.Hour)
+				return session.ClassifyParams{
+					SessionID:        sessionID,
+					ProjectDir:       projectDir,
+					ProjectsRoot:     projects,
+					Now:              nowUTC(),
+					LiveWindow:       session.DefaultLiveWindow,
+					SeenSessionIDs:   []string{sessionID},
+					ResumeSessionIDs: []string{sessionID},
+				}
+			},
+			session.SessionStateLive,
+		),
+		Entry("store-seen-with-no-transcript-is-indeterminate",
+			func() session.ClassifyParams {
+				// A pod or cloud session that posted a heartbeat has no transcript
+				// on this host: it must still read indeterminate, not quiet.
+				Expect(os.MkdirAll(projects, 0o750)).To(Succeed())
+				return session.ClassifyParams{
+					SessionID:      sessionID,
+					ProjectDir:     filepath.Join(projects, "-vault"),
+					ProjectsRoot:   projects,
+					Now:            nowUTC(),
+					LiveWindow:     session.DefaultLiveWindow,
+					SeenSessionIDs: []string{sessionID},
+				}
+			},
+			session.SessionStateIndeterminate,
+		),
 	)
 
 	It("classifies a transcript written within the window as live", func() {

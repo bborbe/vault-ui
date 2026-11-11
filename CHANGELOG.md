@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Stop a killed session rendering `● Live` for the transcript-recency window — the attention store's read now carries every session id it has seen alongside the live set, and the classifier skips only the recency half of the transcript signal for a session the store has reported not live, so the card falls through to the `ps` cross-check and reads `quiet` instead of staying live for five more minutes. A never-seen session keeps recency, the missing-transcript `indeterminate` return and the `ps` cross-check stay unconditional, and an unreachable store still reads "cannot tell" rather than "dead".
+
 ## v0.106.0
 
 - feat: Render the six data slots on the topic card — `CARD_CONFIG.topic` enables `hold`, `assignee`, `priority`, `activityAge`, `blocked` and `jira` while keeping `noteLink`, `flag`, `live` and `detail`, `mapTopicCard` reads each from the topic payload instead of returning a constant (`hold` from `status === 'hold'`, the Jira badge through the same `extractJiraIssue` helper a task card uses), the "+ Assign to me" control is emitted only in the empty-assignee branch and only when `assignCall` is non-null so an unassigned topic shows none, `navigateToBlocker` resolves a topic blocker against the `topicId` dataset, and `pkg/board/jsasset` gains structural tests over the embedded asset

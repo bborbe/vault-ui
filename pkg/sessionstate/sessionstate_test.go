@@ -40,6 +40,11 @@ func liveSession(id, location string) heartbeat.Session {
 	return heartbeat.Session{ID: id, Location: location}
 }
 
+// list builds a store read carrying the given live sessions and no seen ids.
+func list(sessions ...heartbeat.Session) heartbeat.Listing {
+	return heartbeat.Listing{Live: sessions}
+}
+
 // startWatcher runs the watcher in the background and returns its result
 // channel plus a cancel that the caller must register as cleanup.
 func startWatcher(
@@ -64,6 +69,7 @@ type sequenceRead struct {
 
 type readResult struct {
 	sessions []heartbeat.Session
+	seen     []string
 	known    bool
 }
 
@@ -72,7 +78,7 @@ func newSequenceRead(results ...readResult) *sequenceRead {
 }
 
 // Get returns the next scripted result, repeating the last one once exhausted.
-func (r *sequenceRead) Get(_ context.Context) ([]heartbeat.Session, bool) {
+func (r *sequenceRead) Get(_ context.Context) (heartbeat.Listing, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	result := r.results[len(r.results)-1]
@@ -80,7 +86,7 @@ func (r *sequenceRead) Get(_ context.Context) ([]heartbeat.Session, bool) {
 		result = r.results[r.calls]
 	}
 	r.calls++
-	return result.sessions, result.known
+	return heartbeat.Listing{Live: result.sessions, SeenIDs: result.seen}, result.known
 }
 
 func (r *sequenceRead) callCount() int {
@@ -92,26 +98,26 @@ func (r *sequenceRead) callCount() int {
 var _ = Describe("State", func() {
 	It("reports a change on a different set and no change on a reordered one", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("b", "pod"),
-		})).To(BeTrue())
-		Expect(state.Replace([]heartbeat.Session{
+		))).To(BeTrue())
+		Expect(state.Replace(list(
 			liveSession("b", "pod"), liveSession("a", "local"),
-		})).To(BeFalse())
-		Expect(state.Replace([]heartbeat.Session{
+		))).To(BeFalse())
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("b", "pod"), liveSession("c", "local"),
-		})).To(BeTrue())
-		Expect(state.Replace([]heartbeat.Session{
+		))).To(BeTrue())
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("b", "pod"),
-		})).To(BeTrue())
+		))).To(BeTrue())
 	})
 
 	It("reports a change when only a location moved", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).To(BeTrue())
+		Expect(state.Replace(list(liveSession("a", "local")))).To(BeTrue())
 		// The id set is unchanged, but the location moved — that is what pushes a
 		// board refresh frame.
-		Expect(state.Replace([]heartbeat.Session{liveSession("a", "pod")})).To(BeTrue())
+		Expect(state.Replace(list(liveSession("a", "pod")))).To(BeTrue())
 		Expect(state.Sessions(context.Background())).To(Equal(
 			[]heartbeat.Session{liveSession("a", "pod")},
 		))
@@ -119,33 +125,33 @@ var _ = Describe("State", func() {
 
 	It("reports no change when the same id/location set arrives reordered", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("b", "pod"),
-		})).To(BeTrue())
-		Expect(state.Replace([]heartbeat.Session{
+		))).To(BeTrue())
+		Expect(state.Replace(list(
 			liveSession("b", "pod"), liveSession("a", "local"),
-		})).To(BeFalse())
+		))).To(BeFalse())
 	})
 
 	It("drops duplicates and empty ids", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("a", "local"), liveSession("", "pod"),
 			liveSession("b", "pod"), liveSession("", ""),
-		})).To(BeTrue())
+		))).To(BeTrue())
 		Expect(state.Sessions(context.Background())).To(ConsistOf(
 			liveSession("a", "local"), liveSession("b", "pod"),
 		))
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("b", "pod"), liveSession("a", "local"),
-		})).To(BeFalse())
+		))).To(BeFalse())
 	})
 
 	It("keeps the last row for an id when the same id is reported twice", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("a", "pod"),
-		})).To(BeTrue())
+		))).To(BeTrue())
 		Expect(state.Sessions(context.Background())).To(Equal(
 			[]heartbeat.Session{liveSession("a", "pod")},
 		))
@@ -160,9 +166,9 @@ var _ = Describe("State", func() {
 
 	It("returns each stored location paired with its own id", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("b", "pod"),
-		})).To(BeTrue())
+		))).To(BeTrue())
 
 		sessions := state.Sessions(context.Background())
 		byID := map[string]string{}
@@ -174,7 +180,7 @@ var _ = Describe("State", func() {
 
 	It("returns a copy that does not alias the stored set", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).To(BeTrue())
+		Expect(state.Replace(list(liveSession("a", "local")))).To(BeTrue())
 
 		sessions := state.Sessions(context.Background())
 		sessions[0] = liveSession("mutated", "pod")
@@ -195,9 +201,9 @@ var _ = Describe("State", func() {
 
 	It("keeps the last known sessions and their locations when it is marked unknown", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{
+		Expect(state.Replace(list(
 			liveSession("a", "local"), liveSession("b", "pod"),
-		})).To(BeTrue())
+		))).To(BeTrue())
 		state.MarkUnknown()
 
 		Expect(state.Sessions(context.Background())).To(ConsistOf(
@@ -206,12 +212,61 @@ var _ = Describe("State", func() {
 		Expect(state.LiveIDsKnown()).To(BeFalse())
 	})
 
-	It("becomes authoritative again on the next successful replace", func() {
+	It("reports a change when only the seen set moves", func() {
 		state := sessionstate.NewState()
-		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).To(BeTrue())
+		Expect(state.Replace(heartbeat.Listing{
+			Live:    []heartbeat.Session{liveSession("a", "local")},
+			SeenIDs: []string{"a"},
+		})).To(BeTrue())
+
+		// The live set is unchanged, but the store now also knows a dead session:
+		// that is a real change and must push a refresh.
+		Expect(state.Replace(heartbeat.Listing{
+			Live:    []heartbeat.Session{liveSession("a", "local")},
+			SeenIDs: []string{"a", "dead"},
+		})).To(BeTrue())
+		Expect(state.SeenIDs(context.Background())).To(ConsistOf("a", "dead"))
+	})
+
+	It("reports no change when the same live and seen sets arrive reordered", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace(heartbeat.Listing{
+			Live:    []heartbeat.Session{liveSession("a", "local"), liveSession("b", "pod")},
+			SeenIDs: []string{"a", "b", "dead"},
+		})).To(BeTrue())
+
+		Expect(state.Replace(heartbeat.Listing{
+			Live:    []heartbeat.Session{liveSession("b", "pod"), liveSession("a", "local")},
+			SeenIDs: []string{"dead", "b", "a"},
+		})).To(BeFalse())
+	})
+
+	It("keeps the last seen ids when it is marked unknown", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace(heartbeat.Listing{
+			Live:    []heartbeat.Session{liveSession("a", "local")},
+			SeenIDs: []string{"a", "dead"},
+		})).To(BeTrue())
 		state.MarkUnknown()
 
-		Expect(state.Replace([]heartbeat.Session{liveSession("a", "local")})).
+		// "Cannot tell" does not erase what the store previously knew.
+		Expect(state.SeenIDs(context.Background())).To(ConsistOf("a", "dead"))
+		Expect(state.LiveIDsKnown()).To(BeFalse())
+	})
+
+	It("starts with an empty, non-nil seen set", func() {
+		state := sessionstate.NewState()
+		seen := state.SeenIDs(context.Background())
+		Expect(seen).NotTo(BeNil())
+		Expect(seen).To(BeEmpty())
+	})
+
+	It("becomes authoritative again on the next successful replace", func() {
+		state := sessionstate.NewState()
+		Expect(state.Replace(list(liveSession("a", "local")))).To(BeTrue())
+		state.MarkUnknown()
+
+		Expect(state.Replace(list(liveSession("a", "local")))).
 			To(BeTrue(), "known flag moved back")
 		Expect(state.LiveIDsKnown()).To(BeTrue())
 	})

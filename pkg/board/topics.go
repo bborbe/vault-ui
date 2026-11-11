@@ -45,6 +45,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 	selected := b.selectVaults(all, query.Vaults)
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
+	seenIDs := b.signals.SeenSessionIDs(ctx)
 	liveIDsUnknown := !b.signals.LiveIDsKnown()
 	resumeIDs := b.signals.ResumeSessionIDs(ctx)
 
@@ -69,6 +70,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 			LiveWindow:         session.DefaultLiveWindow,
 			ResumeSessionIDs:   resumeIDs,
 			RegistrySessionIDs: registryIDs,
+			SeenSessionIDs:     seenIDs,
 			LiveIDsUnknown:     liveIDsUnknown,
 			TranscriptMtime:    b.transcriptProbe(),
 		}

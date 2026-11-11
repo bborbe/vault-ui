@@ -193,8 +193,11 @@ func CreateSessionState() sessionstate.State {
 // reads session-derived fields from. Its Run must run in main's run group.
 func CreateSessionSnapshot(state sessionstate.State) sessionsnapshot.Snapshot {
 	return sessionsnapshot.NewSnapshot(sessionsnapshot.Params{
-		Registry: func(ctx context.Context) ([]heartbeat.Session, bool) {
-			return state.Sessions(ctx), state.LiveIDsKnown()
+		Registry: func(ctx context.Context) (heartbeat.Listing, bool) {
+			return heartbeat.Listing{
+				Live:    state.Sessions(ctx),
+				SeenIDs: state.SeenIDs(ctx),
+			}, state.LiveIDsKnown()
 		},
 		Scanner: session.NewPSScanner("-axww", "-o", "args="),
 		// Probe is deliberately left nil. A nil probe selects the snapshot's own

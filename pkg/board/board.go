@@ -66,11 +66,17 @@ type OpsProvider interface {
 	TopicShow(vault Vault) ops.EntityShowOperation
 }
 
-// SessionSignals supplies the two per-request liveness signals that are not
-// derivable from the vault: the live session ids from the attention store and
-// the live `--resume`/`--session-id` process ids.
+// SessionSignals supplies the per-request liveness signals that are not
+// derivable from the vault: the live session ids from the attention store, the
+// ids that store has seen (live or not), and the live `--resume`/`--session-id`
+// process ids.
 type SessionSignals interface {
 	RegistrySessionIDs(ctx context.Context) []string
+	// SeenSessionIDs returns every id the last store read carried, live or not —
+	// the store's answer about a session it has seen, not the live set. An id
+	// here that is absent from RegistrySessionIDs is one the store reports not
+	// live.
+	SeenSessionIDs(ctx context.Context) []string
 	// RegistryLocation returns the location the live set carries for sessionID,
 	// or "" when the session is not in it or its location is empty.
 	RegistryLocation(ctx context.Context, sessionID string) string

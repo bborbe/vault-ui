@@ -126,7 +126,9 @@ func (c *seamCounter) get() int {
 
 type fakeSignals struct {
 	registry []heartbeat.Session
-	resume   []string
+	// seen is the store's seen ids; the zero value leaves recency unguarded.
+	seen   []string
+	resume []string
 	// unknown is "cannot tell": the live-session source could not be reached. It
 	// is the negative so the zero value keeps the pre-existing, known behaviour.
 	unknown bool
@@ -143,6 +145,10 @@ func (f fakeSignals) RegistrySessionIDs(_ context.Context) []string {
 		ids = append(ids, session.ID)
 	}
 	return ids
+}
+
+func (f fakeSignals) SeenSessionIDs(_ context.Context) []string {
+	return f.seen
 }
 
 func (f fakeSignals) RegistryLocation(_ context.Context, sessionID string) string {
@@ -606,6 +612,23 @@ var _ = Describe("ListTasks", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses[0].SessionState).NotTo(BeNil())
 		Expect(*responses[0].SessionState).To(Equal("live"))
+	})
+
+	It("classifies a store-seen session with a fresh transcript as quiet", func() {
+		h := newHarness(item("Killed", func(i *ops.TaskListItem) {
+			i.ClaudeSessionID = "22222222-2222-2222-2222-222222222222"
+		}))
+		// A fresh transcript would read live on recency alone; the store has seen
+		// this id and reports it not live, which is authoritative.
+		h.sessions = &fakeProbe{mtime: libtime.DateTime(baseTime).UTC().Ptr()}
+		h.signals.seen = []string{"22222222-2222-2222-2222-222222222222"}
+		h.build()
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].SessionState).NotTo(BeNil())
+		Expect(*responses[0].SessionState).To(Equal("quiet"))
 	})
 
 	It("classifies from the injected session probe, not the filesystem", func() {
