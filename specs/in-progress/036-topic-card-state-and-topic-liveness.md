@@ -162,9 +162,9 @@ None. The change reads operator-written frontmatter, adds no file, no auth path 
 
 ## Non-goals
 
-- Do not add `assignee` or `priority` to topic pages, or render them on the topic card — that is a schema decision for the operator.
+- ~~Do not add `assignee` or `priority` to topic pages, or render them on the topic card — that is a schema decision for the operator.~~ **Superseded by `specs/in-progress/038-topic-card-data-parity.md`** (approved 2026-11-09): the operator chose the data-parity route, so `assignee`, `priority`, `activity_date`, `jira`, `blockers` are now served on `GET /api/topics` and rendered on the topic card.
 - Do not converge the three card builders into one renderer. `createTaskCard`, `createGoalCard` and `createTopicCard` are three renderers; `cardShellHtml` is shared by the task card alone, and the goal card re-implements the same markup inline. Unifying them is a separate refactor.
-- Do not add a take-over, start, resume or jump control to a topic card.
+- Do not add a take-over, start, resume or jump control to a topic card. **Still in force** — the `session` and `menu` slots remain deferred to their own tasks; spec 038 ships only the six data slots and keeps both off.
 - Do not backfill `manager_session_id` on topic pages from code.
 - Do not change the attention store, its heartbeat contract, or the session registry.
 - Do not add `session_state` to the parity normalize list to paper over a divergence.
