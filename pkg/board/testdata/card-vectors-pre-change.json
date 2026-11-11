@@ -1,0 +1,70 @@
+{
+  "task": {
+    "enabled_slots": [
+      "activityAge",
+      "assignee",
+      "blocked",
+      "flag",
+      "hold",
+      "jira",
+      "menu",
+      "noteLink",
+      "priority",
+      "session"
+    ],
+    "mapper": {
+      "activityDate": "task.activity_date || null",
+      "assignee": "task.assignee || ''",
+      "blockers": "task.blockers || []",
+      "flag": "task.flag === true",
+      "hold": "task.status === 'hold'",
+      "id": "task.id",
+      "jiraKey": "issueKey || ''",
+      "jiraUrl": "issueUrl || ''",
+      "live": "false",
+      "obsidianUrl": "task.obsidian_url",
+      "phase": "task.phase",
+      "priority": "task.priority",
+      "recentlyCompleted": "task.recently_completed",
+      "status": "task.status",
+      "title": "title",
+      "upcoming": "task.upcoming",
+      "urgencyTier": "getUrgencyTier(task)",
+      "vault": "task.vault"
+    }
+  },
+  "goal": {
+    "enabled_slots": [
+      "activityAge",
+      "assignee",
+      "blocked",
+      "flag",
+      "hold",
+      "jira",
+      "menu",
+      "noteLink",
+      "priority",
+      "session"
+    ],
+    "mapper": {
+      "activityDate": "goal.activity_date || null",
+      "assignee": "goal.assignee || ''",
+      "blockers": "goal.blockers || []",
+      "flag": "goal.flag === true",
+      "hold": "goal.status === 'hold'",
+      "id": "goal.id",
+      "jiraKey": "issueKey || ''",
+      "jiraUrl": "issueUrl || ''",
+      "live": "false",
+      "obsidianUrl": "goal.obsidian_url",
+      "phase": "goal.phase",
+      "priority": "goal.priority",
+      "recentlyCompleted": "false",
+      "status": "goal.status",
+      "title": "title",
+      "upcoming": "goal.upcoming",
+      "urgencyTier": "null",
+      "vault": "goal.vault"
+    }
+  }
+}

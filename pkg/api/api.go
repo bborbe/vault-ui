@@ -131,6 +131,29 @@ type TopicResponse struct {
 	Flag        bool   `json:"flag"`
 	Vault       string `json:"vault"`
 	ObsidianURL string `json:"obsidian_url"`
+	// Assignee is the topic page's own `assignee:` frontmatter value, on the
+	// same terms as TaskResponse.Assignee: always emitted, null when the page
+	// carries none.
+	Assignee *string `json:"assignee"`
+	// Priority is the topic page's `priority:` frontmatter value, on the same
+	// terms as TaskResponse.Priority: nil for the zero value, the number
+	// otherwise, so the key is always emitted and null when unset.
+	Priority any `json:"priority"`
+	// ActivityDate is the newer of the topic page's modified date and its
+	// session transcript's mtime, on the same terms as
+	// TaskResponse.ActivityDate: always emitted, null when neither signal is
+	// present.
+	ActivityDate *string `json:"activity_date"`
+	// Jira is the topic page's own `jira:` frontmatter value, carried verbatim
+	// and null when the page carries none, on the same terms as
+	// TaskResponse.Jira.
+	Jira *string `json:"jira"`
+	// Blockers is the topic's blocked-by entries that are not completed yet, in
+	// page order. It is always non-nil so an unblocked topic serialises as []
+	// rather than null.
+	Blockers []string `json:"blockers"`
+	// Blocked is true only when Blockers is non-empty.
+	Blocked bool `json:"blocked"`
 }
 
 // TopicDetailResponse is the wire shape of a single topic and the work it

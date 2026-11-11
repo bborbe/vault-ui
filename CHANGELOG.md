@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Serve the six data fields the topic card needs on `GET /api/topics` — `assignee`, `priority`, `activity_date`, `jira`, `blockers` and `blocked` are read from each topic page's own frontmatter and session exactly as a task's are (blockers filtered through the status cache, the activity date from the newer of the page mtime and its transcript), the existing eight keys keep their names and meanings, and an unset value stays `null` rather than a fabricated default; `pkg/board/jsasset` locates named constructs in the embedded `app.js` by parsing structure rather than grepping, and `pkg/board/testdata/card-vectors-pre-change.json` captures the pre-change task and goal card vectors as the non-regression baseline
+
 ## v0.105.0
 
 - chore: remove the retired Python backend — the Go binary is the only implementation now, so `src/vault_ui/*.py`, `tests/`, `pyproject.toml`, `uv.lock` and the Go↔Python parity harness are deleted while `src/vault_ui/static/` and its `static_embed.go` stay (the binary embeds them); `make` becomes Go-only (build/format/vet/test/precommit/run), CI runs gofmt + `go vet` + `go test -race` instead of pytest/ruff/mypy, the wheel-release workflow is dropped, and the README plus the launchd, cutover, frontend-render and optimistic-write docs describe the binary instead of `uv tool install`
