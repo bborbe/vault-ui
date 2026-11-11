@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Render the six data slots on the topic card — `CARD_CONFIG.topic` enables `hold`, `assignee`, `priority`, `activityAge`, `blocked` and `jira` while keeping `noteLink`, `flag`, `live` and `detail`, `mapTopicCard` reads each from the topic payload instead of returning a constant (`hold` from `status === 'hold'`, the Jira badge through the same `extractJiraIssue` helper a task card uses), the "+ Assign to me" control is emitted only in the empty-assignee branch and only when `assignCall` is non-null so an unassigned topic shows none, `navigateToBlocker` resolves a topic blocker against the `topicId` dataset, and `pkg/board/jsasset` gains structural tests over the embedded asset
+- test: Lock the task and goal card definitions to `pkg/board/testdata/card-vectors-pre-change.json` — `TestTaskAndGoalCardDefinitionsMatchBaseline` asserts each kind's enabled slot set and each mapper's full key-to-source-expression map (naming the entry, mapper and key on divergence), excluding the `topic` entry and `mapTopicCard` because the topic-card change alters both by design
+- feat: Serve the six data fields the topic card needs on `GET /api/topics` — `assignee`, `priority`, `activity_date`, `jira`, `blockers` and `blocked` are read from each topic page's own frontmatter and session exactly as a task's are (blockers filtered through the status cache, the activity date from the newer of the page mtime and its transcript), the existing eight keys keep their names and meanings, and an unset value stays `null` rather than a fabricated default; `pkg/board/jsasset` locates named constructs in the embedded `app.js` by parsing structure rather than grepping, and `pkg/board/testdata/card-vectors-pre-change.json` captures the pre-change task and goal card vectors as the non-regression baseline
+
 ## v0.105.0
 
 - chore: remove the retired Python backend — the Go binary is the only implementation now, so `src/vault_ui/*.py`, `tests/`, `pyproject.toml`, `uv.lock` and the Go↔Python parity harness are deleted while `src/vault_ui/static/` and its `static_embed.go` stay (the binary embeds them); `make` becomes Go-only (build/format/vet/test/precommit/run), CI runs gofmt + `go vet` + `go test -race` instead of pytest/ruff/mypy, the wheel-release workflow is dropped, and the README plus the launchd, cutover, frontend-render and optimistic-write docs describe the binary instead of `uv tool install`

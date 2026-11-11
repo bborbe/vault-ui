@@ -1253,15 +1253,137 @@ var _ = Describe("ListTopics", func() {
 		}
 		sort.Strings(fields)
 		Expect(fields).To(Equal([]string{
+			"activity_date",
+			"assignee",
+			"blocked",
+			"blockers",
 			"flag",
 			"id",
+			"jira",
 			"obsidian_url",
 			"phase",
+			"priority",
 			"session_state",
 			"status",
 			"title",
 			"vault",
 		}))
+	})
+
+	It("round-trips assignee, priority, jira and the open blockers", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:      "TopicOne",
+			Status:    "in_progress",
+			Assignee:  "alice",
+			Priority:  2,
+			BlockedBy: []string{"[[OpenTask]]"},
+		}}
+		h.pageIndex.ListPagesReturns([]*domain.Page{
+			pageWithFrontmatter("TopicOne", map[string]any{"jira": "ABC-1"}, ""),
+		}, nil)
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+
+		response := responses[0]
+		Expect(response.Assignee).NotTo(BeNil())
+		Expect(*response.Assignee).To(Equal("alice"))
+		Expect(response.Priority).To(Equal(2))
+		Expect(response.Jira).NotTo(BeNil())
+		Expect(*response.Jira).To(Equal("ABC-1"))
+		Expect(response.Blockers).To(Equal([]string{"OpenTask"}))
+		Expect(response.Blocked).To(BeTrue())
+	})
+
+	It("excludes a completed blocker and reports only the open ones", func() {
+		h := newHarness()
+		h.cache.statuses["Done"] = "completed"
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:      "TopicOne",
+			Status:    "in_progress",
+			BlockedBy: []string{"[[First]]", "[[Second]]", "[[Done]]"},
+		}}
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Blockers).To(Equal([]string{"First", "Second"}))
+		Expect(responses[0].Blocked).To(BeTrue())
+	})
+
+	It("serves an empty blockers list when every blocker is completed", func() {
+		h := newHarness()
+		h.cache.statuses["Done"] = "completed"
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:      "TopicOne",
+			Status:    "in_progress",
+			BlockedBy: []string{"[[Done]]"},
+		}}
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Blockers).NotTo(BeNil())
+		Expect(responses[0].Blockers).To(BeEmpty())
+		Expect(responses[0].Blocked).To(BeFalse())
+	})
+
+	It("serves null for an unset assignee and priority with the keys present", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:   "TopicOne",
+			Status: "in_progress",
+		}}
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Assignee).To(BeNil())
+		Expect(responses[0].Priority).To(BeNil())
+
+		encoded, err := json.Marshal(responses)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"assignee":null`))
+		Expect(string(encoded)).To(ContainSubstring(`"priority":null`))
+	})
+
+	It("derives activity_date from the transcript when it is newer than the page", func() {
+		const topicSessionID = "77777777-7777-7777-7777-777777777777"
+		fresh := libtime.DateTime(baseTime.Add(time.Hour))
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:            "TopicOne",
+			Status:          "in_progress",
+			ClaudeSessionID: topicSessionID,
+			ModifiedDate:    "2026-10-04T11:00:00Z",
+		}}
+		h.sessions = &fakeProbe{
+			mtimes: map[string]*libtime.DateTime{topicSessionID: &fresh},
+		}
+		h.build()
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].ActivityDate).NotTo(BeNil())
+		Expect(*responses[0].ActivityDate).To(Equal("2026-10-04T13:00:00Z"))
+	})
+
+	It("derives activity_date from the page mtime when it has no session", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:         "TopicOne",
+			Status:       "in_progress",
+			ModifiedDate: "2026-10-04T11:00:00Z",
+		}}
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].ActivityDate).NotTo(BeNil())
+		Expect(*responses[0].ActivityDate).To(Equal("2026-10-04T11:00:00Z"))
 	})
 
 	It("contributes nothing for a vault without a topics folder", func() {

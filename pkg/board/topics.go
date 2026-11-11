@@ -13,7 +13,9 @@ import (
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/storage"
+	"github.com/golang/glog"
 
+	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
 	"github.com/bborbe/vault-ui/pkg/session"
@@ -71,7 +73,12 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 			TranscriptMtime:    b.transcriptProbe(),
 		}
 
+		// One ListPages for the whole vault, exactly as the task path reads its
+		// page-derived fields: the topic's `jira:` value is not on the list item.
+		pageJiraByTopic := b.topicPageFieldsByTopic(ctx, vault)
+
 		for _, item := range items {
+			blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
 			responses = append(responses, api.TopicResponse{
 				ID:           item.Name,
 				Title:        item.Name,
@@ -81,6 +88,19 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 				Flag:         item.Flag,
 				Vault:        vault.Name,
 				ObsidianURL:  topicURL(vault, item.Name),
+				Assignee:     strPtr(item.Assignee),
+				Priority:     priorityValue(item.Priority),
+				ActivityDate: dateTimeString(activity.ComputeActivityDateWith(
+					ctx,
+					b.transcriptProbe(),
+					parseDateTime(item.ModifiedDate),
+					item.ClaudeSessionID,
+					projectDir,
+					projectsRoot,
+				)),
+				Jira:     pageJiraByTopic[item.Name],
+				Blockers: blockers,
+				Blocked:  len(blockers) > 0,
 			})
 		}
 	}
@@ -95,6 +115,40 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		responses = live
 	}
 	return responses, nil
+}
+
+// topicPageFieldsByTopic returns each topic page's `jira:` frontmatter value,
+// keyed by the page's file name. It is one ListPages per vault, the same
+// snapshot the topic list already reads, so it adds no walk of its own.
+//
+// It is deliberately separate from taskPageFieldsByTask: that helper lists the
+// tasks folder and parses Open Questions, neither of which applies to a topic.
+// A failure is not fatal to a board read: it is logged and every topic carries
+// a nil Jira rather than the whole topic list failing.
+func (b *board) topicPageFieldsByTopic(
+	ctx context.Context, vault Vault,
+) map[string]*string {
+	byName := map[string]*string{}
+	if b.pageIndex == nil {
+		// A board built without a page index carries no page-derived fields, on
+		// the same terms as the task helper: degrade, never fail the read.
+		return byName
+	}
+	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.TopicsFolder)
+	if err != nil {
+		glog.Warningf("list pages for topic fields in vault %s: %v", vault.Name, err)
+		return byName
+	}
+	for _, page := range pages {
+		select {
+		case <-ctx.Done():
+			// The caller is gone: stop rather than walk the remaining pages.
+			return byName
+		default:
+		}
+		byName[page.FileMetadata.Name] = pageJira(page)
+	}
+	return byName
 }
 
 // ShowTopic reproduces GET /api/topics/{topic_id}.

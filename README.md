@@ -171,7 +171,13 @@ same four outcomes and signal order as the task paragraph above.
     "session_state": null,
     "flag": false,
     "vault": "personal",
-    "obsidian_url": "obsidian://open?vault=personal&file=23%20Topics/Manager%20Layer.md"
+    "obsidian_url": "obsidian://open?vault=personal&file=23%20Topics/Manager%20Layer.md",
+    "assignee": null,
+    "priority": null,
+    "activity_date": null,
+    "jira": null,
+    "blockers": [],
+    "blocked": false
   }
 ]
 ```

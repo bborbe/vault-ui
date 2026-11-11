@@ -1682,12 +1682,12 @@ const CARD_CONFIG = {
         slots: {
             noteLink: true,
             flag: true,
-            hold: false,
-            assignee: false,
-            priority: false,
-            activityAge: false,
-            blocked: false,
-            jira: false,
+            hold: true,
+            assignee: true,
+            priority: true,
+            activityAge: true,
+            blocked: true,
+            jira: true,
             live: true,
             session: false,
             menu: false,
@@ -1760,9 +1760,12 @@ function mapGoalCard(goal) {
 }
 
 function mapTopicCard(topic) {
-    // A topic response carries exactly these eight wire keys. Everything else a
-    // task or goal card renders is absent by design, so it is returned empty —
-    // an absent field renders no badge, never the literal `undefined`.
+    // A topic response carries its own eight keys plus the six data fields a
+    // task and goal card render: assignee, priority, activity_date, jira,
+    // blockers and blocked. The jira badge reuses the task card's helper so the
+    // project-to-domain lookup and the key regex live in one place. An absent
+    // field renders no badge, never the literal `undefined`.
+    const { issueKey, issueUrl } = extractJiraIssue(topic.jira || '');
     return {
         id: topic.id,
         vault: topic.vault,
@@ -1772,16 +1775,16 @@ function mapTopicCard(topic) {
         phase: topic.phase,
         flag: topic.flag === true,
         live: topic.session_state === 'live',
-        hold: false,
+        hold: topic.status === 'hold',
         upcoming: false,
         recentlyCompleted: false,
         urgencyTier: null,
-        assignee: '',
-        priority: null,
-        activityDate: null,
-        blockers: [],
-        jiraKey: '',
-        jiraUrl: '',
+        assignee: topic.assignee || '',
+        priority: topic.priority,
+        activityDate: topic.activity_date || null,
+        blockers: topic.blockers || [],
+        jiraKey: issueKey || '',
+        jiraUrl: issueUrl || '',
     };
 }
 
@@ -1864,7 +1867,10 @@ function createCard(kind, item) {
             } else {
                 assigneeBlock = `<span class="assignee-badge"><span class="assignee-icon">👤</span><span>${escapeHtml(view.assignee)}</span></span>`;
             }
-        } else {
+        } else if (config.assignCall) {
+            // A kind with no assign function (the topic) carries no assign
+            // control. The guard stays on the empty branch: the non-empty
+            // branch is the assignee badge, which every kind keeps.
             assigneeBlock = `<a class="assign-to-me-link" onclick="${config.assignCall}('${escapeJsAttr(view.id)}', '${escapeJsAttr(view.vault)}')" title="Assign this ${kind} to me">+ Assign to me</a>`;
         }
     }
@@ -1937,7 +1943,9 @@ function navigateToBlocker(kind, name) {
     document.querySelectorAll('.task-card').forEach(card => {
         const matches = kind === 'goal'
             ? card.dataset.goalId === name
-            : card.dataset.taskId === name;
+            : kind === 'topic'
+                ? card.dataset.topicId === name
+                : card.dataset.taskId === name;
         if (matches && !target) target = card;
     });
     if (target) {
