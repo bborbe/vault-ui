@@ -44,15 +44,21 @@ type State interface {
 	// Sessions returns a copy of the current live sessions — ids and locations.
 	// The result is never nil and never aliases the internal state.
 	Sessions(ctx context.Context) []heartbeat.Session
+	// SeenIDs returns a copy of every session id the last store read carried,
+	// live or not. It is the store's answer about a session it has seen: an id
+	// here that is absent from Sessions is one the store reports not live. The
+	// result is never nil and never aliases the internal state. MarkUnknown keeps
+	// the last known ids, so "cannot tell" does not erase what the store knew.
+	SeenIDs(ctx context.Context) []string
 	// LiveIDsKnown reports whether those sessions are authoritative. It is false
 	// after a read that could not reach the store — "cannot tell", which a
 	// caller must not read as "nothing is live". It starts true (an empty set is
 	// the honest answer before the first read).
 	LiveIDsKnown() bool
-	// Replace atomically swaps the whole set, marks it authoritative and reports
-	// whether the stored state changed — an id, a location or the authoritative
-	// flag.
-	Replace(sessions []heartbeat.Session) bool
+	// Replace atomically swaps both halves of a store read, marks it
+	// authoritative and reports whether the stored state changed — an id, a
+	// location, a seen id or the authoritative flag.
+	Replace(listing heartbeat.Listing) bool
 	// MarkUnknown records that the live-session source could not be read. The
 	// last known sessions are kept and stop being authoritative. It reports
 	// whether the known flag changed.
@@ -61,12 +67,13 @@ type State interface {
 
 // NewState creates an empty, authoritative State.
 func NewState() State {
-	return &state{sessions: []heartbeat.Session{}, known: true}
+	return &state{sessions: []heartbeat.Session{}, seenIDs: []string{}, known: true}
 }
 
 type state struct {
 	mu       sync.RWMutex
 	sessions []heartbeat.Session
+	seenIDs  []string
 	known    bool
 }
 
@@ -78,6 +85,14 @@ func (s *state) Sessions(_ context.Context) []heartbeat.Session {
 	return append([]heartbeat.Session{}, s.sessions...)
 }
 
+// SeenIDs returns a copy of every id the last store read carried, live or not.
+// The result is never nil and never aliases the internal state.
+func (s *state) SeenIDs(_ context.Context) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string{}, s.seenIDs...)
+}
+
 // LiveIDsKnown reports whether the current set is authoritative.
 func (s *state) LiveIDsKnown() bool {
 	s.mu.RLock()
@@ -85,26 +100,33 @@ func (s *state) LiveIDsKnown() bool {
 	return s.known
 }
 
-// Replace swaps the whole set and reports whether the stored state changed — an
-// id, a location or the authoritative flag. The comparison is order-insensitive,
-// duplicates are dropped and empty ids are ignored. A location move is a real
-// change: it is what pushes a board refresh frame. A swap always marks the set
-// authoritative again: a successful read is what clears a previous MarkUnknown,
-// and that transition alone is worth a refresh frame.
-func (s *state) Replace(sessions []heartbeat.Session) bool {
-	normalized := normalize(sessions)
+// Replace swaps both halves of a store read and reports whether the stored
+// state changed — a live id, a location, a seen id or the authoritative flag.
+// Both comparisons are order-insensitive, duplicates are dropped and empty ids
+// are ignored, so a reordered payload is not a change. A set move in either half
+// is a real change: it is what pushes a board refresh frame — a session moving
+// from seen-but-not-live to live (or the reverse) must reach the board even when
+// the live set itself is unchanged. A swap always marks the state authoritative
+// again: a successful read is what clears a previous MarkUnknown, and that
+// transition alone is worth a refresh frame.
+func (s *state) Replace(listing heartbeat.Listing) bool {
+	normalized := normalize(listing.Live)
+	seen := normalizeSeenIDs(listing.SeenIDs)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	changed := !s.known || !slices.Equal(s.sessions, normalized)
+	changed := !s.known ||
+		!slices.Equal(s.sessions, normalized) ||
+		!slices.Equal(s.seenIDs, seen)
 	s.sessions = normalized
+	s.seenIDs = seen
 	s.known = true
 	return changed
 }
 
-// MarkUnknown keeps the last known sessions and clears the authoritative flag.
-// It reports whether the flag changed, so a caller pushes a refresh only on the
-// transition into the unknown state.
+// MarkUnknown keeps the last known listing — live sessions and seen ids alike —
+// and clears the authoritative flag. It reports whether the flag changed, so a
+// caller pushes a refresh only on the transition into the unknown state.
 func (s *state) MarkUnknown() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,13 +157,31 @@ func normalize(sessions []heartbeat.Session) []heartbeat.Session {
 	return normalized
 }
 
+// normalizeSeenIDs dedupes, drops empty ids and sorts a copy, so two spellings
+// of the same seen set compare equal and a reordered payload is not a change.
+func normalizeSeenIDs(ids []string) []string {
+	unique := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		unique[id] = struct{}{}
+	}
+	normalized := make([]string, 0, len(unique))
+	for id := range unique {
+		normalized = append(normalized, id)
+	}
+	slices.Sort(normalized)
+	return normalized
+}
+
 // WatchParams carries the watcher's injectable dependencies.
 type WatchParams struct {
 	State State
-	// Read returns the live sessions and whether the source answered. A false
-	// second result is "cannot tell" (an unreachable store), never "nothing is
-	// live".
-	Read func(ctx context.Context) ([]heartbeat.Session, bool)
+	// Read returns one store read — the live sessions and the ids it has seen —
+	// and whether the source answered. A false second result is "cannot tell" (an
+	// unreachable store), never "nothing is live".
+	Read func(ctx context.Context) (heartbeat.Listing, bool)
 	// Changed is called when the stored set — or its authoritative flag — moves.
 	Changed func()
 	// Interval is the period between two reads. A non-positive value falls back
@@ -198,26 +238,26 @@ func (w *watcher) Run(ctx context.Context) error {
 
 // seed performs the initial read without pushing a refresh frame.
 func (w *watcher) seed(ctx context.Context) {
-	sessions, known := w.params.Read(ctx)
+	listing, known := w.params.Read(ctx)
 	if !known {
 		w.params.State.MarkUnknown()
 		return
 	}
-	w.params.State.Replace(sessions)
+	w.params.State.Replace(listing)
 }
 
 // apply re-reads the source and swaps the state, pushing a refresh only when the
 // stored set or its authoritative flag actually moved, so a no-op poll does not
 // broadcast.
 func (w *watcher) apply(ctx context.Context) {
-	sessions, known := w.params.Read(ctx)
+	listing, known := w.params.Read(ctx)
 	if !known {
 		if w.params.State.MarkUnknown() {
 			w.params.Changed()
 		}
 		return
 	}
-	if w.params.State.Replace(sessions) {
+	if w.params.State.Replace(listing) {
 		w.params.Changed()
 	}
 }

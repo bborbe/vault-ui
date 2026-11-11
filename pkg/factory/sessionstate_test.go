@@ -43,14 +43,16 @@ func newFakeStore(ids ...string) *fakeStore {
 	return &fakeStore{ids: ids, known: true}
 }
 
-func (s *fakeStore) LiveSessions(_ context.Context) ([]heartbeat.Session, bool) {
+func (s *fakeStore) LiveSessions(_ context.Context) (heartbeat.Listing, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sessions := make([]heartbeat.Session, 0, len(s.ids))
+	seen := make([]string, 0, len(s.ids))
 	for _, id := range s.ids {
 		sessions = append(sessions, heartbeat.Session{ID: id})
+		seen = append(seen, id)
 	}
-	return sessions, s.known
+	return heartbeat.Listing{Live: sessions, SeenIDs: seen}, s.known
 }
 
 func (s *fakeStore) IsLive(_ context.Context, sessionID string) (bool, bool) {

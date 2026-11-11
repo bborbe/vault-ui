@@ -35,6 +35,13 @@ type ClassifyParams struct {
 	// zero value keeps the pre-existing, source-known behaviour.
 	LiveIDsUnknown bool
 
+	// SeenSessionIDs is every id the last store read carried, live or not — not
+	// the live set. An id here that is absent from RegistrySessionIDs is one the
+	// store has answered about and reports not live, so transcript recency must
+	// not override that answer. It is empty when the store has never answered
+	// about the session, and recency then remains the only signal.
+	SeenSessionIDs []string
+
 	// TranscriptMtime probes the session transcript; nil means
 	// activity.TranscriptMtime. The board passes its cached probe so a request
 	// never touches the filesystem.
@@ -48,6 +55,14 @@ type ClassifyParams struct {
 // then a live `--resume`/`--session-id` process cross-check. The task-file mtime
 // is never a liveness signal. A session id with a transcript that cannot be
 // found reads indeterminate, never quiet.
+//
+// The store is authoritative in both directions once it has answered about a
+// session it has seen: an id in SeenSessionIDs that is not in
+// RegistrySessionIDs is one the store reports not live, so transcript recency
+// must not override that answer — only the recency half of the transcript signal
+// is skipped for such a session, and it falls through to the `ps` cross-check.
+// Recency remains the only signal for a session the store has never seen, and an
+// unreachable store (LiveIDsUnknown) is "cannot tell", never "dead".
 func ClassifySessionState(ctx context.Context, params ClassifyParams) SessionState {
 	if params.SessionID == "" {
 		return SessionStateNone
@@ -55,6 +70,9 @@ func ClassifySessionState(ctx context.Context, params ClassifyParams) SessionSta
 	if slices.Contains(params.RegistrySessionIDs, params.SessionID) {
 		return SessionStateLive
 	}
+
+	storeSaysNotLive := !params.LiveIDsUnknown &&
+		slices.Contains(params.SeenSessionIDs, params.SessionID)
 
 	probe := params.TranscriptMtime
 	if probe == nil {
@@ -66,7 +84,7 @@ func ClassifySessionState(ctx context.Context, params ClassifyParams) SessionSta
 	}
 
 	now := params.Now.UTC()
-	if now.Sub(*mtime).Duration() <= params.LiveWindow {
+	if !storeSaysNotLive && now.Sub(*mtime).Duration() <= params.LiveWindow {
 		return SessionStateLive
 	}
 

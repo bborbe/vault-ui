@@ -204,6 +204,10 @@ func (benchSignals) RegistrySessionIDs(context.Context) []string {
 	return []string{benchLiveSessionID}
 }
 
+func (benchSignals) SeenSessionIDs(context.Context) []string {
+	return nil
+}
+
 func (benchSignals) RegistryLocation(_ context.Context, sessionID string) string {
 	if sessionID == benchLiveSessionID {
 		return benchRegistryLoc

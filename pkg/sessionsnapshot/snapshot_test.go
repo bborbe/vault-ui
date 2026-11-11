@@ -71,13 +71,14 @@ func (s *countingScanner) callCount() int {
 // unknown is "cannot tell": the store could not be reached.
 type countingRegistry struct {
 	sessions []heartbeat.Session
+	seen     []string
 	unknown  bool
 	calls    int
 }
 
-func (r *countingRegistry) Get(_ context.Context) ([]heartbeat.Session, bool) {
+func (r *countingRegistry) Get(_ context.Context) (heartbeat.Listing, bool) {
 	r.calls++
-	return r.sessions, !r.unknown
+	return heartbeat.Listing{Live: r.sessions, SeenIDs: r.seen}, !r.unknown
 }
 
 // countingProbe counts transcript probes and returns a settable mtime.
@@ -222,6 +223,27 @@ var _ = Describe("SessionSnapshot", func() {
 		// already-live session never loses its badge location.
 		Expect(snapshot.RegistryLocation(ctx, otherID)).To(Equal("local"))
 		Expect(snapshot.LiveIDsKnown()).To(BeFalse())
+	})
+
+	It("publishes the store's seen ids and keeps them across an unknown read", func() {
+		registry.sessions = []heartbeat.Session{{ID: otherID}}
+		registry.seen = []string{otherID, "dead-session"}
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+		Expect(snapshot.SeenSessionIDs(ctx)).To(ConsistOf(otherID, "dead-session"))
+
+		registry.unknown = true
+		registry.seen = nil
+		Expect(snapshot.RefreshOnce(ctx)).To(Succeed())
+
+		// "Cannot tell" does not erase what the store previously knew.
+		Expect(snapshot.SeenSessionIDs(ctx)).To(ConsistOf(otherID, "dead-session"))
+		Expect(snapshot.LiveIDsKnown()).To(BeFalse())
+	})
+
+	It("returns an empty, non-nil seen set before the first refresh", func() {
+		seen := snapshot.SeenSessionIDs(ctx)
+		Expect(seen).NotTo(BeNil())
+		Expect(seen).To(BeEmpty())
 	})
 
 	It("returns an empty location for a session the last refresh did not carry", func() {

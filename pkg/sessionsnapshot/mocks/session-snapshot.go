@@ -37,6 +37,15 @@ type Snapshot struct {
 	refreshOnceReturnsOnCall map[int]struct {
 		result1 error
 	}
+	SeenSessionIDsStub        func(context.Context) []string
+	seenSessionIDsMutex       sync.RWMutex
+	seenSessionIDsArgsForCall []SnapshotSeenSessionIDsArgs
+	seenSessionIDsReturns     struct {
+		result1 []string
+	}
+	seenSessionIDsReturnsOnCall map[int]struct {
+		result1 []string
+	}
 	RegistrySessionIDsStub        func(context.Context) []string
 	registrySessionIDsMutex       sync.RWMutex
 	registrySessionIDsArgsForCall []SnapshotRegistrySessionIDsArgs
@@ -89,6 +98,11 @@ type Snapshot struct {
 
 // SnapshotRefreshOnceArgs holds the arguments of one call to RefreshOnce.
 type SnapshotRefreshOnceArgs struct {
+	Arg1 context.Context
+}
+
+// SnapshotSeenSessionIDsArgs holds the arguments of one call to SeenSessionIDs.
+type SnapshotSeenSessionIDsArgs struct {
 	Arg1 context.Context
 }
 
@@ -289,6 +303,73 @@ func (fake *Snapshot) RefreshOnceReturnsOnCall(i int, result1 error) {
 	}
 	fake.refreshOnceReturnsOnCall[i] = struct {
 		result1 error
+	}{result1}
+}
+
+func (fake *Snapshot) SeenSessionIDs(arg1 context.Context) []string {
+	fake.seenSessionIDsMutex.Lock()
+	ret, specificReturn := fake.seenSessionIDsReturnsOnCall[len(fake.seenSessionIDsArgsForCall)]
+	fake.seenSessionIDsArgsForCall = append(fake.seenSessionIDsArgsForCall, SnapshotSeenSessionIDsArgs{arg1})
+	stub := fake.SeenSessionIDsStub
+	fakeReturns := fake.seenSessionIDsReturns
+	fake.recordInvocation("SeenSessionIDs", []interface{}{arg1})
+	fake.seenSessionIDsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Snapshot) SeenSessionIDsCallCount() int {
+	fake.seenSessionIDsMutex.RLock()
+	defer fake.seenSessionIDsMutex.RUnlock()
+	return len(fake.seenSessionIDsArgsForCall)
+}
+
+func (fake *Snapshot) SeenSessionIDsCalls(stub func(context.Context) []string) {
+	fake.seenSessionIDsMutex.Lock()
+	defer fake.seenSessionIDsMutex.Unlock()
+	fake.SeenSessionIDsStub = stub
+}
+
+func (fake *Snapshot) SeenSessionIDsArgsForCall(i int) context.Context {
+	fake.seenSessionIDsMutex.RLock()
+	defer fake.seenSessionIDsMutex.RUnlock()
+	argsForCall := fake.seenSessionIDsArgsForCall[i]
+	return argsForCall.Arg1
+}
+
+func (fake *Snapshot) SeenSessionIDsArgs() []SnapshotSeenSessionIDsArgs {
+	fake.seenSessionIDsMutex.RLock()
+	defer fake.seenSessionIDsMutex.RUnlock()
+	args := make([]SnapshotSeenSessionIDsArgs, len(fake.seenSessionIDsArgsForCall))
+	copy(args, fake.seenSessionIDsArgsForCall)
+	return args
+}
+
+func (fake *Snapshot) SeenSessionIDsReturns(result1 []string) {
+	fake.seenSessionIDsMutex.Lock()
+	defer fake.seenSessionIDsMutex.Unlock()
+	fake.SeenSessionIDsStub = nil
+	fake.seenSessionIDsReturns = struct {
+		result1 []string
+	}{result1}
+}
+
+func (fake *Snapshot) SeenSessionIDsReturnsOnCall(i int, result1 []string) {
+	fake.seenSessionIDsMutex.Lock()
+	defer fake.seenSessionIDsMutex.Unlock()
+	fake.SeenSessionIDsStub = nil
+	if fake.seenSessionIDsReturnsOnCall == nil {
+		fake.seenSessionIDsReturnsOnCall = make(map[int]struct {
+			result1 []string
+		})
+	}
+	fake.seenSessionIDsReturnsOnCall[i] = struct {
+		result1 []string
 	}{result1}
 }
 

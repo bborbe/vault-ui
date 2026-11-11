@@ -13,7 +13,7 @@ it survives the Python backend's removal.
 
 | Outcome | Meaning | Signal behind it |
 |---|---|---|
-| `live` | A Claude session for this card is running right now; the wall must not offer Resume. | The attention store lists the session id live, **or** the transcript was written within the five-minute window, **or** a live `--resume` / `--session-id` process pins the session id. |
+| `live` | A Claude session for this card is running right now; the wall must not offer Resume. | The attention store lists the session id live, **or** the transcript was written within the five-minute window and the store has not reported the session (it applies only to a session the store has never seen), **or** a live `--resume` / `--session-id` process pins the session id. |
 | `quiet` | The session ended and Resume is safe (vault-cli's per-session flock releases on process death). | A transcript exists and is older than the five-minute window, the store does not list the session, no live `--resume` / `--session-id` process matches, **and** the store answered. |
 | `indeterminate` | A session id is set but the session cannot be proven dead, so a Resume that cannot be honored must not be offered. | No transcript exists on this host (a manual terminal `/resume` in another cwd, a cloud/container session, or an entity-name session the resolver cannot match) — **or** the attention store could not be reached. |
 | none | The card records no `claude_session_id` — a human task or an unmigrated page, nothing to classify. | The recorded session id is empty — regardless of what the attention store holds. |
@@ -40,19 +40,30 @@ fires decides the outcome.
    read also carries each live row's `location` (e.g. `local`, `pod`), which the
    wall's live badge displays and which is **never** a classification signal —
    the four outcomes and the signal order above are unchanged.
-3. **Transcript recency within the five-minute window → live.** The transcript
-   (`<session_id>.jsonl`) is looked up in the card's project directory first,
-   then by scanning every project directory under `~/.claude/projects`. A
-   transcript written within the window counts as live. A transcript that cannot
-   be found makes the state `indeterminate` (never `quiet`).
+3. **Transcript recency within the five-minute window → live, for a session the
+   store has not reported.** The transcript (`<session_id>.jsonl`) is looked up
+   in the card's project directory first, then by scanning every project
+   directory under `~/.claude/projects`. Only the recency half of this signal —
+   the `live` return for a transcript written within the window — is skipped
+   when the store has reported the session (its id is in the store's seen set)
+   and is not listing it live: the store is authoritative in both directions
+   once it has answered about a session it has seen, so recency must not
+   override a "not live" answer. The transcript lookup itself and its
+   missing-transcript `indeterminate` return stay unconditional: a pod or cloud
+   session that posted a heartbeat but has no transcript on this host cannot be
+   honoured by a local `claude --resume`, so it reads `indeterminate`, never
+   `quiet`. A store-reported session with a stale transcript falls through to
+   the `ps` cross-check and then `quiet`. For a session the store has never
+   seen, recency remains the only signal and applies exactly as before.
 4. **Live `--resume` / `--session-id` process cross-check → live, else quiet.**
    For a stale transcript, a live `claude --resume <uuid>` or
    `claude --session-id <uuid>` process on this host keeps the session `live`.
    The `ps` cross-check covers the gap where a session launched via a launcher
    wrapper or a headless launch keeps its process alive while its transcript
    stops being written, so recency alone would wrongly read `quiet` and the wall
-   would offer a corrupting Resume. When no process matches, the state is
-   `quiet` — **unless the store could not be reached** (see below).
+   would offer a corrupting Resume. This signal stays unconditional, including
+   for a session the store has reported not live. When no process matches, the
+   state is `quiet` — **unless the store could not be reached** (see below).
 
 ## The session id on a card
 
