@@ -1,6 +1,7 @@
 ---
-status: draft
-created: "2026-11-12"
+status: approved
+approved: "2026-11-12T08:04:02Z"
+branch: dark-factory/mode-pill
 ---
 
 ## Summary
