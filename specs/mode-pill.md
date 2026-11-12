@@ -49,50 +49,6 @@ Every card whose page declares `mode:` shows a small pill naming that mode, on a
 
 **Recorded decision — the goal and topic slots are enabled structurally, and they render nothing today.** Only task pages carry a mode (0 of 396 goals, 0 of 22 topics), so enabling the slot on all three kinds is dead code until those kinds carry the field. It is kept deliberately: one slot and one renderer with no `kind` branch is cheaper than a task-only slot that forks the template, and the slot costs nothing because every badge is value-gated.
 
-## Desired Behavior
-
-1. A task card whose page declares `mode:` shows a pill in `card-footer-left`; a task card whose page declares none shows nothing there. **DB1**
-2. The same holds on the goal board and the topic board — one slot, one renderer, three kinds. **DB2**
-3. The pill shows `⚙ headless` for `headless` and `🖥 interactive` for `interactive`, each with a `title` naming the consequence. Any other non-empty value renders verbatim with the title `Execution mode`. **DB3**
-4. A page that declares `mode:` with an empty value shows nothing — empty reads as absent, never as a blank pill. **DB4**
-5. The task payload carries `mode` (`null` when the page declares none); the goal and topic payloads carry the key too, and serve the page's value when one declares it. **DB5**
-6. Every other card affordance, every other payload key, and the baseline guard's coverage of both `task` and `goal` are unchanged. **DB6**
-7. The pill is escaped for both element text and its `title` attribute, so a `mode:` containing HTML or a double quote renders as text and cannot break out of the attribute. **DB7**
-
-## Constraints
-
-- `Mode` is `*string` with `json:"mode"` and **no** `omitempty` on `api.TaskResponse`, `api.GoalResponse` and `api.TopicResponse` — the key is always emitted, `null` when the page declares none. A plain `string` with a default would print a value on every row and break AC1.
-- The other 32 task keys and 14 topic keys are unchanged (see Non-goals); the goal payload gains exactly one key.
-- The pill is a new slot. Every existing slot in `CARD_CONFIG.task`, `.goal` and `.topic` keeps its current value — AC4's pre-change set is the lock.
-- **Escaping differs between element text and an attribute, and the existing helper covers only one.** `escapeHtml` (`app.js:2486`) is `div.textContent` → `div.innerHTML`, which escapes `&`, `<` and `>` but **not** `"` — safe for element text, unsafe inside a double-quoted attribute. The `title` must therefore be built attribute-safely: assign it through the DOM (`el.title = value`) or escape it with the `&quot;`-emitting half of `escapeJsAttr` (`app.js:2500`). Writing `title="${escapeHtml(value)}"` is the defect this constraint exists to prevent. The `app.js:1525` and `:1593` precedents carry the same latent gap; they are out of scope here.
-- Page-derived fields come from **one `pageIndex.ListPages` per vault**, never one per row. Extend the existing task page-fields struct rather than adding a second walk; topics already have `topicPageFieldsByTopic` (`pkg/board/topics.go:122`) and goals have no page read at all today, so the goal path is new plumbing mirroring the topic one.
-- The pill must not change `card-footer-left`'s layout contract: a long or unrecognised value ellipsises within a `max-width` and never pushes the action button off the card. `app.js:1832–1838` records the 2026-09-11 incident where exactly that happened.
-- `docs/frontend-card-render.md` is the written contract for `CARD_CONFIG` and the mappers; prompt 2 updates it alongside the code.
-- The repo has no JS runtime: frontend evidence is over the embedded source, never execution.
-- The container does not mount the operator's vault, so the knowledge-base documentation step is host-side after merge.
-
-## Failure Modes
-
-| Trigger | Expected behavior | Recovery |
-|---|---|---|
-| An `app.js` syntax error ships — a broken asset blanks the board | every board renders empty; no Go test catches it | operator runs `make build` + reloads; the browser console shows the parse error and its line; revert and re-release |
-| A card's `mode:` holds an unrecognised value | the pill renders the raw value with the title `Execution mode`; the card is otherwise normal | no action — free-form by design |
-| `mode:` is an empty string | no pill; the card is unchanged | no action |
-| A long `mode:` value joins `card-footer-left` | the pill ellipsises and the action button stays on-card | no action — CSS backstop, asserted via the pill's class |
-| A payload field lands as `""` instead of `null` | AC1 fails; the frontend still gates correctly, so no user-visible break | prompt 1 fixes the struct to `*string` |
-| The baseline fixture is regenerated from the changed `CARD_CONFIG` | AC7's subset assertion still passes, but a dropped slot goes unnoticed | re-extend the fixture by hand; the file is never regenerated |
-| A `mode:` value contains `"` or HTML | rendered as escaped text; the `title` attribute is not split | none — AC6's adversarial payload |
-
-## Assumptions
-
-- **`mode:` is a free-form string, not an enum.** Disk carries `headless`, `interactive`, `non_interactive` and one empty value. The mapper renders whatever the page carries; empty reads as absent. A two-case switch that drops the third value is a defect, not a simplification.
-- **The three boards already share one card template and one config map.** Verified on master: one `createCard`, no `kind` branches in its body, three one-line board entry points. This spec is one `CARD_CONFIG` entry plus one mapper key per kind.
-- **The card baseline guard covers `task` and `goal` only and deliberately excludes `topic`** (`pkg/board/jsasset/card_baseline_test.go`; the exclusion is commented in the file). Enabling the slot breaks both covered entries, so the fixture moves in the same change and the guard must keep covering both.
-- **Two pinned payload field lists exist and break when `Mode` lands on the API structs** — `pkg/board/parity_test.go:42` (task, 32 keys) and `pkg/board/board_test.go:1278` (topic, 14 keys). No equivalent list exists for goals; AC2's new test is the goal lock.
-- **`pkg/board/testdata/card-vectors-pre-change.json` is extended by hand, never regenerated.** It was introduced by spec 038 and its own contract says the test never rewrites it. This change adds exactly one `mode` slot and one `mode` mapper entry per covered kind; regenerating it from the changed source would make AC7's subset assertion vacuous and can silently drop an existing slot.
-- **Goals have no page-field read path today** (`goalResponse` is built from `ops.TaskListItem`, which carries no page-derived fields), while topics do (`topicPageFieldsByTopic`). Both kinds gain one, on the existing one-`ListPages`-per-vault pattern.
-- **The container does not mount the operator's vault**, so the knowledge-base documentation step is host-side after merge, not a prompt.
-
 ## Acceptance Criteria
 
 - [ ] **AC1 — the task payload carries `mode`, and a page without it serves null.** Evidence: a Go test builds a task page carrying `mode: headless` and one carrying none, and asserts the served rows carry `"mode": "headless"` and `"mode": null` — the key always present, the value null when undeclared. A field populated from a default would print a value for every row and fail the null half. `make test` exits 0.
@@ -117,6 +73,48 @@ Every card whose page declares `mode:` shows a small pill naming that mode, on a
 - `make build` from the production clone, then `launchctl kickstart -k gui/$(id -u)/com.github.bborbe.vault-ui` in a quiet window (the restart kills every live session the board tracks)
 - Load `http://127.0.0.1:8000/` and confirm the browser console is clean, then confirm the pill on a card declaring `mode:` and its absence on one declaring none — see Post-Deploy Verification
 
+## Desired Behavior
+
+1. A task card whose page declares `mode:` shows a pill in `card-footer-left`; a task card whose page declares none shows nothing there. **DB1**
+2. The same holds on the goal board and the topic board — one slot, one renderer, three kinds. **DB2**
+3. The pill shows `⚙ headless` for `headless` and `🖥 interactive` for `interactive`, each with a `title` naming the consequence. Any other non-empty value renders verbatim with the title `Execution mode`. **DB3**
+4. A page that declares `mode:` with an empty value shows nothing — empty reads as absent, never as a blank pill. **DB4**
+5. The task payload carries `mode` (`null` when the page declares none); the goal and topic payloads carry the key too, and serve the page's value when one declares it. **DB5**
+6. Every other card affordance, every other payload key, and the baseline guard's coverage of both `task` and `goal` are unchanged. **DB6**
+7. The pill is escaped for both element text and its `title` attribute, so a `mode:` containing HTML or a double quote renders as text and cannot break out of the attribute. **DB7**
+
+## Constraints
+
+- `Mode` is `*string` with `json:"mode"` and **no** `omitempty` on `api.TaskResponse`, `api.GoalResponse` and `api.TopicResponse` — the key is always emitted, `null` when the page declares none. A plain `string` with a default would print a value on every row and break AC1.
+- The other 32 task keys and 14 topic keys are unchanged (see Non-goals); the goal payload gains exactly one key.
+- The pill is a new slot. Every existing slot in `CARD_CONFIG.task`, `.goal` and `.topic` keeps its current value — AC4's pre-change set is the lock.
+- Page-derived fields come from **one `pageIndex.ListPages` per vault**, never one per row. Extend the existing task page-fields struct rather than adding a second walk; topics already have `topicPageFieldsByTopic` (`pkg/board/topics.go:122`) and goals have no page read at all today, so the goal path is new plumbing mirroring the topic one.
+- The pill must not change `card-footer-left`'s layout contract: a long or unrecognised value ellipsises within a `max-width` and never pushes the action button off the card. `app.js:1832–1842` records the 2026-09-11 incident where exactly that happened.
+- `docs/frontend-card-render.md` is the written contract for `CARD_CONFIG` and the mappers (its § `CARD_CONFIG` fields and § `slots.*`, plus the add-a-slot procedure); prompt 2 updates it alongside the code.
+- The repo has no JS runtime: frontend evidence is over the embedded source, never execution.
+- The container does not mount the operator's vault, so the knowledge-base documentation step is host-side after merge.
+
+## Failure Modes
+
+| Trigger | Expected behavior | Recovery |
+|---|---|---|
+| An `app.js` syntax error ships — a broken asset blanks the board | every board renders empty; no Go test catches it | operator runs `make build` + reloads; the browser console shows the parse error and its line; revert and re-release |
+| A card's `mode:` holds an unrecognised value | the pill renders the raw value with the title `Execution mode`; the card is otherwise normal | no action — free-form by design |
+| `mode:` is an empty string | no pill; the card is unchanged | no action |
+| A long `mode:` value joins `card-footer-left` | the pill ellipsises and the action button stays on-card | no action — CSS backstop, asserted via the pill's class |
+| A payload field lands as `""` instead of `null` | AC1 fails; the frontend still gates correctly, so no user-visible break | prompt 1 fixes the struct to `*string` |
+| The baseline fixture is regenerated from the changed `CARD_CONFIG` | AC7's subset assertion still passes, but a dropped slot goes unnoticed | re-extend the fixture by hand; the file is never regenerated |
+| A `mode:` value contains `"` or HTML | rendered as escaped text; the `title` attribute is not split | none — AC6's adversarial payload |
+
+## Security / Abuse
+
+`mode:` is untrusted file content — anyone or anything that writes a task page controls it — and it is rendered into the board's DOM on every page load.
+
+- **Element text.** Escaped with `escapeHtml` (`app.js:2486`), the codebase's standard treatment for a page-derived string in element position.
+- **Attribute position is the gap.** `escapeHtml` is `div.textContent` → `div.innerHTML`, which escapes `&`, `<` and `>` but **not** `"`. A value of `x" onmouseover="alert(1)` interpolated into `title="${escapeHtml(value)}"` breaks out of the attribute and installs an event handler. The `title` must therefore be assigned through the DOM (`el.title = value`, which the browser escapes on serialisation) or escaped with the `&quot;`-emitting half of `escapeJsAttr` (`app.js:2500`).
+- **Precedent, and why it does not license the defect.** `app.js:1525` and `:1593` build `title` attributes with `escapeHtml` and carry the same latent hole. They are out of scope here — this spec must not extend it, and AC6's quote payload is the check that it did not.
+- **No new surface.** No endpoint, no query parameter, no write path, and no value is ever used as a selector, URL or shell argument.
+
 ## Suggested Decomposition
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
@@ -127,7 +125,7 @@ Every card whose page declares `mode:` shows a small pill naming that mode, on a
 
 Rationale: prompt 1 establishes the payload the frontend reads; prompt 2 is the only layer that changes what a user sees, and it **must** carry the fixture extension in the same prompt — `card_baseline_test.go` asserts exact slot and mapper sets, so a prompt 2 that adds the slot without the fixture leaves `make precommit` red between prompts. Prompt 3 adds only assertions, so it is green on its own. Each prompt owns the tests for its own layer. The vault documentation step (AC8) is host-side after merge, not a prompt.
 
-The spec is at the upper end of the size budget (7 behaviors × 8 ACs across four layers). If generation research runs long, prompt 2 can split into config/mapper versus pill-markup/CSS — but the fixture extension must stay with whichever prompt first changes `CARD_CONFIG`.
+The spec sits at the upper end of the size budget (7 behaviors × 8 ACs across four layers). If generation research runs long, prompt 2 can split into config/mapper versus pill-markup/CSS — but the fixture extension must stay with whichever prompt first changes `CARD_CONFIG`.
 
 Execution route: `bborbe/vault-ui` is a governed repo and this spec carries a business-level why, so it goes **spec → prompts → cluster agent**. After `dark-factory spec approve`, open the draft PR and let the cluster agent pick it up — start no local daemon. The frontend half cannot be verified in the container (no JS runtime, no browser), so AC4–AC6 assert the embedded source expressions and the rendering is proven against the running board after deploy.
 
