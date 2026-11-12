@@ -7,6 +7,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/mxschmitt/playwright-go"
@@ -87,8 +88,25 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 
 var _ = Describe("Scenario 001: the console", func() {
 	It("stays clean across two poll intervals", func() {
-		page := newPage("/")
+		// Built by hand rather than via newPage so the response handler is
+		// registered before the first navigation — a handler attached after
+		// Goto misses the very requests it exists to catch.
+		page, err := browser.NewPage()
+		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = page.Close() }()
+
+		var serverFailures []string
+		page.OnResponse(func(resp playwright.Response) {
+			if resp.Status() >= 500 && strings.Contains(resp.URL(), "/api/") {
+				serverFailures = append(serverFailures,
+					fmt.Sprintf("%d %s", resp.Status(), resp.URL()))
+			}
+		})
+
+		_, err = page.Goto(baseURL+"/", playwright.PageGotoOptions{
+			WaitUntil: playwright.WaitUntilStateLoad,
+		})
+		Expect(err).NotTo(HaveOccurred())
 
 		// The poll interval is 60 s. Waiting past two of them is what stops a
 		// poll-loop exception hiding behind a window where the poll never ran.
@@ -100,7 +118,7 @@ var _ = Describe("Scenario 001: the console", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(errs).To(BeEmpty(), "uncaught exceptions during the walk")
 
-		Expect(serverErrors(page)).To(BeEmpty(), "5xx /api/ responses during the walk")
+		Expect(serverFailures).To(BeEmpty(), "5xx /api/ responses during the walk")
 	})
 })
 

@@ -7,6 +7,7 @@
 package e2e
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/mxschmitt/playwright-go"
@@ -14,15 +15,24 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// The board posts to /api/tasks/{id}/run?vault=… — a query-bearing URL. A glob
+// like "**/api/tasks/*/run" does not match the query string, so the stub would
+// never engage and the click would reach the real handler. A regexp is what
+// actually matches.
+var (
+	runRoutePattern  = regexp.MustCompile(`.*/api/tasks/[^/]+/run.*`)
+	jumpRoutePattern = regexp.MustCompile(`.*/api/tasks/[^/]+/jump.*`)
+)
+
 var _ = Describe("Scenario 002: running and jumping to a task session", func() {
-	It("renders ▶ Start and posts to the run route, stubbed", func() {
+	It("renders ▶ Start and posts to the run route", func() {
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
 		stubSessionRoutes(page)
 
 		var posted []string
 		page.OnRequest(func(req playwright.Request) {
-			if strings.Contains(req.URL(), "/run") {
+			if runRoutePattern.MatchString(req.URL()) {
 				posted = append(posted, req.URL())
 			}
 		})
@@ -55,47 +65,57 @@ var _ = Describe("Scenario 002: running and jumping to a task session", func() {
 			"app.js renders the jump control only for a live task with a resolved pane")
 	})
 
-	It("jumps when a live pane exists", func() {
+	It("does not fabricate a jump control from a stubbed run", func() {
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
 		stubSessionRoutes(page)
 
-		// The fixture has no live session, so the assertion is that the control
-		// is absent — the positive path needs a real pane and is out of scope.
-		total, err := page.Locator(".jump-btn").Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(total).To(Equal(0))
+		Expect(page.Locator(".start-btn").First().Click()).To(Succeed())
+
+		// The stub answers 200 but creates no session and resolves no pane, so
+		// the board must not start offering a jump target it does not have.
+		Consistently(func() int {
+			return countOf(page, ".jump-btn")
+		}, "3s", "500ms").Should(Equal(0))
 	})
 
-	It("does not report success for a second Start it did not create", func() {
+	It("does not claim a session it did not create", func() {
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
 		stubSessionRoutes(page)
 
 		var posted int
 		page.OnRequest(func(req playwright.Request) {
-			if strings.Contains(req.URL(), "/run") {
+			if runRoutePattern.MatchString(req.URL()) {
 				posted++
 			}
 		})
 
 		start := page.Locator(".start-btn").First()
 		Expect(start.Click()).To(Succeed())
-		Expect(start.Click()).To(Succeed())
-
 		Eventually(func() int { return posted }, "10s", "200ms").Should(BeNumerically(">=", 1))
-		Expect(countOf(page, ".starting-badge, .live-badge")).To(BeNumerically(">=", 0))
+
+		// A stubbed 200 reports success but starts nothing, so a live badge
+		// here is a shown-versus-actual defect, not a slow start.
+		Expect(countOf(page, ".live-badge")).To(Equal(0),
+			"a stubbed run must not render a live session")
 	})
 
-	It("keeps the card's rendered state consistent with the API", func() {
+	It("renders every card with a title", func() {
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
-		stubSessionRoutes(page)
 
-		before := countOf(page, ".task-card")
-		Expect(before).To(BeNumerically(">", 0))
-		Expect(countOf(page, ".task-card")).To(Equal(before),
-			"rendering must not change the card set on its own")
+		cards := page.Locator(".task-card")
+		total, err := cards.Count()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(total).To(BeNumerically(">", 0))
+
+		for i := 0; i < total; i++ {
+			title, err := cards.Nth(i).InnerText()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(title)).NotTo(BeEmpty(),
+				"a card rendered with no text is a rendering defect")
+		}
 	})
 })
 
@@ -103,19 +123,13 @@ var _ = Describe("Scenario 002: running and jumping to a task session", func() {
 // real session — that keeps `vault-cli` and `claude` off the harness's
 // requirements and leaves nothing for AfterSuite to clean up.
 func stubSessionRoutes(page playwright.Page) {
-	ExpectWithOffset(1, page.Route("**/api/tasks/*/run", func(route playwright.Route) {
+	fulfil := func(route playwright.Route) {
 		Expect(route.Fulfill(playwright.RouteFulfillOptions{
 			Status:      playwright.Int(200),
 			ContentType: playwright.String("application/json"),
 			Body:        playwright.String(`{"ok":true}`),
 		})).To(Succeed())
-	})).To(Succeed())
-
-	ExpectWithOffset(1, page.Route("**/api/tasks/*/jump", func(route playwright.Route) {
-		Expect(route.Fulfill(playwright.RouteFulfillOptions{
-			Status:      playwright.Int(200),
-			ContentType: playwright.String("application/json"),
-			Body:        playwright.String(`{"ok":true}`),
-		})).To(Succeed())
-	})).To(Succeed())
+	}
+	ExpectWithOffset(1, page.Route(runRoutePattern, fulfil)).To(Succeed())
+	ExpectWithOffset(1, page.Route(jumpRoutePattern, fulfil)).To(Succeed())
 }

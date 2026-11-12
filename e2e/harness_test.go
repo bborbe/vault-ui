@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// These are plain `testing` tests, not Ginkgo specs, and that is deliberate:
+// the package already owns exactly one RunSpecs in e2e_suite_test.go, and a
+// second Ginkgo suite here would panic in the tagged build. Keeping the
+// browser-free half on stdlib testing is what lets `make precommit` run it.
 package e2e
 
 import (

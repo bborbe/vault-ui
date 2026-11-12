@@ -13,12 +13,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/bborbe/errors"
@@ -177,7 +177,7 @@ func startBinary(ctx context.Context, port int) error {
 		"HOME="+homeDir,
 	)
 	var stderr bytes.Buffer
-	cmd.Stderr = io.MultiWriter(&stderr)
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return errors.Wrap(ctx, err, "start binary")
 	}
@@ -208,7 +208,7 @@ func waitReady(ctx context.Context) error {
 		case <-deadline:
 			return errors.Errorf(ctx, "readiness did not answer 200 within 30s")
 		case <-ticker.C:
-			if proc != nil && proc.ProcessState != nil {
+			if binaryExited() {
 				return errors.Errorf(ctx, "binary exited before readiness")
 			}
 			resp, err := client.Get("http://127.0.0.1:9090/readiness")
@@ -239,14 +239,25 @@ func proveAPIConfig(ctx context.Context, client *http.Client) error {
 	return nil
 }
 
-// stopBinary terminates the running binary.
+// stopBinary terminates the running binary and waits for it, which is what lets
+// the stderr copy finish before the buffer is read.
 func stopBinary() {
 	if proc == nil || proc.Process == nil {
 		return
 	}
 	_ = proc.Process.Kill()
-	_, _ = proc.Process.Wait()
+	_ = proc.Wait()
 	proc = nil
+}
+
+// binaryExited reports whether the child has already died. os.ProcessState is
+// only set by Wait, so a Signal(0) probe is the check that actually works while
+// the process is still being supervised.
+func binaryExited() bool {
+	if proc == nil || proc.Process == nil {
+		return true
+	}
+	return proc.Process.Signal(syscall.Signal(0)) != nil
 }
 
 // tail keeps the last n bytes of s, for failure messages.
