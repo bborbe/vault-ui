@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Serve each row's own `mode:` frontmatter on the task, goal and topic payloads — `GET /api/tasks`, `GET /api/goals` and `GET /api/topics` now carry a `mode` key read verbatim from the page, always emitted and `null` when the page declares none (an empty value reads as absent). The goal board gains one `ListPages` per vault against the goals folder rather than one per row, the topic board reuses its existing listing, and the pinned task and topic payload key lists move to lock the new key.
+
 ## v0.106.1
 
 - fix: Stop a killed session rendering `● Live` for the transcript-recency window — the attention store's read now carries every session id it has seen alongside the live set, and the classifier skips only the recency half of the transcript signal for a session the store has reported not live, so the card falls through to the `ps` cross-check and reads `quiet` instead of staying live for five more minutes. A never-seen session keeps recency, the missing-transcript `indeterminate` return and the `ps` cross-check stay unconditional, and an unreachable store still reads "cannot tell" rather than "dead".

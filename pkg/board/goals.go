@@ -117,10 +117,15 @@ func (b *board) goalsForVault(
 	projectDir := cleanup.DeriveClaudeProjectDir(b.homeDir, vault.Path, vault.SessionProjectDir)
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
+	// One ListPages for the whole vault, attached to the rows so the request
+	// path never reads a page.
+	pageFieldsByGoal := b.goalPageFieldsByGoal(ctx, vault)
+
 	responses := make([]api.GoalResponse, 0, len(rows))
 	for _, row := range rows {
+		fields := pageFieldsByGoal[row.item.Name]
 		responses = append(responses, b.goalResponse(
-			ctx, vault, row, goalsFolder, projectDir, projectsRoot,
+			ctx, vault, row, fields.mode, goalsFolder, projectDir, projectsRoot,
 			registryIDs, seenIDs, resumeIDs, liveIDsUnknown,
 		))
 	}
@@ -131,6 +136,7 @@ func (b *board) goalResponse(
 	ctx context.Context,
 	vault Vault,
 	row goalRow,
+	mode *string,
 	goalsFolder, projectDir, projectsRoot string,
 	registryIDs, seenIDs, resumeIDs []string,
 	liveIDsUnknown bool,
@@ -194,6 +200,7 @@ func (b *board) goalResponse(
 		)),
 		SessionState: sessionStatePtr(ownState),
 		Location:     location,
+		Mode:         mode,
 	}
 }
 

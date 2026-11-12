@@ -1,8 +1,14 @@
 ---
-status: approved
+status: completed
 spec: [039-mode-pill]
+summary: 'Served each page''s own mode: on the task, goal and topic list payloads as an always-emitted nullable mode key, with one per-vault page listing for goals and pinned key lists updated.'
+execution_id: 8d56ffdb-6c5f-5293-851d-a5b449090b85-exec-182-spec-039-mode-payload
+dark-factory-version: dev
 created: "2026-11-12T12:15:00+01:00"
 queued: "2026-11-12T11:30:28Z"
+started: "2026-11-12T12:59:31Z"
+completed: "2026-11-12T13:11:31Z"
+branch: dark-factory/182-spec-039-mode-payload
 ---
 
 # Serve the page's mode on the task, goal and topic payloads

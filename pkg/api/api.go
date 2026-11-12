@@ -77,6 +77,11 @@ type TaskResponse struct {
 	// Go-only (see the package doc) and always non-nil, so it serialises as []
 	// rather than null and a task with no such section still carries the key.
 	OpenQuestions []domain.OpenQuestion `json:"open_questions"`
+	// Mode is the page's own `mode:` frontmatter value — the execution mode the
+	// row opens with. It is carried verbatim because the field is free-form on
+	// disk, and the key is always emitted (no omitempty), so a page declaring no
+	// mode reads back as "mode": null rather than vanishing from the payload.
+	Mode *string `json:"mode"`
 }
 
 // GoalResponse is the wire shape of a goal card.
@@ -111,6 +116,11 @@ type GoalResponse struct {
 	// Location is the location the attention store reports for the goal's live
 	// session, on the same terms as TaskResponse.Location.
 	Location *string `json:"location"`
+	// Mode is the page's own `mode:` frontmatter value — the execution mode the
+	// row opens with. It is carried verbatim because the field is free-form on
+	// disk, and the key is always emitted (no omitempty), so a page declaring no
+	// mode reads back as "mode": null rather than vanishing from the payload.
+	Mode *string `json:"mode"`
 }
 
 // TopicResponse is the wire shape of a topic list entry.
@@ -154,6 +164,11 @@ type TopicResponse struct {
 	Blockers []string `json:"blockers"`
 	// Blocked is true only when Blockers is non-empty.
 	Blocked bool `json:"blocked"`
+	// Mode is the page's own `mode:` frontmatter value — the execution mode the
+	// row opens with. It is carried verbatim because the field is free-form on
+	// disk, and the key is always emitted (no omitempty), so a page declaring no
+	// mode reads back as "mode": null rather than vanishing from the payload.
+	Mode *string `json:"mode"`
 }
 
 // TopicDetailResponse is the wire shape of a single topic and the work it

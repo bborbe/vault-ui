@@ -192,6 +192,26 @@ var _ = Describe("row patch", func() {
 		Expect(*patched[0].Jira).To(Equal("BRO-22339"))
 	})
 
+	It("re-derives the mode of a changed page from its own content", func() {
+		h := newHarness(item("Alpha"))
+
+		_, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+
+		h.index.setPages(pageWithFrontmatter(
+			"Alpha",
+			map[string]any{"status": "todo", "mode": "headless"},
+			"",
+		))
+		h.index.markPages("Alpha.md")
+
+		patched, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(patched).To(HaveLen(1))
+		Expect(patched[0].Mode).NotTo(BeNil())
+		Expect(*patched[0].Mode).To(Equal("headless"))
+	})
+
 	It("recomputes a dependent row's blockers when its blocker's page changes", func() {
 		h := newHarness(
 			item("Alpha"),

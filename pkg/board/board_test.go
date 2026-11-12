@@ -376,6 +376,22 @@ func page(name, content string) *domain.Page {
 	)
 }
 
+// rawRowsByID marshals responses into the wire shape and decodes each row into
+// its raw key set, so a test can tell a missing key from a null one.
+func rawRowsByID[T any](responses []T) map[string]map[string]json.RawMessage {
+	encoded, err := json.Marshal(responses)
+	Expect(err).NotTo(HaveOccurred())
+	var rows []map[string]json.RawMessage
+	Expect(json.Unmarshal(encoded, &rows)).To(Succeed())
+	byID := make(map[string]map[string]json.RawMessage, len(rows))
+	for _, row := range rows {
+		var id string
+		Expect(json.Unmarshal(row["id"], &id)).To(Succeed())
+		byID[id] = row
+	}
+	return byID
+}
+
 // pageWithFrontmatter builds one in-memory vault page with the given frontmatter,
 // so a test can exercise a key the fixed {"status": "todo"} of page does not
 // carry.
@@ -714,6 +730,42 @@ var _ = Describe("ListTasks", func() {
 		_, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).To(HaveOccurred())
 	})
+
+	// Decode into the raw map rather than asserting on the typed field: the
+	// criterion is that the key is always present and null when undeclared, and
+	// a struct assertion cannot tell a missing key from a null one.
+	It("serves mode from each task's own page, null when it declares none", func() {
+		h := newHarness(item("WithMode"), item("NoMode"))
+		h.pageIndex.ListPagesReturns([]*domain.Page{
+			pageWithFrontmatter("WithMode", map[string]any{"mode": "headless"}, ""),
+			pageWithFrontmatter("NoMode", map[string]any{"status": "todo"}, ""),
+		}, nil)
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(2))
+
+		byID := rawRowsByID(responses)
+		Expect(byID["WithMode"]).To(HaveKey("mode"))
+		Expect(string(byID["WithMode"]["mode"])).To(Equal(`"headless"`))
+		Expect(byID["NoMode"]).To(HaveKey("mode"))
+		Expect(string(byID["NoMode"]["mode"])).To(Equal("null"))
+	})
+
+	It("serves null for a task page whose mode is empty", func() {
+		h := newHarness(item("EmptyMode"))
+		h.pageIndex.ListPagesReturns([]*domain.Page{
+			pageWithFrontmatter("EmptyMode", map[string]any{"mode": ""}, ""),
+		}, nil)
+
+		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+
+		byID := rawRowsByID(responses)
+		Expect(byID["EmptyMode"]).To(HaveKey("mode"))
+		Expect(string(byID["EmptyMode"]["mode"])).To(Equal("null"))
+	})
 })
 
 var _ = Describe("ListTasks snapshot", func() {
@@ -864,6 +916,30 @@ var _ = Describe("ListGoals", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(1))
 		Expect(responses[0].Phase).To(BeNil())
+	})
+
+	It("serves mode from each goal's own page, null when it declares none", func() {
+		h := newHarness()
+		h.list.items["23 Goals"] = []ops.TaskListItem{
+			{Name: "Headless", Status: "in_progress"},
+			{Name: "NoMode", Status: "in_progress"},
+		}
+		h.pageIndex.ListPagesReturns([]*domain.Page{
+			pageWithFrontmatter("Headless", map[string]any{"mode": "headless"}, ""),
+			pageWithFrontmatter("NoMode", map[string]any{"status": "in_progress"}, ""),
+		}, nil)
+
+		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(2))
+
+		byID := rawRowsByID(responses)
+		Expect(byID["Headless"]).To(HaveKey("mode"))
+		Expect(string(byID["Headless"]["mode"])).To(Equal(`"headless"`))
+		Expect(byID["NoMode"]).To(HaveKey("mode"))
+		Expect(string(byID["NoMode"]["mode"])).To(Equal("null"))
+		// One listing per vault, not one per row: two goals still cost one read.
+		Expect(h.pageIndex.ListPagesCallCount()).To(Equal(1))
 	})
 
 	// An unrecognised goal status reaches the renderer as an empty string.
@@ -1283,6 +1359,7 @@ var _ = Describe("ListTopics", func() {
 			"flag",
 			"id",
 			"jira",
+			"mode",
 			"obsidian_url",
 			"phase",
 			"priority",
@@ -1318,6 +1395,28 @@ var _ = Describe("ListTopics", func() {
 		Expect(*response.Jira).To(Equal("ABC-1"))
 		Expect(response.Blockers).To(Equal([]string{"OpenTask"}))
 		Expect(response.Blocked).To(BeTrue())
+	})
+
+	It("serves mode from each topic's own page, null when it declares none", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{
+			{Name: "Headless", Status: "in_progress"},
+			{Name: "NoMode", Status: "in_progress"},
+		}
+		h.pageIndex.ListPagesReturns([]*domain.Page{
+			pageWithFrontmatter("Headless", map[string]any{"mode": "headless"}, ""),
+			pageWithFrontmatter("NoMode", map[string]any{"status": "in_progress"}, ""),
+		}, nil)
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(2))
+
+		byID := rawRowsByID(responses)
+		Expect(byID["Headless"]).To(HaveKey("mode"))
+		Expect(string(byID["Headless"]["mode"])).To(Equal(`"headless"`))
+		Expect(byID["NoMode"]).To(HaveKey("mode"))
+		Expect(string(byID["NoMode"]["mode"])).To(Equal("null"))
 	})
 
 	It("excludes a completed blocker and reports only the open ones", func() {
