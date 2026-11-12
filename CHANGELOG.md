@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- docs: Add the board's first scenarios and the release gate that runs them — `docs/release-process.md` puts the gate at the PR rather than at an install step, because vault-ui is `autoRelease: true` and nothing human sits between merge and tag; `scenarios/001-board-views-and-filters.md` walks the three views, their filters and the URL that encodes them, and `scenarios/002-task-mutations.md` walks run and jump together with how each reports its own failure. Both are walked by hand in a browser for now: the repo has no browser harness, and building one is the follow-up that retires the manual walk.
+
 ## v0.106.1
 
 - fix: Stop a killed session rendering `● Live` for the transcript-recency window — the attention store's read now carries every session id it has seen alongside the live set, and the classifier skips only the recency half of the transcript signal for a session the store has reported not live, so the card falls through to the `ps` cross-check and reads `quiet` instead of staying live for five more minutes. A never-seen session keeps recency, the missing-transcript `indeterminate` return and the `ps` cross-check stay unconditional, and an unreachable store still reads "cannot tell" rather than "dead".
