@@ -10,6 +10,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/bborbe/errors"
+	"github.com/golang/glog"
 )
 
 var (
@@ -41,6 +43,7 @@ func buildBinary(ctx context.Context, repoRoot, out string) error {
 	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", out, ".")
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
+	glog.V(2).Infof("go build -o %s . -> err=%v", out, err)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "build binary: %s", tail(string(output), 2000))
 	}
@@ -48,24 +51,28 @@ func buildBinary(ctx context.Context, repoRoot, out string) error {
 }
 
 // freePort reserves a port by binding it and closing the listener.
-func freePort() (int, error) {
+func freePort(ctx context.Context) (int, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, errors.Wrap(context.Background(), err, "reserve port")
+		return 0, errors.Wrap(ctx, err, "reserve port")
 	}
 	defer func() { _ = listener.Close() }()
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
-		return 0, errors.Errorf(context.Background(), "unexpected address type %T", listener.Addr())
+		return 0, errors.Errorf(ctx, "unexpected address type %T", listener.Addr())
 	}
 	return addr.Port, nil
 }
 
 // seedFixture writes a throwaway vault holding what the scenarios need: two
 // tasks in different statuses (one sessionless), one goal and one topic.
-func seedFixture(root string) error {
-	ctx := context.Background()
+func seedFixture(ctx context.Context, root string) error {
 	for _, dir := range []string{"25 Tasks", "24 Goals", "23 Topics"} {
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(ctx, ctx.Err(), "seed fixture")
+		default:
+		}
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o750); err != nil {
 			return errors.Wrapf(ctx, err, "create %s", dir)
 		}
@@ -77,8 +84,12 @@ func seedFixture(root string) error {
 		filepath.Join("23 Topics", "Fixture Topic.md"):           pageBody("topic", "Fixture Topic"),
 	}
 	for rel, body := range files {
-		path := filepath.Join(root, rel)
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(ctx, ctx.Err(), "seed fixture")
+		default:
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o600); err != nil {
 			return errors.Wrapf(ctx, err, "write %s", rel)
 		}
 	}
@@ -104,10 +115,10 @@ Tags: [[Task]]
 
 // writeFixtureTask drops a new task into a fixture vault mid-run, which is how
 // the "vault change reaches the open board" assertion gets its change.
-func writeFixtureTask(vaultPath, title string) error {
+func writeFixtureTask(ctx context.Context, vaultPath, title string) error {
 	body := taskBody(title, "in_progress", "execution")
 	path := filepath.Join(vaultPath, "25 Tasks", title+".md")
-	return errors.Wrapf(context.Background(), os.WriteFile(path, []byte(body), 0o600), "write %s", title)
+	return errors.Wrapf(ctx, os.WriteFile(path, []byte(body), 0o600), "write %s", title)
 }
 
 // pageBody renders a minimal goal or topic page.
@@ -128,9 +139,7 @@ Tags: [[%s]]
 // writeConfig writes both config files: vault-ui's own, and the vault-cli one
 // its loader merges. Missing either half fails the load with a message that
 // reads as a harness bug.
-func writeConfig(homeDir, vaultPath string) error {
-	ctx := context.Background()
-
+func writeConfig(ctx context.Context, homeDir, vaultPath string) error {
 	vaultCLIDir := filepath.Join(homeDir, ".config", "vault-cli")
 	if err := os.MkdirAll(vaultCLIDir, 0o750); err != nil {
 		return errors.Wrap(ctx, err, "create vault-cli config dir")
@@ -167,21 +176,17 @@ func startBinary(ctx context.Context, port int) error {
 		fmt.Sprintf("VAULT_UI_LISTEN=127.0.0.1:%d", port),
 		"HOME="+homeDir,
 	)
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return errors.Wrap(ctx, err, "capture stderr")
-	}
+	var stderr bytes.Buffer
+	cmd.Stderr = io.MultiWriter(&stderr)
 	if err := cmd.Start(); err != nil {
 		return errors.Wrap(ctx, err, "start binary")
 	}
 	proc = cmd
-	go func() {
-		buf, _ := io.ReadAll(stderr)
-		procStderr = string(buf)
-	}()
+	glog.V(2).Infof("started binary pid=%d port=%d", cmd.Process.Pid, port)
 
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := waitReady(ctx); err != nil {
+		procStderr = stderr.String()
 		stopBinary()
 		return errors.Wrapf(ctx, err, "wait ready: %s", tail(procStderr, 2000))
 	}
@@ -192,21 +197,32 @@ func startBinary(ctx context.Context, port int) error {
 // the merged config. Readiness alone only proves the vault-cli half loaded.
 func waitReady(ctx context.Context) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if proc != nil && proc.ProcessState != nil {
-			return errors.Errorf(ctx, "binary exited before readiness")
-		}
-		resp, err := client.Get("http://127.0.0.1:9090/readiness")
-		if err == nil {
+	deadline := time.After(30 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(ctx, ctx.Err(), "wait readiness")
+		case <-deadline:
+			return errors.Errorf(ctx, "readiness did not answer 200 within 30s")
+		case <-ticker.C:
+			if proc != nil && proc.ProcessState != nil {
+				return errors.Errorf(ctx, "binary exited before readiness")
+			}
+			resp, err := client.Get("http://127.0.0.1:9090/readiness")
+			if err != nil {
+				continue
+			}
+			status := resp.StatusCode
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if status == http.StatusOK {
+				glog.V(2).Infof("readiness answered 200")
 				return proveAPIConfig(ctx, client)
 			}
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
-	return errors.Errorf(ctx, "readiness did not answer 200 within 30s")
 }
 
 // proveAPIConfig checks the API port serves the merged config.
@@ -216,6 +232,7 @@ func proveAPIConfig(ctx context.Context, client *http.Client) error {
 		return errors.Wrap(ctx, err, "get /api/vaults")
 	}
 	defer func() { _ = resp.Body.Close() }()
+	glog.V(2).Infof("GET /api/vaults -> %d", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		return errors.Errorf(ctx, "/api/vaults returned %d", resp.StatusCode)
 	}

@@ -21,7 +21,7 @@ import (
 // can actually bind — the whole harness depends on it and a stale or reused
 // value fails as a confusing bind error much later.
 func TestFreePortReturnsABindablePort(t *testing.T) {
-	port, err := freePort()
+	port, err := freePort(context.Background())
 	if err != nil {
 		t.Fatalf("freePort: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestFreePortReturnsABindablePort(t *testing.T) {
 // the folder names the config declares.
 func TestSeedFixtureWritesTheExpectedTree(t *testing.T) {
 	root := t.TempDir()
-	if err := seedFixture(root); err != nil {
+	if err := seedFixture(context.Background(), root); err != nil {
 		t.Fatalf("seedFixture: %v", err)
 	}
 	for _, dir := range []string{"25 Tasks", "24 Goals", "23 Topics"} {
@@ -70,10 +70,10 @@ func TestSeedFixtureWritesTheExpectedTree(t *testing.T) {
 func TestWriteConfigProducesAConfigTheLoaderAccepts(t *testing.T) {
 	homeDir := t.TempDir()
 	vaultPath := filepath.Join(homeDir, "fixture-vault")
-	if err := seedFixture(vaultPath); err != nil {
+	if err := seedFixture(context.Background(), vaultPath); err != nil {
 		t.Fatalf("seedFixture: %v", err)
 	}
-	if err := writeConfig(homeDir, vaultPath); err != nil {
+	if err := writeConfig(context.Background(), homeDir, vaultPath); err != nil {
 		t.Fatalf("writeConfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)

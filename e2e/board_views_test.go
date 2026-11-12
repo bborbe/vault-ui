@@ -72,12 +72,12 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 			"a deep link to ?view=goals must not fetch /api/tasks")
 	})
 
-	It("reaches the open board without a manual reload when the vault changes", func() {
+	It("reaches the open board without a manual reload when the vault changes", func(ctx SpecContext) {
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
 
 		before := countOf(page, ".task-card")
-		Expect(writeFixtureTask(vaultPath, "Arrived During The Walk")).To(Succeed())
+		Expect(writeFixtureTask(ctx, vaultPath, "Arrived During The Walk")).To(Succeed())
 
 		Eventually(func() int {
 			return countOf(page, ".task-card")

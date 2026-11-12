@@ -50,10 +50,10 @@ var _ = BeforeSuite(func() {
 	Expect(buildBinary(ctx, repoRoot, binaryPath)).To(Succeed(), "build failed:\n%s", procStderr)
 
 	vaultPath = filepath.Join(root, "vault")
-	Expect(seedFixture(vaultPath)).To(Succeed())
-	Expect(writeConfig(homeDir, vaultPath)).To(Succeed())
+	Expect(seedFixture(ctx, vaultPath)).To(Succeed())
+	Expect(writeConfig(ctx, homeDir, vaultPath)).To(Succeed())
 
-	port, err := freePort()
+	port, err := freePort(ctx)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(startBinary(ctx, port)).To(Succeed(), "binary failed to start:\n%s", procStderr)
 
