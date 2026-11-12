@@ -34,9 +34,9 @@ PLAYWRIGHT_GO_VERSION := v0.6201.1
 e2e:
 	@if lsof -nP -iTCP:9090 -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "make e2e: port 9090 is held by the live board. Stop it first:"; \
-		echo "  launchctl bootout gui/$$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist"; \
+		echo "  launchctl bootout gui/$$(id -u) $(HOME)/Library/LaunchAgents/com.github.bborbe.vault-ui.plist"; \
 		echo "  ... run make e2e ..."; \
-		echo "  launchctl bootstrap gui/$$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist"; \
+		echo "  launchctl bootstrap gui/$$(id -u) $(HOME)/Library/LaunchAgents/com.github.bborbe.vault-ui.plist"; \
 		exit 1; \
 	fi
 	go run $(PLAYWRIGHT_GO_MODULE)/cmd/playwright@$(PLAYWRIGHT_GO_VERSION) install chromium
