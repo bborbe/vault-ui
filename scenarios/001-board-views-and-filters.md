@@ -6,7 +6,7 @@ status: active
 
 Validates that the board's Tasks / Goals / Topics views render the right cards, that every filter applies to the views it claims to, and that the URL is a faithful encoding of the state — so a deep-link and a reload land where the operator left off.
 
-⚠️ **This scenario is walked by hand in a browser.** vault-ui has no browser harness yet (unlike attention-controller's `e2e/` Playwright suite), so nothing here is scripted. The harness is the follow-up; until it exists this is the only regression gate over the served page, which is exactly the gap that let the attention board ship a defect its suite could not see.
+⚠️ **Run by `make e2e`.** This scenario is executed by the Playwright suite in `e2e/`; the sections below are the suite's specification, and the walk is scripted rather than manual.
 
 ## Setup
 

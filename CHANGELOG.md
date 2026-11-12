@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Run the board scenarios in a real browser — `make e2e` builds the binary, serves it on a free port against a throwaway vault, and drives both scenarios with Playwright, so the release gate `docs/release-process.md` describes is a command instead of a manual walk; the suite lives in `e2e/` outside `precommit` and CI because it needs Chromium and a free `:9090`, while its browser-free half (port reservation, fixture seeding, config writing) runs under `precommit` so a broken harness fails fast. The two scenarios now name `make e2e` as their runner, and the release doc states the real precondition — the live board must be stopped, because the admin port is fixed.
+
 ## v0.106.2
 
 - docs: Add the board's first scenarios and the release gate that runs them — `docs/release-process.md` puts the gate at the PR rather than at an install step, because vault-ui is `autoRelease: true` and nothing human sits between merge and tag; `scenarios/001-board-views-and-filters.md` walks the three views, their filters and the URL that encodes them, and `scenarios/002-task-mutations.md` walks run and jump together with what each actually offers — the goal card's ⋮ menu, the assignee filter reaching the Topics view, and the jump control existing only for a live pane. Both are walked by hand in a browser for now: the repo has no browser harness, and building one is the follow-up that retires the manual walk.

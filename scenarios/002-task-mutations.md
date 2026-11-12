@@ -6,7 +6,7 @@ status: active
 
 Validates that the board's two mutation paths — start a Claude Code session for a task, and jump to an already-running one — reach the right vault entry, that **▶ Start** reports its own failure rather than silently doing nothing, and that **jump** is offered only when there is a live pane to jump to.
 
-⚠️ **Walked by hand in a browser**, same as scenario 001: vault-ui has no scripted browser harness yet.
+⚠️ **Run by `make e2e`**, same as scenario 001: the Playwright suite in `e2e/` executes these steps, and the run and jump routes are stubbed so no real session is spawned.
 
 ## Setup
 
