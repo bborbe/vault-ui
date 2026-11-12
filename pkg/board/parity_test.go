@@ -58,6 +58,7 @@ var _ = Describe("task-list payload parity", func() {
 			"jira",
 			"jump_pane",
 			"location",
+			"mode",
 			"modified_date",
 			"obsidian_url",
 			"open_questions",

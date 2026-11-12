@@ -1593,6 +1593,34 @@ function activityAgeHtml(activityDate) {
     return `<span class="activity-age" title="Last activity: ${escapeHtml(activityDate)}">${escapeHtml(age)}</span>`;
 }
 
+// The execution-mode pill's text for a page's `mode:` value. The field is
+// free-form on disk, so the two known modes get a friendly label, any other
+// non-empty value renders verbatim, and an empty value never reaches here —
+// the caller gates on it.
+function modeBadgeLabel(mode) {
+    if (mode === 'headless') return '⚙ headless';
+    if (mode === 'interactive') return '🖥 interactive';
+    return mode;
+}
+
+// The pill's tooltip. Deliberately returns a constant for every case: the value
+// never reaches a title attribute, so a `mode:` carrying a double quote cannot
+// break out of one.
+function modeBadgeTitle(mode) {
+    if (mode === 'headless') return 'Starts a headless worker (no UI)';
+    if (mode === 'interactive') return 'Opens an interactive session';
+    return 'Execution mode';
+}
+
+// The pill's markup. It carries no `title` attribute on purpose: escapeHtml
+// escapes &, < and > but not a double quote, so a value interpolated into
+// title="..." could split the attribute and install an event handler. The
+// title is assigned through the DOM after the card's innerHTML is set — see
+// createCard.
+function modeBadgeHtml(mode) {
+    return `<span class="mode-badge">${escapeHtml(modeBadgeLabel(mode))}</span>`;
+}
+
 // Title text plus the Obsidian arrow, with the arrow glued to the last word.
 // The arrow used to be a separate inline node after a whitespace-producing
 // newline in the template, so a title that filled its last line pushed a lone
@@ -1629,6 +1657,7 @@ const CARD_CONFIG = {
             hold: true,
             assignee: true,
             priority: true,
+            mode: true,
             activityAge: true,
             blocked: true,
             jira: true,
@@ -1657,6 +1686,7 @@ const CARD_CONFIG = {
             hold: true,
             assignee: true,
             priority: true,
+            mode: true,
             activityAge: true,
             blocked: true,
             jira: true,
@@ -1685,6 +1715,7 @@ const CARD_CONFIG = {
             hold: true,
             assignee: true,
             priority: true,
+            mode: true,
             activityAge: true,
             blocked: true,
             jira: true,
@@ -1726,6 +1757,7 @@ function mapTaskCard(task) {
         urgencyTier: getUrgencyTier(task),
         assignee: task.assignee || '',
         priority: task.priority,
+        mode: task.mode,
         activityDate: task.activity_date || null,
         blockers: task.blockers || [],
         jiraKey: issueKey || '',
@@ -1752,6 +1784,7 @@ function mapGoalCard(goal) {
         urgencyTier: null,
         assignee: goal.assignee || '',
         priority: goal.priority,
+        mode: goal.mode,
         activityDate: goal.activity_date || null,
         blockers: goal.blockers || [],
         jiraKey: issueKey || '',
@@ -1781,6 +1814,7 @@ function mapTopicCard(topic) {
         urgencyTier: null,
         assignee: topic.assignee || '',
         priority: topic.priority,
+        mode: topic.mode,
         activityDate: topic.activity_date || null,
         blockers: topic.blockers || [],
         jiraKey: issueKey || '',
@@ -1876,11 +1910,15 @@ function createCard(kind, item) {
     }
 
     const priorityChip = config.slots.priority && view.priority ? `<span class="priority-chip" title="Priority ${escapeHtml(String(view.priority))}">P${escapeHtml(String(view.priority))}</span>` : '';
+    // The slot alone would emit an empty pill on the pages that declare no
+    // mode; the value alone would bypass the slot contract. Empty string is
+    // falsy, so a page carrying `mode:` with no value renders nothing.
+    const modeChip = config.slots.mode && view.mode ? modeBadgeHtml(view.mode) : '';
     const detailButton = config.slots.detail
         ? '<button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>'
         : '';
 
-    const footerLeft = `${liveIndicator}${flagButton}${holdBadge}${assigneeBlock}${priorityChip}${detailButton}`;
+    const footerLeft = `${liveIndicator}${flagButton}${holdBadge}${assigneeBlock}${priorityChip}${modeChip}${detailButton}`;
     // Age rides with the action so it can't be orphaned on its own wrapped row.
     const cardActions = `${config.slots.activityAge ? activityAgeHtml(view.activityDate) : ''}${config.slots.session ? sessionButtonHtml(kind, item) : ''}`;
 
@@ -1898,6 +1936,15 @@ function createCard(kind, item) {
             <div class="card-actions">${cardActions}</div>
         </div>
     `;
+
+    // The pill's tooltip is assigned through the DOM, never interpolated into
+    // the markup: escapeHtml does not escape a double quote, so a `mode:` value
+    // carrying one would split a title="..." attribute. Setting .title lets the
+    // browser escape it on serialisation.
+    if (modeChip) {
+        const modeEl = card.querySelector('.mode-badge');
+        if (modeEl) modeEl.title = modeBadgeTitle(view.mode);
+    }
 
     if (config.slots.detail) {
         card.querySelector('.topic-detail-btn').addEventListener('click', () => {

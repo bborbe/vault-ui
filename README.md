@@ -20,6 +20,7 @@ Full system map: [recurring-task-creator/docs/system-map.md](https://github.com/
 - Start Claude Code sessions in project directories
 - Session handoff via session ID
 - Dark theme interface
+- Execution-mode pill on every card whose page declares `mode:`
 
 ## Prerequisites
 

@@ -224,3 +224,121 @@ func TestTopicHoldComparesStatus(t *testing.T) {
 		t.Fatalf("mapTopicCard hold = %q, want topic.status === 'hold'", hold)
 	}
 }
+
+// TestCardConfigEnablesModeSlot pins the mode slot on for all three kinds and
+// keeps every slot each kind carried before it. The pre-change lists are
+// hardcoded on purpose: this same change extends the baseline fixture, so
+// reading the expectation back from it would compare the change to itself.
+func TestCardConfigEnablesModeSlot(t *testing.T) {
+	preChangeEnabledSlots := map[string][]string{
+		"task":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
+		"goal":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
+		"topic": {"activityAge", "assignee", "blocked", "detail", "flag", "hold", "jira", "live", "noteLink", "priority"},
+	}
+
+	source := loadAsset(t)
+	for kind, preChange := range preChangeEnabledSlots {
+		slots := cardSlots(t, source, kind)
+		if slots["mode"] != "true" {
+			t.Fatalf("%s: mode slot is %q, want \"true\"", kind, slots["mode"])
+		}
+		for _, name := range preChange {
+			if slots[name] != "true" {
+				t.Fatalf("%s: pre-change slot %q is no longer enabled", kind, name)
+			}
+		}
+	}
+}
+
+// TestCardMappersReadModeFromPayload pins each mapper's mode expression to its
+// own payload field. A constant, a fallback or a coerced boolean all fail.
+func TestCardMappersReadModeFromPayload(t *testing.T) {
+	cases := []struct {
+		kind     string
+		mapperFn string
+		field    string
+	}{
+		{"task", "mapTaskCard", "task.mode"},
+		{"goal", "mapGoalCard", "goal.mode"},
+		{"topic", "mapTopicCard", "topic.mode"},
+	}
+
+	source := loadAsset(t)
+	for _, tc := range cases {
+		view, err := jsasset.ReturnedObject(source, tc.mapperFn)
+		if err != nil {
+			t.Fatalf("ReturnedObject(%s): %v", tc.mapperFn, err)
+		}
+		if got := jsasset.CollapseWhitespace(view["mode"]); got != tc.field {
+			t.Fatalf("%s: mode expression is %q, want %q", tc.kind, got, tc.field)
+		}
+	}
+
+	cardFn, err := jsasset.FunctionBody(source, "createCard")
+	if err != nil {
+		t.Fatalf("FunctionBody(createCard): %v", err)
+	}
+	if !strings.Contains(cardFn, "config.slots.mode && view.mode") {
+		t.Fatalf("createCard does not gate the mode pill on slot AND value")
+	}
+}
+
+// TestModeBadgeNamesModeAndEscapes asserts the pill's three helpers structurally.
+//
+// AC6's two adversarial payloads cannot be rendered here — this repo has no JS
+// runtime — so the coverage is structural, and the rendered proof is the spec's
+// post-deploy browser check:
+//   - `<img src=x onerror=alert(1)>` cannot become an element because the label
+//     path goes through escapeHtml.
+//   - `x" onmouseover="alert(1)` cannot split an attribute because the markup
+//     carries no attribute at all and the title path interpolates nothing.
+func TestModeBadgeNamesModeAndEscapes(t *testing.T) {
+	source := loadAsset(t)
+
+	body := func(name string) string {
+		t.Helper()
+		fn, err := jsasset.FunctionBody(source, name)
+		if err != nil {
+			t.Fatalf("FunctionBody(%s): %v", name, err)
+		}
+		return fn
+	}
+
+	label := body("modeBadgeLabel")
+	for _, want := range []string{"'⚙ headless'", "'🖥 interactive'", "return mode;"} {
+		if !strings.Contains(label, want) {
+			t.Fatalf("modeBadgeLabel is missing %q — a two-case switch would drop an unknown mode", want)
+		}
+	}
+
+	title := body("modeBadgeTitle")
+	for _, want := range []string{
+		"'Starts a headless worker (no UI)'",
+		"'Opens an interactive session'",
+		"'Execution mode'",
+	} {
+		if !strings.Contains(title, want) {
+			t.Fatalf("modeBadgeTitle is missing %q", want)
+		}
+	}
+	if strings.Contains(title, "`${") {
+		t.Fatalf("modeBadgeTitle builds its title from the value; it must return constants only")
+	}
+
+	html := body("modeBadgeHtml")
+	for _, want := range []string{`class="mode-badge"`, "escapeHtml(", "modeBadgeLabel(mode)"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("modeBadgeHtml is missing %q", want)
+		}
+	}
+	if strings.Contains(html, "title=") {
+		t.Fatalf("modeBadgeHtml carries a title attribute; the title must be assigned through the DOM")
+	}
+
+	card := body("createCard")
+	for _, want := range []string{"querySelector('.mode-badge')", ".title = modeBadgeTitle(view.mode)"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("createCard is missing %q", want)
+		}
+	}
+}

@@ -44,6 +44,7 @@ display-only indicator; everything else is an affordance the kind supports.
 | `hold` | The hold badge (`config.holdTitle`) | ✓ | ✓ | ✓ |
 | `assignee` | The assignee badge, or the "+ Assign to me" link | ✓ | ✓ | ✓ |
 | `priority` | The priority chip (`P<n>`) | ✓ | ✓ | ✓ |
+| `mode` | The execution-mode pill (`⚙ headless` / `🖥 interactive` / the raw value) | ✓ | ✓ | ✓ |
 | `activityAge` | `activityAgeHtml(view.activityDate)` in the actions | ✓ | ✓ | ✓ |
 | `blocked` | The `card-blocked` row (`blockedBadgeHtml`) | ✓ | ✓ | ✓ |
 | `jira` | The `card-jira` row | ✓ | ✓ | ✓ |
@@ -81,6 +82,7 @@ coming back under a new name.
     urgencyTier,       // number 0..3 for tasks, null for goal and topic
     assignee,          // string — '' when none
     priority,          // number | string | null
+    mode,              // string | null — the page's own `mode:` frontmatter value
     activityDate,      // string | null
     blockers,          // string[] — [] when not blocked
     jiraKey,           // string — '' when none
@@ -90,8 +92,8 @@ coming back under a new name.
 
 `mapTopicCard` reads the topic response's own eight wire keys — `id`, `title`,
 `status`, `phase`, `session_state`, `flag`, `vault`, `obsidian_url` — plus the
-six data keys the topic endpoint now serves: `assignee`, `priority`,
-`activity_date`, `jira`, `blockers` and `blocked`. It returns the slots the
+seven data keys the topic endpoint now serves: `assignee`, `priority`,
+`activity_date`, `jira`, `blockers`, `blocked` and `mode`. It returns the slots the
 topic card does not carry (`upcoming`, `recentlyCompleted`, `urgencyTier`) as
 their neutral values. An absent field renders no badge, never the literal
 `undefined`.
@@ -102,7 +104,14 @@ on it.
 ## Escaping
 
 DOM text goes through `escapeHtml`; values interpolated into an `onclick`
-string go through `escapeJsAttr`. The shared builder escapes the title link's
+string go through `escapeJsAttr`.
+
+`escapeHtml` is safe for **element text** and unsafe inside a **double-quoted
+attribute**: it escapes `&`, `<` and `>` but not `"`. A page-derived value used
+as a `title` is therefore assigned through the DOM (`el.title = value`, which
+the browser escapes on serialisation) and never interpolated into markup.
+`escapeJsAttr` is not a drop-in for a plain attribute value — it also rewrites
+`'` to `\'`, which would render a literal backslash. The shared builder escapes the title link's
 `obsidianUrl` (`${escapeHtml(view.obsidianUrl)}`). This is a deliberate
 hardening over the previous per-kind code, where both the goal card and the
 shared shell interpolated the URL raw.
@@ -143,5 +152,11 @@ for a served asset, precommit-green is not proof that the page renders.
    the template.
 4. Extend `pkg/board/jsasset/card_render_test.go` with a structural assertion
    for the new slot, mapper expression or guard.
-5. Load the board and confirm every card kind that carries the slot renders it.
+5. Extend `pkg/board/testdata/card-vectors-pre-change.json` **by hand** for
+   every kind the baseline guard covers (`task` and `goal`; never `topic`),
+   adding the slot to `enabled_slots` and the mapper key to `mapper`. Never
+   regenerate that file from the changed source — the guard asserts the sets
+   exactly, and a regenerated fixture would make the pre-change subset check
+   vacuous.
+6. Load the board and confirm every card kind that carries the slot renders it.
 

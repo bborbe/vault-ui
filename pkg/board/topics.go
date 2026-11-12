@@ -77,7 +77,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 
 		// One ListPages for the whole vault, exactly as the task path reads its
 		// page-derived fields: the topic's `jira:` value is not on the list item.
-		pageJiraByTopic := b.topicPageFieldsByTopic(ctx, vault)
+		pageFieldsByTopic := b.topicPageFieldsByTopic(ctx, vault)
 
 		for _, item := range items {
 			blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
@@ -100,7 +100,8 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 					projectDir,
 					projectsRoot,
 				)),
-				Jira:     pageJiraByTopic[item.Name],
+				Jira:     pageFieldsByTopic[item.Name].jira,
+				Mode:     pageFieldsByTopic[item.Name].mode,
 				Blockers: blockers,
 				Blocked:  len(blockers) > 0,
 			})
@@ -119,18 +120,29 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 	return responses, nil
 }
 
-// topicPageFieldsByTopic returns each topic page's `jira:` frontmatter value,
-// keyed by the page's file name. It is one ListPages per vault, the same
-// snapshot the topic list already reads, so it adds no walk of its own.
+// pageKeyFields is the per-page state the topic and goal boards derive from a page
+// that their list rows do not carry: the page's `jira:` and `mode:` frontmatter
+// values. The goal board reads only `mode` — a goal payload carries no jira key.
+// Named pageKeyFields, not pageFields: tasks.go declares a local `pageFields`
+// variable, and a package-scope type of that name would shadow it.
+type pageKeyFields struct {
+	jira *string
+	mode *string
+}
+
+// topicPageFieldsByTopic returns each topic page's `jira:` and `mode:`
+// frontmatter values, keyed by the page's file name. It is one ListPages per
+// vault, the same snapshot the topic list already reads, so it adds no walk of
+// its own.
 //
 // It is deliberately separate from taskPageFieldsByTask: that helper lists the
 // tasks folder and parses Open Questions, neither of which applies to a topic.
 // A failure is not fatal to a board read: it is logged and every topic carries
-// a nil Jira rather than the whole topic list failing.
+// a nil Jira and a nil Mode rather than the whole topic list failing.
 func (b *board) topicPageFieldsByTopic(
 	ctx context.Context, vault Vault,
-) map[string]*string {
-	byName := map[string]*string{}
+) map[string]pageKeyFields {
+	byName := map[string]pageKeyFields{}
 	if b.pageIndex == nil {
 		// A board built without a page index carries no page-derived fields, on
 		// the same terms as the task helper: degrade, never fail the read.
@@ -148,7 +160,10 @@ func (b *board) topicPageFieldsByTopic(
 			return byName
 		default:
 		}
-		byName[page.FileMetadata.Name] = pageJira(page)
+		byName[page.FileMetadata.Name] = pageKeyFields{
+			jira: pageJira(page),
+			mode: pageMode(page),
+		}
 	}
 	return byName
 }

@@ -1209,6 +1209,29 @@ h1 {
     white-space: nowrap;
 }
 
+/* The execution-mode pill. `mode:` is free-form on disk, so an unrecognised
+   value can be arbitrarily long; without a max-width it pins .card-footer-left
+   at its max-content width and pushes the action button past the card edge
+   (observed 2026-09-11 on a 298px card, recorded in createCard). Narrower than
+   .blocked-badge's 100% because this pill shares the footer row with the
+   action button. */
+.mode-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.02em;
+    color: #a5b4fc;             /* indigo-300 */
+    background: #3730a3;        /* indigo-800 */
+    padding: 1px 6px;
+    border-radius: 999px;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Time since anything last happened on the card. Deliberately plain text, not a
    chip — it is ambient context, and should lose against the badges beside it. */
 .activity-age {
