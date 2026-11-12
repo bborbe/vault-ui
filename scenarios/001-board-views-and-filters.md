@@ -27,8 +27,8 @@ Validates that the board's Tasks / Goals / Topics views render the right cards, 
 ## Expected
 
 - [ ] The default load renders the **Tasks** view, and the URL is either bare or carries `?view=tasks`
-- [ ] Each toggle swaps the card set and writes the view into the URL as `?view=tasks` / `?view=goals` / the topics value — the URL never keeps a stale view
-- [ ] Goal cards carry a **⋮ menu**, not a read-only view: it offers Complete / Defer / Abort / Hold / Resume Goal plus flag and assign-to-me, and each action posts to the goal route and re-renders the card — so the Goals view **can** mutate a goal, and that is what must be observed rather than denied (`app.js:2665-2671`)
+- [ ] Each toggle swaps the card set and writes the view into the URL as `?view=tasks` / `?view=goals` / `?view=topics` — the URL never keeps a stale view
+- [ ] Goal cards carry a **⋮ menu**, not a read-only view: it offers Complete / Defer / Abort and Hold or Resume Goal, plus Reset Session when one is live, and each action posts to the goal route and re-renders the card — so the Goals view **can** mutate a goal, and that is what must be observed rather than denied (`app.js:2665-2671`). Flag and assign-to-me are separate card controls, not menu entries
 - [ ] The **vault**, **status**, **assignee** and **live-session** filters apply to all three views — tasks and goals filter server-side, topics client-side (`matchesAssigneeSelection`, `app.js:1029-1032`), so the assignee filter **does** narrow the Topics view and its absence there would be a rendering fault
 - [ ] A reload with a non-default view and filters active restores exactly that state — same view, same filter values, same card set
 - [ ] `?view=goals` lands directly in the Goals view with **no flash through Tasks** first
