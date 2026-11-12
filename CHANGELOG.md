@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- docs: Add the board's first scenarios and the release gate that runs them — `docs/release-process.md` puts the gate at the PR rather than at an install step, because vault-ui is `autoRelease: true` and nothing human sits between merge and tag; `scenarios/001-board-views-and-filters.md` walks the three views, their filters and the URL that encodes them, and `scenarios/002-task-mutations.md` walks run and jump together with how each reports its own failure. Both are walked by hand in a browser for now: the repo has no browser harness, and building one is the follow-up that retires the manual walk.
+- docs: Add the board's first scenarios and the release gate that runs them — `docs/release-process.md` puts the gate at the PR rather than at an install step, because vault-ui is `autoRelease: true` and nothing human sits between merge and tag; `scenarios/001-board-views-and-filters.md` walks the three views, their filters and the URL that encodes them, and `scenarios/002-task-mutations.md` walks run and jump together with what each actually offers — the goal card's ⋮ menu, the assignee filter reaching the Topics view, and the jump control existing only for a live pane. Both are walked by hand in a browser for now: the repo has no browser harness, and building one is the follow-up that retires the manual walk.
 
 ## v0.106.1
 
