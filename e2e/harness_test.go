@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
@@ -65,6 +66,41 @@ func TestSeedFixtureWritesTheExpectedTree(t *testing.T) {
 	}
 	if strings.Contains(string(sessionless), "claude_session_id:") {
 		t.Fatalf("sessionless fixture task must carry no claude_session_id")
+	}
+}
+
+// TestSeedFixtureParsesThroughTheRealLoader is the fixture's only real proof.
+// The board's specs cannot run in a container, so a fixture whose markdown the
+// loader rejects would fail only in the board-down window. ListTasksStrict is
+// used deliberately: it fails on an unreadable file instead of silently listing
+// a smaller set, which is exactly the failure a plain ListTasks would hide.
+func TestSeedFixtureParsesThroughTheRealLoader(t *testing.T) {
+	root := t.TempDir()
+	if err := seedFixture(context.Background(), root); err != nil {
+		t.Fatalf("seedFixture: %v", err)
+	}
+	storageConfig := &storage.Config{
+		TasksDir:  "25 Tasks",
+		GoalsDir:  "24 Goals",
+		TopicsDir: "23 Topics",
+	}
+
+	tasks, err := storage.NewTaskStorage(storageConfig).ListTasksStrict(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ListTasksStrict: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 fixture tasks, got %d", len(tasks))
+	}
+	for _, task := range tasks {
+		if task.Name == "Sessionless Fixture Task" && task.ClaudeSessionID() != "" {
+			t.Fatalf("the sessionless fixture task must carry no claude_session_id")
+		}
+	}
+
+	if _, err := storage.NewGoalStorage(storageConfig).
+		FindGoalByName(context.Background(), root, "Fixture Goal"); err != nil {
+		t.Fatalf("fixture goal does not parse: %v", err)
 	}
 }
 
