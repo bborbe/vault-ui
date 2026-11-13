@@ -15,7 +15,6 @@
 package e2e
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,9 +35,7 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "Vault UI Board E2E Suite")
 }
 
-var _ = BeforeSuite(func() {
-	ctx := context.Background()
-
+var _ = BeforeSuite(func(ctx SpecContext) {
 	root, err := os.MkdirTemp("", "vault-ui-e2e-")
 	Expect(err).NotTo(HaveOccurred())
 	homeDir = root

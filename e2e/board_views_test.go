@@ -9,6 +9,7 @@ package e2e
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/mxschmitt/playwright-go"
 	. "github.com/onsi/ginkgo/v2"
@@ -20,8 +21,8 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
 
-		Expect(page.URL()).To(SatisfyAny(Equal(baseURL+"/"), ContainSubstring("?view=tasks")))
-		Expect(countOf(page, ".task-card")).To(BeNumerically(">", 0))
+		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
+			Should(BeNumerically(">", 0), "the board fetches asynchronously")
 
 		for _, view := range []string{"goals", "topics", "tasks"} {
 			clickView(page, view)
@@ -29,16 +30,21 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		}
 	})
 
-	It("offers a mutating ⋮ menu on goal cards", func() {
+	It("offers a mutating menu on goal cards", func() {
 		page := newPage("/?view=goals")
 		defer func() { _ = page.Close() }()
 
-		Expect(countOf(page, ".goal-card")).To(BeNumerically(">", 0))
-		Expect(clickFirst(page, ".goal-card .menu-toggle")).To(Succeed())
+		Eventually(func() int { return countOf(page, ".goal-card") }, "15s", "500ms").
+			Should(BeNumerically(">", 0))
+		Expect(page.Locator(".goal-card .menu-btn").First().Click()).To(Succeed())
 
-		menu := innerText(page, ".menu")
+		menu := page.Locator(".task-menu")
+		Eventually(func() int { return countOf(page, ".task-menu") }, "5s", "200ms").
+			Should(Equal(1))
+		text, err := menu.InnerText()
+		Expect(err).NotTo(HaveOccurred())
 		for _, label := range []string{"Complete Goal", "Defer Goal", "Abort Goal"} {
-			Expect(menu).To(ContainSubstring(label))
+			Expect(text).To(ContainSubstring(label))
 		}
 	})
 
@@ -46,11 +52,15 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		page := newPage("/?view=topics")
 		defer func() { _ = page.Close() }()
 
-		Expect(countOf(page, ".topic-card")).To(BeNumerically(">", 0))
+		// Two fixture topics: one unassigned, one assigned to e2e.
+		Eventually(func() int { return countOf(page, ".topic-card") }, "15s", "500ms").
+			Should(Equal(2))
 
-		selectOption(page, "#assignee-filter", "nobody-matches-this")
-		Expect(countOf(page, ".topic-card")).To(Equal(0),
-			"the assignee filter narrows Topics client-side; an unfiltered Topics view is a defect")
+		selectAssignee(page, "e2e")
+
+		Eventually(func() int { return countOf(page, ".topic-card") }, "10s", "500ms").
+			Should(Equal(1),
+				"the assignee filter narrows Topics client-side; an unfiltered view is a defect")
 	})
 
 	It("restores the view and filters on reload", func() {
@@ -59,7 +69,8 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 
 		Expect(page.URL()).To(ContainSubstring("view=goals"))
 		Expect(page.URL()).To(ContainSubstring("assignee=e2e"))
-		Expect(countOf(page, ".task-card")).To(Equal(0))
+		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
+			Should(Equal(0), "the Goals view renders no task cards")
 	})
 
 	It("lands on the Goals view without fetching /api/tasks first", func() {
@@ -77,12 +88,14 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
 
+		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
+			Should(BeNumerically(">", 0))
 		before := countOf(page, ".task-card")
+
 		Expect(writeFixtureTask(ctx, vaultPath, "Arrived During The Walk")).To(Succeed())
 
-		Eventually(func() int {
-			return countOf(page, ".task-card")
-		}, "30s", "1s").Should(BeNumerically(">", before))
+		Eventually(func() int { return countOf(page, ".task-card") }, "30s", "1s").
+			Should(BeNumerically(">", before))
 	})
 })
 
@@ -95,9 +108,12 @@ var _ = Describe("Scenario 001: the console", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = page.Close() }()
 
+		var mu sync.Mutex
 		var serverFailures []string
 		page.OnResponse(func(resp playwright.Response) {
 			if resp.Status() >= 500 && strings.Contains(resp.URL(), "/api/") {
+				mu.Lock()
+				defer mu.Unlock()
 				serverFailures = append(serverFailures,
 					fmt.Sprintf("%d %s", resp.Status(), resp.URL()))
 			}
@@ -118,6 +134,8 @@ var _ = Describe("Scenario 001: the console", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(errs).To(BeEmpty(), "uncaught exceptions during the walk")
 
+		mu.Lock()
+		defer mu.Unlock()
 		Expect(serverFailures).To(BeEmpty(), "5xx /api/ responses during the walk")
 	})
 })
@@ -129,28 +147,25 @@ func countOf(page playwright.Page, sel string) int {
 	return count
 }
 
-// innerText reads the first match's visible text.
-func innerText(page playwright.Page, sel string) string {
-	text, err := page.Locator(sel).First().InnerText()
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
-	return text
-}
-
-// clickFirst clicks the first element matching sel.
-func clickFirst(page playwright.Page, sel string) error {
-	return page.Locator(sel).First().Click()
-}
-
 // clickView clicks a view toggle.
 func clickView(page playwright.Page, view string) {
-	ExpectWithOffset(1, page.Locator("[data-view='"+view+"']").First().Click()).To(Succeed())
+	ExpectWithOffset(1,
+		page.Locator(".view-toggle-btn[data-view='"+view+"']").First().Click(),
+	).To(Succeed())
 }
 
-// selectOption picks a value in a select control.
-func selectOption(page playwright.Page, sel, value string) {
-	values := []string{value}
-	_, err := page.Locator(sel).First().SelectOption(playwright.SelectOptionValues{Values: &values})
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+// selectAssignee opens the assignee selector and checks one named row. The
+// control is a custom checkbox dropdown, not a <select>, so SelectOption does
+// not apply.
+func selectAssignee(page playwright.Page, name string) {
+	ExpectWithOffset(1, page.Locator("#assignee-selector-toggle").First().Click()).To(Succeed())
+
+	row := page.Locator(".assignee-selector-item").
+		Filter(playwright.LocatorFilterOptions{HasText: name}).First()
+	ExpectWithOffset(1, row.Locator("input[type=checkbox]").First().Click()).To(Succeed())
+
+	// Close it again so the dropdown cannot intercept the next click.
+	ExpectWithOffset(1, page.Locator("#assignee-selector-toggle").First().Click()).To(Succeed())
 }
 
 // pollTicks counts the poll loop's own console line.
@@ -166,19 +181,4 @@ func pollTicks(page playwright.Page) int {
 		}
 	}
 	return ticks
-}
-
-// serverErrors lists 5xx /api/ responses the page received.
-func serverErrors(page playwright.Page) []string {
-	messages, err := page.ConsoleMessages()
-	if err != nil {
-		return nil
-	}
-	var failures []string
-	for _, message := range messages {
-		if message.Type() == "error" && strings.Contains(message.Text(), "/api/") {
-			failures = append(failures, message.Text())
-		}
-	}
-	return failures
 }

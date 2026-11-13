@@ -78,10 +78,11 @@ func seedFixture(ctx context.Context, root string) error {
 		}
 	}
 	files := map[string]string{
-		filepath.Join("25 Tasks", "Sessionless Fixture Task.md"): taskBody("Sessionless Fixture Task", "in_progress", "execution"),
-		filepath.Join("25 Tasks", "Held Fixture Task.md"):        taskBody("Held Fixture Task", "hold", "todo"),
-		filepath.Join("24 Goals", "Fixture Goal.md"):             pageBody("goal", "Fixture Goal"),
-		filepath.Join("23 Topics", "Fixture Topic.md"):           pageBody("topic", "Fixture Topic"),
+		filepath.Join("25 Tasks", "Sessionless Fixture Task.md"): taskBody("Sessionless Fixture Task", "in_progress", "execution", ""),
+		filepath.Join("25 Tasks", "Held Fixture Task.md"):        taskBody("Held Fixture Task", "hold", "todo", ""),
+		filepath.Join("24 Goals", "Fixture Goal.md"):             pageBody("goal", "Fixture Goal", ""),
+		filepath.Join("23 Topics", "Fixture Topic.md"):           pageBody("topic", "Fixture Topic", ""),
+		filepath.Join("23 Topics", "Assigned Fixture Topic.md"):  pageBody("topic", "Assigned Fixture Topic", "e2e"),
 	}
 	for rel, body := range files {
 		select {
@@ -97,43 +98,51 @@ func seedFixture(ctx context.Context, root string) error {
 }
 
 // taskBody renders a minimal task page the board can parse.
-func taskBody(title, status, phase string) string {
+func taskBody(title, status, phase, assignee string) string {
 	return fmt.Sprintf(`---
 page_type: task
 status: %s
 phase: %s
 priority: 2
-created_date: "2026-11-13"
+created_date: "2026-11-13"%s
 ---
 Tags: [[Task]]
 
 ---
 
 %s, written by the e2e fixture.
-`, status, phase, title)
+`, status, phase, assigneeLine(assignee), title)
+}
+
+// assigneeLine renders the assignee frontmatter key, or nothing when unset.
+func assigneeLine(assignee string) string {
+	if assignee == "" {
+		return ""
+	}
+	return "\nassignee: " + assignee
 }
 
 // writeFixtureTask drops a new task into a fixture vault mid-run, which is how
 // the "vault change reaches the open board" assertion gets its change.
 func writeFixtureTask(ctx context.Context, vaultPath, title string) error {
-	body := taskBody(title, "in_progress", "execution")
+	body := taskBody(title, "in_progress", "execution", "")
 	path := filepath.Join(vaultPath, "25 Tasks", title+".md")
 	return errors.Wrapf(ctx, os.WriteFile(path, []byte(body), 0o600), "write %s", title)
 }
 
 // pageBody renders a minimal goal or topic page.
-func pageBody(kind, title string) string {
+func pageBody(kind, title, assignee string) string {
 	return fmt.Sprintf(`---
 page_type: %s
 status: in_progress
-created_date: "2026-11-13"
+created_date: "2026-11-13"%s
 ---
 Tags: [[%s]]
 
 ---
 
 %s, written by the e2e fixture.
-`, kind, kind, title)
+`, kind, assigneeLine(assignee), kind, title)
 }
 
 // writeConfig writes both config files: vault-ui's own, and the vault-cli one
