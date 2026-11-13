@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.107.0
 
 - feat: Run the board scenarios in a real browser — `make e2e` builds the binary, serves it on a free port against a throwaway vault, and drives both scenarios with Playwright, so the release gate `docs/release-process.md` describes is a command instead of a manual walk; the suite lives in `e2e/` outside `precommit` and CI because it needs Chromium and a free `:9090`, while its browser-free half (port reservation, fixture seeding, config writing) runs under `precommit` so a broken harness fails fast. The two scenarios now name `make e2e` as their runner, and the release doc states the real precondition — the live board must be stopped, because the admin port is fixed.
 
