@@ -113,6 +113,39 @@ var _ = Describe("Scenario 002: running and jumping to a task session", func() {
 		checkStubs()
 	})
 
+	It("does not post a second run for a task already starting", func() {
+		// The gap probe 5 found: every spec clicked Start once, so the board's
+		// `button.disabled = true` guard in runSession could be deleted and
+		// nothing noticed. This asserts the request count instead of the
+		// button's appearance.
+		page := newPage("/")
+		defer func() { _ = page.Close() }()
+		checkStubs := stubSessionRoutes(page)
+
+		rec := &recorder{}
+		page.OnRequest(func(req playwright.Request) {
+			if runRoutePattern.MatchString(req.URL()) {
+				rec.add(req.URL())
+			}
+		})
+
+		Eventually(func() int { return countOf(page, ".start-btn") }, "15s", "500ms").
+			Should(BeNumerically(">", 0))
+
+		start := page.Locator(".start-btn").First()
+		Expect(start.Click()).To(Succeed())
+		Eventually(func() int { return rec.len() }, "10s", "200ms").Should(Equal(1))
+
+		// The control is disabled while the first run is in flight, so a
+		// second click must not reach the server. Force skips actionability so
+		// the assertion is about the guard, not about Playwright's politeness.
+		_ = start.Click(playwright.LocatorClickOptions{Force: playwright.Bool(true)})
+
+		Consistently(func() int { return rec.len() }, "3s", "300ms").Should(Equal(1),
+			"a second Start must not post a second run")
+		checkStubs()
+	})
+
 	It("renders every card with a title", func() {
 		page := newPage("/")
 		defer func() { _ = page.Close() }()
