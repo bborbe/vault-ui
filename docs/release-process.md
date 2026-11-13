@@ -4,23 +4,24 @@ vault-ui releases through the maintainer fleet: `.maintainer.yaml` sets `release
 
 ## The scenario gate
 
-**Before a PR is merged — not before a release is cut — run every scenario in `scenarios/` against the built binary.**
+**Before a PR is merged — not before a release is cut — `make e2e` must be green.**
 
 The gate's placement follows from the release driver. vault-cli can gate `make install` because a human runs that step; dark-factory can gate prompt completion because the auto-release hangs off it. Here nothing human sits between merge and tag, so the last point at which a human is in the loop is the PR. A gate placed any later is not a gate.
 
 ```bash
-make build                       # the binary under test
-make run                         # serve it on :8000
-# walk scenarios/*.md in a browser, top to bottom, against that binary
+make e2e                         # the gate — must exit 0
+make run                         # serve it on :8000 for a manual look
 ```
 
-A scenario that fails stops the merge: fix the regression, rebuild, re-walk. Do not merge with a scenario red and do not narrow the walk to the files the diff touched — the board is one page, and a change to a filter or a column renders through code the diff did not name.
+`make e2e` builds the binary, serves it on a free port against a throwaway vault, and drives the two scenarios — `scenarios/001-board-views-and-filters.md` and `scenarios/002-task-mutations.md` — in a real browser. **It needs the live board stopped:** the binary binds the admin port `:9090` unconditionally (spec 021 forbids a port knob), so the target refuses to start while `com.github.bborbe.vault-ui` holds it and prints the `launchctl bootout` / `bootstrap` pair to use.
 
-### Why a browser walk and not `make test`
+A scenario that fails stops the merge: fix the regression, re-run `make e2e`. Do not merge with the suite red and do not narrow it to the files the diff touched — the board is one page, and a change to a filter or a column renders through code the diff did not name.
 
-`make precommit` runs `format vet test`, and none of it renders the page. The failure class this gate exists for is a render-time one: a JavaScript exception inside the poll loop reports itself as a connection problem, so a broken page reads as a dead server, and both read as clean to a unit test. This is the same rule the development guide states for any served UI asset — precommit-green is not the page renders.
+### Why a browser and not `make test`
 
-⚠️ **The walk is manual because vault-ui has no browser harness.** attention-controller has one (`e2e/`, Playwright, `make e2e`); vault-ui does not, and its JS is already extracted into `src/vault_ui/static/app.js` so there is no extraction to piggyback on. Building that harness is the follow-up that retires the manual walk; until it exists, this gate is only as reliable as the operator's attention, and a skipped walk leaves no trace.
+`make precommit` runs `format vet test`, and none of it renders the page. The failure class this gate exists for is a render-time one: a caught render error reaches `showToast` plus a console line and nothing else, and an uncaught one leaves the page showing its last render — the `#ws-status` indicator reports WebSocket state, never render state, so a broken page reads as stale or dead. Both read as clean to a unit test. This is the same rule the development guide states for any served UI asset — precommit-green is not the page renders.
+
+The suite lives in `e2e/` and is deliberately outside `precommit` and outside CI: it needs Chromium and a free `:9090`, so it is a PR-time command, not a pre-commit hook. The browser-free half (`freePort`, the fixture seeder, the config writer) does run under `precommit`, so a broken harness fails fast instead of silently skipping.
 
 ## What a scenario must carry
 
@@ -29,5 +30,7 @@ A scenario that fails stops the merge: fix the regression, rebuild, re-walk. Do 
 - A `⚠️` note when the scenario's coverage has a known hole, so the next reader does not mistake a green walk for full coverage
 
 ## Change history
+
+**2026-11-13** — The gate became executable. `make e2e` now runs both scenarios in a real browser against a throwaway vault, so the page is no longer exercised by hand; the caveat that said the repo had no browser harness is gone, and the mechanism sentence in § Why a browser was corrected to what `app.js` actually does.
 
 **2026-11-12** — Created. The repo had `docs/dod.md` and no release guide, and no `scenarios/` at all, so nothing in the tree told anyone to exercise the served page before shipping it. The two scenarios added with this page are the first ones; the harness that would make them scripted is filed separately.

@@ -235,6 +235,7 @@ make test        # Run tests
 make precommit   # Run all checks
 make build       # Build the Go binary
 make run         # Build and run
+make e2e         # Run the board scenarios in a real browser (needs Chromium and a free :9090)
 ```
 
 ## Configuration
