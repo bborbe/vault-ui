@@ -55,17 +55,22 @@ func cardSlots(t *testing.T, source, kind string) map[string]string {
 // change enables six data slots on the topic card and rewrites its mapper, so
 // comparing them against the pre-change baseline would make this test
 // unsatisfiable. Do not "fix" this omission by adding them.
+// baselineKinds is the set of card kinds the baseline guard covers. Package
+// scope so TestCardBaselineGuardCoversBothKinds can assert the set itself —
+// an inline table could silently lose a row and leave that kind unguarded.
+var baselineKinds = []struct {
+	kind     string
+	mapperFn string
+}{
+	{kind: "task", mapperFn: "mapTaskCard"},
+	{kind: "goal", mapperFn: "mapGoalCard"},
+}
+
 func TestTaskAndGoalCardDefinitionsMatchBaseline(t *testing.T) {
 	source := loadAsset(t)
 	baseline := loadBaseline(t)
 
-	for _, tc := range []struct {
-		kind     string
-		mapperFn string
-	}{
-		{kind: "task", mapperFn: "mapTaskCard"},
-		{kind: "goal", mapperFn: "mapGoalCard"},
-	} {
+	for _, tc := range baselineKinds {
 		t.Run(tc.kind, func(t *testing.T) {
 			want, ok := baseline[tc.kind]
 			if !ok {
@@ -143,4 +148,72 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// TestCardBaselineGuardCoversBothKinds pins the guard's coverage set. Without
+// it, deleting a row from baselineKinds leaves that kind silently unguarded:
+// the remaining row still runs and the fixture comparison stays green.
+func TestCardBaselineGuardCoversBothKinds(t *testing.T) {
+	if len(baselineKinds) != 2 {
+		t.Fatalf("baseline guard covers %d kinds, want 2", len(baselineKinds))
+	}
+
+	covered := map[string]bool{}
+	for _, tc := range baselineKinds {
+		if tc.mapperFn == "" {
+			t.Fatalf("%s: mapperFn is empty", tc.kind)
+		}
+		covered[tc.kind] = true
+	}
+	for _, want := range []string{"task", "goal"} {
+		if !covered[want] {
+			t.Fatalf("baseline guard no longer covers %q", want)
+		}
+	}
+	for kind := range covered {
+		if kind != "task" && kind != "goal" {
+			t.Fatalf("baseline guard covers an unexpected kind %q", kind)
+		}
+	}
+}
+
+// TestCardSlotsRetainPreChangeAffordances proves the fixture extension could not
+// have dropped an existing slot. The expectation is hardcoded, not read back
+// from the fixture: this change extends that same fixture, so reading it would
+// compare the change to itself and make the check vacuous.
+func TestCardSlotsRetainPreChangeAffordances(t *testing.T) {
+	preChangeEnabledSlots := map[string][]string{
+		"task":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
+		"goal":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
+		"topic": {"activityAge", "assignee", "blocked", "detail", "flag", "hold", "jira", "live", "noteLink", "priority"},
+	}
+
+	source := loadAsset(t)
+	baseline := loadBaseline(t)
+
+	for kind, want := range preChangeEnabledSlots {
+		var got []string
+		if entry, ok := baseline[kind]; ok {
+			got = entry.EnabledSlots
+		} else {
+			// topic has no fixture entry by design; assert against the live asset.
+			slots := cardSlots(t, source, kind)
+			for name, value := range slots {
+				if value == "true" {
+					got = append(got, name)
+				}
+			}
+			sort.Strings(got)
+		}
+
+		have := map[string]bool{}
+		for _, name := range got {
+			have[name] = true
+		}
+		for _, name := range want {
+			if !have[name] {
+				t.Fatalf("%s: pre-change slot %q is missing", kind, name)
+			}
+		}
+	}
 }

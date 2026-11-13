@@ -811,6 +811,7 @@ var _ = Describe("task-list body cache content gate", func() {
 			row.openQuestions = []domain.OpenQuestion{{Index: 2, Text: "when?"}}
 		}),
 		Entry("flag", func(row *taskSnapshotRow) { row.item.Flag = true }),
+		Entry("mode", func(row *taskSnapshotRow) { row.mode = strPtr("headless") }),
 	)
 
 	It("a move in an unselected vault keeps the query's held body", func() {

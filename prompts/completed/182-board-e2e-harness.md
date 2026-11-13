@@ -1,5 +1,5 @@
 ---
-status: approved
+status: completed
 execution_id: vault-ui-e2e-exec-182-board-e2e-harness
 dark-factory-version: v0.198.17
 created: "2026-11-12T23:22:33Z"

@@ -8,6 +8,7 @@
       "hold",
       "jira",
       "menu",
+      "mode",
       "noteLink",
       "priority",
       "session"
@@ -22,6 +23,7 @@
       "jiraKey": "issueKey || ''",
       "jiraUrl": "issueUrl || ''",
       "live": "false",
+      "mode": "task.mode",
       "obsidianUrl": "task.obsidian_url",
       "phase": "task.phase",
       "priority": "task.priority",
@@ -42,6 +44,7 @@
       "hold",
       "jira",
       "menu",
+      "mode",
       "noteLink",
       "priority",
       "session"
@@ -56,6 +59,7 @@
       "jiraKey": "issueKey || ''",
       "jiraUrl": "issueUrl || ''",
       "live": "false",
+      "mode": "goal.mode",
       "obsidianUrl": "goal.obsidian_url",
       "phase": "goal.phase",
       "priority": "goal.priority",

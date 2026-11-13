@@ -45,6 +45,7 @@ type taskRow struct {
 	location          *string
 	jumpPane          *string
 	jira              *string
+	mode              *string
 	openQuestions     []domain.OpenQuestion
 }
 
@@ -105,6 +106,7 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 			visibleTask.location = row.location
 			visibleTask.jumpPane = row.jumpPane
 			visibleTask.jira = row.jira
+			visibleTask.mode = row.mode
 			visibleTask.openQuestions = row.openQuestions
 			responses = append(responses, b.taskResponse(vault, visibleTask, row.activityDate))
 		}
@@ -278,6 +280,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 				projectsRoot,
 			),
 			jira:          fields.jira,
+			mode:          fields.mode,
 			openQuestions: fields.openQuestions,
 		})
 	}
@@ -542,6 +545,7 @@ func (b *board) patchTaskRows(
 			jumpPane:      rows[at].jumpPane,
 			activityDate:  rows[at].activityDate,
 			jira:          pageJira(page),
+			mode:          pageMode(page),
 			openQuestions: questions,
 		}
 	}
@@ -689,6 +693,7 @@ func pageOpenQuestions(ctx context.Context, page *domain.Page) ([]domain.OpenQue
 type taskPageFields struct {
 	openQuestions []domain.OpenQuestion
 	jira          *string
+	mode          *string
 }
 
 // taskPageFieldsByTask returns each task page's Open Questions and `jira:`
@@ -737,6 +742,7 @@ func (b *board) taskPageFieldsByTask(
 		byName[page.FileMetadata.Name] = taskPageFields{
 			openQuestions: questions,
 			jira:          pageJira(page),
+			mode:          pageMode(page),
 		}
 	}
 	return byName
@@ -759,6 +765,17 @@ func taskPageFieldsFor(byName map[string]taskPageFields, name string) taskPageFi
 // carries no value, the same nil-for-empty shape the other pointer fields use.
 func pageJira(page *domain.Page) *string {
 	value := page.GetString("jira")
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// pageMode returns a page's `mode:` frontmatter value as a nullable string,
+// verbatim and unparsed: in the vaults the field is free-form, and an empty
+// value reads as absent — the same nil-for-empty shape pageJira uses.
+func pageMode(page *domain.Page) *string {
+	value := page.GetString("mode")
 	if value == "" {
 		return nil
 	}
@@ -889,6 +906,7 @@ func (b *board) taskResponse(
 		Location:             row.location,
 		JumpPane:             row.jumpPane,
 		Jira:                 row.jira,
+		Mode:                 row.mode,
 		OpenQuestions:        openQuestions,
 	}
 }
