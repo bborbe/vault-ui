@@ -83,13 +83,34 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 	})
 
 	It("lands on the Goals view without fetching /api/tasks first", func() {
-		page := newPage("/?view=goals")
+		// Built by hand so the request handler is registered BEFORE the first
+		// navigation, and asserted on the request rather than on
+		// performance.getEntriesByType: a probe that forced every view through
+		// loadTasks passed this spec when it read the performance buffer, so
+		// that signal does not record the fetch this assertion is about.
+		page, err := browser.NewPage()
+		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = page.Close() }()
 
-		raw, err := page.Evaluate(
-			"performance.getEntriesByType('resource').map(e => e.name).join(',')", nil)
+		rec := &recorder{}
+		page.OnRequest(func(req playwright.Request) {
+			if strings.Contains(req.URL(), "/api/tasks") {
+				rec.add(req.URL())
+			}
+		})
+
+		_, err = page.Goto(baseURL+"/?view=goals", playwright.PageGotoOptions{
+			WaitUntil: playwright.WaitUntilStateLoad,
+		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(strings.Contains(raw.(string), "/api/tasks")).To(BeFalse(),
+
+		// Positive first: once goal cards have rendered, the fetch that would
+		// have flashed Tasks has had its chance. Only then is the absence
+		// meaningful.
+		Eventually(func() int { return countOf(page, ".goal-card") }, "15s", "500ms").
+			Should(BeNumerically(">", 0))
+
+		Expect(rec.len()).To(Equal(0),
 			"a deep link to ?view=goals must not fetch /api/tasks")
 	})
 
