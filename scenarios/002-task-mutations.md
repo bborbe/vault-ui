@@ -6,7 +6,7 @@ status: active
 
 Validates that the board's two mutation paths — start a Claude Code session for a task, and jump to an already-running one — reach the right vault entry, that **▶ Start** reports its own failure rather than silently doing nothing, and that **jump** is offered only when there is a live pane to jump to.
 
-⚠️ **Run by `make e2e`**, same as scenario 001: the Playwright suite in `e2e/` executes these steps, and the run and jump routes are stubbed so no real session is spawned.
+⚠️ **Partly run by `make e2e`.** The Playwright suite in `e2e/` executes the run path and the jump control's absence on a sessionless task, with both routes stubbed so no real session is spawned. The **jump-on-a-live-session** step below is **not** covered: it needs a real terminal pane, which the throwaway fixture has no way to create.
 
 ## Setup
 

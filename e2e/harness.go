@@ -194,8 +194,12 @@ func startBinary(ctx context.Context, port int) error {
 
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	if err := waitReady(ctx); err != nil {
-		procStderr = stderr.String()
+		// Stop first, then read: os/exec copies the child's stderr in its own
+		// goroutine and only Wait joins it. Reading before the stop races that
+		// copy and drops whatever the binary wrote on the way out — which is
+		// exactly the output a failed start needs.
 		stopBinary()
+		procStderr = stderr.String()
 		return errors.Wrapf(ctx, err, "wait ready: %s", tail(procStderr, 2000))
 	}
 	return nil

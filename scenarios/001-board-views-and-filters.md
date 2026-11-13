@@ -6,7 +6,7 @@ status: active
 
 Validates that the board's Tasks / Goals / Topics views render the right cards, that every filter applies to the views it claims to, and that the URL is a faithful encoding of the state — so a deep-link and a reload land where the operator left off.
 
-⚠️ **Run by `make e2e`.** This scenario is executed by the Playwright suite in `e2e/`; the sections below are the suite's specification, and the walk is scripted rather than manual.
+⚠️ **Run by `make e2e`.** The Playwright suite in `e2e/` drives this scenario against a throwaway vault: the view toggles and their URL, the goal card's menu, the assignee filter on the Topics view, the reload restore, the no-flash deep link, the vault-change update, and the console over two poll intervals. The sections below are the suite's specification — where the suite asserts less than a line here claims, that line is the gap to close, not a description of what runs.
 
 ## Setup
 
