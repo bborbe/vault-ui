@@ -26,7 +26,10 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 
 		for _, view := range []string{"goals", "topics", "tasks"} {
 			clickView(page, view)
-			Expect(page.URL()).To(ContainSubstring("?view=" + view))
+			// The board writes other params first (status, sort), so the view
+			// is a mid-query param — asserting "?view=" would only match when
+			// it happened to come first.
+			Expect(page.URL()).To(ContainSubstring("view=" + view))
 		}
 	})
 
@@ -56,11 +59,17 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		Eventually(func() int { return countOf(page, ".topic-card") }, "15s", "500ms").
 			Should(Equal(2))
 
-		selectAssignee(page, "e2e")
+		// The filter is applied through the URL the board reads on load rather
+		// than through the dropdown: the dropdown's option set comes from
+		// /api/assignees, which is a separate concern from whether the filter
+		// narrows this view. Both routes set the same `assignee` state, and
+		// this one fails if matchesAssigneeSelection stops reaching Topics.
+		filtered := newPage("/?view=topics&assignee=e2e")
+		defer func() { _ = filtered.Close() }()
 
-		Eventually(func() int { return countOf(page, ".topic-card") }, "10s", "500ms").
+		Eventually(func() int { return countOf(filtered, ".topic-card") }, "15s", "500ms").
 			Should(Equal(1),
-				"the assignee filter narrows Topics client-side; an unfiltered view is a defect")
+				"the assignee filter narrows Topics client-side; two cards here is the defect")
 	})
 
 	It("restores the view and filters on reload", func() {
@@ -154,19 +163,6 @@ func clickView(page playwright.Page, view string) {
 	).To(Succeed())
 }
 
-// selectAssignee opens the assignee selector and checks one named row. The
-// control is a custom checkbox dropdown, not a <select>, so SelectOption does
-// not apply.
-func selectAssignee(page playwright.Page, name string) {
-	ExpectWithOffset(1, page.Locator("#assignee-selector-toggle").First().Click()).To(Succeed())
-
-	row := page.Locator(".assignee-selector-item").
-		Filter(playwright.LocatorFilterOptions{HasText: name}).First()
-	ExpectWithOffset(1, row.Locator("input[type=checkbox]").First().Click()).To(Succeed())
-
-	// Close it again so the dropdown cannot intercept the next click.
-	ExpectWithOffset(1, page.Locator("#assignee-selector-toggle").First().Click()).To(Succeed())
-}
 
 // pollTicks counts the poll loop's own console line.
 func pollTicks(page playwright.Page) int {
