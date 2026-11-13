@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/bborbe/errors"
@@ -217,9 +216,6 @@ func waitReady(ctx context.Context) error {
 		case <-deadline:
 			return errors.Errorf(ctx, "readiness did not answer 200 within 30s")
 		case <-ticker.C:
-			if binaryExited() {
-				return errors.Errorf(ctx, "binary exited before readiness")
-			}
 			resp, err := client.Get("http://127.0.0.1:9090/readiness")
 			if err != nil {
 				continue
@@ -259,15 +255,11 @@ func stopBinary() {
 	proc = nil
 }
 
-// binaryExited reports whether the child has already died. os.ProcessState is
-// only set by Wait, so a Signal(0) probe is the check that actually works while
-// the process is still being supervised.
-func binaryExited() bool {
-	if proc == nil || proc.Process == nil {
-		return true
-	}
-	return proc.Process.Signal(syscall.Signal(0)) != nil
-}
+// There is deliberately no "did the child exit early?" probe here. An unreaped
+// child is a zombie, and a zombie still answers Signal(0), so every cheap
+// liveness check reports alive; detecting the exit means calling Wait, which
+// only one owner may do. A dead binary therefore costs the full 30s timeout —
+// and the error carries the captured stderr, which is what actually diagnoses it.
 
 // tail keeps the last n bytes of s, for failure messages.
 func tail(s string, n int) string {
