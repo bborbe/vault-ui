@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat(ci): add a `check-task-link` gate that fails a PR whose body carries no `Task: <task_identifier>` line
+
 ## v0.108.0
 
 - feat: show a card's interactive or headless mode as a pill on the task, goal and topic boards
