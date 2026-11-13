@@ -1,5 +1,5 @@
 ---
-status: approved
+status: completed
 spec: [039-mode-pill]
 created: "2026-11-12T12:35:00+01:00"
 queued: "2026-11-12T11:30:28Z"
