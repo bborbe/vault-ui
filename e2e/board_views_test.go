@@ -119,6 +119,17 @@ var _ = Describe("Scenario 001: the console", func() {
 
 		var mu sync.Mutex
 		var serverFailures []string
+		var consoleErrors []string
+		// A render exception inside loadTasks' try is CAUGHT — it reaches
+		// showToast plus console.error, never pageerror. Without this handler
+		// the assertion would pass on exactly the failure the gate exists for.
+		page.OnConsole(func(msg playwright.ConsoleMessage) {
+			if msg.Type() == "error" {
+				mu.Lock()
+				defer mu.Unlock()
+				consoleErrors = append(consoleErrors, msg.Text())
+			}
+		})
 		page.OnResponse(func(resp playwright.Response) {
 			if resp.Status() >= 500 && strings.Contains(resp.URL(), "/api/") {
 				mu.Lock()
@@ -146,6 +157,8 @@ var _ = Describe("Scenario 001: the console", func() {
 		mu.Lock()
 		defer mu.Unlock()
 		Expect(serverFailures).To(BeEmpty(), "5xx /api/ responses during the walk")
+		Expect(consoleErrors).To(BeEmpty(),
+			"console.error during the walk — a caught render exception lands here")
 	})
 })
 
@@ -162,7 +175,6 @@ func clickView(page playwright.Page, view string) {
 		page.Locator(".view-toggle-btn[data-view='"+view+"']").First().Click(),
 	).To(Succeed())
 }
-
 
 // pollTicks counts the poll loop's own console line.
 func pollTicks(page playwright.Page) int {
