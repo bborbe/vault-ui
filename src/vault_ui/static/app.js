@@ -1706,6 +1706,8 @@ const CARD_CONFIG = {
         vaultDataset: true,
         extraClass: 'topic-card',
         titleLinkExtraClass: 'topic-title-link',
+        // No topic assign route exists, so the badge is plain text and no
+        // "+ Assign to me" link is emitted.
         assignCall: null,
         assigneeClickable: false,
         holdTitle: 'On hold — paused, not actively worked',
@@ -1719,10 +1721,13 @@ const CARD_CONFIG = {
             activityAge: true,
             blocked: true,
             jira: true,
-            live: true,
-            session: false,
-            menu: false,
-            detail: true,
+            // Pinned divergence from the task card, asserted by
+            // TestCardConfigSlotParityAcrossKinds. Each of these four is
+            // deliberate; every other slot must match task.slots exactly.
+            live: true, // topic-only, display-only live badge
+            session: false, // no topic session route yet
+            menu: false, // no PATCH /api/topics/{id}/status route yet
+            detail: true, // topic-only detail view
         },
     },
 };

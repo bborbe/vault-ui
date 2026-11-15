@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- test: pin the card-config slot parity across task, goal and topic — a slot added to one kind alone now fails CI instead of drifting silently, and the four deliberate topic-only divergences are pinned with their reasons in `CARD_CONFIG` and `docs/frontend-card-render.md`
+
 ## v0.109.0
 
 - feat(ci): add a `check-task-link` gate that fails a PR whose body carries no `Task: <task_identifier>` line

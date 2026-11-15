@@ -58,6 +58,25 @@ status action (complete, hold, abort, defer) lives in the card menu built by
 `showMenu`, so there is no separate status slot to disable. If a status
 affordance outside the menu is ever wanted, it becomes its own slot then.
 
+### The only allowed slot divergence
+
+`task` and `goal` carry an identical slot map. `topic` differs in exactly four
+slots, and every one of them is deliberate:
+
+| Slot | topic | Why |
+| --- | --- | --- |
+| `menu` | `false` | No `PATCH /api/topics/{id}/status` route exists, so the `⋮` menu would offer status actions that fail. |
+| `session` | `false` | No topic session route exists, so `sessionButtonHtml` would resolve a topic id against the task cache. |
+| `detail` | `true` | The topic detail view is topic-only; no other kind has it. |
+| `live` | `true` | The live badge is a topic-only, display-only indicator. |
+
+Every other slot must be identical across the three kinds — a slot added to
+`task` alone is a bug, not a per-kind choice.
+`TestCardConfigSlotParityAcrossKinds` in `pkg/board/jsasset/card_render_test.go`
+enforces this, so a one-entry edit fails CI instead of drifting silently.
+`topic.assignCall` is `null` and `topic.assigneeClickable` is `false` for the
+same reason: no topic assign route exists, so the badge is plain text.
+
 No card kind renders a `.status-badge`: the column is the phase.
 
 ## View-model

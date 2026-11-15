@@ -5,6 +5,7 @@
 package jsasset_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -212,6 +213,55 @@ func TestBlockerResolverUsesTopicDataset(t *testing.T) {
 	}
 	if !strings.Contains(body, "card.dataset.topicId === name") {
 		t.Fatal("navigateToBlocker does not resolve a topic blocker against topicId")
+	}
+}
+
+// TestCardConfigSlotParityAcrossKinds pins the three kinds' card slots to one
+// contract. goal and task are the same view in two tabs, so they carry an
+// identical slot map. topic differs only by the four slots pinned below, each
+// deliberate; every other slot — and any slot added to task later — must appear
+// on topic too, so a one-entry edit can no longer drift silently.
+func TestCardConfigSlotParityAcrossKinds(t *testing.T) {
+	source := loadAsset(t)
+	task := cardSlots(t, source, "task")
+	goal := cardSlots(t, source, "goal")
+	topic := cardSlots(t, source, "topic")
+
+	if !reflect.DeepEqual(task, goal) {
+		t.Fatalf("goal.slots differs from task.slots: task=%v goal=%v", task, goal)
+	}
+
+	// The pinned divergence, with the value each must hold.
+	pinned := map[string]string{
+		"menu":    "false", // no PATCH /api/topics/{id}/status route yet
+		"session": "false", // no topic session route yet
+		"detail":  "true",  // topic-only detail view
+		"live":    "true",  // topic-only, display-only live badge
+	}
+
+	for name, taskValue := range task {
+		topicValue, ok := topic[name]
+		if !ok {
+			t.Fatalf("topic.slots is missing %q carried by task.slots — a slot added to task alone must not skip topics", name)
+		}
+		if want, isPinned := pinned[name]; isPinned {
+			if topicValue != want {
+				t.Fatalf("topic.slots.%s = %q, want the pinned %q", name, topicValue, want)
+			}
+			continue
+		}
+		if topicValue != taskValue {
+			t.Fatalf("topic.slots.%s = %q, want %q — only menu, session, detail and live may differ", name, topicValue, taskValue)
+		}
+	}
+	for name := range topic {
+		if _, ok := task[name]; !ok {
+			t.Fatalf("topic.slots carries %q absent from task.slots — the divergence is pinned to menu, session, detail and live", name)
+		}
+	}
+
+	if got := cardEntry(t, source, "topic")["assigneeClickable"]; got != "false" {
+		t.Fatalf("topic.assigneeClickable = %q, want false (no topic assign route)", got)
 	}
 }
 
