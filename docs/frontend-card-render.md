@@ -77,6 +77,11 @@ enforces this, so a one-entry edit fails CI instead of drifting silently.
 `topic.assignCall` is `null` and `topic.assigneeClickable` is `false` for the
 same reason: no topic assign route exists, so the badge is plain text.
 
+`draggable` is `true` for `task` only. The board writes a phase for tasks; a
+goal's or topic's phase is owned by `vault-cli`, so dragging one of those cards
+would ship a control that cannot act. Both entries carry this reason inline in
+`CARD_CONFIG`.
+
 No card kind renders a `.status-badge`: the column is the phase.
 
 ## View-model
