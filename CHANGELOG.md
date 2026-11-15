@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.109.1
 
 - test: pin the card-config slot parity across task, goal and topic — a slot added to one kind alone now fails CI instead of drifting silently, and the four deliberate topic-only divergences are pinned with their reasons in `CARD_CONFIG` and `docs/frontend-card-render.md`
 
