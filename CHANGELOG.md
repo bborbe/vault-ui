@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.109.2
 
 - docs: record why goal and topic cards are not draggable — `vault-cli` owns their phase, so the reason now sits inline in `CARD_CONFIG` and in `docs/frontend-card-render.md`
 
