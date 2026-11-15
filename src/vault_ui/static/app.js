@@ -1671,6 +1671,8 @@ const CARD_CONFIG = {
         map: mapGoalCard,
         fallbackColumn: 'unknown',
         statusFilter: false,
+        // Goals are not draggable: the board writes no goal phase (vault-cli
+        // owns the goal lifecycle), so a drag would ship a control that fails.
         draggable: false,
         idDataset: 'goalId',
         kindDataset: 'goal',
@@ -1700,6 +1702,8 @@ const CARD_CONFIG = {
         map: mapTopicCard,
         fallbackColumn: 'unknown',
         statusFilter: true,
+        // Topics are not draggable: the board writes no topic phase (vault-cli
+        // owns the topic lifecycle), so a drag would ship a control that fails.
         draggable: false,
         idDataset: 'topicId',
         kindDataset: null,
