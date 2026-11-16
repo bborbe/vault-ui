@@ -782,6 +782,20 @@ func pageMode(page *domain.Page) *string {
 	return &value
 }
 
+// pageClaudeSessionStarted returns a page's `claude_session_started` marker as a
+// nullable string, on the same nil-for-empty terms as pageJira and pageMode.
+//
+// A topic card needs this from the page rather than from the status cache: the
+// cache indexes Themes/Objectives/Goals/Tasks only, so a topic's marker is never
+// in it and the card would never render "Starting…" across a reload.
+func pageClaudeSessionStarted(page *domain.Page) *string {
+	value := page.GetString("claude_session_started")
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 // visibleRow applies the completed/deferred visibility rules, returning the row
 // with upcoming/recently_completed set.
 func (b *board) visibleRow(

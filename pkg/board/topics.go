@@ -88,7 +88,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 				Phase:                strPtr(item.Phase),
 				SessionState:         sessionStatePtr(classifySessionID(ctx, item.ClaudeSessionID, params)),
 				ClaudeSessionID:      strPtr(item.ClaudeSessionID),
-				ClaudeSessionStarted: b.sessionStarted(vault.Name, item.Name),
+				ClaudeSessionStarted: pageFieldsByTopic[item.Name].started,
 				Flag:                 item.Flag,
 				Vault:                vault.Name,
 				ObsidianURL:          topicURL(vault, item.Name),
@@ -128,12 +128,16 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 // Named pageKeyFields, not pageFields: tasks.go declares a local `pageFields`
 // variable, and a package-scope type of that name would shadow it.
 type pageKeyFields struct {
-	jira *string
-	mode *string
+	jira    *string
+	mode    *string
+	started *string
 }
 
-// topicPageFieldsByTopic returns each topic page's `jira:` and `mode:`
-// frontmatter values, keyed by the page's file name. It is one ListPages per
+// topicPageFieldsByTopic returns each topic page's `jira:`, `mode:` and
+// `claude_session_started:` frontmatter values, keyed by the page's file name.
+// The launch marker is read here rather than from the status cache, which
+// indexes Themes/Objectives/Goals/Tasks and so never carries a topic's marker.
+// It is one ListPages per
 // vault, the same snapshot the topic list already reads, so it adds no walk of
 // its own.
 //
@@ -163,8 +167,9 @@ func (b *board) topicPageFieldsByTopic(
 		default:
 		}
 		byName[page.FileMetadata.Name] = pageKeyFields{
-			jira: pageJira(page),
-			mode: pageMode(page),
+			jira:    pageJira(page),
+			mode:    pageMode(page),
+			started: pageClaudeSessionStarted(page),
 		}
 	}
 	return byName

@@ -51,6 +51,10 @@ var _ = Describe("Mutation handlers", func() {
 				http.MethodPost, "/api/goals/GoalOne/run"),
 			Entry("take-over goal", handler.NewTakeOverGoalHandler(&fakeMutations{}),
 				http.MethodPost, "/api/goals/GoalOne/take-over"),
+			Entry("run topic", handler.NewRunTopicHandler(&fakeMutations{}),
+				http.MethodPost, "/api/topics/TopicOne/run"),
+			Entry("take-over topic", handler.NewTakeOverTopicHandler(&fakeMutations{}),
+				http.MethodPost, "/api/topics/TopicOne/take-over"),
 			Entry("execute task command", handler.NewExecuteTaskCommandHandler(&fakeMutations{}),
 				http.MethodPost, "/api/tasks/TaskOne/execute-command"),
 			Entry("assign task", handler.NewAssignTaskHandler(&fakeMutations{}),
@@ -326,6 +330,16 @@ var _ = Describe("Mutation handler success paths", func() {
 				return emptySession, nil
 			},
 		}), http.MethodPost, "/api/goals/GoalOne/take-over?vault=personal", "", http.StatusOK),
+		Entry("run topic", handler.NewRunTopicHandler(&fakeMutations{
+			runTopic: func(context.Context, string, string) (api.SessionResponse, error) {
+				return emptySession, nil
+			},
+		}), http.MethodPost, "/api/topics/TopicOne/run?vault=personal", "", http.StatusOK),
+		Entry("take-over topic", handler.NewTakeOverTopicHandler(&fakeMutations{
+			takeOverTopic: func(context.Context, string, string) (api.SessionResponse, error) {
+				return emptySession, nil
+			},
+		}), http.MethodPost, "/api/topics/TopicOne/take-over?vault=personal", "", http.StatusOK),
 		Entry("execute task command", handler.NewExecuteTaskCommandHandler(&fakeMutations{
 			executeTaskCommand: func(
 				context.Context, string, string, api.ExecuteCommandRequest,

@@ -1323,6 +1323,28 @@ var _ = Describe("ListTopics", func() {
 		Expect(response.Blocked).To(BeTrue())
 	})
 
+	// The status cache indexes Themes/Objectives/Goals/Tasks only, so a topic's
+	// claude_session_started is never in it. Reading the marker from the page is
+	// what keeps "Starting…" alive across a reload.
+	It("carries the launch marker from the page, not the status cache", func() {
+		h := newHarness()
+		h.list.items["23 Topics"] = []ops.TaskListItem{{
+			Name:   "TopicOne",
+			Status: "in_progress",
+		}}
+		h.pageIndex.ListPagesReturns([]*domain.Page{
+			pageWithFrontmatter("TopicOne", map[string]any{
+				"claude_session_started": "2026-01-01T00:00:00Z",
+			}, ""),
+		}, nil)
+
+		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].ClaudeSessionStarted).NotTo(BeNil())
+		Expect(*responses[0].ClaudeSessionStarted).To(Equal("2026-01-01T00:00:00Z"))
+	})
+
 	It("excludes a completed blocker and reports only the open ones", func() {
 		h := newHarness()
 		h.cache.statuses["Done"] = "completed"

@@ -102,7 +102,17 @@ func (s *service) TakeOverTopic(
 	set := s.opsForVault(resolved)
 	sessionID := topic.ClaudeSessionID
 	terminated := false
-	if s.startingMarker(vault, topicID, "") != "" {
+	// The status cache indexes Themes/Objectives/Goals/Tasks only, so a topic's
+	// claude_session_started is never in it and startingMarker would fall through
+	// to an empty file fallback on every take-over — routing an in-flight launch
+	// down the resume branch. Read the page's own marker instead.
+	fileMarker := ""
+	if show, showErr := set.TopicShow.Execute(
+		ctx, resolved.Path, resolved.Name, topicID,
+	); showErr == nil {
+		fileMarker = show.Fields["claude_session_started"]
+	}
+	if s.startingMarker(vault, topicID, fileMarker) != "" {
 		var resolvedID string
 		resolvedID, terminated = s.terminateLaunch(ctx, sessionID, topic.Name)
 		if resolvedID != "" {

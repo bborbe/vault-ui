@@ -35,16 +35,18 @@ import (
 )
 
 const (
-	taskOneID   = "TaskOne"
-	taskTwoID   = "TaskTwo"
-	goalOneID   = "GoalOne"
-	goalTwoID   = "GoalTwo"
-	taskThreeID = "TaskThree"
-	taskFourID  = "TaskFour"
-	goalThreeID = "GoalThree"
-	topicOneID  = "TopicOne"
-	uuidOne     = "11111111-1111-1111-1111-111111111111"
-	uuidTwo     = "22222222-2222-2222-2222-222222222222"
+	taskOneID    = "TaskOne"
+	taskTwoID    = "TaskTwo"
+	goalOneID    = "GoalOne"
+	goalTwoID    = "GoalTwo"
+	taskThreeID  = "TaskThree"
+	taskFourID   = "TaskFour"
+	goalThreeID  = "GoalThree"
+	topicOneID   = "TopicOne"
+	topicTwoID   = "TopicTwo"
+	topicThreeID = "TopicThree"
+	uuidOne      = "11111111-1111-1111-1111-111111111111"
+	uuidTwo      = "22222222-2222-2222-2222-222222222222"
 )
 
 // fakePane resolves every session to a fixed pane.
@@ -141,6 +143,11 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		"---\nstatus: in_progress\n---\n\n# Goal One\n")
 	writeFile(filepath.Join(dir, "23 Topics", topicOneID+".md"),
 		"---\nstatus: in_progress\nphase: execution\n---\n\n# Topic One\n\n## Goals\n")
+	writeFile(filepath.Join(dir, "23 Topics", topicTwoID+".md"),
+		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Topic Two\n")
+	writeFile(filepath.Join(dir, "23 Topics", topicThreeID+".md"),
+		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+
+			"\nclaude_session_started: \"2026-01-01T00:00:00Z\"\n---\n\n# Topic Three\n")
 	writeFile(filepath.Join(goalsDir, goalTwoID+".md"),
 		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Goal Two\n")
 	writeFile(filepath.Join(tasksDir, "Task With Space.md"),
@@ -262,6 +269,8 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 			GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, clock),
 			TopicSet:         ops.NewTopicSetOperation(topicStore),
 			TopicClear:       ops.NewTopicClearOperation(topicStore),
+			TopicShow:        ops.NewTopicShowOperation(topicStore),
+			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, func() string { return uuidTwo }, nil, nil),
 		}
 	}
 }
@@ -279,6 +288,7 @@ func opsFactoryWithStarter(
 		}
 		taskStore := storage.NewTaskStorage(storageConfig)
 		goalStore := storage.NewGoalStorage(storageConfig)
+		topicStore := storage.NewTopicStorage(storageConfig)
 		dailyStore := storage.NewDailyNoteStorage(storageConfig)
 		clock := libtime.NewCurrentDateTime()
 		return vaultui.OpSet{
@@ -294,6 +304,10 @@ func opsFactoryWithStarter(
 			GoalSet:          ops.NewGoalSetOperation(goalStore),
 			GoalClear:        ops.NewGoalClearOperation(goalStore),
 			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, starter, resumer),
+			TopicSet:         ops.NewTopicSetOperation(topicStore),
+			TopicClear:       ops.NewTopicClearOperation(topicStore),
+			TopicShow:        ops.NewTopicShowOperation(topicStore),
+			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, func() string { return uuidTwo }, starter, resumer),
 		}
 	}
 }
@@ -982,6 +996,54 @@ var _ = Describe("Mutation service edge branches", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.SessionID).To(Equal(uuidOne))
 			Expect(h.readGoal(goalThreeID)).NotTo(ContainSubstring("claude_session_started"))
+		})
+	})
+
+	Describe("RunTopic", func() {
+		It("404s an unknown topic", func() {
+			_, err := h.service.RunTopic(ctx, "personal", "Missing")
+			Expect(httpStatus(err)).To(Equal(404))
+		})
+
+		It("400s a dash-prefixed id", func() {
+			_, err := h.service.RunTopic(ctx, "personal", "-x")
+			Expect(httpStatus(err)).To(Equal(400))
+		})
+
+		It("500s an unknown vault", func() {
+			_, err := h.service.RunTopic(ctx, "nope", topicOneID)
+			Expect(httpStatus(err)).To(Equal(500))
+		})
+	})
+
+	Describe("TakeOverTopic", func() {
+		It("returns the resume command for a live session", func() {
+			result, err := h.service.TakeOverTopic(ctx, "personal", topicTwoID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.SessionID).To(Equal(uuidOne))
+			Expect(result.Terminated).NotTo(BeNil())
+		})
+
+		It("400s a topic with no session", func() {
+			_, err := h.service.TakeOverTopic(ctx, "personal", topicOneID)
+			Expect(httpStatus(err)).To(Equal(400))
+		})
+
+		It("404s an unknown topic", func() {
+			_, err := h.service.TakeOverTopic(ctx, "personal", "Missing")
+			Expect(httpStatus(err)).To(Equal(404))
+		})
+	})
+
+	// The status cache indexes Themes/Objectives/Goals/Tasks only, so a topic's
+	// claude_session_started marker is never in it. Without the page fallback the
+	// take-over took the resume branch and left the marker on disk.
+	Describe("TakeOverTopic starting path", func() {
+		It("returns the resume command and clears the marker", func() {
+			result, err := h.service.TakeOverTopic(ctx, "personal", topicThreeID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.SessionID).To(Equal(uuidOne))
+			Expect(h.readTopic(topicThreeID)).NotTo(ContainSubstring("claude_session_started"))
 		})
 	})
 
