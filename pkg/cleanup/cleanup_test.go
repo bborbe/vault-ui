@@ -33,17 +33,26 @@ type opsCall struct {
 // fakeOps is the hand-written VaultOps fake: it records every call and lets a
 // test force a list/show error or a blocking (timeout) show.
 type fakeOps struct {
-	tasks []cleanup.Item
-	goals []cleanup.Item
-	calls []opsCall
+	tasks  []cleanup.Item
+	goals  []cleanup.Item
+	topics []cleanup.Item
+	calls  []opsCall
 
-	listTasksErr error
-	listGoalsErr error
-	showTaskErr  error
-	setTaskErr   error
-	clearTaskErr error
-	setGoalErr   error
-	clearGoalErr error
+	listTasksErr  error
+	listGoalsErr  error
+	listTopicsErr error
+	showTaskErr   error
+	showTopicErr  error
+	setTaskErr    error
+	clearTaskErr  error
+	setGoalErr    error
+	clearGoalErr  error
+	setTopicErr   error
+	clearTopicErr error
+
+	// topicMarkers is the page-sourced claude_session_started each topic carries;
+	// the status cache never answers for a topic.
+	topicMarkers map[string]string
 
 	showTaskResult cleanup.Item
 	// showTaskBlock makes ShowTask wait for ctx to be done and then return its
@@ -118,6 +127,30 @@ func (f *fakeOps) ClearGoalField(_ context.Context, itemID, key string) error {
 	}
 	f.record(opsCall{op: "clearGoal", id: itemID, key: key})
 	return f.clearGoalErr
+}
+
+func (f *fakeOps) ListTopics(_ context.Context) ([]cleanup.Item, error) {
+	f.record(opsCall{op: "listTopics"})
+	return f.topics, f.listTopicsErr
+}
+
+// ShowTopic returns the page-sourced marker the sweep must read for a topic.
+func (f *fakeOps) ShowTopic(_ context.Context, itemID string) (cleanup.Item, error) {
+	f.record(opsCall{op: "showTopic", id: itemID})
+	if f.showTopicErr != nil {
+		return cleanup.Item{}, f.showTopicErr
+	}
+	return cleanup.Item{ID: itemID, ClaudeSessionStarted: f.topicMarkers[itemID]}, nil
+}
+
+func (f *fakeOps) SetTopicField(_ context.Context, itemID, key, value string) error {
+	f.record(opsCall{op: "setTopic", id: itemID, key: key, value: value})
+	return f.setTopicErr
+}
+
+func (f *fakeOps) ClearTopicField(_ context.Context, itemID, key string) error {
+	f.record(opsCall{op: "clearTopic", id: itemID, key: key})
+	return f.clearTopicErr
 }
 
 func (f *fakeOps) callsOf(op string) []opsCall {
@@ -549,6 +582,64 @@ var _ = Describe("CleanupSweep marker TTL pass", func() {
 
 		Expect(runSweep(f)).To(Equal(1))
 		Expect(f.ops.callsOf("clearGoal")[0].key).To(Equal("claude_session_started"))
+	})
+})
+
+var _ = Describe("CleanupSweep topic marker pass", func() {
+	// A topic's marker is never in the status cache — the cache indexes
+	// Themes/Objectives/Goals/Tasks only — so these fixtures leave the cache empty
+	// and put the marker on the page. A cache-reading implementation finds
+	// nothing and clears nothing.
+	It("clears a page-sourced topic marker older than the TTL", func() {
+		vaultPath := GinkgoT().TempDir()
+		topic := cleanup.Item{ID: "tp", Title: "TP"}
+		f := newFixture(nil, nil, vaultPath, nil)
+		f.ops.topics = []cleanup.Item{topic}
+		f.ops.topicMarkers = map[string]string{topic.ID: markerOlderThanTTL}
+
+		Expect(runSweep(f)).To(Equal(1))
+		Expect(f.ops.callsOf("showTopic")).To(HaveLen(1))
+		clears := f.ops.callsOf("clearTopic")
+		Expect(clears).To(HaveLen(1))
+		Expect(clears[0].key).To(Equal("claude_session_started"))
+	})
+
+	It("leaves a young topic marker alone", func() {
+		vaultPath := GinkgoT().TempDir()
+		topic := cleanup.Item{ID: "tp", Title: "TP"}
+		f := newFixture(nil, nil, vaultPath, nil)
+		f.ops.topics = []cleanup.Item{topic}
+		f.ops.topicMarkers = map[string]string{topic.ID: markerYoungerThanTTL}
+
+		Expect(runSweep(f)).To(Equal(0))
+		Expect(f.ops.callsOf("clearTopic")).To(BeEmpty())
+	})
+
+	It("never clears a topic marker while an IN_FLIGHT record exists", func() {
+		vaultPath := GinkgoT().TempDir()
+		topic := cleanup.Item{ID: "tp", Title: "TP"}
+		f := newFixture(nil, nil, vaultPath, nil)
+		f.ops.topics = []cleanup.Item{topic}
+		f.ops.topicMarkers = map[string]string{topic.ID: markerOlderThanTTL}
+		f.reg.Begin(f.vault.Name, topic.ID, "topic")
+
+		Expect(runSweep(f)).To(Equal(0))
+		Expect(f.ops.callsOf("clearTopic")).To(BeEmpty())
+	})
+
+	It("re-clears a finished topic launch's marker and evicts the record", func() {
+		vaultPath := GinkgoT().TempDir()
+		topic := cleanup.Item{ID: "tp", Title: "TP"}
+		f := newFixture(nil, nil, vaultPath, nil)
+		f.ops.topics = []cleanup.Item{topic}
+		f.ops.topicMarkers = map[string]string{topic.ID: markerYoungerThanTTL}
+		f.reg.Begin(f.vault.Name, topic.ID, "topic")
+		f.reg.Finish(f.vault.Name, topic.ID)
+
+		Expect(runSweep(f)).To(Equal(1))
+		Expect(f.ops.callsOf("clearTopic")).To(HaveLen(1))
+		_, present := f.reg.State(f.vault.Name, topic.ID)
+		Expect(present).To(BeFalse())
 	})
 })
 

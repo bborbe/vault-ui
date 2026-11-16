@@ -286,13 +286,15 @@ func (s *service) clearStartingMarker(
 	s.deps.Launch.Finish(vault, itemID)
 	s.deps.Launch.MarkTakenOver(vault, itemID)
 	// A failed clear never fails the take-over: the cleanup sweep converges the
-	// file within one pass.
+	// file within one pass. The switch is exhaustive over the three kinds on
+	// purpose — an unrecognised kind must clear nothing rather than fall through
+	// to a task write.
 	switch kind {
 	case kindGoal:
 		_ = set.GoalClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
 	case kindTopic:
 		_ = set.TopicClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
-	default:
+	case kindTask:
 		_ = set.FrontmatterClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
 	}
 	s.deps.Cache.Invalidate(vault, itemID)
@@ -336,7 +338,7 @@ func (s *service) bindSessionID(
 				_ = set.TopicSet.Execute(
 					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "",
 				)
-			default:
+			case kindTask:
 				_ = set.FrontmatterSet.Execute(
 					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "", "", false,
 				)
@@ -373,13 +375,14 @@ func (s *service) readBoundSessionID(
 			return "", nil
 		}
 		return topic.ClaudeSessionID, nil
-	default:
+	case kindTask:
 		task, err := set.Show.Execute(ctx, vaultCfg.Path, vaultCfg.Name, itemID)
 		if err != nil {
 			return "", err
 		}
 		return task.ClaudeSessionID, nil
 	}
+	return "", nil
 }
 
 // ExecuteTaskCommand runs a task lifecycle command, mirroring

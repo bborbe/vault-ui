@@ -1259,6 +1259,14 @@ var _ = Describe("Mutation service session start (counterfeiter fakes)", func() 
 		Expect(result.SessionID).To(Equal(uuidTwo))
 		Expect(h.readGoal(goalOneID)).To(ContainSubstring(uuidTwo))
 	})
+
+	It("starts a topic session and stores the id on the topic", func() {
+		result, err := h.service.RunTopic(ctx, "personal", topicOneID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.SessionID).To(Equal(uuidTwo))
+		Expect(starter.StartSessionCallCount()).To(Equal(1))
+		Expect(h.readTopic(topicOneID)).To(ContainSubstring(uuidTwo))
+	})
 })
 
 var _ = Describe("Mutation service page-index invalidation", func() {
@@ -1297,6 +1305,22 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		ExpectWithOffset(1, key).To(Equal(want))
 		ExpectWithOffset(1, name).To(Equal(id))
 		ExpectWithOffset(1, index.MarkDirtyCallCount()).To(Equal(0))
+	}
+
+	// expectTopicMarked asserts the invalidator recorded a folder-level MarkDirty
+	// call naming the vault's topics key. That key is the only place a topic's
+	// claude_session_* fields are served from — the status cache indexes
+	// Themes/Objectives/Goals/Tasks only — so a topic route that marks anything
+	// else leaves its own write invisible until the background rescan.
+	expectTopicMarked := func(index *mocks.IndexInvalidator, dir string) {
+		want := []pageindex.Key{pageindex.NewKey(dir, "23 Topics")}
+		matched := false
+		for i := 0; i < index.MarkDirtyCallCount(); i++ {
+			if reflect.DeepEqual(index.MarkDirtyArgsForCall(i), want) {
+				matched = true
+			}
+		}
+		ExpectWithOffset(1, matched).To(BeTrue(), "no MarkDirty call with %v", want)
 	}
 
 	// The three queued post-write callbacks (task publishing, goal publishing,
@@ -1416,6 +1440,21 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 			return h
 		}),
 	)
+
+	// The topic session routes edit a topic file, so they mark the topics key
+	// instead of the tasks+goals pair.
+	It("marks the topics key after RunTopic", func() {
+		sh, _ := newStarterHarness()
+		_, err := sh.service.RunTopic(ctx, "personal", topicOneID)
+		Expect(err).NotTo(HaveOccurred())
+		expectTopicMarked(sh.index, sh.dir)
+	})
+
+	It("marks the topics key after TakeOverTopic", func() {
+		_, err := h.service.TakeOverTopic(ctx, "personal", topicThreeID)
+		Expect(err).NotTo(HaveOccurred())
+		expectTopicMarked(h.index, h.dir)
+	})
 
 	It("marks before PublishTaskUpdated for UpdateTaskPhase", func() {
 		// The publisher stub runs on the queue consumer goroutine, where a

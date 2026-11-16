@@ -188,6 +188,20 @@ func (s *service) markVaultDirty(vault vaultconfig.Vault) {
 	)
 }
 
+// markTopicDirty marks the vault's topics key dirty in the page index.
+//
+// A topic route must not use markVaultDirty: it edits a topic file, and the
+// topics folder is not in that pair. The status cache indexes
+// Themes/Objectives/Goals/Tasks only, so a topic's claude_session_* fields are
+// served from the page index alone — leaving the topics key unmarked makes the
+// write invisible to every other client until the background rescan.
+func (s *service) markTopicDirty(vault vaultconfig.Vault) {
+	if vault.TopicsFolder == "" {
+		return
+	}
+	s.deps.Index.MarkDirty(pageindex.NewKey(vault.Path, vault.TopicsFolder))
+}
+
 // enqueueWrite queues one frontmatter write on the vault's FIFO. write runs
 // the vault-cli calls; onSuccess runs the route's post-write side-effects.
 // Both run on the vault's queue consumer with the consumer's context — never

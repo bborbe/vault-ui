@@ -34,8 +34,8 @@ non-goal "no monolithic card builder" was reversed by the operator on
 
 ## `slots.*`
 
-The template reads `config.slots` to decide what to emit. `live` is a
-display-only indicator; everything else is an affordance the kind supports.
+The template reads `config.slots` to decide what to emit. Every slot is an
+affordance the kind supports.
 
 | Slot | Markup it gates | task | goal | topic |
 | --- | --- | --- | --- | --- |

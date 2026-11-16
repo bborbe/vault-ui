@@ -35,6 +35,22 @@ func (o *showTaskErrOps) ListGoals(ctx context.Context) ([]cleanup.Item, error) 
 	return o.fake.ListGoals(ctx)
 }
 
+func (o *showTaskErrOps) ListTopics(ctx context.Context) ([]cleanup.Item, error) {
+	return o.fake.ListTopics(ctx)
+}
+
+func (o *showTaskErrOps) ShowTopic(ctx context.Context, itemID string) (cleanup.Item, error) {
+	return o.fake.ShowTopic(ctx, itemID)
+}
+
+func (o *showTaskErrOps) SetTopicField(ctx context.Context, itemID, key, value string) error {
+	return o.fake.SetTopicField(ctx, itemID, key, value)
+}
+
+func (o *showTaskErrOps) ClearTopicField(ctx context.Context, itemID, key string) error {
+	return o.fake.ClearTopicField(ctx, itemID, key)
+}
+
 func (o *showTaskErrOps) ShowTask(ctx context.Context, itemID string) (cleanup.Item, error) {
 	if itemID == o.errID {
 		o.fake.record(opsCall{op: "showTask", id: itemID})
