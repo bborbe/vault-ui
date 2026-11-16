@@ -193,11 +193,11 @@ func (s *service) TakeOverTask(
 		if resolvedID != "" {
 			sessionID = resolvedID
 		}
-		if err := s.clearStartingMarker(ctx, resolved, set, vault, taskID, false); err != nil {
+		if err := s.clearStartingMarker(ctx, resolved, set, vault, taskID, kindTask); err != nil {
 			return api.SessionResponse{}, err
 		}
 		if sessionID != "" {
-			s.bindSessionID(ctx, resolved, set, vault, taskID, false, sessionID)
+			s.bindSessionID(ctx, resolved, set, vault, taskID, kindTask, sessionID)
 		}
 		if sessionID == "" {
 			return api.SessionResponse{}, newHTTPError(
@@ -265,6 +265,15 @@ func (s *service) terminateResumed(ctx context.Context, sessionID string) bool {
 	return terminate.TerminateResumedSession(ctx, s.deps.Scanner, s.deps.Signaler, sessionID)
 }
 
+// Item kinds a session route can address. The take-over helpers take one of
+// these rather than a goal-vs-task boolean, so a third kind needs a branch
+// instead of a second flag.
+const (
+	kindTask  = "task"
+	kindGoal  = "goal"
+	kindTopic = "topic"
+)
+
 // clearStartingMarker finishes the launch record, flags the take-over, and
 // clears the durable claude_session_started marker.
 func (s *service) clearStartingMarker(
@@ -272,15 +281,18 @@ func (s *service) clearStartingMarker(
 	vaultCfg vaultconfig.Vault,
 	set vaultui.OpSet,
 	vault, itemID string,
-	isGoal bool,
+	kind string,
 ) error {
 	s.deps.Launch.Finish(vault, itemID)
 	s.deps.Launch.MarkTakenOver(vault, itemID)
 	// A failed clear never fails the take-over: the cleanup sweep converges the
 	// file within one pass.
-	if isGoal {
+	switch kind {
+	case kindGoal:
 		_ = set.GoalClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
-	} else {
+	case kindTopic:
+		_ = set.TopicClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
+	default:
 		_ = set.FrontmatterClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
 	}
 	s.deps.Cache.Invalidate(vault, itemID)
@@ -295,7 +307,7 @@ func (s *service) bindSessionID(
 	vaultCfg vaultconfig.Vault,
 	set vaultui.OpSet,
 	vault, itemID string,
-	isGoal bool,
+	kind string,
 	sessionID string,
 ) {
 	const polls = 10
@@ -303,7 +315,7 @@ func (s *service) bindSessionID(
 	sawClear := false
 	stable := 0
 	for i := 0; i < polls; i++ {
-		current, err := s.readBoundSessionID(ctx, set, vaultCfg, itemID, isGoal)
+		current, err := s.readBoundSessionID(ctx, set, vaultCfg, itemID, kind)
 		if err != nil {
 			return
 		}
@@ -315,11 +327,16 @@ func (s *service) bindSessionID(
 		} else {
 			sawClear = true
 			stable = 0
-			if isGoal {
+			switch kind {
+			case kindGoal:
 				_ = set.GoalSet.Execute(
 					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "",
 				)
-			} else {
+			case kindTopic:
+				_ = set.TopicSet.Execute(
+					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "",
+				)
+			default:
 				_ = set.FrontmatterSet.Execute(
 					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "", "", false,
 				)
@@ -335,9 +352,10 @@ func (s *service) bindSessionID(
 
 // readBoundSessionID re-reads an item's claude_session_id.
 func (s *service) readBoundSessionID(
-	ctx context.Context, set vaultui.OpSet, vaultCfg vaultconfig.Vault, itemID string, isGoal bool,
+	ctx context.Context, set vaultui.OpSet, vaultCfg vaultconfig.Vault, itemID, kind string,
 ) (string, error) {
-	if isGoal {
+	switch kind {
+	case kindGoal:
 		goal, found, err := s.findGoal(ctx, vaultCfg, itemID)
 		if err != nil {
 			return "", err
@@ -346,12 +364,22 @@ func (s *service) readBoundSessionID(
 			return "", nil
 		}
 		return goal.ClaudeSessionID, nil
+	case kindTopic:
+		topic, found, err := s.findTopic(ctx, vaultCfg, itemID)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return "", nil
+		}
+		return topic.ClaudeSessionID, nil
+	default:
+		task, err := set.Show.Execute(ctx, vaultCfg.Path, vaultCfg.Name, itemID)
+		if err != nil {
+			return "", err
+		}
+		return task.ClaudeSessionID, nil
 	}
-	task, err := set.Show.Execute(ctx, vaultCfg.Path, vaultCfg.Name, itemID)
-	if err != nil {
-		return "", err
-	}
-	return task.ClaudeSessionID, nil
 }
 
 // ExecuteTaskCommand runs a task lifecycle command, mirroring

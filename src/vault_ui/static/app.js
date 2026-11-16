@@ -22,6 +22,7 @@ let currentSort = 'default'; // 'default' | 'priority' | 'modified' — column s
 let ws = null; // WebSocket connection
 let startingTasks = new Set(); // Track tasks currently being started
 let startingGoals = new Set(); // Track goals currently being started (mirrors startingTasks)
+let startingTopics = new Set(); // Track topics currently being started (mirrors startingGoals)
 
 const POLL_INTERVAL_MS = 60000; // Fallback polling every 60 seconds
 
@@ -1480,10 +1481,11 @@ function extractJiraIssue(title) {
     return { title: cleanTitle, issueKey, issueUrl };
 }
 
-// Shared Start / Resume / Starting button for task and goal cards. Written once;
-// both card renderers call it. hasSession/isStarting gate the three labels off
-// claude_session_id and the durable claude_session_started flag (plus the optimistic
-// per-tab starting set), mirroring the pre-collapse per-kind blocks exactly.
+// Shared Start / Resume / Starting button for task, goal and topic cards. Written
+// once; all three card renderers call it. hasSession/isStarting gate the three
+// labels off claude_session_id and the durable claude_session_started flag (plus
+// the optimistic per-tab starting set), mirroring the pre-collapse per-kind blocks
+// exactly.
 // Elapsed time for the "Starting…" badge, from the claude_session_started marker.
 // The marker is an ISO-8601 launch instant; legacy markers are the literal "true"
 // and carry no age, so they render the bare label. Returns '' when unknown.
@@ -1504,8 +1506,39 @@ function liveBadgeLabel(location) {
     return location ? `● Live·${escapeHtml(location)}` : '● Live';
 }
 
+// The capitalised kind name for operator-facing messages.
+function kindLabel(kind) {
+    return kind === 'goal' ? 'Goal' : kind === 'topic' ? 'Topic' : 'Task';
+}
+
+// The route family a kind's session routes live under.
+function sessionRouteFor(kind) {
+    return kind === 'goal' ? 'goals' : kind === 'topic' ? 'topics' : 'tasks';
+}
+
+// The cache a kind's cards live in. Tasks and goals are keyed by id; the topics
+// cache is keyed by `<vault>\u0000<id>` (see its declaration).
+function sessionCacheFor(kind) {
+    return kind === 'goal' ? goalsCache : kind === 'topic' ? topicsCache : tasksCache;
+}
+
+// The per-tab optimistic "Starting…" set for a kind.
+function startingSetFor(kind) {
+    return kind === 'goal' ? startingGoals : kind === 'topic' ? startingTopics : startingTasks;
+}
+
+// One card's cache entry. Tasks and goals are keyed by id; the topics cache is
+// keyed by `<vault>\u0000<id>` because a topic name is not unique across vaults,
+// so the topic lookup needs the card's own vault — the id alone cannot identify
+// a topic, and falling back to the first id match would let a take-over end a
+// session in another vault. The keying is the same one applyOptimisticWrite uses.
+function sessionCacheItem(kind, id, vault) {
+    if (kind !== 'topic') return sessionCacheFor(kind)[id];
+    return sessionCacheFor(kind)[`${vault}\u0000${id}`];
+}
+
 function sessionButtonHtml(kind, item) {
-    const startingSet = kind === 'goal' ? startingGoals : startingTasks;
+    const startingSet = startingSetFor(kind);
     const hasSession = item.claude_session_id;
     // Marker means "launch turn in flight": Starting wins even once the id lands
     // (assistant writes it mid-turn), so a reload mid-launch stays "Starting…"
@@ -1522,7 +1555,7 @@ function sessionButtonHtml(kind, item) {
         const age = formatActivityAge(item.activity_date);
         const ageNote = age ? ` Last activity ${age} ago.` : '';
         const title = `Launch turn in flight${elapsed ? ` (${elapsed.trim()})` : ''} — click to take over and resume (ends the running launch turn; in-flight work is lost).${ageNote}`;
-        return `<span class="starting-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="${escapeHtml(title)}">⏳ Starting...${elapsed}</span>`;
+        return `<span class="starting-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}', '${escapeJsAttr(item.vault)}')" title="${escapeHtml(title)}">⏳ Starting...${elapsed}</span>`;
     } else if (item.session_state === 'live') {
         // Live session — running now. A plain resume is flock-refused (vault-cli
         // path) or corrupting (launcher path), so offer take-over instead: the
@@ -1530,7 +1563,7 @@ function sessionButtonHtml(kind, item) {
         // it opens the confirm dialog, which ends the running turn (SIGTERM via
         // the ps --resume match), then Resume works normally. In-flight work is
         // lost — that is the accepted trade-off, stated in the confirm dialog.
-        const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">${liveBadgeLabel(item.location)}</span>`;
+        const liveBadge = `<span class="live-badge" role="button" tabindex="0" onclick="takeOverSession('${kind}', '${escapeJsAttr(item.id)}', '${escapeJsAttr(item.vault)}')" title="Session is live — click to take over and resume (ends the running turn; in-flight work is lost)">${liveBadgeLabel(item.location)}</span>`;
         // Jump control — a sibling of the badge, never a second handler on it: the
         // badge's click ENDS the session, so navigation must not ride on it. It
         // follows pane availability, not session state: a headless session is live
@@ -1560,7 +1593,7 @@ function sessionButtonHtml(kind, item) {
         buttonClass = 'start-btn';
         buttonDisabled = false;
     }
-    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${escapeJsAttr(item.id)}')"${buttonDisabled ? ' disabled' : ''}${buttonTitle}>${buttonLabel}</button>`;
+    return `<button class="${buttonClass}" onclick="runSession('${kind}', '${escapeJsAttr(item.id)}', '${escapeJsAttr(item.vault)}')"${buttonDisabled ? ' disabled' : ''}${buttonTitle}>${buttonLabel}</button>`;
 }
 
 // Age of the last activity on a card, as a single largest unit with no decimals.
@@ -1661,7 +1694,6 @@ const CARD_CONFIG = {
             activityAge: true,
             blocked: true,
             jira: true,
-            live: false,
             session: true,
             menu: true,
             detail: false,
@@ -1692,7 +1724,6 @@ const CARD_CONFIG = {
             activityAge: true,
             blocked: true,
             jira: true,
-            live: false,
             session: true,
             menu: true,
             detail: false,
@@ -1726,10 +1757,12 @@ const CARD_CONFIG = {
             blocked: true,
             jira: true,
             // Pinned divergence from the task card, asserted by
-            // TestCardConfigSlotParityAcrossKinds. Each of these four is
+            // TestCardConfigSlotParityAcrossKinds. Each of these two is
             // deliberate; every other slot must match task.slots exactly.
-            live: true, // topic-only, display-only live badge
-            session: false, // no topic session route yet
+            // There is no `live` slot: a live topic renders the same clickable
+            // take-over badge as a task or goal, so a second display-only pill
+            // would duplicate it.
+            session: true, // POST /api/topics/{id}/run and /take-over
             menu: false, // no PATCH /api/topics/{id}/status route yet
             detail: true, // topic-only detail view
         },
@@ -1816,7 +1849,6 @@ function mapTopicCard(topic) {
         status: topic.status,
         phase: topic.phase,
         flag: topic.flag === true,
-        live: topic.session_state === 'live',
         hold: topic.status === 'hold',
         upcoming: false,
         recentlyCompleted: false,
@@ -1891,9 +1923,6 @@ function createCard(kind, item) {
            </div>`
         : '';
 
-    const liveIndicator = config.slots.live && view.live
-        ? `<span class="topic-live-badge">${liveBadgeLabel(null)}</span>`
-        : '';
     const flagButton = config.slots.flag ? flagButtonHtml(kind, item) : '';
     const holdBadge = config.slots.hold && view.hold
         ? `<span class="hold-badge" title="${config.holdTitle}">⏸ HOLD</span>`
@@ -1927,7 +1956,7 @@ function createCard(kind, item) {
         ? '<button type="button" class="topic-detail-btn" title="Show tracked work" aria-label="Show tracked work">📋</button>'
         : '';
 
-    const footerLeft = `${liveIndicator}${flagButton}${holdBadge}${assigneeBlock}${priorityChip}${modeChip}${detailButton}`;
+    const footerLeft = `${flagButton}${holdBadge}${assigneeBlock}${priorityChip}${modeChip}${detailButton}`;
     // Age rides with the action so it can't be orphaned on its own wrapped row.
     const cardActions = `${config.slots.activityAge ? activityAgeHtml(view.activityDate) : ''}${config.slots.session ? sessionButtonHtml(kind, item) : ''}`;
 
@@ -2031,7 +2060,7 @@ async function toggleFlag(kind, itemId, vault, current) {
     }
 }
 
-async function runSession(kind, id) {
+async function runSession(kind, id, vault) {
     // Arg-injection guard on the merged path (spec AC + Security): reject ids
     // beginning with '-' before any fetch, covering BOTH kinds at once. Mirrors
     // the backend guard in api/tasks.py.
@@ -2040,13 +2069,12 @@ async function runSession(kind, id) {
         return;
     }
 
-    const base = kind === 'goal' ? 'goals' : 'tasks';
-    const cache = kind === 'goal' ? goalsCache : tasksCache;
-    const startingSet = kind === 'goal' ? startingGoals : startingTasks;
+    const base = sessionRouteFor(kind);
+    const startingSet = startingSetFor(kind);
 
-    const item = cache[id];
+    const item = sessionCacheItem(kind, id, vault);
     if (!item) {
-        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
+        showToast(`${kindLabel(kind)} not found in cache`, true);
         return;
     }
 
@@ -2209,19 +2237,18 @@ function askTakeOver() {
 // or, while the launch marker is set, the in-flight launch process, clearing the
 // marker so the card leaves "Starting…" — and returns the resume command, shown
 // in the session modal so the operator can resume.
-async function takeOverSession(kind, id) {
+async function takeOverSession(kind, id, vault) {
     // Arg-injection guard (mirrors runSession).
     if (typeof id === 'string' && id.startsWith('-')) {
         showToast('Invalid id', true);
         return;
     }
 
-    const base = kind === 'goal' ? 'goals' : 'tasks';
-    const cache = kind === 'goal' ? goalsCache : tasksCache;
-    const startingSet = kind === 'goal' ? startingGoals : startingTasks;
-    const item = cache[id];
+    const base = sessionRouteFor(kind);
+    const startingSet = startingSetFor(kind);
+    const item = sessionCacheItem(kind, id, vault);
     if (!item) {
-        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
+        showToast(`${kindLabel(kind)} not found in cache`, true);
         return;
     }
 

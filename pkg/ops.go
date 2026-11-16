@@ -36,4 +36,5 @@ type OpSet struct {
 	TopicShow        ops.EntityShowOperation
 	TopicSet         ops.EntitySetOperation
 	TopicClear       ops.EntityClearOperation
+	TopicWorkOn      ops.TopicWorkOnOperation
 }

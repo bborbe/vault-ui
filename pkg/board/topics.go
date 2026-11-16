@@ -82,16 +82,18 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		for _, item := range items {
 			blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
 			responses = append(responses, api.TopicResponse{
-				ID:           item.Name,
-				Title:        item.Name,
-				Status:       item.Status,
-				Phase:        strPtr(item.Phase),
-				SessionState: sessionStatePtr(classifySessionID(ctx, item.ClaudeSessionID, params)),
-				Flag:         item.Flag,
-				Vault:        vault.Name,
-				ObsidianURL:  topicURL(vault, item.Name),
-				Assignee:     strPtr(item.Assignee),
-				Priority:     priorityValue(item.Priority),
+				ID:                   item.Name,
+				Title:                item.Name,
+				Status:               item.Status,
+				Phase:                strPtr(item.Phase),
+				SessionState:         sessionStatePtr(classifySessionID(ctx, item.ClaudeSessionID, params)),
+				ClaudeSessionID:      strPtr(item.ClaudeSessionID),
+				ClaudeSessionStarted: b.sessionStarted(vault.Name, item.Name),
+				Flag:                 item.Flag,
+				Vault:                vault.Name,
+				ObsidianURL:          topicURL(vault, item.Name),
+				Assignee:             strPtr(item.Assignee),
+				Priority:             priorityValue(item.Priority),
 				ActivityDate: dateTimeString(activity.ComputeActivityDateWith(
 					ctx,
 					b.transcriptProbe(),

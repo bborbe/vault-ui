@@ -50,6 +50,10 @@ func CreateHTTPRouter(
 		Handler(NewRunGoalHandler(m))
 	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/take-over").
 		Handler(NewTakeOverGoalHandler(m))
+	router.Methods(http.MethodPost).Path("/api/topics/{topic_id}/run").
+		Handler(NewRunTopicHandler(m))
+	router.Methods(http.MethodPost).Path("/api/topics/{topic_id}/take-over").
+		Handler(NewTakeOverTopicHandler(m))
 	router.Methods(http.MethodPost).Path("/api/tasks/{task_id}/execute-command").
 		Handler(NewExecuteTaskCommandHandler(m))
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/assign-to-me").

@@ -1280,6 +1280,8 @@ var _ = Describe("ListTopics", func() {
 			"assignee",
 			"blocked",
 			"blockers",
+			"claude_session_id",
+			"claude_session_started",
 			"flag",
 			"id",
 			"jira",
