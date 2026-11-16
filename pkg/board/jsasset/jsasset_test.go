@@ -53,9 +53,6 @@ func TestObjectLiteral(t *testing.T) {
 	if slots["assignee"] != "true" {
 		t.Fatalf("task.assignee slot = %q, want true", slots["assignee"])
 	}
-	if slots["live"] != "false" {
-		t.Fatalf("task.live slot = %q, want false", slots["live"])
-	}
 	if task["map"] != "mapTaskCard" {
 		t.Fatalf("task.map = %q, want mapTaskCard", task["map"])
 	}

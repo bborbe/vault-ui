@@ -192,6 +192,41 @@ func (o *cleanupVaultOps) ClearGoalField(ctx context.Context, itemID, key string
 	return o.set.GoalClear.Execute(ctx, o.vault.Path, itemID, key)
 }
 
+func (o *cleanupVaultOps) ListTopics(ctx context.Context) ([]cleanup.Item, error) {
+	items, err := o.set.List.Execute(
+		ctx, o.vault.Path, o.vault.Name, o.vault.GetTopicsDir(), nil, true, "", "",
+	)
+	if err != nil {
+		return nil, errors.Wrap(ctx, err, "list topics")
+	}
+	return cleanupItems(items), nil
+}
+
+// ShowTopic reads a topic's page, including claude_session_started — the field
+// the list does not carry and the status cache never indexes for a topic.
+func (o *cleanupVaultOps) ShowTopic(ctx context.Context, itemID string) (cleanup.Item, error) {
+	detail, err := o.set.TopicShow.Execute(ctx, o.vault.Path, o.vault.Name, itemID)
+	if err != nil {
+		return cleanup.Item{}, errors.Wrap(ctx, err, "show topic")
+	}
+	return cleanup.Item{
+		ID:                   detail.Name,
+		Title:                detail.Name,
+		Status:               detail.Fields["status"],
+		Assignee:             detail.Fields["assignee"],
+		ClaudeSessionID:      detail.Fields["claude_session_id"],
+		ClaudeSessionStarted: detail.Fields["claude_session_started"],
+	}, nil
+}
+
+func (o *cleanupVaultOps) SetTopicField(ctx context.Context, itemID, key, value string) error {
+	return o.set.TopicSet.Execute(ctx, o.vault.Path, itemID, key, value, "", "")
+}
+
+func (o *cleanupVaultOps) ClearTopicField(ctx context.Context, itemID, key string) error {
+	return o.set.TopicClear.Execute(ctx, o.vault.Path, itemID, key)
+}
+
 // cleanupItems maps vault-cli list items to the sweep's item view. The list item
 // carries no title of its own; the board uses its name as the title, and the
 // sweep's live-name lookup needs the same value.

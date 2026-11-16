@@ -106,11 +106,11 @@ func (s *service) TakeOverGoal(
 		if resolvedID != "" {
 			sessionID = resolvedID
 		}
-		if err := s.clearStartingMarker(ctx, resolved, set, vault, goalID, true); err != nil {
+		if err := s.clearStartingMarker(ctx, resolved, set, vault, goalID, kindGoal); err != nil {
 			return api.SessionResponse{}, err
 		}
 		if sessionID != "" {
-			s.bindSessionID(ctx, resolved, set, vault, goalID, true, sessionID)
+			s.bindSessionID(ctx, resolved, set, vault, goalID, kindGoal, sessionID)
 		}
 		if sessionID == "" {
 			return api.SessionResponse{}, newHTTPError(

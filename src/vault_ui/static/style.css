@@ -1349,27 +1349,6 @@ h1 {
 }
 
 /* Topics view — a topic card, and the modal showing the work it tracks. */
-/* Display-only live indicator on a topic card. Same pill colours as
-   `.live-badge`, but NOT the take-over control: a topic has no take-over route,
-   so there is no pointer cursor and no hover/active/focus shade — it states a
-   fact and does nothing when clicked. */
-.topic-live-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    line-height: 1rem;
-    letter-spacing: 0.03em;
-    color: #bbf7d0;             /* green-200 */
-    background: #15803d;        /* green-700 */
-    padding: 1px 7px;
-    border-radius: 999px;
-    max-width: fit-content;
-    white-space: nowrap;
-    cursor: default;
-}
-
 /* Opens the tracked-work detail. The title carries the Obsidian link, exactly
    as it does on a task or goal card, so the two affordances stay parallel —
    this button is the topic card's only addition to that shared pair. */

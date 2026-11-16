@@ -285,6 +285,38 @@ func NewTakeOverGoalHandler(m mutations.Service) http.Handler {
 	})
 }
 
+// NewRunTopicHandler returns the POST /api/topics/{topic_id}/run handler.
+func NewRunTopicHandler(m mutations.Service) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		vault, ok := requireVault(resp, req)
+		if !ok {
+			return
+		}
+		result, err := m.RunTopic(req.Context(), vault, pathVar(req, "topic_id"))
+		if err != nil {
+			writeMutationError(resp, err)
+			return
+		}
+		writeJSON(resp, http.StatusOK, result)
+	})
+}
+
+// NewTakeOverTopicHandler returns the POST /api/topics/{topic_id}/take-over handler.
+func NewTakeOverTopicHandler(m mutations.Service) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		vault, ok := requireVault(resp, req)
+		if !ok {
+			return
+		}
+		result, err := m.TakeOverTopic(req.Context(), vault, pathVar(req, "topic_id"))
+		if err != nil {
+			writeMutationError(resp, err)
+			return
+		}
+		writeJSON(resp, http.StatusOK, result)
+	})
+}
+
 // NewExecuteTaskCommandHandler returns the POST /api/tasks/{task_id}/execute-command handler.
 func NewExecuteTaskCommandHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {

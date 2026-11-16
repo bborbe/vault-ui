@@ -185,7 +185,7 @@ func TestCardSlotsRetainPreChangeAffordances(t *testing.T) {
 	preChangeEnabledSlots := map[string][]string{
 		"task":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
 		"goal":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
-		"topic": {"activityAge", "assignee", "blocked", "detail", "flag", "hold", "jira", "live", "noteLink", "priority"},
+		"topic": {"activityAge", "assignee", "blocked", "detail", "flag", "hold", "jira", "noteLink", "priority"},
 	}
 
 	source := loadAsset(t)

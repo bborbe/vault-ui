@@ -78,11 +78,15 @@ type Item struct {
 type VaultOps interface {
 	ListTasks(ctx context.Context) ([]Item, error)
 	ListGoals(ctx context.Context) ([]Item, error)
+	ListTopics(ctx context.Context) ([]Item, error)
 	ShowTask(ctx context.Context, itemID string) (Item, error)
+	ShowTopic(ctx context.Context, itemID string) (Item, error)
 	SetTaskField(ctx context.Context, itemID, key, value string) error
 	ClearTaskField(ctx context.Context, itemID, key string) error
 	SetGoalField(ctx context.Context, itemID, key, value string) error
 	ClearGoalField(ctx context.Context, itemID, key string) error
+	ClearTopicField(ctx context.Context, itemID, key string) error
+	SetTopicField(ctx context.Context, itemID, key, value string) error
 }
 
 // VaultOpsFactory builds the ops for one vault.
@@ -212,6 +216,7 @@ func (s *sweep) runVault(ctx context.Context, vault Vault, liveNames map[string]
 	cleared += s.clearOrphanedTaskMarkers(ctx, vault, ops, tasks, projectDir)
 	cleared += s.reclearResurrectedTaskMarkers(ctx, vault, ops)
 	cleared += s.runGoalPass(ctx, vault, ops, projectDir, liveNames)
+	cleared += s.runTopicPass(ctx, vault, ops)
 	return cleared
 }
 
@@ -291,8 +296,39 @@ func (s *sweep) runGoalPass(
 	return cleared
 }
 
-// clearStaleGoalSessions is the goal mirror of clearStaleTaskSessions, with the
-// one deliberate divergence: a goal's unresolvable display name IS cleared
+// runTopicPass clears orphaned and resurrected claude_session_started markers on
+// topic pages. It carries its own catch, like the goal pass, so a topic-list
+// failure never aborts the passes that already completed.
+//
+// The topic pass covers the MARKER only. RunTopic clears the marker on every
+// exit path, so the way one survives is a crash between the marker write and
+// the clear — and a surviving marker is the whole failure mode: the card sits on
+// "Starting…" and never offers Start. A topic's stale claude_session_id is not
+// swept; the next launch rewrites it and it never strands a card.
+//
+// The marker is read from the page, never from the status cache: the cache
+// indexes Themes/Objectives/Goals/Tasks only, so a topic's marker is never in it.
+func (s *sweep) runTopicPass(ctx context.Context, vault Vault, ops VaultOps) int {
+	topics, err := s.listTopics(ctx, ops)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such file or directory") {
+			glog.V(4).Infof(
+				"[Cleanup] Skipping topics for vault %s: Topics directory not configured",
+				vault.Name,
+			)
+		} else {
+			glog.Errorf("[Cleanup] Exception processing topics for vault %s: %v", vault.Name, err)
+		}
+		return 0
+	}
+
+	cleared := 0
+	cleared += s.clearOrphanedTopicMarkers(ctx, vault, ops, topics)
+	cleared += s.reclearResurrectedTopicMarkers(ctx, vault, ops)
+	return cleared
+}
+
+// clearStaleGoalSessions is the goal mirror of clearStaleTaskSessions, with the// one deliberate divergence: a goal's unresolvable display name IS cleared
 // (falls through to the clear block).
 func (s *sweep) clearStaleGoalSessions(
 	ctx context.Context,
@@ -610,6 +646,65 @@ func (s *sweep) clearOrphanedGoalMarkers(
 	return cleared
 }
 
+// clearOrphanedTopicMarkers is the topic marker TTL pass. Unlike the task and
+// goal passes it reads the marker from the page, not the StatusCache: the cache
+// indexes Themes/Objectives/Goals/Tasks only, so it can never answer for a topic.
+//
+// It has no transcript gate. The task pass skips an id-bearing item whose
+// transcript is gone because the main sweep already cleared that pair; topics
+// have no session-id sweep, so a marker past its TTL is always an orphan.
+func (s *sweep) clearOrphanedTopicMarkers(
+	ctx context.Context,
+	vault Vault,
+	ops VaultOps,
+	topics []Item,
+) int {
+	cleared := 0
+	for _, topic := range topics {
+		if ctxDone(ctx) {
+			return cleared
+		}
+		// A launch the registry knows about is never cleared by this TTL loop: an
+		// IN_FLIGHT record means the turn is still running (never clear, regardless
+		// of age), and a FINISHED record is handled by the re-clear pass below.
+		if _, known := s.params.LaunchRegistry.State(vault.Name, topic.ID); known {
+			continue
+		}
+		marker, err := s.topicMarker(ctx, ops, topic.ID)
+		if err != nil {
+			glog.Warningf(
+				"[Cleanup] Failed to read Starting marker on topic %s in vault %s: %v",
+				topic.ID,
+				vault.Name,
+				err,
+			)
+			continue
+		}
+		if marker == "" || s.markerIsYoung(marker, s.params.MarkerTTL) {
+			continue
+		}
+		if err := s.bounded(ctx, func(callCtx context.Context) error {
+			return ops.ClearTopicField(callCtx, topic.ID, "claude_session_started")
+		}); err != nil {
+			glog.Errorf(
+				"[Cleanup] Failed to clear orphaned Starting marker on topic %s in vault %s: %v",
+				topic.ID,
+				vault.Name,
+				err,
+			)
+			continue
+		}
+		glog.Infof(
+			"[Cleanup] Cleared orphaned Starting marker from topic %s in vault %s",
+			topic.ID,
+			vault.Name,
+		)
+		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, topic.ID, "topic")
+		cleared++
+	}
+	return cleared
+}
+
 // reclearResurrectedTaskMarkers clears a finished launch's resurrected marker
 // from disk. Fires at most once per finished record: the record is evicted once
 // the clear succeeds or the marker is already gone, and a failed clear is logged
@@ -694,6 +789,73 @@ func (s *sweep) reclearResurrectedGoalMarkers(ctx context.Context, vault Vault, 
 	return cleared
 }
 
+// reclearResurrectedTopicMarkers is the topic mirror of
+// reclearResurrectedTaskMarkers. Presence is read from the page for the same
+// reason clearOrphanedTopicMarkers does: the status cache never indexes topics.
+func (s *sweep) reclearResurrectedTopicMarkers(
+	ctx context.Context, vault Vault, ops VaultOps,
+) int {
+	cleared := 0
+	for _, record := range s.params.LaunchRegistry.Finished(vault.Name) {
+		if ctxDone(ctx) {
+			return cleared
+		}
+		if record.Kind != "topic" {
+			continue
+		}
+		marker, err := s.topicMarker(ctx, ops, record.ItemID)
+		if err != nil {
+			glog.Warningf(
+				"[Cleanup] Failed to read Starting marker on topic %s in vault %s: %v",
+				record.ItemID,
+				vault.Name,
+				err,
+			)
+			continue
+		}
+		if marker == "" {
+			s.params.LaunchRegistry.Evict(vault.Name, record.ItemID)
+			continue
+		}
+		if err := s.bounded(ctx, func(callCtx context.Context) error {
+			return ops.ClearTopicField(callCtx, record.ItemID, "claude_session_started")
+		}); err != nil {
+			glog.Warningf(
+				"[Cleanup] Failed to clear resurrected Starting marker on topic %s in vault %s: %v",
+				record.ItemID,
+				vault.Name,
+				err,
+			)
+			continue // record retained -> retried on the next pass
+		}
+		glog.Infof(
+			"[Cleanup] Cleared resurrected Starting marker from topic %s in vault %s",
+			record.ItemID,
+			vault.Name,
+		)
+		cleared++
+		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, record.ItemID, "topic")
+		s.params.LaunchRegistry.EvictIfFinished(vault.Name, record.ItemID)
+	}
+	return cleared
+}
+
+// topicMarker reads a topic's claude_session_started from its page.
+func (s *sweep) topicMarker(
+	ctx context.Context, ops VaultOps, itemID string,
+) (string, error) {
+	var item Item
+	err := s.bounded(ctx, func(callCtx context.Context) error {
+		var showErr error
+		item, showErr = ops.ShowTopic(callCtx, itemID)
+		return showErr
+	})
+	if err != nil {
+		return "", err
+	}
+	return item.ClaudeSessionStarted, nil
+}
+
 // markerPresent reports whether the status cache holds a non-empty marker.
 func (s *sweep) markerPresent(vaultName, itemID string) bool {
 	marker, ok := s.params.StatusCache.GetSessionStarted(vaultName, itemID)
@@ -746,11 +908,16 @@ func (s *sweep) restoreMarkerIfInFlight(
 	value := s.params.Now.Now().UTC().Format(time.RFC3339Nano)
 
 	var err error
-	if kind == "goal" {
+	switch kind {
+	case "goal":
 		err = s.bounded(ctx, func(callCtx context.Context) error {
 			return ops.SetGoalField(callCtx, itemID, "claude_session_started", value)
 		})
-	} else {
+	case "topic":
+		err = s.bounded(ctx, func(callCtx context.Context) error {
+			return ops.SetTopicField(callCtx, itemID, "claude_session_started", value)
+		})
+	default:
 		err = s.bounded(ctx, func(callCtx context.Context) error {
 			return ops.SetTaskField(callCtx, itemID, "claude_session_started", value)
 		})
@@ -802,6 +969,17 @@ func (s *sweep) listGoals(ctx context.Context, ops VaultOps) ([]Item, error) {
 		return listErr
 	})
 	return goals, err
+}
+
+// listTopics lists a vault's topics under the field timeout.
+func (s *sweep) listTopics(ctx context.Context, ops VaultOps) ([]Item, error) {
+	var topics []Item
+	err := s.bounded(ctx, func(callCtx context.Context) error {
+		var listErr error
+		topics, listErr = ops.ListTopics(callCtx)
+		return listErr
+	})
+	return topics, err
 }
 
 // kindName renders the item kind for a log line.

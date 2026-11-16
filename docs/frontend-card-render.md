@@ -34,8 +34,8 @@ non-goal "no monolithic card builder" was reversed by the operator on
 
 ## `slots.*`
 
-The template reads `config.slots` to decide what to emit. `live` is a
-display-only indicator; everything else is an affordance the kind supports.
+The template reads `config.slots` to decide what to emit. Every slot is an
+affordance the kind supports.
 
 | Slot | Markup it gates | task | goal | topic |
 | --- | --- | --- | --- | --- |
@@ -48,8 +48,7 @@ display-only indicator; everything else is an affordance the kind supports.
 | `activityAge` | `activityAgeHtml(view.activityDate)` in the actions | ✓ | ✓ | ✓ |
 | `blocked` | The `card-blocked` row (`blockedBadgeHtml`) | ✓ | ✓ | ✓ |
 | `jira` | The `card-jira` row | ✓ | ✓ | ✓ |
-| `live` | The display-only `topic-live-badge` (no onclick/role/tabindex) | — | — | ✓ |
-| `session` | `sessionButtonHtml(kind, item)` in the actions | ✓ | ✓ | — |
+| `session` | `sessionButtonHtml(kind, item)` in the actions | ✓ | ✓ | ✓ |
 | `menu` | The `⋮` menu button wired to `showMenu` | ✓ | ✓ | — |
 | `detail` | The `topic-detail-btn` and its `openTopicDetail(item)` listener | — | — | ✓ |
 
@@ -60,15 +59,17 @@ affordance outside the menu is ever wanted, it becomes its own slot then.
 
 ### The only allowed slot divergence
 
-`task` and `goal` carry an identical slot map. `topic` differs in exactly four
+`task` and `goal` carry an identical slot map. `topic` differs in exactly two
 slots, and every one of them is deliberate:
 
 | Slot | topic | Why |
 | --- | --- | --- |
 | `menu` | `false` | No `PATCH /api/topics/{id}/status` route exists, so the `⋮` menu would offer status actions that fail. |
-| `session` | `false` | No topic session route exists, so `sessionButtonHtml` would resolve a topic id against the task cache. |
 | `detail` | `true` | The topic detail view is topic-only; no other kind has it. |
-| `live` | `true` | The live badge is a topic-only, display-only indicator. |
+
+There is no `live` slot. It existed only to render a display-only pill on a topic
+card, and once a topic carries the `session` slot that pill duplicates the
+clickable take-over badge `sessionButtonHtml` already renders.
 
 Every other slot must be identical across the three kinds — a slot added to
 `task` alone is a bug, not a per-kind choice.

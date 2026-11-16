@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Give topic cards Start, Resume and take-over — a topic is the last kind without a session control, so it now gets the same one a goal card has: `POST /api/topics/{topic_id}/run` starts a session through vault-cli's `TopicWorkOnOperation` (already in the pinned dependency, no bump), `POST /api/topics/{topic_id}/take-over` ends a live or in-flight launch and hands back the resume command, `GET /api/topics` carries the page's own `claude_session_id` and the durable `claude_session_started` marker — read from the topic page, since the status cache indexes Themes/Objectives/Goals/Tasks only and never holds a topic's marker — and `CARD_CONFIG.topic.slots.session` turns on — the take-over helpers now switch on the item kind instead of a goal-vs-task boolean, the frontend resolves route family, cache, starting set and the vault-keyed topic cache entry per kind, and the resume command is built from the vault's `claude_script` exactly as a goal's is; the display-only `live` slot is removed, since a live topic now renders the same clickable take-over badge a task or goal does and the second pill only duplicated it; the two topic session routes mark the topics page-index key (the only place a topic's session fields are served from, the status cache not indexing topics) so a launch or a take-over is visible to every client at once instead of after the background rescan, and the cleanup sweep gains a topic pass that clears an orphaned `claude_session_started` from the topic page — a marker no task- or goal-shaped pass could see
+
 ## v0.109.2
 
 - docs: record why goal and topic cards are not draggable — `vault-cli` owns their phase, so the reason now sits inline in `CARD_CONFIG` and in `docs/frontend-card-render.md`

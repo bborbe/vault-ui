@@ -139,6 +139,8 @@ type Service interface {
 	ResumeTaskCommand(ctx context.Context, vault, taskID string) (api.SessionResponse, error)
 	RunGoal(ctx context.Context, vault, goalID string) (api.SessionResponse, error)
 	TakeOverGoal(ctx context.Context, vault, goalID string) (api.SessionResponse, error)
+	RunTopic(ctx context.Context, vault, topicID string) (api.SessionResponse, error)
+	TakeOverTopic(ctx context.Context, vault, topicID string) (api.SessionResponse, error)
 	ExecuteTaskCommand(
 		ctx context.Context, vault, taskID string, req api.ExecuteCommandRequest,
 	) (api.SessionResponse, error)
@@ -184,6 +186,20 @@ func (s *service) markVaultDirty(vault vaultconfig.Vault) {
 		pageindex.NewKey(vault.Path, vault.TasksFolder),
 		pageindex.NewKey(vault.Path, vault.GoalsFolder),
 	)
+}
+
+// markTopicDirty marks the vault's topics key dirty in the page index.
+//
+// A topic route must not use markVaultDirty: it edits a topic file, and the
+// topics folder is not in that pair. The status cache indexes
+// Themes/Objectives/Goals/Tasks only, so a topic's claude_session_* fields are
+// served from the page index alone — leaving the topics key unmarked makes the
+// write invisible to every other client until the background rescan.
+func (s *service) markTopicDirty(vault vaultconfig.Vault) {
+	if vault.TopicsFolder == "" {
+		return
+	}
+	s.deps.Index.MarkDirty(pageindex.NewKey(vault.Path, vault.TopicsFolder))
 }
 
 // enqueueWrite queues one frontmatter write on the vault's FIFO. write runs
@@ -439,6 +455,38 @@ func (s *service) findGoal(
 	for _, goal := range goals {
 		if goal.Name == goalID {
 			return goal, true, nil
+		}
+	}
+	return ops.TaskListItem{}, false, nil
+}
+
+// listTopics returns every topic in the vault, mirroring list_goals(show_all=True).
+func (s *service) listTopics(
+	ctx context.Context, vault vaultconfig.Vault,
+) ([]ops.TaskListItem, error) {
+	return s.opsForVault(vault).List.Execute(
+		ctx, vault.Path, vault.Name, vault.TopicsFolder, nil, true, "", "",
+	)
+}
+
+// findTopic returns the topic row with the given id, or false when absent.
+//
+// A vault with no topics folder has no topics: the guard is load-bearing, not
+// cosmetic — listing an empty directory name would walk the vault root and
+// could match an unrelated task or goal that happens to share the name.
+func (s *service) findTopic(
+	ctx context.Context, vault vaultconfig.Vault, topicID string,
+) (ops.TaskListItem, bool, error) {
+	if vault.TopicsFolder == "" {
+		return ops.TaskListItem{}, false, nil
+	}
+	topics, err := s.listTopics(ctx, vault)
+	if err != nil {
+		return ops.TaskListItem{}, false, err
+	}
+	for _, topic := range topics {
+		if topic.Name == topicID {
+			return topic, true, nil
 		}
 	}
 	return ops.TaskListItem{}, false, nil

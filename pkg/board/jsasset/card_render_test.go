@@ -45,8 +45,9 @@ func topicView(t *testing.T, source string) map[string]string {
 }
 
 // TestTopicCardEnablesDataSlots pins the topic card's slot set: it carries the
-// six data slots the task and goal cards already render and keeps the four it
-// shipped with.
+// six data slots the task and goal cards already render and keeps the three of
+// its original four that remain. The display-only `live` slot is gone: a live
+// topic now renders the same clickable take-over badge as a task or goal.
 func TestTopicCardEnablesDataSlots(t *testing.T) {
 	source := loadAsset(t)
 	slots := topicSlots(t, source)
@@ -55,7 +56,7 @@ func TestTopicCardEnablesDataSlots(t *testing.T) {
 			t.Fatalf("topic.%s slot = %q, want true", slot, slots[slot])
 		}
 	}
-	for _, slot := range []string{"noteLink", "flag", "live", "detail"} {
+	for _, slot := range []string{"noteLink", "flag", "detail"} {
 		if slots[slot] != "true" {
 			t.Fatalf("topic.%s slot = %q, want true (existing slot must stay enabled)", slot, slots[slot])
 		}
@@ -76,7 +77,6 @@ func TestTopicMapperReadsPayloadFields(t *testing.T) {
 		"status":       "topic.status",
 		"phase":        "topic.phase",
 		"flag":         "topic.flag",
-		"live":         "topic.session_state",
 		"hold":         "topic.status",
 		"assignee":     "topic.assignee",
 		"priority":     "topic.priority",
@@ -218,7 +218,7 @@ func TestBlockerResolverUsesTopicDataset(t *testing.T) {
 
 // TestCardConfigSlotParityAcrossKinds pins the three kinds' card slots to one
 // contract. goal and task are the same view in two tabs, so they carry an
-// identical slot map. topic differs only by the four slots pinned below, each
+// identical slot map. topic differs only by the two slots pinned below, each
 // deliberate; every other slot — and any slot added to task later — must appear
 // on topic too, so a one-entry edit can no longer drift silently.
 func TestCardConfigSlotParityAcrossKinds(t *testing.T) {
@@ -233,10 +233,8 @@ func TestCardConfigSlotParityAcrossKinds(t *testing.T) {
 
 	// The pinned divergence, with the value each must hold.
 	pinned := map[string]string{
-		"menu":    "false", // no PATCH /api/topics/{id}/status route yet
-		"session": "false", // no topic session route yet
-		"detail":  "true",  // topic-only detail view
-		"live":    "true",  // topic-only, display-only live badge
+		"menu":   "false", // no PATCH /api/topics/{id}/status route yet
+		"detail": "true",  // topic-only detail view
 	}
 
 	for name, taskValue := range task {
@@ -251,12 +249,12 @@ func TestCardConfigSlotParityAcrossKinds(t *testing.T) {
 			continue
 		}
 		if topicValue != taskValue {
-			t.Fatalf("topic.slots.%s = %q, want %q — only menu, session, detail and live may differ", name, topicValue, taskValue)
+			t.Fatalf("topic.slots.%s = %q, want %q — only menu and detail may differ", name, topicValue, taskValue)
 		}
 	}
 	for name := range topic {
 		if _, ok := task[name]; !ok {
-			t.Fatalf("topic.slots carries %q absent from task.slots — the divergence is pinned to menu, session, detail and live", name)
+			t.Fatalf("topic.slots carries %q absent from task.slots — the divergence is pinned to menu and detail", name)
 		}
 	}
 
@@ -283,7 +281,7 @@ func TestCardConfigEnablesModeSlot(t *testing.T) {
 	preChangeEnabledSlots := map[string][]string{
 		"task":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
 		"goal":  {"activityAge", "assignee", "blocked", "flag", "hold", "jira", "menu", "noteLink", "priority", "session"},
-		"topic": {"activityAge", "assignee", "blocked", "detail", "flag", "hold", "jira", "live", "noteLink", "priority"},
+		"topic": {"activityAge", "assignee", "blocked", "detail", "flag", "hold", "jira", "noteLink", "priority"},
 	}
 
 	source := loadAsset(t)

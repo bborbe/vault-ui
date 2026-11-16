@@ -135,6 +135,16 @@ type TopicResponse struct {
 	// as GoalResponse.SessionState: always emitted, null when the topic page
 	// records no manager id.
 	SessionState *string `json:"session_state"`
+	// ClaudeSessionID is the topic page's own `claude_session_id` frontmatter
+	// value, on the same terms as GoalResponse.ClaudeSessionID: always emitted,
+	// null when the page records none. It is the id the card's Resume button
+	// hands to `claude --resume`.
+	ClaudeSessionID *string `json:"claude_session_id"`
+	// ClaudeSessionStarted is the durable launch marker a Start writes and the
+	// take-over clears, on the same terms as
+	// GoalResponse.ClaudeSessionStarted: always emitted, null when no launch is
+	// in flight, so the card can render "Starting…" across a reload.
+	ClaudeSessionStarted *string `json:"claude_session_started"`
 	// Flag is the same picked-for-today marker a task and a goal carry, on the
 	// same terms as GoalResponse.Flag: always emitted, false when cleared.
 	Flag        bool   `json:"flag"`

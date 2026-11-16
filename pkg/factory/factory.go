@@ -84,6 +84,7 @@ func CreateOpSet(
 		TopicShow:        ops.NewTopicShowOperation(topicStore),
 		TopicSet:         ops.NewTopicSetOperation(topicStore),
 		TopicClear:       ops.NewTopicClearOperation(topicStore),
+		TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, uuidGenerator, starter, resumer),
 	}
 }
 

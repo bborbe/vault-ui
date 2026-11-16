@@ -35,16 +35,18 @@ import (
 )
 
 const (
-	taskOneID   = "TaskOne"
-	taskTwoID   = "TaskTwo"
-	goalOneID   = "GoalOne"
-	goalTwoID   = "GoalTwo"
-	taskThreeID = "TaskThree"
-	taskFourID  = "TaskFour"
-	goalThreeID = "GoalThree"
-	topicOneID  = "TopicOne"
-	uuidOne     = "11111111-1111-1111-1111-111111111111"
-	uuidTwo     = "22222222-2222-2222-2222-222222222222"
+	taskOneID    = "TaskOne"
+	taskTwoID    = "TaskTwo"
+	goalOneID    = "GoalOne"
+	goalTwoID    = "GoalTwo"
+	taskThreeID  = "TaskThree"
+	taskFourID   = "TaskFour"
+	goalThreeID  = "GoalThree"
+	topicOneID   = "TopicOne"
+	topicTwoID   = "TopicTwo"
+	topicThreeID = "TopicThree"
+	uuidOne      = "11111111-1111-1111-1111-111111111111"
+	uuidTwo      = "22222222-2222-2222-2222-222222222222"
 )
 
 // fakePane resolves every session to a fixed pane.
@@ -141,6 +143,11 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		"---\nstatus: in_progress\n---\n\n# Goal One\n")
 	writeFile(filepath.Join(dir, "23 Topics", topicOneID+".md"),
 		"---\nstatus: in_progress\nphase: execution\n---\n\n# Topic One\n\n## Goals\n")
+	writeFile(filepath.Join(dir, "23 Topics", topicTwoID+".md"),
+		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Topic Two\n")
+	writeFile(filepath.Join(dir, "23 Topics", topicThreeID+".md"),
+		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+
+			"\nclaude_session_started: \"2026-01-01T00:00:00Z\"\n---\n\n# Topic Three\n")
 	writeFile(filepath.Join(goalsDir, goalTwoID+".md"),
 		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Goal Two\n")
 	writeFile(filepath.Join(tasksDir, "Task With Space.md"),
@@ -262,6 +269,8 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 			GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, clock),
 			TopicSet:         ops.NewTopicSetOperation(topicStore),
 			TopicClear:       ops.NewTopicClearOperation(topicStore),
+			TopicShow:        ops.NewTopicShowOperation(topicStore),
+			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, func() string { return uuidTwo }, nil, nil),
 		}
 	}
 }
@@ -279,6 +288,7 @@ func opsFactoryWithStarter(
 		}
 		taskStore := storage.NewTaskStorage(storageConfig)
 		goalStore := storage.NewGoalStorage(storageConfig)
+		topicStore := storage.NewTopicStorage(storageConfig)
 		dailyStore := storage.NewDailyNoteStorage(storageConfig)
 		clock := libtime.NewCurrentDateTime()
 		return vaultui.OpSet{
@@ -294,6 +304,10 @@ func opsFactoryWithStarter(
 			GoalSet:          ops.NewGoalSetOperation(goalStore),
 			GoalClear:        ops.NewGoalClearOperation(goalStore),
 			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, starter, resumer),
+			TopicSet:         ops.NewTopicSetOperation(topicStore),
+			TopicClear:       ops.NewTopicClearOperation(topicStore),
+			TopicShow:        ops.NewTopicShowOperation(topicStore),
+			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, func() string { return uuidTwo }, starter, resumer),
 		}
 	}
 }
@@ -985,6 +999,54 @@ var _ = Describe("Mutation service edge branches", func() {
 		})
 	})
 
+	Describe("RunTopic", func() {
+		It("404s an unknown topic", func() {
+			_, err := h.service.RunTopic(ctx, "personal", "Missing")
+			Expect(httpStatus(err)).To(Equal(404))
+		})
+
+		It("400s a dash-prefixed id", func() {
+			_, err := h.service.RunTopic(ctx, "personal", "-x")
+			Expect(httpStatus(err)).To(Equal(400))
+		})
+
+		It("500s an unknown vault", func() {
+			_, err := h.service.RunTopic(ctx, "nope", topicOneID)
+			Expect(httpStatus(err)).To(Equal(500))
+		})
+	})
+
+	Describe("TakeOverTopic", func() {
+		It("returns the resume command for a live session", func() {
+			result, err := h.service.TakeOverTopic(ctx, "personal", topicTwoID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.SessionID).To(Equal(uuidOne))
+			Expect(result.Terminated).NotTo(BeNil())
+		})
+
+		It("400s a topic with no session", func() {
+			_, err := h.service.TakeOverTopic(ctx, "personal", topicOneID)
+			Expect(httpStatus(err)).To(Equal(400))
+		})
+
+		It("404s an unknown topic", func() {
+			_, err := h.service.TakeOverTopic(ctx, "personal", "Missing")
+			Expect(httpStatus(err)).To(Equal(404))
+		})
+	})
+
+	// The status cache indexes Themes/Objectives/Goals/Tasks only, so a topic's
+	// claude_session_started marker is never in it. Without the page fallback the
+	// take-over took the resume branch and left the marker on disk.
+	Describe("TakeOverTopic starting path", func() {
+		It("returns the resume command and clears the marker", func() {
+			result, err := h.service.TakeOverTopic(ctx, "personal", topicThreeID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.SessionID).To(Equal(uuidOne))
+			Expect(h.readTopic(topicThreeID)).NotTo(ContainSubstring("claude_session_started"))
+		})
+	})
+
 	Describe("ExecuteTaskCommand session path", func() {
 		It("500s when the work-on session cannot start", func() {
 			_, err := h.service.ExecuteTaskCommand(
@@ -1197,6 +1259,14 @@ var _ = Describe("Mutation service session start (counterfeiter fakes)", func() 
 		Expect(result.SessionID).To(Equal(uuidTwo))
 		Expect(h.readGoal(goalOneID)).To(ContainSubstring(uuidTwo))
 	})
+
+	It("starts a topic session and stores the id on the topic", func() {
+		result, err := h.service.RunTopic(ctx, "personal", topicOneID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.SessionID).To(Equal(uuidTwo))
+		Expect(starter.StartSessionCallCount()).To(Equal(1))
+		Expect(h.readTopic(topicOneID)).To(ContainSubstring(uuidTwo))
+	})
 })
 
 var _ = Describe("Mutation service page-index invalidation", func() {
@@ -1235,6 +1305,22 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		ExpectWithOffset(1, key).To(Equal(want))
 		ExpectWithOffset(1, name).To(Equal(id))
 		ExpectWithOffset(1, index.MarkDirtyCallCount()).To(Equal(0))
+	}
+
+	// expectTopicMarked asserts the invalidator recorded a folder-level MarkDirty
+	// call naming the vault's topics key. That key is the only place a topic's
+	// claude_session_* fields are served from — the status cache indexes
+	// Themes/Objectives/Goals/Tasks only — so a topic route that marks anything
+	// else leaves its own write invisible until the background rescan.
+	expectTopicMarked := func(index *mocks.IndexInvalidator, dir string) {
+		want := []pageindex.Key{pageindex.NewKey(dir, "23 Topics")}
+		matched := false
+		for i := 0; i < index.MarkDirtyCallCount(); i++ {
+			if reflect.DeepEqual(index.MarkDirtyArgsForCall(i), want) {
+				matched = true
+			}
+		}
+		ExpectWithOffset(1, matched).To(BeTrue(), "no MarkDirty call with %v", want)
 	}
 
 	// The three queued post-write callbacks (task publishing, goal publishing,
@@ -1354,6 +1440,21 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 			return h
 		}),
 	)
+
+	// The topic session routes edit a topic file, so they mark the topics key
+	// instead of the tasks+goals pair.
+	It("marks the topics key after RunTopic", func() {
+		sh, _ := newStarterHarness()
+		_, err := sh.service.RunTopic(ctx, "personal", topicOneID)
+		Expect(err).NotTo(HaveOccurred())
+		expectTopicMarked(sh.index, sh.dir)
+	})
+
+	It("marks the topics key after TakeOverTopic", func() {
+		_, err := h.service.TakeOverTopic(ctx, "personal", topicThreeID)
+		Expect(err).NotTo(HaveOccurred())
+		expectTopicMarked(h.index, h.dir)
+	})
 
 	It("marks before PublishTaskUpdated for UpdateTaskPhase", func() {
 		// The publisher stub runs on the queue consumer goroutine, where a
