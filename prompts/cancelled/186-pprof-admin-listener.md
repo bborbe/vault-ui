@@ -1,9 +1,10 @@
 ---
-status: approved
+status: cancelled
 created: "2026-11-17T13:04:18Z"
 queued: "2026-11-17T13:04:18Z"
 completed: "2026-11-17T13:05:01Z"
 lastFailReason: 'setup workflow: working tree is not clean; cannot switch to branch "dark-factory/186-pprof-admin-listener"; uncommitted changes: specs/in-progress/039-mode-pill.md'
+cancelled: "2026-11-17T15:57:16Z"
 ---
 
 # Mount Go pprof on the admin listener

@@ -7,6 +7,7 @@ package factory
 import (
 	"context"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	libhttp "github.com/bborbe/http"
@@ -96,6 +97,18 @@ func CreateVaultDiscovery(loader config.Loader, readiness vaultui.Readiness) run
 	}
 }
 
+// registerPprof mounts the Go profiling endpoints on the admin router only.
+func registerPprof(router *mux.Router) {
+	router.Path("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.Path("/debug/pprof/cmdline").HandlerFunc(pprof.Cmdline)
+	router.Path("/debug/pprof/profile").HandlerFunc(pprof.Profile)
+	router.Path("/debug/pprof/symbol").HandlerFunc(pprof.Symbol)
+	router.Path("/debug/pprof/trace").HandlerFunc(pprof.Trace)
+	for _, name := range []string{"heap", "goroutine", "allocs", "block", "mutex", "threadcreate"} {
+		router.Path("/debug/pprof/" + name).Handler(pprof.Handler(name))
+	}
+}
+
 // CreateHTTPServer returns a run.Func serving the canonical bborbe admin block.
 func CreateHTTPServer(listen string, readiness vaultui.Readiness) run.Func {
 	return func(ctx context.Context) error {
@@ -109,8 +122,13 @@ func CreateHTTPServer(listen string, readiness vaultui.Readiness) run.Func {
 		router.Path("/setloglevel/{level}").
 			Handler(log.NewSetLoglevelHandler(ctx, log.NewLogLevelSetter(2, 5*time.Minute)))
 		router.Path("/gc").Handler(libhttp.NewGarbageCollectorHandler())
+		registerPprof(router)
 
 		glog.V(2).Infof("starting http server listen on %s", listen)
-		return libhttp.NewServer(listen, router).Run(ctx)
+		// pprof profile and trace run for seconds=30 by default and must finish
+		// within the server write timeout.
+		return libhttp.NewServer(listen, router, func(serverOptions *libhttp.ServerOptions) {
+			serverOptions.WriteTimeout = 2 * time.Minute
+		}).Run(ctx)
 	}
 }
