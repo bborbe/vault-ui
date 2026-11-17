@@ -28,7 +28,7 @@ type fakeRevisions struct {
 	// one.
 	changed   []string
 	changedOK bool
-	// pageReads counts ListPages calls. The store never makes one — the page
+	// pageReads counts ListEntries calls. The store never makes one — the page
 	// read belongs to the board's patch func — so a non-zero count is a bug.
 	pageReads int
 }
@@ -48,7 +48,7 @@ func (f *fakeRevisions) ChangedPagesSince(_ pageindex.Key, revision uint64) ([]s
 	return append([]string(nil), f.changed...), f.changedOK
 }
 
-func (f *fakeRevisions) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+func (f *fakeRevisions) ListEntries(context.Context, string, string) ([]*pageindex.Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pageReads++
@@ -79,7 +79,7 @@ func (f *fakeRevisions) markFolder() {
 	f.changedOK = false
 }
 
-// PageReads reports how many ListPages calls the store made.
+// PageReads reports how many ListEntries calls the store made.
 func (f *fakeRevisions) PageReads() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -320,7 +320,7 @@ var _ = Describe("CreateOpSet", func() {
 			set := createOpSet(vaultDir)
 
 			Expect(set.GoalSet.Execute(
-				ctx, vaultDir, "Goal A", "assignee", "alice", "", "",
+				ctx, vaultDir, "Goal A", "assignee", "alice", "", "", "",
 			)).To(Succeed())
 			Expect(frontmatterValue(vaultDir, goalFile, "assignee")).To(Equal("alice"))
 
@@ -335,7 +335,7 @@ var _ = Describe("CreateOpSet", func() {
 			set := createOpSet(vaultDir)
 
 			Expect(set.TopicSet.Execute(
-				ctx, vaultDir, "Topic A", "assignee", "alice", "", "",
+				ctx, vaultDir, "Topic A", "assignee", "alice", "", "", "",
 			)).To(Succeed())
 			Expect(frontmatterValue(vaultDir, topicFile, "assignee")).To(Equal("alice"))
 

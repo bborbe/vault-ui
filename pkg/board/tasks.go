@@ -13,7 +13,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
@@ -465,14 +464,16 @@ func (b *board) patchTaskRows(
 		}
 	}()
 
-	pages, err := b.index.ListPages(ctx, vault.Path, vault.TasksFolder)
+	entries, err := b.index.ListEntries(ctx, vault.Path, vault.TasksFolder)
 	if err != nil {
 		return nil, errors.Wrapf(ctx, err, "list task pages for vault %s", vault.Name)
 	}
 
-	byName := make(map[string]*domain.Page, len(pages))
-	for _, page := range pages {
-		byName[page.FileMetadata.Name+".md"] = page
+	byName := make(map[string]*domain.Page, len(entries))
+	questionsByName := make(map[string][]domain.OpenQuestion, len(entries))
+	for _, entry := range entries {
+		byName[entry.Page.FileMetadata.Name+".md"] = entry.Page
+		questionsByName[entry.Page.FileMetadata.Name] = entry.OpenQuestions
 	}
 	held := make(map[string]int, len(rows))
 	for i, row := range rows {
@@ -521,14 +522,10 @@ func (b *board) patchTaskRows(
 		}
 		at := held[name+".md"]
 		blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
-		questions, questionsErr := pageOpenQuestions(ctx, page)
-		if questionsErr != nil {
-			glog.Warningf(
-				"parse open questions of %s in vault %s: %v",
-				name,
-				vault.Name,
-				questionsErr,
-			)
+		// The index parsed the Open Questions when it read the page; the body
+		// itself is never held.
+		questions := questionsByName[name]
+		if questions == nil {
 			questions = []domain.OpenQuestion{}
 		}
 		patched[at] = taskSnapshotRow{
@@ -664,29 +661,6 @@ func (c *changedPages) ReadPage(
 	return nil, errors.Errorf(ctx, "page %q is not in the changed set", name)
 }
 
-// pageOpenQuestions returns one page's Open Questions in the wire shape the
-// board exposes, never nil.
-func pageOpenQuestions(ctx context.Context, page *domain.Page) ([]domain.OpenQuestion, error) {
-	items, err := storage.ParseOpenQuestions(ctx, page.Content.String())
-	if err != nil {
-		return nil, err
-	}
-	// Marker and Line are parse bookkeeping for a rewriter, so only the
-	// question and its position go on the wire. An already-answered item's
-	// Answer is deliberately not exposed, and answered items are included
-	// rather than filtered out: the section is the source of truth for what
-	// the task is waiting on, and a UI is better placed to decide what an
-	// already-answered item means.
-	questions := make([]domain.OpenQuestion, 0, len(items))
-	for _, item := range items {
-		questions = append(questions, domain.OpenQuestion{
-			Index: item.Index,
-			Text:  item.Question,
-		})
-	}
-	return questions, nil
-}
-
 // taskPageFields is the per-task state the board derives from a task page that
 // the list rows do not carry: the Open Questions section and the page's own
 // `jira:` frontmatter value.
@@ -717,30 +691,21 @@ func (b *board) taskPageFieldsByTask(
 		// the same terms as any other failure here: degrade, never fail the read.
 		return byName
 	}
-	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.TasksFolder)
+	entries, err := b.pageIndex.ListEntries(ctx, vault.Path, vault.TasksFolder)
 	if err != nil {
 		glog.Warningf("list pages for task fields in vault %s: %v", vault.Name, err)
 		return byName
 	}
-	for _, page := range pages {
+	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			// The caller is gone: stop rather than warn once per remaining page.
+			// The caller is gone: stop rather than walk the remaining pages.
 			return byName
 		default:
 		}
-		questions, parseErr := pageOpenQuestions(ctx, page)
-		if parseErr != nil {
-			glog.Warningf(
-				"parse open questions of %s in vault %s: %v",
-				page.FileMetadata.Name,
-				vault.Name,
-				parseErr,
-			)
-			continue
-		}
+		page := entry.Page
 		byName[page.FileMetadata.Name] = taskPageFields{
-			openQuestions: questions,
+			openQuestions: entry.OpenQuestions,
 			jira:          pageJira(page),
 			mode:          pageMode(page),
 		}

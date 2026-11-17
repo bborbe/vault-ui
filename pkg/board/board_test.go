@@ -15,6 +15,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -225,9 +226,9 @@ type fakeIndex struct {
 	// bound it.
 	changed   []string
 	changedOK bool
-	// pages is what ListPages serves: the pages the index already holds.
+	// pages is what ListEntries serves: the pages the index already holds.
 	pages []*domain.Page
-	// pageReads counts ListPages calls, so a spec can prove a patch read the
+	// pageReads counts ListEntries calls, so a spec can prove a patch read the
 	// pages the index holds instead of listing the vault.
 	pageReads int
 }
@@ -247,11 +248,11 @@ func (f *fakeIndex) ChangedPagesSince(_ pageindex.Key, revision uint64) ([]strin
 	return append([]string(nil), f.changed...), f.changedOK
 }
 
-func (f *fakeIndex) ListPages(_ context.Context, _, _ string) ([]*domain.Page, error) {
+func (f *fakeIndex) ListEntries(_ context.Context, _, _ string) ([]*pageindex.Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pageReads++
-	return f.pages, nil
+	return asEntries(f.pages), nil
 }
 
 func (f *fakeIndex) bump() {
@@ -272,14 +273,14 @@ func (f *fakeIndex) markPages(names ...string) {
 	f.changedOK = true
 }
 
-// setPages swaps the pages ListPages serves.
+// setPages swaps the pages ListEntries serves.
 func (f *fakeIndex) setPages(pages ...*domain.Page) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pages = pages
 }
 
-// PageReads reports how many ListPages calls the board made against the index.
+// PageReads reports how many ListEntries calls the board made against the index.
 func (f *fakeIndex) PageReads() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -387,6 +388,26 @@ func pageWithFrontmatter(
 		domain.FileMetadata{Name: name},
 		domain.Content(content),
 	)
+}
+
+// asEntries converts in-memory pages into what the page index serves: each page
+// with its Open Questions pre-parsed off the body and its Content dropped, so a
+// test proves the board reads the questions from the entry, never the body.
+func asEntries(pages []*domain.Page) []*pageindex.Entry {
+	entries := make([]*pageindex.Entry, 0, len(pages))
+	for _, p := range pages {
+		items, err := storage.ParseOpenQuestions(context.Background(), p.Content.String())
+		Expect(err).NotTo(HaveOccurred())
+		questions := make([]domain.OpenQuestion, 0, len(items))
+		for _, it := range items {
+			questions = append(questions, domain.OpenQuestion{Index: it.Index, Text: it.Question})
+		}
+		entries = append(entries, &pageindex.Entry{
+			Page:          &domain.Page{FrontmatterMap: p.FrontmatterMap, FileMetadata: p.FileMetadata},
+			OpenQuestions: questions,
+		})
+	}
+	return entries
 }
 
 // build (re)constructs the board from the current fakes, so a test can mutate a
@@ -1012,9 +1033,8 @@ var _ = Describe("goal session id", func() {
 		// what guarantees every page carries the surviving field.
 		h := newHarness()
 		h.list.items["23 Goals"] = []ops.TaskListItem{{
-			Name:             "Goal",
-			Status:           "in_progress",
-			ManagerSessionID: retiredID,
+			Name:   "Goal",
+			Status: "in_progress",
 		}}
 		h.signals.registry = []heartbeat.Session{{ID: retiredID}}
 		h.build()
@@ -1225,7 +1245,7 @@ var _ = Describe("ListTopics", func() {
 		const retiredID = "66666666-6666-6666-6666-666666666666"
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{
-			{Name: "Retired", Status: "in_progress", ManagerSessionID: retiredID},
+			{Name: "Retired", Status: "in_progress"},
 		}
 		h.signals.registry = []heartbeat.Session{{ID: retiredID}}
 		h.build()
@@ -1666,8 +1686,8 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("serialises [] for a task with no Open Questions section", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListPagesReturns(
-			[]*domain.Page{page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n")}, nil,
+		h.pageIndex.ListEntriesReturns(
+			asEntries([]*domain.Page{page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n")}), nil,
 		)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
@@ -1683,7 +1703,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("maps the parsed section items in section order", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListPagesReturns([]*domain.Page{page("TaskOne", questions)}, nil)
+		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{page("TaskOne", questions)}), nil)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1705,17 +1725,17 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("lists the vault's pages once, not once per task", func() {
 		h := newHarness(item("One"), item("Two"), item("Three"))
-		h.pageIndex.ListPagesReturns([]*domain.Page{page("One", questions)}, nil)
+		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{page("One", questions)}), nil)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responses).To(HaveLen(3))
-		Expect(h.pageIndex.ListPagesCallCount()).To(Equal(1))
+		Expect(h.pageIndex.ListEntriesCallCount()).To(Equal(1))
 	})
 
 	It("carries an empty list rather than failing when the pages cannot be listed", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListPagesReturns(nil, errors.New("boom"))
+		h.pageIndex.ListEntriesReturns(nil, errors.New("boom"))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1756,8 +1776,8 @@ var _ = Describe("ListTasks jira", func() {
 	} {
 		It("carries "+testCase.name+" from the task page", func() {
 			h := newHarness(item("TaskOne"))
-			h.pageIndex.ListPagesReturns(
-				[]*domain.Page{pageWithFrontmatter("TaskOne", testCase.frontmatter, "")}, nil,
+			h.pageIndex.ListEntriesReturns(
+				asEntries([]*domain.Page{pageWithFrontmatter("TaskOne", testCase.frontmatter, "")}), nil,
 			)
 
 			responses, err := h.board.ListTasks(
@@ -1776,7 +1796,7 @@ var _ = Describe("ListTasks jira", func() {
 
 	It("carries null rather than failing when the pages cannot be listed", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListPagesReturns(nil, errors.New("boom"))
+		h.pageIndex.ListEntriesReturns(nil, errors.New("boom"))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1914,11 +1934,11 @@ var _ = Describe("mode payload", func() {
 
 	It("serves the task's own mode, and null when the page declares none", func() {
 		h := newHarness(item("WithMode"), item("NoMode"), item("EmptyMode"))
-		h.pageIndex.ListPagesReturns([]*domain.Page{
+		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{
 			pageWithFrontmatter("WithMode", map[string]any{"mode": "headless"}, ""),
 			pageWithFrontmatter("NoMode", map[string]any{}, ""),
 			pageWithFrontmatter("EmptyMode", map[string]any{"mode": ""}, ""),
-		}, nil)
+		}), nil)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())

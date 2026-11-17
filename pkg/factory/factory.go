@@ -77,15 +77,15 @@ func CreateOpSet(
 		Answer:           ops.NewTaskAnswerOperation(taskStore),
 		Defer:            ops.NewDeferOperation(taskStore, dailyStore, currentDateTime),
 		Complete:         ops.NewCompleteOperation(taskStore, dailyStore, currentDateTime, interactionCounter),
-		GoalSet:          ops.NewGoalSetOperation(goalStore),
+		GoalSet:          ops.NewGoalSetOperation(goalStore, currentDateTime),
 		GoalClear:        ops.NewGoalClearOperation(goalStore),
-		GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, uuidGenerator, starter, resumer),
+		GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, currentDateTime, uuidGenerator, starter, resumer),
 		GoalDefer:        ops.NewGoalDeferOperation(goalStore, currentDateTime),
 		GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, currentDateTime),
 		TopicShow:        ops.NewTopicShowOperation(topicStore),
-		TopicSet:         ops.NewTopicSetOperation(topicStore),
+		TopicSet:         ops.NewTopicSetOperation(topicStore, currentDateTime),
 		TopicClear:       ops.NewTopicClearOperation(topicStore),
-		TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, uuidGenerator, starter, resumer),
+		TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, currentDateTime, uuidGenerator, starter, resumer),
 	}
 }
 

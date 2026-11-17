@@ -14,7 +14,6 @@ import (
 	"time"
 
 	libtime "github.com/bborbe/time"
-	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo/v2"
@@ -580,7 +579,7 @@ func (staticIndex) ChangedPagesSince(pageindex.Key, uint64) ([]string, bool) {
 	return nil, false
 }
 
-func (staticIndex) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+func (staticIndex) ListEntries(context.Context, string, string) ([]*pageindex.Entry, error) {
 	return nil, nil
 }
 

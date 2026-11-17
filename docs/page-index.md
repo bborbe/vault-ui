@@ -1,19 +1,28 @@
 # Page index
 
-`pkg/pageindex` keeps the parsed pages of each vault folder in memory so a list
-read can be answered without opening a vault file. It implements vault-cli's
-`storage.PageStorage`, so it plugs in exactly where vault-cli reads a folder
-today: filtering, sorting and blocked-state logic stay in vault-cli's list
-operation, and vault-ui reads single page files through its own reader seam,
-which delegates the read to vault-cli's `storage.PageStorage.ReadPage`, so a
-parsed page is identical to what vault-cli's folder listing returns. The read is
-delegated so that one parse path and one symlink-out-of-vault guard serve both
-the index and vault-cli's own folder listing, instead of two copies that have to
-be kept in sync.
+`pkg/pageindex` is vault-ui's thin adapter over vault-cli's `pkg/index`, which
+keeps each vault folder's page **metadata** in memory so a list read can be
+answered without opening a vault file. The engine — snapshots, stat-diff
+refresh, per-file write marks, the change log and the bolt store — lives in
+vault-cli (its own `docs/page-index.md` is the full contract); the adapter wires
+in vault-ui's glog warnings, its prometheus counters (unchanged metric names)
+and the fixed store path. The index implements vault-cli's
+`storage.PageStorage`, so vault-cli's list operation runs on it unchanged, and
+single page files are read through vault-cli's `storage.PageStorage.ReadPage`,
+so one parse path and one symlink-out-of-vault guard serve both.
 
-One immutable snapshot (`[]*domain.Page`) is held per key — a vault root plus a
-vault-relative pages dir. A published snapshot is never mutated; concurrent
-readers share the same `*domain.Page` pointers read-only.
+The index never holds a page body:
+
+- `ListPages` returns pages whose frontmatter, name, path and modification time
+  equal vault-cli's folder listing, with `Content` always empty.
+- `ListEntries` serves the same snapshot as entries, each carrying the page's
+  pre-parsed Open Questions; this is where the board's `open_questions` comes
+  from, on the full task list and on a row patch alike.
+- `ReadPage` reads the full page from disk on demand and never caches it.
+
+One immutable snapshot is held per key — a vault root plus a vault-relative
+pages dir. A published snapshot is never mutated; concurrent readers share the
+same `*domain.Page` pointers read-only.
 
 ## Task-list snapshot
 
@@ -283,8 +292,9 @@ not have to re-parse every indexed file. The store is never a source of truth:
 it is read as untrusted input, discarded on any mismatch, and never changes what
 the board serves.
 
-- **What it holds.** One entry per indexed file: the parsed page plus the
-  pre-read fingerprint — size, modification time and status-change time — taken
+- **What it holds.** One entry per indexed file: the page's frontmatter and
+  file metadata, its Open Questions, and the pre-read fingerprint — never the
+  body (store format version 2) — size, modification time and status-change time — taken
   from the symlink-following stat before the read. A file excluded from the
   index (unreadable, unparsable, or a symlink out of the vault) stores its
   fingerprint and no page, so an unchanged excluded file is neither re-read nor
@@ -301,7 +311,9 @@ the board serves.
 - **When it is discarded.** A store that is missing, empty, damaged, unreadable,
   or written under a different store-format version or by a different vault-cli
   parser version is discarded and the key takes the full parse; it is never
-  migrated. A discard logs one warning naming the reason and the path, and never
+  migrated. A pre-upgrade file, whose records held bodies (format 1), is
+  therefore discarded on the first start, its entry buckets deleted, with a
+  warning naming `store format mismatch` and the path. A discard logs one warning naming the reason and the path, and never
   changes a served response and never stops the process from starting.
 - **The codec trap.** `domain.Page` embeds `FrontmatterMap`, whose only field is
   unexported, so `json.Marshal` on a `domain.Page` silently drops every

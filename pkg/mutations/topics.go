@@ -39,7 +39,7 @@ func (s *service) RunTopic(ctx context.Context, vault, topicID string) (api.Sess
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, topicID, kindTopic)
 	if err := set.TopicSet.Execute(
-		ctx, resolved.Path, topicID, "claude_session_started", sessionStartedMarker(), "", "",
+		ctx, resolved.Path, topicID, "claude_session_started", sessionStartedMarker(), "", "", "",
 	); err != nil {
 		s.deps.Launch.Finish(vault, topicID)
 		return api.SessionResponse{}, newHTTPError(500, err.Error())
@@ -62,7 +62,7 @@ func (s *service) RunTopic(ctx context.Context, vault, topicID string) (api.Sess
 	}
 	s.deps.Launch.Finish(vault, topicID)
 	if setErr := set.TopicSet.Execute(
-		ctx, resolved.Path, topicID, "claude_session_id", result.SessionID, "", "",
+		ctx, resolved.Path, topicID, "claude_session_id", result.SessionID, "", "", "",
 	); setErr != nil {
 		return api.SessionResponse{}, newHTTPError(500, setErr.Error())
 	}

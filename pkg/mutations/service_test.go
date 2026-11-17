@@ -262,15 +262,15 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 			Answer:           ops.NewTaskAnswerOperation(taskStore),
 			Defer:            ops.NewDeferOperation(taskStore, dailyStore, clock),
 			Complete:         ops.NewCompleteOperation(taskStore, dailyStore, clock, ops.NewInteractionCounter("", "")),
-			GoalSet:          ops.NewGoalSetOperation(goalStore),
+			GoalSet:          ops.NewGoalSetOperation(goalStore, clock),
 			GoalClear:        ops.NewGoalClearOperation(goalStore),
-			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, nil, nil),
+			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, clock, func() string { return uuidTwo }, nil, nil),
 			GoalDefer:        ops.NewGoalDeferOperation(goalStore, clock),
 			GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, clock),
-			TopicSet:         ops.NewTopicSetOperation(topicStore),
+			TopicSet:         ops.NewTopicSetOperation(topicStore, clock),
 			TopicClear:       ops.NewTopicClearOperation(topicStore),
 			TopicShow:        ops.NewTopicShowOperation(topicStore),
-			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, func() string { return uuidTwo }, nil, nil),
+			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, clock, func() string { return uuidTwo }, nil, nil),
 		}
 	}
 }
@@ -301,13 +301,13 @@ func opsFactoryWithStarter(
 			WorkOn:           ops.NewWorkOnOperation(taskStore, dailyStore, goalStore, clock, func() string { return uuidTwo }, starter, resumer, nil),
 			Approve:          ops.NewTaskApproveOperation(taskStore, clock),
 			Answer:           ops.NewTaskAnswerOperation(taskStore),
-			GoalSet:          ops.NewGoalSetOperation(goalStore),
+			GoalSet:          ops.NewGoalSetOperation(goalStore, clock),
 			GoalClear:        ops.NewGoalClearOperation(goalStore),
-			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, func() string { return uuidTwo }, starter, resumer),
-			TopicSet:         ops.NewTopicSetOperation(topicStore),
+			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, clock, func() string { return uuidTwo }, starter, resumer),
+			TopicSet:         ops.NewTopicSetOperation(topicStore, clock),
 			TopicClear:       ops.NewTopicClearOperation(topicStore),
 			TopicShow:        ops.NewTopicShowOperation(topicStore),
-			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, func() string { return uuidTwo }, starter, resumer),
+			TopicWorkOn:      ops.NewTopicWorkOnOperation(topicStore, clock, func() string { return uuidTwo }, starter, resumer),
 		}
 	}
 }
@@ -1882,22 +1882,20 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(h.index.MarkFileDirtyCallCount()).To(Equal(0))
 	})
 
-	It("leaves a todo task's existing approval record to fail asynchronously", func() {
+	It("advances a todo task that already carries an approval record, keeping it", func() {
 		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice\napproved_by: someone")
 
-		// The request is accepted: an existing approval record is not worth a
-		// request-path read, so the refusal arrives as a write_failed frame.
+		// vault-cli advances an already-approved inbox row to planning and
+		// preserves the existing record rather than refusing it.
 		_, err := h.service.UpdateTaskPhase(
 			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		h.drain()
-		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
-		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
-		_, _, itemKind, itemID, reason := h.publisher.PublishWriteFailedArgsForCall(0)
-		Expect(itemKind).To(Equal("task"))
-		Expect(itemID).To(Equal("Inbox"))
-		Expect(reason).To(ContainSubstring("approved_by"))
+		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("approved_by: someone"))
 	})
 
 	It("takes the old path for a planning request on a task already past todo", func() {

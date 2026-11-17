@@ -14,6 +14,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
@@ -124,19 +125,30 @@ func benchItems() []ops.TaskListItem {
 	return items
 }
 
-// benchPages builds one page per fixture item, each carrying a small Open
-// Questions section, so openQuestionsByTask parses real markdown for every
-// item.
-func benchPages(items []ops.TaskListItem) []*domain.Page {
-	pages := make([]*domain.Page, 0, len(items))
-	for _, item := range items {
-		pages = append(pages, domain.NewPage(
-			map[string]any{"status": item.Status},
-			domain.FileMetadata{Name: item.Name},
-			domain.Content(benchPageContent),
-		))
+// benchEntries builds one index entry per fixture item, each carrying the Open
+// Questions the index parses off benchPageContent, so the board serves real
+// parsed questions for every item.
+func benchEntries(items []ops.TaskListItem) []*pageindex.Entry {
+	parsed, err := storage.ParseOpenQuestions(context.Background(), benchPageContent)
+	if err != nil {
+		panic(err)
 	}
-	return pages
+	entries := make([]*pageindex.Entry, 0, len(items))
+	for _, item := range items {
+		questions := make([]domain.OpenQuestion, 0, len(parsed))
+		for _, q := range parsed {
+			questions = append(questions, domain.OpenQuestion{Index: q.Index, Text: q.Question})
+		}
+		entries = append(entries, &pageindex.Entry{
+			Page: domain.NewPage(
+				map[string]any{"status": item.Status},
+				domain.FileMetadata{Name: item.Name},
+				"",
+			),
+			OpenQuestions: questions,
+		})
+	}
+	return entries
 }
 
 // benchVaults returns the single fixture vault.
@@ -248,7 +260,7 @@ func (benchIndex) ChangedPagesSince(pageindex.Key, uint64) ([]string, bool) {
 	return nil, false
 }
 
-func (benchIndex) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+func (benchIndex) ListEntries(context.Context, string, string) ([]*pageindex.Entry, error) {
 	return nil, nil
 }
 
@@ -264,7 +276,7 @@ func benchBoard(tb testing.TB) *board {
 	tb.Helper()
 	items := benchItems()
 	pageIndex := &pageindexmocks.PageIndex{}
-	pageIndex.ListPagesReturns(benchPages(items), nil)
+	pageIndex.ListEntriesReturns(benchEntries(items), nil)
 	return New(Deps{
 		Vaults: benchVaults{},
 		Ops:    benchOps{items: items},

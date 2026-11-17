@@ -16,7 +16,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/bborbe/vault-cli/pkg/storage"
 
@@ -65,16 +64,16 @@ func (c *countingSeams) ListFiles(
 	return c.DirectoryLister.ListFiles(ctx, vaultPath, pagesDir)
 }
 
-func (c *countingSeams) ReadPage(
+func (c *countingSeams) ReadEntry(
 	ctx context.Context,
 	vaultPath string,
 	pagesDir string,
 	filename string,
-) (*domain.Page, pageindex.FileFingerprint, error) {
+) (*pageindex.Entry, pageindex.FileFingerprint, error) {
 	c.mu.Lock()
 	c.reads = append(c.reads, filename)
 	c.mu.Unlock()
-	return c.PageReader.ReadPage(ctx, vaultPath, pagesDir, filename)
+	return c.PageReader.ReadEntry(ctx, vaultPath, pagesDir, filename)
 }
 
 // reset clears the recorded work, so a test counts only its own change.
