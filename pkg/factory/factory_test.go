@@ -192,7 +192,16 @@ var _ = Describe("CreateHTTPServer", func() {
 			Entry("metrics", "/metrics"),
 			Entry("setloglevel", "/setloglevel/info"),
 			Entry("gc", "/gc"),
+			Entry("pprof index", "/debug/pprof/"),
+			Entry("pprof cmdline", "/debug/pprof/cmdline"),
+			Entry("pprof heap", "/debug/pprof/heap"),
+			Entry("pprof goroutine", "/debug/pprof/goroutine"),
 		)
+
+		It("serves a one second CPU profile", func() {
+			Expect(statusCode(baseURL + "/debug/pprof/profile?seconds=1")).
+				To(Equal(http.StatusOK))
+		})
 	})
 
 	Context("readiness", func() {
