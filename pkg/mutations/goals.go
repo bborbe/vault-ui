@@ -37,7 +37,7 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, goalID, "goal")
 	if err := set.GoalSet.Execute(
-		ctx, resolved.Path, goalID, "claude_session_started", sessionStartedMarker(), "", "",
+		ctx, resolved.Path, goalID, "claude_session_started", sessionStartedMarker(), "", "", "",
 	); err != nil {
 		s.deps.Launch.Finish(vault, goalID)
 		return api.SessionResponse{}, newHTTPError(500, err.Error())
@@ -60,7 +60,7 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	}
 	s.deps.Launch.Finish(vault, goalID)
 	if setErr := set.GoalSet.Execute(
-		ctx, resolved.Path, goalID, "claude_session_id", result.SessionID, "", "",
+		ctx, resolved.Path, goalID, "claude_session_id", result.SessionID, "", "", "",
 	); setErr != nil {
 		return api.SessionResponse{}, newHTTPError(500, setErr.Error())
 	}
@@ -157,7 +157,7 @@ func (s *service) UpdateGoalStatus(
 	}
 	write := func(ctx context.Context) error {
 		if setErr := s.opsForVault(resolved).GoalSet.Execute(
-			ctx, resolved.Path, goalID, "status", req.Status, reason, gate,
+			ctx, resolved.Path, goalID, "status", req.Status, reason, gate, "",
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}
@@ -242,7 +242,7 @@ func (s *service) AssignGoalToMe(
 	assignee := cfg.CurrentUser
 	write := func(ctx context.Context) error {
 		if setErr := s.opsForVault(resolved).GoalSet.Execute(
-			ctx, resolved.Path, goalID, "assignee", assignee, "", "",
+			ctx, resolved.Path, goalID, "assignee", assignee, "", "", "",
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}

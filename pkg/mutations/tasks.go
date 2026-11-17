@@ -332,11 +332,11 @@ func (s *service) bindSessionID(
 			switch kind {
 			case kindGoal:
 				_ = set.GoalSet.Execute(
-					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "",
+					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "", "",
 				)
 			case kindTopic:
 				_ = set.TopicSet.Execute(
-					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "",
+					ctx, vaultCfg.Path, itemID, "claude_session_id", sessionID, "", "", "",
 				)
 			case kindTask:
 				_ = set.FrontmatterSet.Execute(

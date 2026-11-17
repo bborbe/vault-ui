@@ -4,7 +4,10 @@
 
 package pageindex
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/bborbe/vault-cli/pkg/index"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // filesReadTotal counts single-file page reads, so the cost of keeping the
 // index current is visible next to the folder-wide parse it replaced.
@@ -14,18 +17,6 @@ var filesReadTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name:      "files_read_total",
 	Help:      "Total single-file page reads, by reason.",
 }, []string{"reason"})
-
-// The reasons a single-file read happens.
-const (
-	reasonBuild  = "build"
-	reasonEvent  = "event"
-	reasonWrite  = "write"
-	reasonRescan = "rescan"
-	reasonReload = "reload"
-)
-
-// readReasons is every series the counter carries.
-var readReasons = []string{reasonBuild, reasonEvent, reasonWrite, reasonRescan, reasonReload}
 
 // changedPagesUnboundedTotal counts the times the page index refused to bound a
 // changed set, by the cause of the refusal. Its totals are counts of refusals
@@ -37,47 +28,31 @@ var changedPagesUnboundedTotal = prometheus.NewCounterVec(prometheus.CounterOpts
 	Help:      "Total changed-page sets the page index could not bound, by reason.",
 }, []string{"reason"})
 
-// The reasons a changed set cannot be bounded.
-const (
-	unboundedUnknownKey                   = "unknown_key"
-	unboundedRevisionAhead                = "revision_ahead"
-	unboundedWindowNotRetained            = "window_not_retained"
-	unboundedForcedReload                 = "forced_reload"
-	unboundedFirstPublication             = "first_publication"
-	unboundedFolderMarkExplicit           = "folder_mark_explicit"
-	unboundedFolderMarkWidenedName        = "folder_mark_widened_name_not_in_snapshot"
-	unboundedFolderMarkWidenedFile        = "folder_mark_widened_file_absent"
-	unboundedFolderMarkWidenedNameInvalid = "folder_mark_widened_invalid_name"
-	unboundedFolderMarkWidenedKey         = "folder_mark_widened_key_unpublished"
-)
-
-// unboundedReasons is every series the counter carries.
-var unboundedReasons = []string{
-	unboundedUnknownKey,
-	unboundedRevisionAhead,
-	unboundedWindowNotRetained,
-	unboundedForcedReload,
-	unboundedFirstPublication,
-	unboundedFolderMarkExplicit,
-	unboundedFolderMarkWidenedName,
-	unboundedFolderMarkWidenedFile,
-	unboundedFolderMarkWidenedNameInvalid,
-	unboundedFolderMarkWidenedKey,
-}
-
 func init() {
 	prometheus.MustRegister(filesReadTotal, changedPagesUnboundedTotal)
 	// Pre-initialize the series so alerting rules see them from boot.
-	for _, reason := range readReasons {
+	for _, reason := range index.ReadReasons {
 		filesReadTotal.WithLabelValues(reason).Add(0)
 	}
-	for _, reason := range unboundedReasons {
+	for _, reason := range index.UnboundedReasons {
 		changedPagesUnboundedTotal.WithLabelValues(reason).Add(0)
 	}
 }
 
-// recordRead counts one single-file page read.
-func recordRead(reason string) { filesReadTotal.WithLabelValues(reason).Inc() }
+// NewMetrics returns the index.Metrics adapter onto vault-ui's prometheus
+// counters, keeping the pre-migration metric names.
+func NewMetrics() index.Metrics {
+	return prometheusMetrics{}
+}
 
-// recordUnbounded counts one refused bound by its cause.
-func recordUnbounded(reason string) { changedPagesUnboundedTotal.WithLabelValues(reason).Inc() }
+type prometheusMetrics struct{}
+
+// FileRead counts one single-file page read.
+func (prometheusMetrics) FileRead(reason string) {
+	filesReadTotal.WithLabelValues(reason).Inc()
+}
+
+// ChangedPagesUnbounded counts one refused bound by its cause.
+func (prometheusMetrics) ChangedPagesUnbounded(reason string) {
+	changedPagesUnboundedTotal.WithLabelValues(reason).Inc()
+}

@@ -15,7 +15,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -103,7 +102,7 @@ type countingSeams struct {
 	listCalls [][2]string
 }
 
-// seamRead is one ReadPage call.
+// seamRead is one ReadEntry call.
 type seamRead struct {
 	key      [2]string
 	filename string
@@ -127,12 +126,12 @@ func (c *countingSeams) ListFiles(
 	return c.DirectoryLister.ListFiles(ctx, vaultPath, pagesDir)
 }
 
-func (c *countingSeams) ReadPage(
+func (c *countingSeams) ReadEntry(
 	ctx context.Context,
 	vaultPath string,
 	pagesDir string,
 	filename string,
-) (*domain.Page, pageindex.FileFingerprint, error) {
+) (*pageindex.Entry, pageindex.FileFingerprint, error) {
 	c.mu.Lock()
 	c.reads++
 	c.readCalls = append(c.readCalls, seamRead{
@@ -140,7 +139,7 @@ func (c *countingSeams) ReadPage(
 		filename: filename,
 	})
 	c.mu.Unlock()
-	return c.PageReader.ReadPage(ctx, vaultPath, pagesDir, filename)
+	return c.PageReader.ReadEntry(ctx, vaultPath, pagesDir, filename)
 }
 
 // reset clears the recorded reads and listings, so a fixture can count only

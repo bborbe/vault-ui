@@ -185,7 +185,7 @@ func (o *cleanupVaultOps) ClearTaskField(ctx context.Context, itemID, key string
 }
 
 func (o *cleanupVaultOps) SetGoalField(ctx context.Context, itemID, key, value string) error {
-	return o.set.GoalSet.Execute(ctx, o.vault.Path, itemID, key, value, "", "")
+	return o.set.GoalSet.Execute(ctx, o.vault.Path, itemID, key, value, "", "", "")
 }
 
 func (o *cleanupVaultOps) ClearGoalField(ctx context.Context, itemID, key string) error {
@@ -220,7 +220,7 @@ func (o *cleanupVaultOps) ShowTopic(ctx context.Context, itemID string) (cleanup
 }
 
 func (o *cleanupVaultOps) SetTopicField(ctx context.Context, itemID, key, value string) error {
-	return o.set.TopicSet.Execute(ctx, o.vault.Path, itemID, key, value, "", "")
+	return o.set.TopicSet.Execute(ctx, o.vault.Path, itemID, key, value, "", "", "")
 }
 
 func (o *cleanupVaultOps) ClearTopicField(ctx context.Context, itemID, key string) error {

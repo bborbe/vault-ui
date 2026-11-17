@@ -50,11 +50,8 @@ type flagTarget struct {
 // stays "operator" and force stays false, exactly as the task-only flag path
 // wrote them before the kinds were unified.
 //
-// This is the one deliberate behavioural difference between the kinds: the
-// entity family (EntitySetOperation) has no actor parameter, so a goal or topic
-// flag is written without flag_set_by/flag_set_at while a task flag records
-// "operator". Nothing in this repo reads those keys for goals or topics; they
-// exist so a task's flag can be told apart from an unattributed write.
+// The entity family (goals, topics) records the same "operator" actor through
+// entityFlagSet.
 type taskFlagSet struct {
 	op ops.FrontmatterSetOperation
 }
@@ -65,6 +62,19 @@ func (t taskFlagSet) Execute(
 	return t.op.Execute(
 		ctx, vaultPath, itemName, key, value, reason, gateSuccessor, "operator", false,
 	)
+}
+
+// entityFlagSet adapts the entity EntitySetOperation (goals and topics) to the
+// common flag-set shape. vault-cli refuses a goal flag write with a blank actor,
+// so the actor is "operator", the same value the task path records.
+type entityFlagSet struct {
+	op ops.EntitySetOperation
+}
+
+func (e entityFlagSet) Execute(
+	ctx context.Context, vaultPath, itemName, key, value, reason, gateSuccessor string,
+) error {
+	return e.op.Execute(ctx, vaultPath, itemName, key, value, reason, gateSuccessor, "operator")
 }
 
 // flagTarget resolves the frontmatter operations and post-write side-effect one
@@ -86,7 +96,7 @@ func (s *service) flagTarget(
 	case "goal":
 		return flagTarget{
 			ops: flagOps{
-				FrontmatterSet:   set.GoalSet,
+				FrontmatterSet:   entityFlagSet{op: set.GoalSet},
 				FrontmatterClear: set.GoalClear,
 			},
 			written: s.goalWritten(vault, itemID),
@@ -94,7 +104,7 @@ func (s *service) flagTarget(
 	case "topic":
 		return flagTarget{
 			ops: flagOps{
-				FrontmatterSet:   set.TopicSet,
+				FrontmatterSet:   entityFlagSet{op: set.TopicSet},
 				FrontmatterClear: set.TopicClear,
 			},
 			written: s.topicWritten(vault, itemID),

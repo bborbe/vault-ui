@@ -50,7 +50,7 @@ func (v refreshVault) key(dir string) pageindex.Key {
 	return pageindex.NewKey(v.path, dir)
 }
 
-// refreshRead records one ReadPage call.
+// refreshRead records one ReadEntry call.
 type refreshRead struct {
 	vaultPath string
 	pagesDir  string
@@ -154,12 +154,29 @@ type refreshReader struct {
 	gate  func(callIndex int) <-chan struct{}
 }
 
+// ReadPage serves the full page by bare name; the index calls it only for a
+// lazy body read, which these specs never make.
 func (r *refreshReader) ReadPage(
 	_ context.Context,
 	vaultPath string,
 	pagesDir string,
+	name string,
+) (*domain.Page, error) {
+	r.content.mu.Lock()
+	defer r.content.mu.Unlock()
+	file, known := r.content.files[[2]string{vaultPath, pagesDir}][name]
+	if !known {
+		return nil, stderrors.New("page not found: " + name)
+	}
+	return file.page, nil
+}
+
+func (r *refreshReader) ReadEntry(
+	_ context.Context,
+	vaultPath string,
+	pagesDir string,
 	filename string,
-) (*domain.Page, pageindex.FileFingerprint, error) {
+) (*pageindex.Entry, pageindex.FileFingerprint, error) {
 	key := [2]string{vaultPath, pagesDir}
 	name := strings.TrimSuffix(filename, ".md")
 
@@ -188,7 +205,13 @@ func (r *refreshReader) ReadPage(
 	if !known {
 		return nil, pageindex.FileFingerprint{}, stderrors.New("page not found: " + name)
 	}
-	return file.page, refreshFingerprint(file.version), nil
+	// The index holds metadata only, so the entry carries no body.
+	meta := &domain.Page{
+		FrontmatterMap: file.page.FrontmatterMap,
+		FileMetadata:   file.page.FileMetadata,
+	}
+	return &pageindex.Entry{Page: meta, OpenQuestions: []domain.OpenQuestion{}},
+		refreshFingerprint(file.version), nil
 }
 
 func (r *refreshReader) setGate(gate func(callIndex int) <-chan struct{}) {
@@ -286,12 +309,13 @@ type refreshFrame struct {
 	pages   []*domain.Page
 }
 
-// content returns the content the frame's snapshot held for the named page, or
-// "" when the page was absent.
+// content returns the file content the frame's snapshot held for the named
+// page, or "" when the page was absent. The index holds no body, so the fake
+// files mirror their content into the bodyKey frontmatter field.
 func (f refreshFrame) content(name string) string {
 	for _, page := range f.pages {
 		if page.FileMetadata.Name == name {
-			return string(page.Content)
+			return page.FrontmatterMap.GetString(bodyKey)
 		}
 	}
 	return ""
@@ -427,19 +451,19 @@ func (f *refreshFixture) warm() {
 	f.lister.reset()
 }
 
+// bodyKey is the frontmatter field the fake files mirror their content into,
+// so a spec can see which file version a body-free snapshot holds.
+const bodyKey = "fake_body"
+
 func testPage(name string) *domain.Page {
-	return domain.NewPage(
-		map[string]any{"status": "next"},
-		domain.FileMetadata{Name: name},
-		domain.Content("# "+name+"\n"),
-	)
+	return pageWithContent(name, "# "+name+"\n")
 }
 
 // pageWithContent builds a page of the given name holding the given content, so
 // a test can rewrite one file in place.
 func pageWithContent(name, content string) *domain.Page {
 	return domain.NewPage(
-		map[string]any{"status": "next"},
+		map[string]any{"status": "next", bodyKey: content},
 		domain.FileMetadata{Name: name},
 		domain.Content(content),
 	)
@@ -506,7 +530,7 @@ var _ = Describe("Watcher page-index refresh", func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pageNames(served)).To(HaveLen(1000))
-		Expect(string(findPage(served, "Page 0500").Content)).To(Equal("# Page 0500 changed\n"))
+		Expect(findPage(served, "Page 0500").FrontmatterMap.GetString(bodyKey)).To(Equal("# Page 0500 changed\n"))
 
 		// The frame is broadcast only after that snapshot is published, and the
 		// snapshot the recorder saw already held the new content.

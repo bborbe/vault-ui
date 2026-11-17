@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- perf: Serve the page index from vault-cli's `pkg/index` (vault-cli bumped to v0.197.0) so no page body is held in RAM or in the on-disk cache — listed pages carry empty `Content`, the board's `open_questions` come from the index's pre-parsed entries, `pkg/pageindex` becomes a thin adapter keeping the prometheus metric names and the store path, and a pre-upgrade cache file holding bodies is discarded on first start with a `store format mismatch` warning; the vault-cli bump also records `flag_set_by: operator` on goal flags (vault-cli now refuses an unattributed goal flag)
+
 ## v0.111.0
 
 - feat: Mount Go pprof on the admin listener — `/debug/pprof/` (index, cmdline, profile, symbol, trace) plus the heap, goroutine, allocs, block, mutex and threadcreate profiles are served on the admin port only, never on the public UI listener, so a heap profile can be taken from a running vault-ui to diagnose the large page-index heap; the admin server's write timeout is raised to two minutes so a default 30 second CPU profile or trace completes

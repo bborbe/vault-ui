@@ -947,9 +947,9 @@ func (bodyRowsRevisions) ChangedPagesSince(
 	return nil, false
 }
 
-func (bodyRowsRevisions) ListPages(
+func (bodyRowsRevisions) ListEntries(
 	_ context.Context, _, _ string,
-) ([]*domain.Page, error) {
+) ([]*pageindex.Entry, error) {
 	return nil, nil
 }
 

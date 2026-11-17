@@ -47,7 +47,7 @@ type taskSnapshotRow struct {
 // key's current pages. pageindex.PageIndex satisfies it.
 //
 // It is deliberately narrow. A rebuild reads Revision to detect that its page
-// input moved, ChangedPagesSince to bound which rows moved, and ListPages to
+// input moved, ChangedPagesSince to bound which rows moved, and ListEntries to
 // re-derive those rows from the pages the index already holds. It exposes no
 // write, no mark and no directory listing.
 type IndexRevisions interface {
@@ -56,10 +56,10 @@ type IndexRevisions interface {
 	// in the key's publications and marks after revision, each with its ".md"
 	// suffix, or ok == false when the key cannot bound the set.
 	ChangedPagesSince(key pageindex.Key, revision uint64) (names []string, ok bool)
-	// ListPages returns the key's current pages, resolving any pending write
-	// mark first, so a row patch reads the pages the index already holds rather
-	// than the vault.
-	ListPages(ctx context.Context, vaultPath string, pagesDir string) ([]*domain.Page, error)
+	// ListEntries returns the key's current pages with their pre-parsed Open
+	// Questions, resolving any pending write mark first, so a row patch reads
+	// what the index already holds rather than the vault.
+	ListEntries(ctx context.Context, vaultPath string, pagesDir string) ([]*pageindex.Entry, error)
 }
 
 // generationSource reports a value that advances when a new session snapshot is

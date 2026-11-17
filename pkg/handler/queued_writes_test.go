@@ -168,7 +168,7 @@ func newQueuedFixture() *queuedFixture {
 
 	goalSet := &vcmocks.EntitySetOperation{}
 	goalSet.ExecuteStub = func(
-		_ context.Context, vaultPath, item, key, value, _, _ string,
+		_ context.Context, vaultPath, item, key, value, _, _, _ string,
 	) error {
 		f.mu.Lock()
 		failKey, failErr := f.goalFailKey, f.goalFailErr

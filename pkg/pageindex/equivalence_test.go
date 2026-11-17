@@ -85,6 +85,22 @@ func newEquivalenceIndex() pageindex.PageIndex {
 	)
 }
 
+// withoutContent returns copies of the reference pages with Content zeroed: the
+// index never holds a body, so Content is the one field excluded from
+// equivalence.
+func withoutContent(pages []*domain.Page) []*domain.Page {
+	if pages == nil {
+		return nil
+	}
+	result := make([]*domain.Page, 0, len(pages))
+	for _, page := range pages {
+		clone := *page
+		clone.Content = ""
+		result = append(result, &clone)
+	}
+	return result
+}
+
 var _ = Describe("Snapshot equivalence", func() {
 	It("matches vault-cli's own folder listing over awkward files", func() {
 		ctx := context.Background()
@@ -99,7 +115,7 @@ var _ = Describe("Snapshot equivalence", func() {
 		got, err := newEquivalenceIndex().ListPages(ctx, vaultDir, equivalenceFolder)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(reflect.DeepEqual(got, want)).To(BeTrue())
+		Expect(reflect.DeepEqual(got, withoutContent(want))).To(BeTrue())
 	})
 
 	It("matches vault-cli on an existing folder with no page files", func() {
@@ -117,7 +133,7 @@ var _ = Describe("Snapshot equivalence", func() {
 		got, err := newEquivalenceIndex().ListPages(ctx, vaultDir, equivalenceFolder)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(reflect.DeepEqual(got, want)).To(BeTrue())
+		Expect(reflect.DeepEqual(got, withoutContent(want))).To(BeTrue())
 	})
 
 	It("AC3 stays equal to vault-cli through create, modify, delete and rename", func() {
@@ -132,7 +148,7 @@ var _ = Describe("Snapshot equivalence", func() {
 			Expect(err).NotTo(HaveOccurred())
 			got, err := index.ListPages(ctx, vaultDir, equivalenceFolder)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(reflect.DeepEqual(got, want)).To(
+			Expect(reflect.DeepEqual(got, withoutContent(want))).To(
 				BeTrue(),
 				"index %v != vault-cli %v",
 				indexedNames(got),
@@ -193,6 +209,6 @@ var _ = Describe("Snapshot equivalence", func() {
 		got, err := newEquivalenceIndex().ListPages(ctx, vaultDir, equivalenceFolder)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(reflect.DeepEqual(got, want)).To(BeTrue())
+		Expect(reflect.DeepEqual(got, withoutContent(want))).To(BeTrue())
 	})
 })
