@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.111.0
 
 - feat: Mount Go pprof on the admin listener — `/debug/pprof/` (index, cmdline, profile, symbol, trace) plus the heap, goroutine, allocs, block, mutex and threadcreate profiles are served on the admin port only, never on the public UI listener, so a heap profile can be taken from a running vault-ui to diagnose the large page-index heap; the admin server's write timeout is raised to two minutes so a default 30 second CPU profile or trace completes
 
