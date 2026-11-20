@@ -529,6 +529,9 @@ func BenchmarkTaskSnapshotRowsWarm(b *testing.B) {
 // so the per-comparison cost is what is measured. It must report 0 allocs/op:
 // the lowercase form is precomputed and the comparator allocates nothing, so the
 // sort allocates per comparison only if that precompute moved back inside it.
+//
+// The slice is sorted in place, so after the first iteration it is already
+// sorted and the timing is the best case; only the allocation count is asserted.
 func BenchmarkAssigneeSort(b *testing.B) {
 	keys := make([]assigneeSortKey, 0, 64)
 	for i := 0; i < 64; i++ {

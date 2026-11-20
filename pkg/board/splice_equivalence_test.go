@@ -6,9 +6,9 @@ package board_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
+	"github.com/bborbe/errors"
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
@@ -44,7 +44,7 @@ func (m *mutablePages) ListPages(
 }
 
 func (m *mutablePages) ReadPage(
-	_ context.Context, _, _, name string,
+	ctx context.Context, _, _, name string,
 ) (*domain.Page, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -53,7 +53,7 @@ func (m *mutablePages) ReadPage(
 			return page, nil
 		}
 	}
-	return nil, fmt.Errorf("page %q is not in the fixture", name)
+	return nil, errors.Errorf(ctx, "page %q is not in the fixture", name)
 }
 
 // pageOps is an OpsProvider whose list operation runs vault-cli's real list
@@ -86,6 +86,12 @@ func newSpliceHarness(pages ...*domain.Page) *spliceHarness {
 	index := &fakeIndex{}
 	index.setPages(pages...)
 	probe := &fakeProbe{}
+	// Production wires one page index to both the Ops provider and the board's
+	// page-fields seam; backing the mock with the same pages keeps the two sides
+	// deriving jira/mode/Open Questions from one source, so a divergence is
+	// caught rather than masked by an empty listing.
+	pageIndex := &pageindexmocks.PageIndex{}
+	pageIndex.ListEntriesReturns(asEntries(pages), nil)
 	h := &spliceHarness{storage: storage, index: index, probe: probe}
 	h.board = board.New(board.Deps{
 		Vaults: fakeVaults{vaults: []board.Vault{vault}},
@@ -98,7 +104,7 @@ func newSpliceHarness(pages ...*domain.Page) *spliceHarness {
 		Signals:   fakeSignals{},
 		Sessions:  probe,
 		Index:     index,
-		PageIndex: &pageindexmocks.PageIndex{},
+		PageIndex: pageIndex,
 	})
 	return h
 }
@@ -121,16 +127,19 @@ var _ = Describe("bounded rebuild equivalence", func() {
 	})
 
 	It("splices a new page's row so the result equals a full rebuild", func() {
-		// The patch path: build from a one-page vault, then add a second page and
-		// mark it as a new page the snapshot does not hold yet.
+		// The patch path: build from a one-page vault, then add a second page —
+		// carrying jira, mode and Open Questions, so the page-derived fields the
+		// splice must reproduce are actually exercised — and mark it as new.
 		patched := newSpliceHarness(pageStatus("Alpha", "todo"))
 		_, err := patched.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 
-		pagesAfterWrite := []*domain.Page{
-			pageStatus("Alpha", "todo"),
-			pageStatus("New", "in_progress"),
-		}
+		newPage := pageWithFrontmatter(
+			"New",
+			map[string]any{"status": "in_progress", "jira": "BRO-1", "mode": "headless"},
+			"## Open Questions\n\n- Which vault?\n",
+		)
+		pagesAfterWrite := []*domain.Page{pageStatus("Alpha", "todo"), newPage}
 		patched.storage.set(pagesAfterWrite)
 		patched.index.setPages(pagesAfterWrite...)
 		patched.index.markPages("New.md")
@@ -138,6 +147,8 @@ var _ = Describe("bounded rebuild equivalence", func() {
 		patchedRows, err := patched.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(patchedRows).To(HaveLen(2))
+		Expect(taskByID(patchedRows, "New").Jira).NotTo(BeNil())
+		Expect(*taskByID(patchedRows, "New").Jira).To(Equal("BRO-1"))
 
 		// The full-build path: a cold board over the same two pages.
 		full := newSpliceHarness(pagesAfterWrite...)

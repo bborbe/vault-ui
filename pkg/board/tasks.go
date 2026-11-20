@@ -484,6 +484,11 @@ func (b *board) refreshTaskRows(
 // each is copied before a field is written, and a row that is replaced is
 // replaced whole rather than mutated.
 //
+// Row order is not part of the equivalence with a full rebuild: a spliced new
+// row is appended rather than inserted at its status-priority position, and the
+// frontend re-sorts every render, so the served card order is unchanged. The
+// snapshot's row set and every row's fields are what the equivalence asserts.
+//
 // Anything this path cannot derive without data it does not already hold falls
 // back to the full build for the whole key rather than fetching it. A page with
 // no held row is not such a case: its item is derived from the page the index
@@ -601,6 +606,7 @@ func (b *board) patchTaskRows(
 		// A page with no held row is derived whole, exactly as the full build
 		// derives it, and appended. The session precompute is read once here.
 		sig := b.taskRowSignals(ctx, vault)
+		firstSpliced := len(patched)
 		for _, page := range newPages {
 			name := page.FileMetadata.Name
 			item, ok := itemByName[name]
@@ -625,8 +631,10 @@ func (b *board) patchTaskRows(
 			))
 		}
 		// A newly spliced live row needs its pane resolved, exactly as the full
-		// build resolves it. The held rows keep the pane they already carry.
-		b.attachJumpPanes(ctx, patched)
+		// build resolves it. Only the spliced rows are resolved: the held rows
+		// keep the pane they already carry, so the patch pays no pane resolution
+		// (and no process spawn) for them.
+		b.attachJumpPanes(ctx, patched[firstSpliced:])
 	}
 	if len(dropped) > 0 {
 		patched = withoutRows(patched, dropped)

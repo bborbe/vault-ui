@@ -736,6 +736,47 @@ var _ = Describe("taskSnapshotStore row patch", func() {
 		Expect(patches).To(Equal(1))
 	})
 
+	It("rebuilds in full when both move but the changed set is unbounded", func() {
+		h := newSnapshotHarnessWithHooks(
+			rowsBuilder("Alpha"),
+			snapshotHooks{
+				patch:   statusPatch("Alpha", "patched"),
+				refresh: allStatusRefresh("refreshed"),
+			},
+			0,
+		)
+		_, err := h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+
+		// A folder-level mark and a session move in the same window: the page
+		// revision moved but cannot be bounded, so no patch can run.
+		h.revisions.markFolder()
+		h.generations.bump()
+		rows, err := h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+		Expect(rows[0].item.Status).To(Equal(""))
+		Expect(h.Builds()).To(Equal(2))
+		Expect(h.Refreshes()).To(Equal(0))
+		patches, _ := h.Patches()
+		Expect(patches).To(Equal(0))
+	})
+
+	It("rebuilds in full when both move and a seam is unwired", func() {
+		h := newSnapshotHarness(rowsBuilder("Alpha"), 0)
+		_, err := h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+
+		h.revisions.markPages("Alpha.md")
+		h.generations.bump()
+		rows, err := h.store.List(ctx, snapshotVaultA)
+		Expect(err).To(BeNil())
+		Expect(rows[0].item.Status).To(Equal(""))
+		Expect(h.Builds()).To(Equal(2))
+		Expect(h.Refreshes()).To(Equal(0))
+		patches, _ := h.Patches()
+		Expect(patches).To(Equal(0))
+	})
+
 	It("keeps the previous rows when a patch fails and retries the next read", func() {
 		h := newSnapshotHarnessWithHooks(
 			rowsBuilder("Alpha"),

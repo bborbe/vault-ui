@@ -349,9 +349,10 @@ func (s *taskSnapshotStore) runBuild(
 		if buildErr == nil && b.refreshAfterPatch {
 			// The session generation moved with the page revision: the patch
 			// re-derived the page-derived fields, and this re-derives the
-			// session-dependent ones against the patched rows. It is a refresh on
-			// the same clock the refresh-only path counts.
-			recordRebuild(rebuildKindRefresh)
+			// session-dependent ones against the patched rows. The rebuild is
+			// counted once — as the patch that drove it — so
+			// sum(rebuilds_total) stays the rebuild count; the refresh work
+			// inside it is not a separate rebuild.
 			rows, buildErr = s.refresh(buildCtx, vault, rows)
 		}
 	case b.refreshOnly:

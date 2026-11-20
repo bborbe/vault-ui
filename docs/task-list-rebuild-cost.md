@@ -346,3 +346,25 @@ This is the branch Open Question 3 pre-registered: *"If the reading shows the bo
 - It does **not** say the per-request cost is small. It says the cost is not a rebuild. What a *served* request does with rows it already holds is untouched by this document.
 - The allocation half of this reading is **confounded and is not reported as a measurement.** Over 100-request bursts the `/api/vaults` control read 8,427 KB/request — 25× the 329 KB in § *The measurement before any instrumentation* — so the delta absorbs concurrent background allocation (file watchers, the 60 s session refresh, websockets) across the burst's wall time. Bare `/api/tasks` read 52,305 KB/request and the 5-vault filter 46,390 KB/request. Treat all three as **upper bounds**, not per-request costs.
 - The benchmark's attribution does **not** transfer to a served request. `BenchmarkBuildTaskRows` puts 64% of `buildTaskRows`' allocation on the Open Questions section, but `openQuestionsByTask` is called only from `buildTaskRows`, which runs only on a rebuild — and on a warm board there is no rebuild. That figure describes a path that is not on the request's critical path.
+
+## Follow-up — 2026-11-20, the P3/P4 branches are now satisfied by construction
+
+On v0.112.0 the live counters had changed since this reading: `both_moved`
+(3,114) and `new_page_no_held_row` (1,315) accounted for essentially every full
+rebuild over three days, while `folder_mark_*` stayed near 1 — so the prior this
+document was weighted by no longer held, and the two causes it pre-registered as
+*unlikely* were the dominant ones.
+
+The follow-up change implements the remedy each of those two branches named, and
+this record is updated so a future reader does not read a zero as "the cause
+never happens":
+
+- **P3 (`both_moved`)** — the page-derived rows are patched and the session
+  fields refreshed in the same rebuild, instead of rebuilding in full.
+- **P4 (`new_page_no_held_row`)** — the missing row is derived from the page the
+  index already holds and spliced in.
+
+Consequently `vault_ui_board_task_snapshot_full_rebuilds_total{reason="new_page_no_held_row"}`
+is retired and will stay at zero; `reason="both_moved"` now fires only when a
+seam is unwired (a test-only configuration) or the changed set is unbounded.
+Both labels are kept so existing dashboards keep their series.
