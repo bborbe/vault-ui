@@ -123,21 +123,23 @@ var _ = Describe("row patch", func() {
 		Expect(h.counter.get()).To(Equal(builds))
 	})
 
-	It("falls back to the full build for a changed page with no held row", func() {
+	It("splices a new page's row without a full build", func() {
 		h := newHarness(item("Alpha"))
 
 		_, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		builds := h.counter.get()
 
-		h.index.setPages(pageStatus("Alpha", "todo"), pageStatus("New", "todo"))
-		h.list.items["24 Tasks"] = []ops.TaskListItem{item("Alpha"), item("New")}
+		h.index.setPages(pageStatus("Alpha", "todo"), pageStatus("New", "in_progress"))
 		h.index.markPages("New.md")
 
 		patched, err := h.board.ListTasks(ctx, board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(patched).To(HaveLen(2))
-		Expect(h.counter.get()).To(Equal(builds + 1))
+		// The new row is derived from the page the index holds and spliced in;
+		// it does not re-list the vault, so the full-build counter does not move.
+		Expect(taskByID(patched, "New").Status).To(Equal("in_progress"))
+		Expect(h.counter.get()).To(Equal(builds))
 	})
 
 	It("rebuilds in full for a folder-level mark", func() {

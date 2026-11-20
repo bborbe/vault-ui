@@ -40,8 +40,16 @@ const (
 	fullReasonBothMoved           = "both_moved"
 	fullReasonPatchNotWired       = "patch_not_wired"
 	fullReasonChangedSetUnbounded = "changed_set_unbounded"
-	fullReasonNewPageNoHeldRow    = "new_page_no_held_row"
-	fullReasonPatchPageNotListed  = "patch_page_not_listed"
+	// fullReasonNewPageNoHeldRow is retired as of the snapshot-churn fix: a page
+	// with no held row is now derived from the index page and spliced in, so this
+	// cause no longer forces a full rebuild. The label is kept so a zero is not
+	// read as "the cause never happens" and so existing dashboards keep their
+	// series; it will stay at zero.
+	fullReasonNewPageNoHeldRow = "new_page_no_held_row"
+	// fullReasonPatchPageNotListed fires only when the list operation drops a
+	// page the snapshot or the index holds — a programming error, not a
+	// steady-state cause.
+	fullReasonPatchPageNotListed = "patch_page_not_listed"
 )
 
 // fullRebuildReasons is every series the full-rebuild-cause counter carries.

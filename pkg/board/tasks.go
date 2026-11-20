@@ -192,9 +192,15 @@ func (b *board) taskSnapshotSignals(selected []Vault) []VaultSignal {
 }
 
 // taskSnapshotRows returns the snapshot's rows for the query's selected vaults,
-// concatenated, before the status filter and visibleRow drop any. The body
-// cache reads it to derive its clock boundary, so a row the visibility filter
-// drops still contributes its entry instant.
+// one slice per selected vault in selection order, before the status filter and
+// visibleRow drop any. The body cache reads it to derive its clock boundary, so
+// a row the visibility filter drops still contributes its entry instant.
+//
+// It returns the per-vault published slices rather than one concatenated slice:
+// the store shares each slice with every reader, so returning them as they are
+// copies nothing. Concatenating them allocated and copied every row of every
+// selected vault on every body-cache miss — the single largest allocation on the
+// board's request path — only for the caller to walk them once and discard them.
 //
 // It makes the same vault selection ListTasks makes and reads the same
 // snapshot, so it adds no vault I/O: the snapshot List is served from the
@@ -202,22 +208,22 @@ func (b *board) taskSnapshotSignals(selected []Vault) []VaultSignal {
 func (b *board) taskSnapshotRows(
 	ctx context.Context,
 	query TaskQuery,
-) ([]taskSnapshotRow, error) {
+) ([][]taskSnapshotRow, error) {
 	all, err := b.vaults.Vaults(ctx)
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "list vaults")
 	}
 	selected := b.selectVaults(all, query.Vaults)
 
-	rows := make([]taskSnapshotRow, 0, len(selected))
+	perVault := make([][]taskSnapshotRow, 0, len(selected))
 	for _, vault := range selected {
 		vaultRows, snapshotErr := b.snapshot.List(ctx, vault)
 		if snapshotErr != nil {
 			return nil, snapshotErr
 		}
-		rows = append(rows, vaultRows...)
+		perVault = append(perVault, vaultRows)
 	}
-	return rows, nil
+	return perVault, nil
 }
 
 // buildTaskRows lists the vault's tasks and precomputes every field that needs
@@ -232,13 +238,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 		return nil, errors.Wrapf(ctx, err, "list tasks for vault %s", vault.Name)
 	}
 
-	projectDir := cleanup.DeriveClaudeProjectDir(b.homeDir, vault.Path, vault.SessionProjectDir)
-	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
-
-	registryIDs := b.signals.RegistrySessionIDs(ctx)
-	seenIDs := b.signals.SeenSessionIDs(ctx)
-	liveIDsUnknown := !b.signals.LiveIDsKnown()
-	resumeIDs := b.signals.ResumeSessionIDs(ctx)
+	sig := b.taskRowSignals(ctx, vault)
 
 	// One ListPages for the whole vault, attached to the rows so the request
 	// path never reads a page — the same precompute the other fields get.
@@ -246,45 +246,87 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 
 	rows := make([]taskSnapshotRow, 0, len(items))
 	for _, item := range items {
-		blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
-		state := session.ClassifySessionState(ctx, session.ClassifyParams{
-			SessionID:          item.ClaudeSessionID,
-			ProjectDir:         projectDir,
-			ProjectsRoot:       projectsRoot,
-			Now:                b.clock.Now().UTC(),
-			LiveWindow:         session.DefaultLiveWindow,
-			ResumeSessionIDs:   resumeIDs,
-			RegistrySessionIDs: registryIDs,
-			SeenSessionIDs:     seenIDs,
-			LiveIDsUnknown:     liveIDsUnknown,
-			TranscriptMtime:    b.transcriptProbe(),
-		})
-		fields := taskPageFieldsFor(pageFields, item.Name)
-		rows = append(rows, taskSnapshotRow{
-			item:         item,
-			vault:        vault,
-			blockers:     blockers,
-			blocked:      len(blockers) > 0,
-			started:      b.sessionStarted(vault.Name, item.Name),
-			sessionState: sessionStatePtr(state),
-			location: liveLocationPtr(
-				state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
-			),
-			activityDate: activity.ComputeActivityDateWith(
-				ctx,
-				b.transcriptProbe(),
-				parseDateTime(item.ModifiedDate),
-				item.ClaudeSessionID,
-				projectDir,
-				projectsRoot,
-			),
-			jira:          fields.jira,
-			mode:          fields.mode,
-			openQuestions: fields.openQuestions,
-		})
+		rows = append(
+			rows,
+			b.deriveTaskRow(ctx, vault, item, taskPageFieldsFor(pageFields, item.Name), sig),
+		)
 	}
 	b.attachJumpPanes(ctx, rows)
 	return rows, nil
+}
+
+// taskRowSignals is the per-vault session precompute the per-row derivation
+// classifies against. It is read once per build (or per patch), never per row:
+// the session id sets and the transcript probe are the same for every row of a
+// vault, so reading them inside the loop would repeat the work for no reason.
+type taskRowSignals struct {
+	projectDir   string
+	projectsRoot string
+	registryIDs  []string
+	seenIDs      []string
+	resumeIDs    []string
+	liveUnknown  bool
+}
+
+// taskRowSignals reads the vault's session precompute.
+func (b *board) taskRowSignals(ctx context.Context, vault Vault) taskRowSignals {
+	return taskRowSignals{
+		projectDir:   cleanup.DeriveClaudeProjectDir(b.homeDir, vault.Path, vault.SessionProjectDir),
+		projectsRoot: filepath.Join(b.homeDir, ".claude", "projects"),
+		registryIDs:  b.signals.RegistrySessionIDs(ctx),
+		seenIDs:      b.signals.SeenSessionIDs(ctx),
+		resumeIDs:    b.signals.ResumeSessionIDs(ctx),
+		liveUnknown:  !b.signals.LiveIDsKnown(),
+	}
+}
+
+// deriveTaskRow builds one snapshot row from a list item and the page-derived
+// fields, classifying the session-dependent fields against sig. It is the single
+// per-row derivation both the full build and the patch path's new-page splice
+// use, so a spliced row carries exactly the fields a full rebuild would produce
+// for the same item and page.
+func (b *board) deriveTaskRow(
+	ctx context.Context,
+	vault Vault,
+	item ops.TaskListItem,
+	fields taskPageFields,
+	sig taskRowSignals,
+) taskSnapshotRow {
+	blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+	state := session.ClassifySessionState(ctx, session.ClassifyParams{
+		SessionID:          item.ClaudeSessionID,
+		ProjectDir:         sig.projectDir,
+		ProjectsRoot:       sig.projectsRoot,
+		Now:                b.clock.Now().UTC(),
+		LiveWindow:         session.DefaultLiveWindow,
+		ResumeSessionIDs:   sig.resumeIDs,
+		RegistrySessionIDs: sig.registryIDs,
+		SeenSessionIDs:     sig.seenIDs,
+		LiveIDsUnknown:     sig.liveUnknown,
+		TranscriptMtime:    b.transcriptProbe(),
+	})
+	return taskSnapshotRow{
+		item:         item,
+		vault:        vault,
+		blockers:     blockers,
+		blocked:      len(blockers) > 0,
+		started:      b.sessionStarted(vault.Name, item.Name),
+		sessionState: sessionStatePtr(state),
+		location: liveLocationPtr(
+			state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID),
+		),
+		activityDate: activity.ComputeActivityDateWith(
+			ctx,
+			b.transcriptProbe(),
+			parseDateTime(item.ModifiedDate),
+			item.ClaudeSessionID,
+			sig.projectDir,
+			sig.projectsRoot,
+		),
+		jira:          fields.jira,
+		mode:          fields.mode,
+		openQuestions: fields.openQuestions,
+	}
 }
 
 // attachJumpPanes resolves the panes of the live rows in one batch and stores
@@ -442,10 +484,18 @@ func (b *board) refreshTaskRows(
 // each is copied before a field is written, and a row that is replaced is
 // replaced whole rather than mutated.
 //
-// Anything this path cannot derive without data it does not already hold — a
-// page with no held row, whose session-derived fields would need a process spawn
-// and a transcript probe to recompute — falls back to the full build for the
-// whole key rather than fetching it.
+// Row order is not part of the equivalence with a full rebuild: a spliced new
+// row is appended rather than inserted at its status-priority position, and the
+// frontend re-sorts every render, so the served card order is unchanged. The
+// snapshot's row set and every row's fields are what the equivalence asserts.
+//
+// Anything this path cannot derive without data it does not already hold falls
+// back to the full build for the whole key rather than fetching it. A page with
+// no held row is not such a case: its item is derived from the page the index
+// already parsed and its session fields are classified against the vault's
+// in-memory precompute, so the row is spliced in rather than rebuilt. Only a
+// page the list operation drops (patch_page_not_listed) still forces the full
+// build.
 func (b *board) patchTaskRows(
 	ctx context.Context,
 	vault Vault,
@@ -481,6 +531,7 @@ func (b *board) patchTaskRows(
 	}
 
 	changed := make([]*domain.Page, 0, len(names))
+	newPages := make([]*domain.Page, 0, len(names))
 	var dropped []int
 	for _, name := range names {
 		page, present := byName[name]
@@ -489,16 +540,21 @@ func (b *board) patchTaskRows(
 		case present && wasHeld:
 			changed = append(changed, page)
 		case present:
-			// A page with no held row carries no session data to reuse.
-			kind = rebuildKindFull
-			fullReason = fullReasonNewPageNoHeldRow
-			return b.buildTaskRows(ctx, vault)
+			// A page the snapshot does not hold yet. Its session fields cannot be
+			// carried over from a held row, so the row is derived whole — but from
+			// the page the index already parsed and only this page's item, never a
+			// vault-wide re-list. It is spliced in below rather than rebuilt.
+			newPages = append(newPages, page)
 		case wasHeld:
 			dropped = append(dropped, at)
 		}
 	}
 
-	items, err := ops.NewListOperation(&changedPages{pages: changed}).Execute(
+	derive := make([]*domain.Page, 0, len(changed)+len(newPages))
+	derive = append(derive, changed...)
+	derive = append(derive, newPages...)
+
+	items, err := ops.NewListOperation(&changedPages{pages: derive}).Execute(
 		ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
 	)
 	if err != nil {
@@ -545,6 +601,40 @@ func (b *board) patchTaskRows(
 			mode:          pageMode(page),
 			openQuestions: questions,
 		}
+	}
+	if len(newPages) > 0 {
+		// A page with no held row is derived whole, exactly as the full build
+		// derives it, and appended. The session precompute is read once here.
+		sig := b.taskRowSignals(ctx, vault)
+		firstSpliced := len(patched)
+		for _, page := range newPages {
+			name := page.FileMetadata.Name
+			item, ok := itemByName[name]
+			if !ok {
+				// The list operation dropped a page the index lists.
+				kind = rebuildKindFull
+				fullReason = fullReasonPatchPageNotListed
+				return b.buildTaskRows(ctx, vault)
+			}
+			questions := questionsByName[name]
+			if questions == nil {
+				questions = []domain.OpenQuestion{}
+			}
+			patched = append(patched, b.deriveTaskRow(
+				ctx, vault, item,
+				taskPageFields{
+					openQuestions: questions,
+					jira:          pageJira(page),
+					mode:          pageMode(page),
+				},
+				sig,
+			))
+		}
+		// A newly spliced live row needs its pane resolved, exactly as the full
+		// build resolves it. Only the spliced rows are resolved: the held rows
+		// keep the pane they already carry, so the patch pays no pane resolution
+		// (and no process spawn) for them.
+		b.attachJumpPanes(ctx, patched[firstSpliced:])
 	}
 	if len(dropped) > 0 {
 		patched = withoutRows(patched, dropped)

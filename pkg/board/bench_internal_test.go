@@ -6,8 +6,11 @@ package board
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,16 +77,18 @@ var (
 // cannot elide the work being measured. Writing a field of it allocates
 // nothing.
 var benchSink struct {
-	items     []ops.TaskListItem
-	rows      []taskSnapshotRow
-	names     []string
-	questions []domain.OpenQuestion
-	started   *string
-	state     *string
-	location  string
-	date      *libtime.DateTime
-	n         int
-	body      TaskListBody
+	items        []ops.TaskListItem
+	rows         []taskSnapshotRow
+	rowsPerVault [][]taskSnapshotRow
+	assigneeKeys []assigneeSortKey
+	names        []string
+	questions    []domain.OpenQuestion
+	started      *string
+	state        *string
+	location     string
+	date         *libtime.DateTime
+	n            int
+	body         TaskListBody
 }
 
 // benchItemName is the fixture's naming scheme: a distinct, stable name per
@@ -516,6 +521,28 @@ func BenchmarkTaskSnapshotRowsWarm(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		benchSink.rows = rows
+		benchSink.rowsPerVault = rows
 	}
+}
+
+// BenchmarkAssigneeSort measures the assignee sort over a precomputed key set,
+// so the per-comparison cost is what is measured. It must report 0 allocs/op:
+// the lowercase form is precomputed and the comparator allocates nothing, so the
+// sort allocates per comparison only if that precompute moved back inside it.
+//
+// The slice is sorted in place, so after the first iteration it is already
+// sorted and the timing is the best case; only the allocation count is asserted.
+func BenchmarkAssigneeSort(b *testing.B) {
+	keys := make([]assigneeSortKey, 0, 64)
+	for i := 0; i < 64; i++ {
+		name := fmt.Sprintf("Assignee-%02d", i)
+		keys = append(keys, assigneeSortKey{name: name, lower: strings.ToLower(name)})
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		slices.SortFunc(keys, compareAssigneeKeys)
+	}
+	benchSink.assigneeKeys = keys
 }
