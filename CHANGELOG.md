@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.112.1
 
 - perf: Cut the board snapshot rebuild and copy churn that drove GC CPU — `taskSnapshotRows` now returns the store's published per-vault row slices instead of concatenating every row of every selected vault on every body-cache miss (the board's largest per-request allocation), a page with no held row is derived from the page the index already holds and spliced in instead of re-listing the whole vault, a key whose page revision and session generation move together takes the bounded row patch and then the session refresh instead of a full rebuild, and the assignee sort precomputes its lowercase keys so the comparator allocates nothing; unit tests assert both the spliced and the patched-and-refreshed snapshots equal a full rebuild, and the assignee sort benchmark reports 0 allocs/op
 
