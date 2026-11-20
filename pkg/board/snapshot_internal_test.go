@@ -710,7 +710,7 @@ var _ = Describe("taskSnapshotStore row patch", func() {
 		Expect(patches).To(Equal(0))
 	})
 
-	It("rebuilds in full when the page revision and the generation both move", func() {
+	It("patches then refreshes when the page revision and the generation both move", func() {
 		h := newSnapshotHarnessWithHooks(
 			rowsBuilder("Alpha"),
 			snapshotHooks{
@@ -726,13 +726,14 @@ var _ = Describe("taskSnapshotStore row patch", func() {
 		h.generations.bump()
 		rows, err := h.store.List(ctx, snapshotVaultA)
 		Expect(err).To(BeNil())
-		// A patch here would have published stale session fields, and a refresh
-		// would have dropped the page move: neither is correct.
-		Expect(rows[0].item.Status).To(Equal(""))
-		Expect(h.Builds()).To(Equal(2))
-		Expect(h.Refreshes()).To(Equal(0))
+		// The patch re-derives the page-derived fields and the refresh re-derives
+		// the session fields, so a both-moved key needs no full rebuild: the
+		// refresh runs after the patch, so its status is the one published.
+		Expect(rows[0].item.Status).To(Equal("refreshed"))
+		Expect(h.Builds()).To(Equal(1))
+		Expect(h.Refreshes()).To(Equal(1))
 		patches, _ := h.Patches()
-		Expect(patches).To(Equal(0))
+		Expect(patches).To(Equal(1))
 	})
 
 	It("keeps the previous rows when a patch fails and retries the next read", func() {

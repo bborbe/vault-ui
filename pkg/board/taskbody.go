@@ -53,9 +53,10 @@ type taskBodyParams struct {
 	// Production: the board's clock.
 	Clock libtime.CurrentDateTimeGetter
 	// Rows reads the snapshot's pre-filter rows for the query — the rows the
-	// visibility filter has not yet dropped. Production: the board reads
-	// b.snapshot.List per selected vault and concatenates them.
-	Rows func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error)
+	// visibility filter has not yet dropped — one slice per selected vault, in
+	// selection order. Production: the board's taskSnapshotRows, which returns
+	// the store's published slices without copying them.
+	Rows func(ctx context.Context, query TaskQuery) ([][]taskSnapshotRow, error)
 }
 
 // taskBodyEntry is one held body. It is replaced wholesale on invalidation
@@ -95,7 +96,7 @@ type taskBodyCache struct {
 	// signals is the seam Get reads the selected vaults' signals from.
 	signals func(selected []Vault) []VaultSignal
 	clock   libtime.CurrentDateTimeGetter
-	rows    func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error)
+	rows    func(ctx context.Context, query TaskQuery) ([][]taskSnapshotRow, error)
 	// lastUsedSeq is the cache's monotonic access ordinal. It is advanced under
 	// the mutex on every touch and every store.
 	lastUsedSeq uint64
@@ -219,9 +220,17 @@ func (c *taskBodyCache) storeLocked(key string, e *taskBodyEntry) {
 // is dropped by visibleRow and is precisely the row whose entry instant matters.
 // Each row's dates and status are read from its item.
 //
+// The rows arrive one slice per selected vault, exactly as the store publishes
+// them, so the boundary walk allocates nothing: it iterates the shared slices
+// instead of a concatenated copy.
+//
 // It is derived from those rows and the request's windows — never from a fixed
 // timer — so it moves with the data and with the request's upcoming_hours.
-func taskBodyBoundary(rows []taskSnapshotRow, now time.Time, upcomingHours int) time.Time {
+func taskBodyBoundary(
+	perVault [][]taskSnapshotRow,
+	now time.Time,
+	upcomingHours int,
+) time.Time {
 	var earliest time.Time
 	consider := func(candidate time.Time) {
 		if !candidate.After(now) {
@@ -231,30 +240,32 @@ func taskBodyBoundary(rows []taskSnapshotRow, now time.Time, upcomingHours int) 
 			earliest = candidate
 		}
 	}
-	for _, row := range rows {
-		if row.item.Status == "completed" {
-			completedAt := parseFlexibleDate(row.item.CompletedDate)
-			if completedAt == nil {
-				if modifiedAt := parseDateTime(row.item.ModifiedDate); modifiedAt != nil {
-					value := modifiedAt.Time()
-					completedAt = &value
+	for _, rows := range perVault {
+		for _, row := range rows {
+			if row.item.Status == "completed" {
+				completedAt := parseFlexibleDate(row.item.CompletedDate)
+				if completedAt == nil {
+					if modifiedAt := parseDateTime(row.item.ModifiedDate); modifiedAt != nil {
+						value := modifiedAt.Time()
+						completedAt = &value
+					}
 				}
-			}
-			if completedAt == nil {
+				if completedAt == nil {
+					continue
+				}
+				consider(completedAt.Add(LookbackHours * time.Hour))
 				continue
 			}
-			consider(completedAt.Add(LookbackHours * time.Hour))
-			continue
+			if row.item.DeferDate == "" {
+				continue
+			}
+			deferAt, ok := parseDeferDate(row.item.DeferDate)
+			if !ok {
+				continue
+			}
+			consider(deferAt)
+			consider(deferAt.Add(-time.Duration(upcomingHours) * time.Hour))
 		}
-		if row.item.DeferDate == "" {
-			continue
-		}
-		deferAt, ok := parseDeferDate(row.item.DeferDate)
-		if !ok {
-			continue
-		}
-		consider(deferAt)
-		consider(deferAt.Add(-time.Duration(upcomingHours) * time.Hour))
 	}
 	return earliest
 }

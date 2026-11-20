@@ -95,8 +95,12 @@ func newBodyHarness(
 		},
 		Signals: h.Signals,
 		Clock:   h.clock,
-		Rows: func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error) {
-			return h.rowsFn(ctx, query)
+		Rows: func(ctx context.Context, query TaskQuery) ([][]taskSnapshotRow, error) {
+			rows, err := h.rowsFn(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			return [][]taskSnapshotRow{rows}, nil
 		},
 	})
 	return h
@@ -386,7 +390,7 @@ var _ = Describe("taskBodyCache", func() {
 
 	It("never expires a body with no clock-derived rows", func() {
 		rows := []taskSnapshotRow{bodySnapshotRow("Alpha")}
-		Expect(taskBodyBoundary(rows, bodyBaseTime, 8)).To(BeZero())
+		Expect(taskBodyBoundary([][]taskSnapshotRow{rows}, bodyBaseTime, 8)).To(BeZero())
 
 		h := newBodyHarness(
 			bodyFixture,
@@ -416,7 +420,7 @@ var _ = Describe("taskBodyCache", func() {
 		}
 		// The completed row leaves the window at now+7h; the deferred row flips
 		// at now+2h, so the deferred candidate is the minimum.
-		Expect(taskBodyBoundary(rows, bodyBaseTime, 8)).
+		Expect(taskBodyBoundary([][]taskSnapshotRow{rows}, bodyBaseTime, 8)).
 			To(Equal(bodyBaseTime.Add(2 * time.Hour)))
 
 		h := newBodyHarness(
@@ -453,7 +457,7 @@ var _ = Describe("taskBodyCache", func() {
 		}
 		// The row with neither date is skipped; the modified-only row leaves the
 		// window at now+6h.
-		Expect(taskBodyBoundary(rows, bodyBaseTime, 8)).
+		Expect(taskBodyBoundary([][]taskSnapshotRow{rows}, bodyBaseTime, 8)).
 			To(Equal(bodyBaseTime.Add(6 * time.Hour)))
 	})
 
@@ -466,7 +470,7 @@ var _ = Describe("taskBodyCache", func() {
 				i.DeferDate = "not-a-date"
 			}),
 		}
-		Expect(taskBodyBoundary(rows, bodyBaseTime, 8)).To(BeZero())
+		Expect(taskBodyBoundary([][]taskSnapshotRow{rows}, bodyBaseTime, 8)).To(BeZero())
 	})
 
 	It("invalidates when a hidden row becomes visible", func() {
@@ -624,16 +628,17 @@ func newContentGateHarnessWith(
 			return signals
 		},
 		Clock: h.clock,
-		Rows: func(ctx context.Context, query TaskQuery) ([]taskSnapshotRow, error) {
-			var rows []taskSnapshotRow
-			for _, vault := range h.selection(query) {
+		Rows: func(ctx context.Context, query TaskQuery) ([][]taskSnapshotRow, error) {
+			selected := h.selection(query)
+			perVault := make([][]taskSnapshotRow, 0, len(selected))
+			for _, vault := range selected {
 				vaultRows, err := h.store.List(ctx, vault)
 				if err != nil {
 					return nil, err
 				}
-				rows = append(rows, vaultRows...)
+				perVault = append(perVault, vaultRows)
 			}
-			return rows, nil
+			return perVault, nil
 		},
 	})
 	return h
@@ -978,20 +983,25 @@ var _ = Describe("taskSnapshotRows", func() {
 		}
 	}
 
-	It("concatenates the selected vaults' pre-filter rows", func() {
+	It("returns one row slice per selected vault, without concatenating them", func() {
 		b := newBoard([]Vault{
 			{Name: "a", Path: "/a", TasksFolder: "24 Tasks"},
 			{Name: "b", Path: "/b", TasksFolder: "24 Tasks"},
 		})
 
-		rows, err := b.taskSnapshotRows(ctx, TaskQuery{})
+		perVault, err := b.taskSnapshotRows(ctx, TaskQuery{})
 		Expect(err).To(BeNil())
-		Expect(rows).To(HaveLen(2))
+		Expect(perVault).To(HaveLen(2))
+		Expect(perVault[0]).To(HaveLen(1))
+		Expect(perVault[0][0].item.Name).To(Equal("a"))
+		Expect(perVault[1]).To(HaveLen(1))
+		Expect(perVault[1][0].item.Name).To(Equal("b"))
 
 		filtered, err := b.taskSnapshotRows(ctx, TaskQuery{Vaults: []string{"b"}})
 		Expect(err).To(BeNil())
 		Expect(filtered).To(HaveLen(1))
-		Expect(filtered[0].item.Name).To(Equal("b"))
+		Expect(filtered[0]).To(HaveLen(1))
+		Expect(filtered[0][0].item.Name).To(Equal("b"))
 	})
 
 	It("wraps a vaults read failure", func() {

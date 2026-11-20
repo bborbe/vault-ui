@@ -168,6 +168,12 @@ type taskSnapshotBuild struct {
 	// changed names the pages a patch re-derives, as base filenames including
 	// their ".md" suffix. It is set only when patchOnly is set.
 	changed []string
+	// refreshAfterPatch records that the session generation moved together with
+	// the page revision, so after the patch re-derives the page-derived fields
+	// the session-dependent fields must be refreshed too. Without it a
+	// both-moved key would publish the session fields it held before the
+	// generation advanced.
+	refreshAfterPatch bool
 	// fullReason is the cause to attribute when this build ends up a full build.
 	// It is empty for a build whose cause has no enum value, which is the
 	// session-only move with the refresh seam unwired (a test-only
@@ -204,8 +210,9 @@ func newTaskSnapshotStore(params taskSnapshotParams) *taskSnapshotStore {
 // re-derives only the session-dependent fields against the rows already held,
 // because those are the whole of what a session snapshot can change: the vault
 // list, the blockers and the Open Questions sections are page-derived and do not
-// move with it. A move of both at once takes the full build, since a row patch
-// would publish session fields from before the session snapshot moved. Either
+// move with it. A move of both at once takes the bounded patch and then the
+// session refresh, so neither the page-derived nor the session-derived fields
+// are published from before their move. Either
 // way a caller that arrives while work is in flight waits on that same work
 // rather than starting a second one, and the returned slice is shared with every
 // other reader and must be treated as read-only.
@@ -246,8 +253,11 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 		// The cheaper kinds are chosen top-down and each carries the qualifier
 		// that keeps it honest. A page move that can be attributed to a bounded
 		// set of single files is a row patch; a session-only move is a refresh;
-		// both moved at once is neither — a patch on a both-moved key would
-		// publish stale session fields — so the key rebuilds in full.
+		// both moved at once is a patch followed by a refresh — the patch
+		// re-derives the page-derived fields and the refresh re-derives the
+		// session fields, so neither publishes state from before the other moved.
+		// A both-moved key whose changed set is unbounded has no bounded patch to
+		// run, so it rebuilds in full.
 		//
 		// A cold key has pageMoved and sessionMoved both set, so it never
 		// reaches either cheaper kind: e.pageRevision is meaningless until a
@@ -255,12 +265,21 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 		refreshOnly := !pageMoved && sessionMoved && s.refresh != nil
 		var changed []string
 		patchOnly := false
+		refreshAfterPatch := false
 		fullReason := ""
 		switch {
 		case !e.hasSnapshot:
 			fullReason = fullReasonColdKey
 		case pageMoved && sessionMoved:
-			fullReason = fullReasonBothMoved
+			if s.patch == nil || s.refresh == nil {
+				fullReason = fullReasonBothMoved
+			} else if names, ok := s.revisions.ChangedPagesSince(key, e.pageRevision); ok {
+				patchOnly = true
+				changed = names
+				refreshAfterPatch = true
+			} else {
+				fullReason = fullReasonChangedSetUnbounded
+			}
 		case pageMoved:
 			if s.patch == nil {
 				fullReason = fullReasonPatchNotWired
@@ -276,13 +295,14 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 			// (test-only) configuration, so the kind is counted with no cause.
 		}
 		b := &taskSnapshotBuild{
-			startRevision:   revision,
-			startGeneration: generation,
-			refreshOnly:     refreshOnly,
-			patchOnly:       patchOnly,
-			changed:         changed,
-			fullReason:      fullReason,
-			done:            make(chan struct{}),
+			startRevision:     revision,
+			startGeneration:   generation,
+			refreshOnly:       refreshOnly,
+			patchOnly:         patchOnly,
+			changed:           changed,
+			refreshAfterPatch: refreshAfterPatch,
+			fullReason:        fullReason,
+			done:              make(chan struct{}),
 		}
 		e.inflight = b
 		s.mu.Unlock()
@@ -326,6 +346,14 @@ func (s *taskSnapshotStore) runBuild(
 		held := s.entryLocked(key).rows
 		s.mu.Unlock()
 		rows, buildErr = s.patch(buildCtx, vault, held, b.changed)
+		if buildErr == nil && b.refreshAfterPatch {
+			// The session generation moved with the page revision: the patch
+			// re-derived the page-derived fields, and this re-derives the
+			// session-dependent ones against the patched rows. It is a refresh on
+			// the same clock the refresh-only path counts.
+			recordRebuild(rebuildKindRefresh)
+			rows, buildErr = s.refresh(buildCtx, vault, rows)
+		}
 	case b.refreshOnly:
 		recordRebuild(rebuildKindRefresh)
 		// The held rows are read under the mutex and never mutated: Refresh

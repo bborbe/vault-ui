@@ -6,7 +6,7 @@ package board
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/bborbe/errors"
@@ -56,20 +56,37 @@ func (b *board) ListAssignees(ctx context.Context, vaults []string) (api.Assigne
 		}
 	}
 
-	named := make([]string, 0, len(namedSet))
+	named := make([]assigneeSortKey, 0, len(namedSet))
 	for name := range namedSet {
-		named = append(named, name)
+		named = append(named, assigneeSortKey{name: name, lower: strings.ToLower(name)})
 	}
-	sort.Slice(named, func(i, j int) bool {
-		left := strings.ToLower(named[i])
-		right := strings.ToLower(named[j])
-		if left != right {
-			return left < right
-		}
-		return named[i] < named[j]
-	})
+	slices.SortFunc(named, compareAssigneeKeys)
 
-	return api.AssigneesResponse{Named: named, HasUnassigned: hasUnassigned}, nil
+	ordered := make([]string, 0, len(named))
+	for _, entry := range named {
+		ordered = append(ordered, entry.name)
+	}
+
+	return api.AssigneesResponse{Named: ordered, HasUnassigned: hasUnassigned}, nil
+}
+
+// assigneeSortKey is one assignee with its lowercase form precomputed, so the
+// sort's comparator never allocates: strings.ToLower allocates for any name with
+// an uppercase byte, and computing it per comparison allocated O(n log n) times
+// per read.
+type assigneeSortKey struct {
+	name  string
+	lower string
+}
+
+// compareAssigneeKeys orders by the lowercase form, then by the original name as
+// a tiebreak. It allocates nothing, so slices.SortFunc over it reports 0
+// allocs/op.
+func compareAssigneeKeys(left, right assigneeSortKey) int {
+	if left.lower != right.lower {
+		return strings.Compare(left.lower, right.lower)
+	}
+	return strings.Compare(left.name, right.name)
 }
 
 // selectVaults resolves the requested vault names against the configured set,
