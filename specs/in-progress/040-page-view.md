@@ -1,6 +1,7 @@
 ---
-status: draft
-created: "2026-11-22"
+status: approved
+approved: "2026-11-22T13:31:54Z"
+branch: dark-factory/page-view
 ---
 
 ## Summary
