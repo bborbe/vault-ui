@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A completed or aborted card no longer offers **Resume** or **Live** — the terminal gate now sits first in `sessionButtonHtml`, so a closed row renders the **Done** chip only and never a session control, even when it still carries a `claude_session_id`; open cards are unchanged
+
 ## v0.112.3
 
 - fix: A completed card with no recorded session no longer offers **Start** (which read as "begin this work" on delivered work) — the shared session button now renders a **Done** chip for a terminal card with no session, across tasks, goals and topics; a terminal card that still carries a session id keeps **Resume** (many completed goals do), and only the sessionless ones previously showed Start
