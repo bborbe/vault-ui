@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: A completed card with no recorded session no longer offers **Start** (which read as "begin this work" on delivered work) — the shared session button now renders a **Done** chip for a terminal card with no session, across tasks, goals and topics; a terminal card that still carries a session id keeps **Resume** (many completed goals do), and only the sessionless ones previously showed Start
+
 ## v0.112.2
 
 - fix: Sort topics by priority (then id) in the default board view, matching goals — the default sort's topic branch sorted by title under a stale assumption that topics carry no priority, while the backend emits `Priority` and the card renders the P-chip, so the view now orders P1 first and flagged topics still sort above all

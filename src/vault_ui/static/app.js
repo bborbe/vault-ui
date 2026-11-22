@@ -1537,6 +1537,13 @@ function sessionCacheItem(kind, id, vault) {
     return sessionCacheFor(kind)[`${vault}\u0000${id}`];
 }
 
+// A card whose work is finished. Shared by the session button so a completed
+// card never offers Start as if the work were still to begin; a terminal card
+// that still carries a session reaches the Resume branch first.
+function isTerminalStatus(status) {
+    return status === 'completed' || status === 'aborted';
+}
+
 function sessionButtonHtml(kind, item) {
     const startingSet = startingSetFor(kind);
     const hasSession = item.claude_session_id;
@@ -1588,6 +1595,12 @@ function sessionButtonHtml(kind, item) {
             buttonClass = 'resume-btn';
             buttonDisabled = false;
         }
+    } else if (isTerminalStatus(item.status)) {
+        // A finished card with no session to resume must not offer Start — that
+        // reads as "begin this work" on work already delivered. One shared rule
+        // for tasks, goals and topics; a terminal card WITH a session already
+        // reaches the Resume branch above.
+        return `<span class="done-chip" title="Finished — no session to resume">✓ Done</span>`;
     } else {
         buttonLabel = '▶ Start';
         buttonClass = 'start-btn';
