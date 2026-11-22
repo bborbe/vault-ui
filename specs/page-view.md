@@ -32,13 +32,20 @@ A vault page is readable inside vault-ui. `GET /v/{vault}/page/{path}` returns t
 - No change to vault-cli, and no vault-cli version bump.
 - No styling work beyond what the existing static stylesheet already provides for a rendered document.
 
+## Alternatives Considered
+
+- **Render inside vault-ui (chosen).** One process, the existing static stylesheet, and the page read reuses the board's own disk read and symlink guard.
+- **Embed a headless Obsidian.** Reuses the renderer the operator already trusts, but drags a second binary, its config and its index in for a read-only view.
+- **Shell out to a vault-cli render command.** No such command exists, and adding one to vault-cli widens that repo's surface for a UI concern.
+- **Do nothing** — see the Do-Nothing Option below.
+
 ## Assumptions
 
 - `github.com/bborbe/vault-markdown` `v0.1.0` is frozen for this work: its API (`New`, `WithResolver`, `WithPages`, `Renderer.Render`, `Backlinks`) does not change while this spec is implemented.
 - `pkg/pageindex` stays metadata-only and keeps `ReadPage` as the on-demand disk read; this spec does not change the index.
 - The frontend deliverable (card click opening the in-app view) lands separately and does not change these routes' contract.
 - The vault set is already configured on the board; no new configuration is introduced.
-- The dependency resolves on a clean machine: `github.com/bborbe/vault-markdown` is public, and CI carries `GOPRIVATE` for that one path until the proxy and checksum caches catch up (see Constraints).
+- The `/open` compatibility route and the backlinks section are in scope by construction: they are the owning task's SC5 and DoD item, so removing them would leave the task's own success criteria unmet.
 
 ## Acceptance Criteria
 
@@ -47,7 +54,7 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
 - [ ] **AC1: the released renderer is the one that renders (the load-bearing criterion).** Evidence:
   - `grep -n 'github.com/bborbe/vault-markdown v0.1.0' go.mod` returns exactly one line.
   - The page handler's call site is cited by file:line and that line passes `Render`'s returned string to the response writer.
-  - A test renders `Alpha.md`'s source with `markdown.New(markdown.WithResolver(...), markdown.WithPages(...)).Render(ctx, src)` and asserts the `GET /v/private-personal/page/Alpha.md` body **equals** that output. A handler that echoes the raw markdown fails, because the raw source contains `| --- |` and the rendered body contains `<table>`.
+  - A test renders `Alpha.md`'s source with `markdown.New(markdown.WithResolver(...), markdown.WithPages(...)).Render(ctx, src)` and asserts the `GET /v/private-personal/page/Alpha.md` body **contains** that output verbatim — the document wrapper DB8 requires surrounds it. A handler that echoes the raw markdown fails, because the raw source contains `| --- |` and the rendered body contains `<table>`.
 - [ ] **AC2: the page route renders and is read-only.** Evidence, against the fixture vault:
   - `GET /v/private-personal/page/Alpha.md` returns `200`; the body contains `<table>`.
   - The same request for `Beta.md` returns `200` and a **different** body — a constant response fails both.
@@ -55,7 +62,7 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
 - [ ] **AC3: wikilinks resolve through the page index.** Evidence:
   - The body for `Alpha.md` contains an anchor whose `href` is `/v/private-personal/page/Beta.md` — the `[[Beta]]` target resolved to the page route, not to `obsidian://`.
   - The body for `Delta.md` (`[[Nope]]`) contains no anchor with a `href` to a page route for `Nope`, and the link text `Nope` is still present.
-  - The resolver consults `pkg/pageindex` rather than listing the vault: with the page-index seam wrapped by a counting double, rendering `Alpha.md` performs **0** `ListPages` calls and at most one `ReadPage` per page it actually needs.
+  - The resolver adds no listing of its own: with the page-index seam wrapped by a counting double, rendering `Alpha.md` performs exactly **one** `ListPages` per folder — the single listing the backlinks pass needs — and at most one `ReadPage` per distinct page the render touches. A resolver that re-lists per wikilink exceeds that count.
 - [ ] **AC4: embeds are inlined.** Evidence:
   - The body for `Gamma.md` contains `Beta.md`'s body text (`![[Beta]]` inlined).
   - Negative control: with `markdown.WithPages` omitted, the same render **drops** the embed — the test asserts the two bodies differ, so a passing AC4 cannot come from a renderer that ignores the option.
@@ -63,6 +70,7 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
   - The body for `Alpha.md` contains a backlinks section naming `Links` (the page that links to it) and naming no page that does not link to it.
   - The body for `Beta.md` names `Alpha` and `Gamma` (a plain link and an embed both count) and not `Delta`.
   - `Delta.md` (a link to a missing page) lists no backlinks for `Nope`, and the request still returns `200`.
+  - The test then creates `Epsilon.md` (linking `Alpha`) after the fixture is built and asserts `Alpha`'s next response lists `Epsilon` — a name-keyed table over the fixed fixture cannot satisfy this.
 - [ ] **AC6: `/open` answers Obsidian's parameters with a redirect.** Evidence:
   - `GET /open?vault=private-personal&file=Alpha.md` returns `302` with `Location: /v/private-personal/page/Alpha.md`.
   - `GET /open?vault=private-personal&file=Missing.md` returns `404`.
@@ -76,22 +84,21 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
   - `make precommit` exits 0.
   - The new routes are registered **before** `router.PathPrefix("/")` in `pkg/handler/router.go`; a test asserts that a request for a path no page route claims still reaches the static handler and returns the static tree's response, so the catch-all still serves the board.
   - `GET /api/tasks`, `GET /api/goals`, `GET /api/topics` and `GET /ws` are unchanged: `git diff origin/master -- pkg/handler/router.go` shows only added route registrations and no modified existing line.
-  - A page whose frontmatter contains a `<script>` tag renders without an executable script in the body — the renderer's escaping is relied on and asserted, not assumed.
+  - A page whose **body** contains a raw `<script>` tag renders with that tag escaped — it appears as text, not as an executable element. The body is the surface `goldmark` actually governs; frontmatter is stripped and would prove nothing.
 
 ## Verification
 
 ### Container-executable (runs inside the YOLO container at prompt time)
 
-- `make precommit` — format, vet and `go test -race ./...` clean.
-- `go test ./pkg/handler/... -run 'Page|Open'` — the route tests behind AC2, AC6, AC7 and AC8.
-- `go test ./pkg/board/... -run 'Page'` — the renderer/resolver/backlinks tests behind AC1, AC3, AC4 and AC5.
+- `make precommit` — format, vet and `go test -race ./...` clean. The `Makefile` exports `GOPRIVATE` for the one dependency whose proxy cache is stale, so this resolves on a clean machine.
+- `go test ./... -run 'Page|Open'` — every route and page-service test behind AC1–AC8. Package-agnostic, so the prompt may place the page service in any package.
 - `grep -n 'github.com/bborbe/vault-markdown v0.1.0' go.mod` — the pin.
 
 ### Operator-executable (runs on the host after PR merge, spec verification ladder)
 
 - `make build` — the binary builds with the embedded static tree.
 - Restore the board: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist` (a booted-out job is not in the domain, so `kickstart -k` cannot revive it).
-- `curl -sI '127.0.0.1:8000/open?vault=private-personal&file=24%20Goals/Vault%20Pages%20Are%20Read%20in%20vault-ui,%20Not%20Obsidian.md'` — expect `302` with `Location: /v/private-personal/page/...`.
+- `curl -sI '127.0.0.1:8000/open?vault=private-personal&file=24%20Goals%2FVault%20Pages%20Are%20Read%20in%20vault-ui%2C%20Not%20Obsidian.md'` — expect `302` with `Location: /v/private-personal/page/...` (the encoded-slash form AC6 pins).
 - `curl -sI '127.0.0.1:8000/open?vault=private-personal&file=Missing.md'` — expect `404`.
 - `curl -s '127.0.0.1:8000/v/private-personal/page/<a page with a table>' | grep -c '<table>'` — expect ≥1.
 - Open one real page each containing a table, a callout, an `![[embed]]`, a resolving `[[wikilink]]`, a missing link and backlinks; confirm the wikilink stays on `/v/...` and the backlinks section lists entries.
@@ -100,8 +107,8 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
 
 Rung-3 (the local launchd install is the only deployment target — this repo ships no image and no cluster workload). These run on the operator's host after the release tag exists and the local binary is rebuilt:
 
-- `deploy_check:` `git -C ~/Documents/workspaces/vault-ui rev-parse --short HEAD`
-- `deploy_target:` the short SHA of the merge commit cited in the PR body
+- `deploy_check:` `git -C ~/Documents/workspaces/vault-ui rev-parse --short HEAD` and `stat -f %m ~/Documents/workspaces/go/bin/vault-ui`
+- `deploy_target:` the short SHA of the merge commit cited in the PR body, and a binary mtime newer than that commit — the plist runs the installed binary, so the repo HEAD alone would pass on a stale binary
 
 Then the operator-executable probes above (`/open` → `302`/`404`, a page body containing `<table>`, and one real page per element type).
 
@@ -120,7 +127,7 @@ Then the operator-executable probes above (`/open` → `302`/`404`, a page body 
 
 - `github.com/bborbe/vault-markdown` is pinned at `v0.1.0`. Its public API is `New(opts ...Option) Renderer`, `WithResolver(Resolver) Option`, `WithPages(Pages) Option`, `Renderer.Render(ctx, src) (string, error)` and `Backlinks(pages map[string]string, target string) []string`. There is **no** package-level `Render`.
 - `pkg/pageindex` holds page **metadata only** — `ListPages` returns pages whose `Content` is always empty, and `ReadPage` reads the full page from disk without caching. A name→body map must therefore be built with `ListPages` plus one `ReadPage` per page; passing the index's own pages as the `Backlinks` map would produce an empty map. `docs/page-index.md` is the authoritative statement of this contract; it is cited, not restated.
-- **The dependency is public, but the Go proxy and checksum database still serve cached "not found" results for it.** `github.com/bborbe/vault-markdown` was made public on 2026-11-22 and now fetches anonymously (`git ls-remote` returns its `v0.1.0` tag with no credentials; the GitHub API answers `200`). However `proxy.golang.org/.../@v/v0.1.0.info` and `sum.golang.org/lookup/...` both still return `404`, cached from when the repo was private, so a plain `go mod download` fails on a clean machine. CI therefore sets `GOPRIVATE=github.com/bborbe/vault-markdown`, which fetches this one path straight from GitHub and skips the checksum database for it. Measured locally: `go mod download github.com/bborbe/vault-markdown@v0.1.0` exits **1** with no env and **0** with that variable. The workflow change is landed directly on the branch, never inside a prompt — the cluster agent's GitHub App holds no `workflows` permission. Remove the variable once the proxy serves `.info`.
+- **The dependency is public, but the Go proxy and checksum database still serve cached "not found" results for it.** `github.com/bborbe/vault-markdown` was made public on 2026-11-22 and now fetches anonymously (`git ls-remote` returns its `v0.1.0` tag with no credentials; the GitHub API answers `200`). However `proxy.golang.org/.../@v/v0.1.0.info` and `sum.golang.org/lookup/...` both still return `404`, cached from when the repo was private, so a plain `go mod download` fails on a clean machine. The `Makefile` therefore exports `GOPRIVATE ?= github.com/bborbe/vault-markdown` — fetching this one path straight from GitHub and skipping the checksum database for it — so every `go` target, `make precommit` included, works on a clean machine and inside the prompt container; `.github/workflows/ci.yml` sets the same variable for its direct `go vet` / `go test` calls. Measured locally: `go mod download github.com/bborbe/vault-markdown@v0.1.0` exits **1** with no env and **0** with that variable. Both files are landed directly on the branch, never inside a prompt — the cluster agent's GitHub App holds no `workflows` permission. Remove the variable from both once the proxy serves `.info`.
 - The new routes must be registered in `pkg/handler/router.go` **before** `router.PathPrefix("/")`, because that catch-all serves the static tree and would otherwise swallow every page path.
 - `router.SkipClean(true)` is in force: a traversal request reaches the handler instead of being normalized by the mux, so the `404` must come from the read guard, not from path cleaning.
 - No new configuration key. The routes exist on every board instance; the vault set is the one already configured.
@@ -136,12 +143,13 @@ Then the operator-executable probes above (`/open` → `302`/`404`, a page body 
 | `{path}` escapes the vault or resolves through a symlink pointing outside it | `404`, and zero file reads | None needed; the guard is the point |
 | Page file is unreadable (permissions, encoding) | `500` with the error logged and the path named; no partial body | Operator fixes the file; the next request re-reads |
 | Renderer returns an error | `500` with the error logged; the page is not served half-rendered | Re-request after the library is fixed; the pin is the contract |
+| Module resolution hits the cached proxy/checksum 404 | The build fails before any test runs, naming `sum.golang.org` | The `Makefile` already exports `GOPRIVATE`; if a tool bypasses it, export it explicitly and re-run. The permanent fix is the proxy indexing the module |
 | A page links to itself or a cycle of pages | The wikilink renders as a normal link; no recursion happens, because only the requested page is rendered and embeds are expanded by the library, which bounds its own expansion | None needed |
 | The vault root is missing or unmounted | `404` for every page request, one warning naming the vault and the path; the board's list routes keep serving their previous snapshot | Operator remounts the vault; the next request re-reads |
 | A very large page | The response is served whole; no truncation and no new limit | None; size is the vault's business |
 | Concurrent requests for the same page | Each reads independently; no lock and no shared cache | None needed |
 
-## Security / Abuse
+## Security / Abuse Cases
 
 - **Path traversal** is the primary risk: the route takes a path from the URL. Every read goes through `ReadPage`, whose symlink-out-of-vault guard is the single check; the route must not open files itself. AC7 pins the negative evidence (0 reads on a traversal request).
 - **No write surface.** The routes accept `GET` only; `POST`/`PUT`/`PATCH`/`DELETE` are `405`. There is no upload, no form, and no state change.

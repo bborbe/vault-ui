@@ -1,5 +1,14 @@
 # Development targets
 
+# github.com/bborbe/vault-markdown is public and fetches anonymously, but
+# proxy.golang.org and sum.golang.org still serve cached "not found" results
+# for it from when the repo was private. Fetch this one path straight from
+# GitHub and skip the checksum database for it, so every `go` target here works
+# on a clean machine. Remove once
+# `curl -sI https://proxy.golang.org/github.com/bborbe/vault-markdown/@v/v0.1.0.info`
+# returns 200.
+export GOPRIVATE ?= github.com/bborbe/vault-markdown
+
 .PHONY: build
 build:
 	mkdir -p $(HOME)/Documents/workspaces/go/bin
