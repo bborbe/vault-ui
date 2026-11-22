@@ -32,6 +32,10 @@ func TestSessionButtonStopsStartOnTerminalCard(t *testing.T) {
 	if termIdx > startIdx {
 		t.Fatal("the terminal branch must precede the Start fallback")
 	}
+	hasIdx := strings.Index(body, "} else if (hasSession) {")
+	if hasIdx < 0 || hasIdx > termIdx {
+		t.Fatal("the hasSession (Resume) branch must precede the terminal branch, so a completed card with a session still resumes")
+	}
 	if !strings.Contains(body, "done-chip") {
 		t.Fatal("sessionButtonHtml does not render the done-chip for a terminal card")
 	}

@@ -1600,7 +1600,7 @@ function sessionButtonHtml(kind, item) {
         // reads as "begin this work" on work already delivered. One shared rule
         // for tasks, goals and topics; a terminal card WITH a session already
         // reaches the Resume branch above.
-        return `<span class="done-chip" title="Completed — no session to resume">✓ Done</span>`;
+        return `<span class="done-chip" title="Finished — no session to resume">✓ Done</span>`;
     } else {
         buttonLabel = '▶ Start';
         buttonClass = 'start-btn';
