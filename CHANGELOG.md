@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - feat: Read vault pages inside vault-ui — `GET /v/{vault}/page/{path}` renders a page with the pinned `github.com/bborbe/vault-markdown` v0.1.0 renderer (tables, callouts, embeds, resolving wikilinks and a backlinks section) through the existing on-demand `ReadPage` read and symlink guard, and `GET /open?vault=&file=` answers Obsidian's parameters with a `302` to that route so existing links keep working; both routes are GET-only (other verbs get `405`) and are registered ahead of the static catch-all, an unknown vault or missing page is a `404`, and the page body is served as `text/html`
+- feat: A card title opens the page inside vault-ui at `/v/{vault}/page/{path}` instead of handing it to Obsidian — a small ↗ beside the title keeps the `obsidian://` hand-off one click away, and a card whose link carries no vault or file keeps the old behaviour
 
 ## v0.112.3
 

@@ -1672,11 +1672,34 @@ function modeBadgeHtml(mode) {
 // newline in the template, so a title that filled its last line pushed a lone
 // "↗" onto a line of its own. Binding it to the final word means the two wrap
 // together or not at all.
-function titleWithIconHtml(title) {
+function titleWithIconHtml(title, withIcon) {
     const cut = title.lastIndexOf(' ');
     const head = cut === -1 ? '' : title.slice(0, cut + 1);
     const tail = cut === -1 ? title : title.slice(cut + 1);
+    // A card that links to the in-app page renders the arrow as its own
+    // sibling anchor, because an anchor cannot nest inside another one.
+    if (withIcon === false) {
+        return `${escapeHtml(head)}<span class="title-tail">${escapeHtml(tail)}</span>`;
+    }
     return `${escapeHtml(head)}<span class="title-tail">${escapeHtml(tail)}<span class="obsidian-icon">↗</span></span>`;
+}
+
+// pageUrlFromObsidianUrl turns the board's obsidian:// deep link into the
+// in-app page route, so a card opens the page inside vault-ui instead of
+// handing it to Obsidian. Returns '' when the link carries no vault or file,
+// which leaves the caller on the old Obsidian behaviour.
+function pageUrlFromObsidianUrl(obsidianUrl) {
+    if (!obsidianUrl) return '';
+    try {
+        const parsed = new URL(obsidianUrl);
+        const vault = parsed.searchParams.get('vault') || '';
+        const file = parsed.searchParams.get('file') || '';
+        if (!vault || !file) return '';
+        const encodedPath = file.split('/').map(encodeURIComponent).join('/');
+        return `/v/${encodeURIComponent(vault)}/page/${encodedPath}`;
+    } catch (e) {
+        return '';
+    }
 }
 
 // Which affordances a card kind carries and how its board places it. The card
@@ -1970,6 +1993,9 @@ function createCard(kind, item) {
         : '';
 
     const footerLeft = `${flagButton}${holdBadge}${assigneeBlock}${priorityChip}${modeChip}${detailButton}`;
+    // Derived here rather than in the card mapper: the mappers have a committed
+    // key baseline, and a page route is a render concern, not card data.
+    const pageUrl = pageUrlFromObsidianUrl(view.obsidianUrl);
     // Age rides with the action so it can't be orphaned on its own wrapped row.
     const cardActions = `${config.slots.activityAge ? activityAgeHtml(view.activityDate) : ''}${config.slots.session ? sessionButtonHtml(kind, item) : ''}`;
 
@@ -1977,7 +2003,7 @@ function createCard(kind, item) {
         ${menuButton}
         <div class="card-content">
             <h3 class="task-title">
-                <a href="${escapeHtml(view.obsidianUrl)}" class="task-title-link${config.titleLinkExtraClass ? ' ' + config.titleLinkExtraClass : ''}" title="Open in Obsidian">${titleWithIconHtml(view.title)}</a>
+                <a href="${escapeHtml(pageUrl || view.obsidianUrl)}" class="task-title-link${config.titleLinkExtraClass ? ' ' + config.titleLinkExtraClass : ''}" title="${pageUrl ? 'Open page' : 'Open in Obsidian'}">${titleWithIconHtml(view.title, !pageUrl)}</a>${pageUrl ? `<a href="${escapeHtml(view.obsidianUrl)}" class="obsidian-icon obsidian-handoff" title="Open in Obsidian" aria-label="Open in Obsidian">↗</a>` : ''}
             </h3>
         </div>
         ${blockedHtml}
