@@ -49,20 +49,20 @@ A vault page is readable inside vault-ui. `GET /v/{vault}/page/{path}` returns t
 
 ## Acceptance Criteria
 
-Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe table and a `[[Beta]]` link), `Beta.md` (plain text), `Gamma.md` (an `![[Beta]]` embed), `Delta.md` (a `[[Nope]]` link to a page that does not exist) and `Links.md` (a `[[Alpha]]` link, so `Alpha` has one backlink). Route tests run against the real router built by `CreateHTTPRouter` with an `httptest` server; the page storage seam is the production page-index adapter over the fixture vault.
+Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe table, a callout and a `[[Beta]]` link), `Beta.md` (plain text), `Gamma.md` (an `![[Beta]]` embed), `Delta.md` (a `[[Nope]]` link to a page that does not exist), `Links.md` (a `[[Alpha]]` link, so `Alpha` has one backlink) and `Echo.md` (a raw `<script>` tag in the body). Route tests run against the real router built by `CreateHTTPRouter` with an `httptest` server; the page storage seam is the production page-index adapter over the fixture vault. Every new test is named `TestPage…` or `TestOpen…` so the verification filter below actually runs it.
 
 - [ ] **AC1: the released renderer is the one that renders (the load-bearing criterion).** Evidence:
   - `grep -n 'github.com/bborbe/vault-markdown v0.1.0' go.mod` returns exactly one line.
   - The page handler's call site is cited by file:line and that line passes `Render`'s returned string to the response writer.
   - A test renders `Alpha.md`'s source with `markdown.New(markdown.WithResolver(...), markdown.WithPages(...)).Render(ctx, src)` and asserts the `GET /v/private-personal/page/Alpha.md` body **contains** that output verbatim — the document wrapper DB8 requires surrounds it. A handler that echoes the raw markdown fails, because the raw source contains `| --- |` and the rendered body contains `<table>`.
 - [ ] **AC2: the page route renders and is read-only.** Evidence, against the fixture vault:
-  - `GET /v/private-personal/page/Alpha.md` returns `200`; the body contains `<table>`.
+  - `GET /v/private-personal/page/Alpha.md` returns `200`; the body contains `<table>` and a callout element carrying the callout's title text.
   - The same request for `Beta.md` returns `200` and a **different** body — a constant response fails both.
   - `POST /v/private-personal/page/Alpha.md` returns `405`; likewise `PUT`, `PATCH` and `DELETE`.
 - [ ] **AC3: wikilinks resolve through the page index.** Evidence:
   - The body for `Alpha.md` contains an anchor whose `href` is `/v/private-personal/page/Beta.md` — the `[[Beta]]` target resolved to the page route, not to `obsidian://`.
   - The body for `Delta.md` (`[[Nope]]`) contains no anchor with a `href` to a page route for `Nope`, and the link text `Nope` is still present.
-  - The resolver adds no listing of its own: with the page-index seam wrapped by a counting double, rendering `Alpha.md` performs exactly **one** `ListPages` per folder — the single listing the backlinks pass needs — and at most one `ReadPage` per distinct page the render touches. A resolver that re-lists per wikilink exceeds that count.
+  - The resolver adds no listing of its own: with the page-index seam wrapped by a counting double, rendering `Alpha.md` performs exactly **one** `ListPages` per folder — the single listing the backlinks pass needs — and exactly one `ReadPage` per page in that folder, with no second read for the same page. A resolver that re-lists per wikilink exceeds the first count; one that re-reads a page exceeds the second.
 - [ ] **AC4: embeds are inlined.** Evidence:
   - The body for `Gamma.md` contains `Beta.md`'s body text (`![[Beta]]` inlined).
   - Negative control: with `markdown.WithPages` omitted, the same render **drops** the embed — the test asserts the two bodies differ, so a passing AC4 cannot come from a renderer that ignores the option.
@@ -75,16 +75,20 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
   - `GET /open?vault=private-personal&file=Alpha.md` returns `302` with `Location: /v/private-personal/page/Alpha.md`.
   - `GET /open?vault=private-personal&file=Missing.md` returns `404`.
   - `GET /open?vault=nonexistent&file=Alpha.md` returns `404` — an unknown vault is a miss, not a `500`.
+  - `POST /open?vault=private-personal&file=Alpha.md` returns `405`, so the read-only rule covers both routes.
   - The parameters are read exactly as `obsidian://open` spells them: `vault` and `file`, with `file` URL-encoded (a path containing a space and a slash, e.g. `24%20Goals%2FSome%20Goal.md`, redirects to the corresponding page route).
 - [ ] **AC7: the read path refuses traversal and symlink escape.** Evidence:
   - `GET /v/private-personal/page/../../../../etc/passwd` returns `404`, and no file outside the vault is read (a counting reader records 0 reads for that request).
   - A symlink inside the fixture vault pointing outside it, requested by name, returns `404` — the same guard `ReadPage` already applies.
-  - `GET /v/private-personal/page/` (empty path) and `GET /v/nonexistent/page/Alpha.md` each return `404`.
+  - `GET /v/private-personal/page/` (empty path), `GET /v/private-personal/page/24%20Goals/` (a folder path, never a listing) and `GET /v/nonexistent/page/Alpha.md` each return `404`.
 - [ ] **AC8: nothing existing regresses.** Evidence:
   - `make precommit` exits 0.
   - The new routes are registered **before** `router.PathPrefix("/")` in `pkg/handler/router.go`; a test asserts that a request for a path no page route claims still reaches the static handler and returns the static tree's response, so the catch-all still serves the board.
-  - `GET /api/tasks`, `GET /api/goals`, `GET /api/topics` and `GET /ws` are unchanged: `git diff origin/master -- pkg/handler/router.go` shows only added route registrations and no modified existing line.
+  - `GET /api/tasks`, `GET /api/goals`, `GET /api/topics` and `GET /ws` are unchanged: after `git fetch origin`, `git diff origin/master -- pkg/handler/router.go` shows only added route registrations and no modified existing line.
   - A page whose **body** contains a raw `<script>` tag renders with that tag escaped — it appears as text, not as an executable element. The body is the surface `goldmark` actually governs; frontmatter is stripped and would prove nothing.
+- [ ] **Post-Deploy (Rung-3):** the local launchd install serves the new routes from the merged commit. Evidence: the operator probes below return `302` with the expected `Location` for an existing page, `404` for a missing one, and a real page body contains `<table>`.
+  - `deploy_check:` `test "$(git -C ~/Documents/workspaces/vault-ui rev-parse --short HEAD)" = "$(git -C ~/Documents/workspaces/vault-ui rev-parse --short origin/master)" && test "$(stat -f %m ~/Documents/workspaces/go/bin/vault-ui)" -gt "$(git -C ~/Documents/workspaces/vault-ui log -1 --format=%ct)" && echo fresh`
+  - `deploy_target:` `fresh`
 
 ## Verification
 
@@ -102,15 +106,6 @@ Fixture note: "fixture vault" means a temp directory holding `Alpha.md` (a pipe 
 - `curl -sI '127.0.0.1:8000/open?vault=private-personal&file=Missing.md'` — expect `404`.
 - `curl -s '127.0.0.1:8000/v/private-personal/page/<a page with a table>' | grep -c '<table>'` — expect ≥1.
 - Open one real page each containing a table, a callout, an `![[embed]]`, a resolving `[[wikilink]]`, a missing link and backlinks; confirm the wikilink stays on `/v/...` and the backlinks section lists entries.
-
-## Post-Deploy Verification
-
-Rung-3 (the local launchd install is the only deployment target — this repo ships no image and no cluster workload). These run on the operator's host after the release tag exists and the local binary is rebuilt:
-
-- `deploy_check:` `git -C ~/Documents/workspaces/vault-ui rev-parse --short HEAD` and `stat -f %m ~/Documents/workspaces/go/bin/vault-ui`
-- `deploy_target:` the short SHA of the merge commit cited in the PR body, and a binary mtime newer than that commit — the plist runs the installed binary, so the repo HEAD alone would pass on a stale binary
-
-Then the operator-executable probes above (`/open` → `302`/`404`, a page body containing `<table>`, and one real page per element type).
 
 ## Desired Behavior
 
@@ -153,7 +148,7 @@ Then the operator-executable probes above (`/open` → `302`/`404`, a page body 
 
 - **Path traversal** is the primary risk: the route takes a path from the URL. Every read goes through `ReadPage`, whose symlink-out-of-vault guard is the single check; the route must not open files itself. AC7 pins the negative evidence (0 reads on a traversal request).
 - **No write surface.** The routes accept `GET` only; `POST`/`PUT`/`PATCH`/`DELETE` are `405`. There is no upload, no form, and no state change.
-- **HTML injection.** Page content is untrusted markdown, and a vault page can contain `<script>`. The renderer escapes page text; the handler must not splice the raw path, vault name or file content into the document unescaped. AC8 asserts a frontmatter `<script>` does not execute.
+- **HTML injection.** Page content is untrusted markdown, and a vault page can contain `<script>`. The renderer escapes page text; the handler must not splice the raw path, vault name or file content into the document unescaped. AC8 asserts a **body-level** `<script>` tag is escaped — frontmatter is stripped, so a frontmatter assertion would prove nothing.
 - **Information disclosure.** The route exposes only pages inside a configured vault, read-only. It must not serve `.bolt` stores, the page-index cache, or anything outside the vault root; the guard covers the last, and the route only ever asks for a `.md` page.
 - **No directory listing.** A request for a folder path returns `404`, never an index of names.
 
@@ -165,7 +160,7 @@ Prompts should be generated in this order — each row is a single prompt with a
 |---|---|---|---|---|
 | 1 | Page service: read through `ReadPage`, render with `vault-markdown`, resolver + pages adapters over `pkg/pageindex`, backlinks section | 1–5, 8 | 1, 3, 4, 5 | — |
 | 2 | Page route `GET /v/{vault}/page/{path}` + `/open` compatibility redirect, registered before the static catch-all | 6, 7 | 2, 6 | prompt 1 |
-| 3 | Read-only and traversal hardening, method rejection, escaping assertion, no-regression checks | 7 | 7, 8 | prompts 1, 2 |
+| 3 | Read-only and traversal hardening, method rejection, escaping assertion, no-regression checks, post-deploy probe | 7 | 7, 8, 9 | prompts 1, 2 |
 
 Rationale: prompt 1 establishes the render contract and its adapters; prompt 2 exposes it over HTTP; prompt 3 locks the boundary and proves nothing existing moved. The daemon executes in filename order, so this ordering is the dependency order.
 
