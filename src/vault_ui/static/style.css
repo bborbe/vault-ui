@@ -1154,6 +1154,26 @@ h1 {
     white-space: nowrap;
 }
 
+/* "done" chip — a finished card with no session to resume. Muted green, so it
+   reads as delivered rather than actionable; the session button never renders
+   Start on a terminal card (isTerminalStatus in app.js). */
+.done-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #dcfce7;             /* green-100 */
+    background: #15803d;        /* green-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: default;
+}
+
 /* "blocked by X" badge — the dependency-graph affordance. Amber (distinct from
    the violet hold badge) so the two are never confused; clickable, and the
    click jumps to the blocker's card on the same board. */
