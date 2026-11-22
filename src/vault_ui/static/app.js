@@ -2592,7 +2592,7 @@ function escapeJsAttr(value) {
 
 // Sort cards within a column by the active sort key (currentSort, driven by
 // the header sort-select). 'default' keeps each view's existing ordering
-// (tasks: urgency tier → priority; goals: priority → id). 'priority' is
+// (tasks: urgency tier → priority; goals and topics: priority → id). 'priority' is
 // priority-only (highest first). 'modified' is most-recent-activity first via
 // activity_date — the small age number each card shows — with items lacking a
 // date sinking to the bottom. Ties fall through to the default ordering so
@@ -2623,18 +2623,13 @@ function activityDateMs(item) {
 // The ordering each view used before the sort control existed — preserved
 // verbatim as the 'default' branch so nothing changes when no sort is chosen.
 function defaultSortCompare(a, b, kind) {
-    if (kind === 'goal') {
-        // Goals carry no due/planned dates, so there is no urgency tier:
-        // priority first, then id for a stable tiebreak.
+    if (kind === 'goal' || kind === 'topic') {
+        // Goals and topics carry no due/planned dates, so there is no urgency
+        // tier: priority first, then id for a stable tiebreak.
         const pa = normalizePriority(a.priority);
         const pb = normalizePriority(b.priority);
         if (pa !== pb) return pa - pb;
         return (a.id || '').localeCompare(b.id || '');
-    }
-    if (kind === 'topic') {
-        // Topics carry no dates and no priority, so there is no urgency tier
-        // and no priority comparison: title first, id for a stable tiebreak.
-        return (a.title || a.id || '').localeCompare(b.title || b.id || '');
     }
     // Tasks: urgency tier (0=overdue, 1=due-today, 2=scheduled, 3=none), then
     // priority within each tier.
