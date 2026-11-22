@@ -1,7 +1,7 @@
 ---
 status: approved
-approved: "2026-11-22T13:31:54Z"
-branch: dark-factory/page-view
+approved: "2026-11-22T13:37:05Z"
+branch: feat/page-view
 ---
 
 ## Summary
