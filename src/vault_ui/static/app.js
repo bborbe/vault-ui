@@ -2632,9 +2632,12 @@ function defaultSortCompare(a, b, kind) {
         return (a.id || '').localeCompare(b.id || '');
     }
     if (kind === 'topic') {
-        // Topics carry no dates and no priority, so there is no urgency tier
-        // and no priority comparison: title first, id for a stable tiebreak.
-        return (a.title || a.id || '').localeCompare(b.title || b.id || '');
+        // Topics carry no due/planned dates, so there is no urgency tier:
+        // priority first, then id for a stable tiebreak — the goal ordering.
+        const pa = normalizePriority(a.priority);
+        const pb = normalizePriority(b.priority);
+        if (pa !== pb) return pa - pb;
+        return (a.id || '').localeCompare(b.id || '');
     }
     // Tasks: urgency tier (0=overdue, 1=due-today, 2=scheduled, 3=none), then
     // priority within each tier.
