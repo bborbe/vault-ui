@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.112.4
 
 - fix: A completed or aborted card no longer offers **Resume** or **Live** — the terminal gate now sits first in `sessionButtonHtml`, so a closed row renders the **Done** chip only and never a session control, even when it still carries a `claude_session_id`; open cards are unchanged
 
