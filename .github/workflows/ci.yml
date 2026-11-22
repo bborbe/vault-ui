@@ -9,6 +9,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # github.com/bborbe/vault-markdown is public and fetches anonymously, but
+      # proxy.golang.org and sum.golang.org still serve cached "not found"
+      # results for it from when the repo was private. Fetch this one path
+      # straight from GitHub and skip the checksum database for it. Remove once
+      # `curl -sI https://proxy.golang.org/github.com/bborbe/vault-markdown/@v/v0.1.0.info`
+      # returns 200.
+      GOPRIVATE: github.com/bborbe/vault-markdown
     steps:
       - uses: actions/checkout@v4
 
