@@ -552,18 +552,6 @@ func NewSetTaskSessionHandler(m mutations.Service) http.Handler {
 	})
 }
 
-// NewCacheReloadHandler returns the POST /api/cache/reload handler.
-func NewCacheReloadHandler(m mutations.Service) http.Handler {
-	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		result, err := m.ReloadCache(req.Context(), req.URL.Query().Get("vault"))
-		if err != nil {
-			writeMutationError(resp, err)
-			return
-		}
-		writeJSON(resp, http.StatusOK, result)
-	})
-}
-
 // NewConfigReloadHandler returns the POST /api/config/reload handler.
 func NewConfigReloadHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {

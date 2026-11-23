@@ -19,7 +19,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sigterm"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -94,7 +93,6 @@ func (c paneJumpClient) Perform(ctx context.Context, paneID, token string) error
 func CreateMutationService(
 	loader config.Loader,
 	configPath string,
-	cache statuscache.Cache,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
@@ -105,7 +103,6 @@ func CreateMutationService(
 	return mutations.New(mutations.Deps{
 		Config:    &mutationConfigProvider{loader: loader, configPath: configPath},
 		Ops:       mutationOpsFactory,
-		Cache:     cache,
 		Launch:    launches,
 		Locks:     locks,
 		Publisher: publisher,

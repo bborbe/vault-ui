@@ -65,7 +65,6 @@ func (s *service) RunTopic(ctx context.Context, vault, topicID string) (api.Sess
 		return api.SessionResponse{}, newHTTPError(500, setErr.Error())
 	}
 	_ = set.TopicClear.Execute(ctx, resolved.Path, topicID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, topicID)
 	if result.SessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
 			500, "vault-cli topic work-on did not start a claude session: no warnings reported",
@@ -147,7 +146,6 @@ func (s *service) topicWritten(
 	vault vaultconfig.Vault, topicID string,
 ) func(context.Context) {
 	return func(ctx context.Context) {
-		s.deps.Cache.Invalidate(vault.Name, topicID)
 		s.deps.Publisher.PublishTopicUpdated(ctx, vault.Name, topicID)
 	}
 }

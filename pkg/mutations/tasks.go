@@ -6,7 +6,6 @@ package mutations
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -59,13 +58,6 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	if err != nil {
 		return api.SessionResponse{}, err
 	}
-	launching := s.launchCount(ctx)
-	if launching >= cfg.MaxConcurrentSessions {
-		return api.SessionResponse{}, newHTTPError(
-			429,
-			fmt.Sprintf("%d sessions starting, cap %d", launching, cfg.MaxConcurrentSessions),
-		)
-	}
 	resolved, ok, err := s.vaultByName(ctx, vault)
 	if err != nil {
 		return api.SessionResponse{}, err
@@ -112,7 +104,6 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	}
 	s.deps.Launch.Finish(vault, taskID)
 	_ = set.FrontmatterClear.Execute(ctx, resolved.Path, taskID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, taskID)
 	sessionID := result.SessionID
 	if sessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
@@ -295,7 +286,6 @@ func (s *service) clearStartingMarker(
 	case kindTask:
 		_ = set.FrontmatterClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
 	}
-	s.deps.Cache.Invalidate(vault, itemID)
 	return nil
 }
 
@@ -417,7 +407,6 @@ func (s *service) ExecuteTaskCommand(
 	if workErr != nil {
 		return api.SessionResponse{}, newHTTPError(500, workErr.Error())
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
 	if result.SessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
 			500, "vault-cli work-on did not start a claude session: no warnings reported",
@@ -466,7 +455,6 @@ func (s *service) taskFastPath(
 	if runErr != nil {
 		return api.SessionResponse{}, newHTTPError(500, runErr.Error())
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
 	// Mark before publishing so a client reacting to the frame never re-fetches
 	// stale data; the deferred mark still covers error returns after a partial
 	// write, and the extra mark costs at most one extra rebuild.

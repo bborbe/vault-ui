@@ -233,7 +233,6 @@ func newQueuedFixture() *queuedFixture {
 				GoalClear:        goalClear,
 			}
 		},
-		Cache:     f.cache,
 		Launch:    launchregistry.NewRegistry(),
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: websocket.NewMutationPublisher(f.manager),
@@ -523,10 +522,7 @@ var _ = Describe("Queued frontmatter writes", func() {
 			"item_kind": "task",
 			"vault":     "personal",
 		}))
-		// A queued write marks one item's file, not the whole folder.
-		Expect(f.countEvents("invalidate:personal:TaskOne")).To(Equal(1))
 		Expect(f.eventsSnapshot()).To(Equal([]string{
-			"invalidate:personal:TaskOne",
 			"broadcast:" + string(websocket.TaskUpdatedFrame("personal", "TaskOne")),
 		}))
 	})
@@ -553,8 +549,6 @@ var _ = Describe("Queued frontmatter writes", func() {
 			"item_kind": "goal",
 			"vault":     "personal",
 		}))
-		// A queued goal write marks the goal's own file in the goals key.
-		Expect(f.countEvents("invalidate:personal:GoalOne")).To(Equal(1))
 	})
 
 	It("AC4 — a failed task write reverts and says so", func() {

@@ -80,7 +80,6 @@ func CreateHTTPRouter(
 		Handler(NewClearGoalSessionHandler(m))
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/session").
 		Handler(NewSetTaskSessionHandler(m))
-	router.Methods(http.MethodPost).Path("/api/cache/reload").Handler(NewCacheReloadHandler(m))
 	router.Methods(http.MethodPost).Path("/api/config/reload").Handler(NewConfigReloadHandler(m))
 
 	router.Methods(http.MethodGet).Path("/ws").

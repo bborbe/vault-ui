@@ -168,12 +168,6 @@ func (f *fakeMutations) SetTaskSession(
 	return f.setTaskSession(ctx, vault, taskID, req)
 }
 
-func (f *fakeMutations) ReloadCache(
-	ctx context.Context, vault string,
-) (api.CacheReloadResponse, error) {
-	return f.reloadCache(ctx, vault)
-}
-
 func (f *fakeMutations) ReloadConfig(ctx context.Context) (api.ConfigReloadResponse, error) {
 	return f.reloadConfig(ctx)
 }

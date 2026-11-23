@@ -36,7 +36,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sigterm"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -99,7 +98,6 @@ type JumpClient interface {
 type Deps struct {
 	Config       ConfigProvider
 	Ops          OpsFactory
-	Cache        statuscache.Cache
 	Launch       launchregistry.Registry
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
@@ -148,7 +146,6 @@ type Service interface {
 	SetTaskSession(
 		ctx context.Context, vault, taskID string, req api.UpdateSessionRequest,
 	) (api.SessionSetResponse, error)
-	ReloadCache(ctx context.Context, vault string) (api.CacheReloadResponse, error)
 	ReloadConfig(ctx context.Context) (api.ConfigReloadResponse, error)
 }
 
@@ -215,7 +212,6 @@ func failureReason(err error) string {
 // name a file exactly.
 func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(context.Context) {
 	return func(ctx context.Context) {
-		s.deps.Cache.Invalidate(vault.Name, taskID)
 		s.deps.Publisher.PublishTaskUpdated(ctx, vault.Name, taskID)
 	}
 }
@@ -223,7 +219,6 @@ func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(conte
 // goalWritten is taskWritten for a publishing goal route.
 func (s *service) goalWritten(vault vaultconfig.Vault, goalID string) func(context.Context) {
 	return func(ctx context.Context) {
-		s.deps.Cache.Invalidate(vault.Name, goalID)
 		s.deps.Publisher.PublishGoalUpdated(ctx, vault.Name, goalID)
 	}
 }
@@ -234,7 +229,6 @@ func (s *service) itemWrittenSilently(
 	vault vaultconfig.Vault, itemID string,
 ) func(context.Context) {
 	return func(context.Context) {
-		s.deps.Cache.Invalidate(vault.Name, itemID)
 	}
 }
 
@@ -343,33 +337,6 @@ func sessionResponse(
 
 // launchCount counts launches in flight across every configured vault — the
 // Start-button admission gate.
-func (s *service) launchCount(ctx context.Context) int {
-	cfg, err := s.deps.Config.Load(ctx)
-	if err != nil {
-		return 0
-	}
-	total := 0
-	for _, vault := range cfg.Vaults {
-		set := s.opsForVault(vault)
-		items, listErr := set.List.Execute(
-			ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
-		)
-		if listErr != nil {
-			continue
-		}
-		for _, item := range items {
-			if _, started := s.deps.Cache.GetSessionStarted(vault.Name, item.Name); !started {
-				continue
-			}
-			if state, ok := s.deps.Launch.State(vault.Name, item.Name); ok &&
-				state == launchregistry.Finished {
-				continue
-			}
-			total++
-		}
-	}
-	return total
-}
 
 // startingMarker reports the launch marker the board shows for an item, or ""
 // when the board shows a session instead. A FINISHED registry record suppresses
@@ -378,9 +345,6 @@ func (s *service) startingMarker(vaultName, itemID, fileMarker string) string {
 	if state, ok := s.deps.Launch.State(vaultName, itemID); ok &&
 		state == launchregistry.Finished {
 		return ""
-	}
-	if marker, ok := s.deps.Cache.GetSessionStarted(vaultName, itemID); ok && marker != "" {
-		return marker
 	}
 	return fileMarker
 }

@@ -190,7 +190,6 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	service := mutations.New(mutations.Deps{
 		Config:    configProvider{cfg: cfgPtr},
 		Ops:       opsFactory(vault),
-		Cache:     cache,
 		Launch:    launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: publisher,
@@ -324,7 +323,6 @@ func newStarterHarnessWith(
 	h.service = mutations.New(mutations.Deps{
 		Config:    configProvider{cfg: h.cfgPtr},
 		Ops:       opsFactoryWithStarter(vault, starter, resumer),
-		Cache:     h.cache,
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
@@ -345,7 +343,6 @@ func (h *harness) withQueue(q mutations.WriteQueue) mutations.Service {
 	return mutations.New(mutations.Deps{
 		Config:    configProvider{cfg: h.cfgPtr},
 		Ops:       opsFactory(h.config.Vaults[0]),
-		Cache:     h.cache,
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
@@ -398,7 +395,6 @@ func (h *harness) withSignalingScanner() mutations.Service {
 	return mutations.New(mutations.Deps{
 		Config:    configProvider{cfg: h.cfgPtr},
 		Ops:       opsFactory(h.config.Vaults[0]),
-		Cache:     h.cache,
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
@@ -419,7 +415,6 @@ func (h *harness) withOps(ops mutations.OpsFactory) mutations.Service {
 	return mutations.New(mutations.Deps{
 		Config:    configProvider{cfg: h.cfgPtr},
 		Ops:       ops,
-		Cache:     h.cache,
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
@@ -775,27 +770,6 @@ var _ = Describe("Mutation service", func() {
 			Expect(httpStatus(err)).To(Equal(500))
 		})
 
-		It("429s when the launch cap is reached", func() {
-			capCfg := h.config
-			capCfg.MaxConcurrentSessions = 0
-			capPtr := &capCfg
-			service := mutations.New(mutations.Deps{
-				Config:    configProvider{cfg: capPtr},
-				Ops:       opsFactory(capCfg.Vaults[0]),
-				Cache:     h.cache,
-				Launch:    h.launch,
-				Locks:     sessionlock.NewRegistry(),
-				Publisher: h.publisher,
-				Clock:     libtime.NewCurrentDateTime(),
-				Scanner:   session.ProcessScanner(noScanner),
-				Signaler:  &fakeSignaler{},
-				Pane:      fakePane{},
-				Jump:      &fakeJump{},
-				HomeDir:   h.dir,
-			})
-			_, err := service.RunTask(ctx, "personal", taskTwoID)
-			Expect(httpStatus(err)).To(Equal(429))
-		})
 	})
 
 	Describe("TakeOverTask", func() {
@@ -857,26 +831,6 @@ var _ = Describe("Mutation service", func() {
 		It("400s a dash-prefixed id", func() {
 			_, err := h.service.RunGoal(ctx, "personal", "-x")
 			Expect(httpStatus(err)).To(Equal(400))
-		})
-	})
-
-	Describe("ReloadCache", func() {
-		It("reloads a single vault", func() {
-			result, err := h.service.ReloadCache(ctx, "personal")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Reloaded).To(Equal([]string{"personal"}))
-			Expect(result.Counts).To(HaveKey("personal"))
-		})
-
-		It("reloads all vaults when vault is empty", func() {
-			result, err := h.service.ReloadCache(ctx, "")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Reloaded).To(Equal([]string{"personal"}))
-		})
-
-		It("404s an unknown vault", func() {
-			_, err := h.service.ReloadCache(ctx, "nope")
-			Expect(httpStatus(err)).To(Equal(404))
 		})
 	})
 
@@ -960,30 +914,6 @@ var _ = Describe("Mutation service edge branches", func() {
 		It("500s an unknown vault", func() {
 			_, err := h.service.RunGoal(ctx, "nope", goalOneID)
 			Expect(httpStatus(err)).To(Equal(500))
-		})
-	})
-
-	Describe("TakeOverTask starting path", func() {
-		It("400s a starting task with no session id", func() {
-			_, err := h.service.TakeOverTask(ctx, "personal", taskThreeID)
-			Expect(httpStatus(err)).To(Equal(400))
-			Expect(h.readTask(taskThreeID)).NotTo(ContainSubstring("claude_session_started"))
-		})
-
-		It("returns the resume command for a starting task with a session id", func() {
-			result, err := h.service.TakeOverTask(ctx, "personal", taskFourID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.SessionID).To(Equal(uuidOne))
-			Expect(result.Terminated).NotTo(BeNil())
-		})
-	})
-
-	Describe("TakeOverGoal starting path", func() {
-		It("returns the resume command for a starting goal with a session id", func() {
-			result, err := h.service.TakeOverGoal(ctx, "personal", goalThreeID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.SessionID).To(Equal(uuidOne))
-			Expect(h.readGoal(goalThreeID)).NotTo(ContainSubstring("claude_session_started"))
 		})
 	})
 
@@ -1408,20 +1338,6 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("forces a full re-read once on a single-vault reload", func() {
-		_, err := h.service.ReloadCache(ctx, "personal")
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("forces a full re-read once on an all-vault reload", func() {
-		_, err := h.service.ReloadCache(ctx, "")
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("does not mark on a 404 reload", func() {
-		_, err := h.service.ReloadCache(ctx, "nope")
-		Expect(httpStatus(err)).To(Equal(404))
-	})
 })
 
 var _ = Describe("Mutation service enqueue failure", func() {
@@ -1546,7 +1462,6 @@ var _ = Describe("SetTaskSession queued write failures", func() {
 			Ops: func(vaultconfig.Vault) vaultui.OpSet {
 				return vaultui.OpSet{Show: show, FrontmatterSet: set}
 			},
-			Cache:     h.cache,
 			Launch:    h.launch,
 			Locks:     locks,
 			Publisher: h.publisher,
@@ -1848,7 +1763,6 @@ var _ = Describe("UpdateTaskPhase answer ordering", func() {
 			Ops: func(vaultconfig.Vault) vaultui.OpSet {
 				return vaultui.OpSet{Show: show, Answer: answer, Approve: approve}
 			},
-			Cache:     h.cache,
 			Launch:    h.launch,
 			Locks:     sessionlock.NewRegistry(),
 			Publisher: h.publisher,

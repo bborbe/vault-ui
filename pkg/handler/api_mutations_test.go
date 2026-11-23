@@ -84,17 +84,6 @@ var _ = Describe("Mutation handlers", func() {
 		)
 	})
 
-	It("does not require vault on the maintenance routes", func() {
-		recorder := doRequest(
-			handler.NewCacheReloadHandler(&fakeMutations{
-				reloadCache: func(context.Context, string) (api.CacheReloadResponse, error) {
-					return api.CacheReloadResponse{Reloaded: []string{}, Counts: map[string]int{}}, nil
-				},
-			}), http.MethodPost, "/api/cache/reload", "",
-		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
-	})
-
 	It("422s an out-of-enum status before any vault operation", func() {
 		called := false
 		recorder := doRequest(
