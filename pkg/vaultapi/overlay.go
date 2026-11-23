@@ -91,6 +91,9 @@ type Overlay struct {
 
 	mu      sync.Mutex
 	entries map[pendingKey]pendingEntry
+	// version advances whenever the overlaid values change, so a cached
+	// snapshot built from them is rebuilt.
+	version uint64
 }
 
 // NewOverlay returns an empty Overlay with the given clock and TTL.
@@ -112,6 +115,7 @@ func (o *Overlay) Record(vault, kind, id string, fields PendingFields) {
 		fields = existing.fields.merge(fields)
 	}
 	o.entries[key] = pendingEntry{fields: fields, writtenAt: now}
+	o.version++
 }
 
 // Apply returns values with the item's pending fields laid over them. Fields
@@ -127,8 +131,10 @@ func (o *Overlay) Apply(vault, kind, id string, values OverlayValues) OverlayVal
 	}
 	if now.Sub(entry.writtenAt) >= o.ttl {
 		delete(o.entries, key)
+		o.version++
 		return values
 	}
+	before := entry.fields
 	f := &entry.fields
 	if f.Flag != nil {
 		if *f.Flag == values.Flag {
@@ -146,7 +152,26 @@ func (o *Overlay) Apply(vault, kind, id string, values OverlayValues) OverlayVal
 	} else {
 		o.entries[key] = entry
 	}
+	if before != entry.fields {
+		o.version++
+	}
 	return values
+}
+
+// Version advances whenever the overlaid values change — a record, a field
+// vault-api caught up on, or an expiry. It purges expired entries first, so a
+// cached snapshot holding an expired value is rebuilt without it.
+func (o *Overlay) Version() uint64 {
+	now := o.clock.Now().Time()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for key, entry := range o.entries {
+		if now.Sub(entry.writtenAt) >= o.ttl {
+			delete(o.entries, key)
+			o.version++
+		}
+	}
+	return o.version
 }
 
 // Len is the number of items with pending fields.

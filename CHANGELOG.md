@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - fix: A board write (flag/unflag, assign to me, phase, status, session set/clear) stays visible until vault-api catches up — `pkg/vaultapi.Overlay` records the written fields per (vault, kind, item) on success and the list path lays them over vault-api's stale rows, dropping a field once vault-api reports it or after a 3-minute TTL, so the card no longer reverts on the refetch after the update frame
+- fix: A pending board write now advances `Source.Revision` (overlay version added to the poll revision, bumped on record, catch-up and expiry), so the board's cached task snapshot rebuilds and shows the overlaid value instead of serving the pre-write rows
 - fix: Goal cards carry `assignee` and `priority` from vault-api's goal projection (and topics carry `priority`), so the goals assignee filter matches again and cards show their assignee and priority; `pkg/vaultapi/listop.go` threads the assignee filter into the goal list like topics
 - fix: Clicking a flag (or any other board write) no longer reverts until the next poll — the mutation service now calls `Source.Refresh` (a synchronous vault-api poll, safe alongside the 10s ticker) before publishing the task/goal/topic update frame, so the UI's refetch reads post-write rows; a refresh error is logged and the frame still goes out
 

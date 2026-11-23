@@ -214,11 +214,14 @@ func (s *Source) Topics(vaultName string) []Topic {
 }
 
 // Revision implements board.IndexRevisions. The global revision advances when
-// any vault's list content changes.
+// any vault's list content changes, and also when the pending-write overlay
+// changes: the board caches its task snapshot by this revision, so a write
+// recorded on the overlay must move it or the cached pre-write rows are served.
 func (s *Source) Revision(_ SnapshotKey) uint64 {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.revision
+	revision := s.revision
+	s.mu.RUnlock()
+	return revision + s.pending.Version()
 }
 
 // hashLists hashes the three lists so a change in any item advances the

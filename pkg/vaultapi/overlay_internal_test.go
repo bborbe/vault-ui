@@ -84,6 +84,20 @@ var _ = Describe("Overlay", func() {
 		Expect(overlay.Apply("v", KindTask, "T", OverlayValues{Flag: true}).Flag).To(BeFalse())
 	})
 
+	It("advances its version on record, catch-up and expiry", func() {
+		v0 := overlay.Version()
+		overlay.Record("v", KindTask, "T", PendingFields{Flag: boolPtr(true)})
+		v1 := overlay.Version()
+		Expect(v1).To(BeNumerically(">", v0))
+		overlay.Record("v", KindTask, "U", PendingFields{Flag: boolPtr(true)})
+		_ = overlay.Apply("v", KindTask, "T", OverlayValues{Flag: true})
+		v2 := overlay.Version()
+		Expect(v2).To(BeNumerically(">", v1+1))
+		clock.SetNow(libtime.DateTime(start.Add(DefaultPendingTTL)))
+		Expect(overlay.Version()).To(BeNumerically(">", v2))
+		Expect(overlay.Len()).To(Equal(0))
+	})
+
 	It("is safe for concurrent use", func() {
 		var wg sync.WaitGroup
 		for i := 0; i < 50; i++ {
