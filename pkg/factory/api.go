@@ -27,6 +27,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
@@ -154,8 +155,9 @@ func CreateAPIHandler(
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
 ) http.Handler {
+	vaults := &vaultProvider{loader: loader, configPath: configPath}
 	service := board.New(board.Deps{
-		Vaults:    &vaultProvider{loader: loader, configPath: configPath},
+		Vaults:    vaults,
 		Ops:       opsProvider{pageIndex: pageIndex},
 		Cache:     cache,
 		Launch:    launches,
@@ -175,7 +177,10 @@ func CreateAPIHandler(
 		loader, configPath, cache, launches, locks, homeDir,
 		paneResolver, websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
 	)
-	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
+	pages := pageview.NewService(vaults, pageIndex)
+	return handler.CreateHTTPRouter(
+		service, mutationsService, CreateStaticFS(), readiness, manager, pages,
+	)
 }
 
 // CreateWriteQueue returns the process-wide per-vault write queue. Its

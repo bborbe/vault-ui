@@ -16,13 +16,42 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/bborbe/vault-cli/pkg/domain"
+
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/mutations"
+	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
+
+// stubVaultsProvider returns no vaults; the page routes are not exercised by
+// the API router specs, so the page service only needs to satisfy the signature.
+type stubVaultsProvider struct{}
+
+func (stubVaultsProvider) Vaults(context.Context) ([]board.Vault, error) { return nil, nil }
+
+// stubPageStorage returns no pages for the same reason.
+type stubPageStorage struct{}
+
+func (stubPageStorage) ListPages(
+	context.Context, string, string,
+) ([]*domain.Page, error) {
+	return nil, nil
+}
+
+func (stubPageStorage) ReadPage(
+	context.Context, string, string, string,
+) (*domain.Page, error) {
+	return nil, nil
+}
+
+// newStubPageService returns a page service over the empty stubs above.
+func newStubPageService() pageview.Service {
+	return pageview.NewService(stubVaultsProvider{}, stubPageStorage{})
+}
 
 type fakeBoard struct {
 	vaults    []api.VaultResponse
@@ -101,7 +130,7 @@ func newRouterWithMutations(fake *fakeBoard, m mutations.Service) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	manager := websocket.NewConnectionManager(websocket.NewMetrics())
-	return handler.CreateHTTPRouter(fake, m, staticFS, readiness, manager)
+	return handler.CreateHTTPRouter(fake, m, staticFS, readiness, manager, newStubPageService())
 }
 
 func doGet(router http.Handler, target string) *httptest.ResponseRecorder {

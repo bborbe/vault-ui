@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Read vault pages inside vault-ui — `GET /v/{vault}/page/{path}` renders a page with the pinned `github.com/bborbe/vault-markdown` v0.1.0 renderer (tables, callouts, embeds, resolving wikilinks and a backlinks section) through the existing on-demand `ReadPage` read and symlink guard, and `GET /open?vault=&file=` answers Obsidian's parameters with a `302` to that route so existing links keep working; both routes are GET-only (other verbs get `405`) and are registered ahead of the static catch-all, an unknown vault or missing page is a `404`, and the page body is served as `text/html`
+
 ## v0.112.3
 
 - fix: A completed card with no recorded session no longer offers **Start** (which read as "begin this work" on delivered work) — the shared session button now renders a **Done** chip for a terminal card with no session, across tasks, goals and topics; a terminal card that still carries a session id keeps **Resume** (many completed goals do), and only the sessionless ones previously showed Start

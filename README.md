@@ -215,6 +215,26 @@ goals lands in `goals`, among tasks in `tasks`, and an unknown name in
 An unknown `vault` and a topic id that `vault-cli topic show` cannot resolve
 both return HTTP 404.
 
+### `GET /v/{vault}/page/{path}`
+
+Renders a vault-relative markdown page inside vault-ui and serves it as
+`text/html; charset=utf-8`. Tables become `<table>`, callouts keep their title,
+`![[embed]]`s are inlined, `[[wikilinks]]` resolve to this route for pages that
+exist (and stay as plain text for missing ones), and a backlinks section follows
+the body. Every read goes through the same on-demand page read and symlink guard
+the board uses; nothing is cached. An unknown vault, a missing page or a path
+that escapes the vault returns `404`, never `500`. The route serves `GET` only —
+every other verb returns `405`.
+
+### `GET /open`
+
+Obsidian compatibility redirect. It answers the same `vault` and `file` query
+parameters as `obsidian://open` with a `302` to the page route when the file
+exists, and a `404` when it does not. `file` is URL-decoded, so a path with a
+space and a slash (`24%20Goals%2FSome%20Goal.md`) redirects to
+`/v/<vault>/page/24%20Goals/Some%20Goal.md`. `GET` only; every other verb
+returns `405`.
+
 ## Group columns by phase or status
 
 The kanban header has a `groupBy` selector that switches the columns between two dimensions:
