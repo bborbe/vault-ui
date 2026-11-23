@@ -63,7 +63,9 @@ type Service interface {
 }
 
 // vaultIndex is the vault-wide page map: name→body and name→relative path for
-// the resolver, and relative path→body for backlinks.
+// the resolver, and relative path→body for backlinks. It is immutable once
+// published, so concurrent renders may read it without a lock; a page that must
+// differ from the cached copy is passed to the renderer, never written here.
 type vaultIndex struct {
 	built  time.Time
 	byName map[string]string
@@ -119,15 +121,8 @@ func (s *service) Render(
 	if err != nil {
 		return "", err
 	}
-	// Overlay the freshly-read page so an edit is reflected before the TTL.
-	idx.byName[name] = string(page.Content)
-	idx.paths[name] = pagePath
-	idx.bodies[pagePath] = string(page.Content)
-
-	rendered, err := newRenderer(vault.Name, idx.paths, idx.byName).Render(
-		ctx,
-		string(page.Content),
-	)
+	body := string(page.Content)
+	rendered, err := newRenderer(vault.Name, idx, pagePath, name, body).Render(ctx, body)
 	if err != nil {
 		return "", errors.Wrap(ctx, err, "render page")
 	}
@@ -286,18 +281,33 @@ func (s *service) loadIndex(ctx context.Context, vault board.Vault) (*vaultIndex
 }
 
 // newRenderer builds the vault-markdown renderer with a resolver over the
-// vault-wide name→path map, so a link to a page in any folder resolves.
-func newRenderer(vaultName string, paths map[string]string, byName map[string]string) markdown.Renderer {
+// vault-wide name→path index, so a link to a page in any folder resolves. The
+// requested page is preferred over the cached index for its own link target and
+// its embed source, so a just-edited page renders from its fresh body without
+// mutating the shared index that concurrent renders read.
+func newRenderer(
+	vaultName string,
+	idx *vaultIndex,
+	pagePath string,
+	pageName string,
+	pageBody string,
+) markdown.Renderer {
 	return markdown.New(
 		markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
-			rel, ok := paths[target]
+			if target == pageName {
+				return PageURL(vaultName, pagePath), true
+			}
+			rel, ok := idx.paths[target]
 			if !ok {
 				return "", false
 			}
 			return PageURL(vaultName, rel), true
 		})),
 		markdown.WithPages(markdown.PagesFunc(func(name string) (string, bool) {
-			body, ok := byName[name]
+			if name == pageName {
+				return pageBody, true
+			}
+			body, ok := idx.byName[name]
 			return body, ok
 		})),
 	)
@@ -392,8 +402,12 @@ func buildDocument(
 ) (string, error) {
 	entries := make([]backlink, 0, len(backlinks))
 	for _, rel := range backlinks {
+		linkName := strings.TrimSuffix(path.Base(rel), ".md")
+		if linkName == name {
+			continue
+		}
 		entries = append(entries, backlink{
-			Name: strings.TrimSuffix(path.Base(rel), ".md"),
+			Name: linkName,
 			URL:  PageURL(vault.Name, rel),
 		})
 	}

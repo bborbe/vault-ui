@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/bborbe/vault-cli/pkg/domain"
@@ -261,6 +262,47 @@ func (e errorStorage) ListPages(context.Context, string, string) ([]*domain.Page
 
 func (e errorStorage) ReadPage(context.Context, string, string, string) (*domain.Page, error) {
 	return nil, e.err
+}
+
+// TestPageViewConcurrentRenderIsRaceFree renders many pages at once so `go test
+// -race` (make test) catches a write to the shared cached index. It fails on a
+// design that stores the per-request page back into the cached vaultIndex after
+// loadIndex releases its mutex: concurrent map writes are a fatal runtime error.
+func TestPageViewConcurrentRenderIsRaceFree(t *testing.T) {
+	dir := newFixture(t)
+	service := newService(t, dir)
+	ctx := context.Background()
+
+	// Warm the index so every goroutine below takes the cache-hit path and races
+	// on the same maps, rather than serialising on the one-time build.
+	if _, err := service.Render(ctx, vaultName, "Alpha.md"); err != nil {
+		t.Fatalf("warm render: %v", err)
+	}
+
+	const renders = 64
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, renders)
+	for i := 0; i < renders; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			pagePath := "Alpha.md"
+			if i%2 == 1 {
+				pagePath = "Beta.md"
+			}
+			if _, err := service.Render(ctx, vaultName, pagePath); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent render: %v", err)
+	}
 }
 
 func TestPageViewGenericReadErrorPropagates(t *testing.T) {
