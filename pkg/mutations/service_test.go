@@ -27,7 +27,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -83,7 +82,6 @@ type harness struct {
 	dir       string
 	service   mutations.Service
 	publisher *mocks.EventPublisher
-	cache     statuscache.Cache
 	launch    launchregistry.Registry
 	pane      *fakePane
 	jump      *fakeJump
@@ -176,9 +174,6 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		CurrentUser:           "fixtureuser",
 		MaxConcurrentSessions: 5,
 	}
-
-	cache := statuscache.NewCache()
-	Expect(cache.LoadVault(vault.Name, vault.Path, vault.TasksFolder)).To(Succeed())
 	launch := launchregistry.NewRegistry()
 	publisher := &mocks.EventPublisher{}
 	pane := &fakePane{paneID: "pane-1", found: true}
@@ -208,7 +203,6 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		dir:       dir,
 		service:   service,
 		publisher: publisher,
-		cache:     cache,
 		launch:    launch,
 		pane:      pane,
 		jump:      jump,

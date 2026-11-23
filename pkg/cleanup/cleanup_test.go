@@ -19,7 +19,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/cleanup"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
 // opsCall records one VaultOps invocation.
@@ -215,14 +214,12 @@ func writeTitledTranscript(homeDir, vaultPath, sessionID, title string) {
 // the status cache (the CLI does not emit the marker, so the cache is the only
 // source the sweep reads).
 func seedMarker(
-	cache statuscache.Cache,
 	vaultName, vaultPath, tasksFolder, itemID, marker string,
 ) {
 	dir := filepath.Join(vaultPath, tasksFolder)
 	ExpectWithOffset(1, os.MkdirAll(dir, 0o750)).To(Succeed())
 	body := "---\nstatus: in_progress\nclaude_session_started: \"" + marker + "\"\n---\n\nbody\n"
 	ExpectWithOffset(1, os.WriteFile(filepath.Join(dir, itemID+".md"), []byte(body), 0o600)).To(Succeed())
-	ExpectWithOffset(1, cache.LoadVault(vaultName, vaultPath, tasksFolder)).To(Succeed())
 }
 
 // sweepFixture bundles the injectable dependencies a test needs to assert on.
@@ -231,7 +228,6 @@ type sweepFixture struct {
 	ops    *fakeOps
 	reg    launchregistry.Registry
 	lock   sessionlock.Registry
-	cache  statuscache.Cache
 	clock  libtime.CurrentDateTime
 	home   string
 	vault  cleanup.Vault
@@ -249,7 +245,6 @@ func newFixture(
 	ops := newFakeOps(tasks, goals)
 	reg := launchregistry.NewRegistry()
 	lock := sessionlock.NewRegistry()
-	cache := statuscache.NewCache()
 	clock := libtime.NewCurrentDateTime()
 	clock.SetNow(fixedNow)
 
@@ -275,7 +270,7 @@ func newFixture(
 	}
 
 	return &sweepFixture{
-		params: params, ops: ops, reg: reg, lock: lock, cache: cache,
+		params: params, ops: ops, reg: reg, lock: lock,
 		clock: clock, home: home, vault: vault,
 	}
 }

@@ -32,7 +32,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	wsmocks "github.com/bborbe/vault-ui/pkg/websocket/mocks"
@@ -56,17 +55,6 @@ type writeRecord struct {
 	value     string
 }
 
-// recordingCache records every Invalidate into the fixture's shared event log.
-type recordingCache struct {
-	statuscache.Cache
-	f *queuedFixture
-}
-
-func (c *recordingCache) Invalidate(vaultName, itemID string) {
-	c.f.appendEvent("invalidate:" + vaultName + ":" + itemID)
-	c.Cache.Invalidate(vaultName, itemID)
-}
-
 // staticConfig is a ConfigProvider returning a fixed config.
 type staticConfig struct{ cfg *vaultconfig.Config }
 
@@ -78,7 +66,6 @@ type queuedFixture struct {
 	router      http.Handler
 	queue       queue.Queue
 	manager     *wsmocks.WebsocketConnectionManager
-	cache       *recordingCache
 	personalDir string
 	workDir     string
 
@@ -123,8 +110,6 @@ func newQueuedFixture() *queuedFixture {
 	f.manager.BroadcastStub = func(payload []byte) {
 		f.appendEvent("broadcast:" + string(payload))
 	}
-
-	f.cache = &recordingCache{Cache: statuscache.NewCache(), f: f}
 
 	show := &vcmocks.ShowOperation{}
 	show.ExecuteStub = func(_ context.Context, _, _, taskName string) (ops.TaskDetail, error) {

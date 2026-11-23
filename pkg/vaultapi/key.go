@@ -8,7 +8,7 @@ import "path/filepath"
 
 // SnapshotKey identifies one indexed folder the board's snapshot store keys on:
 // a vault root plus a vault-relative pages dir. It replaces the page index's
-// key so the board no longer imports pkg/pageindex.
+// key so the board no longer imports the page index.
 type SnapshotKey struct {
 	VaultPath string
 	PagesDir  string

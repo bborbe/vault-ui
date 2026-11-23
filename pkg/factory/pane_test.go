@@ -13,10 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -24,7 +22,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -101,13 +98,6 @@ func paneHandler(
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
-	pageIndex := factory.CreatePageIndex(
-		pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
-		libtime.NewCurrentDateTime(),
-	)
-	Expect(
-		factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
-	).To(Succeed())
 
 	// The board reads the live set from the session state, which production
 	// keeps current from the attention store with the session-state watcher.
