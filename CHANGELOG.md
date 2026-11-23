@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.112.6
 
 - feat: Read the board from the local vault-api instead of a page index of vault-ui's own — tasks, goals and topics come from vault-api's list endpoints, a 10s poll replaces the in-process fsnotify watcher (a poll that sees new content broadcasts a `source_changed` frame, so an open board refreshes without a reload), `pkg/pageindex`, `pkg/statuscache`, the `ops.NewWatchOperation` wiring and the dead `pkg/watcher` package are deleted, and a `vault-api unavailable` banner shows while the source's last poll failed (the board keeps its last-known rows); goal cards lose their assignee until vault-api's goal projection carries one, so the goals assignee filter matches nothing
 
