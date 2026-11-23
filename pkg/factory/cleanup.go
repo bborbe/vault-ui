@@ -19,7 +19,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -38,18 +37,16 @@ import (
 func CreateCleanupSweep(
 	loader config.Loader,
 	configPath string,
-	cache statuscache.Cache,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
-	cacheReady <-chan struct{},
 ) run.Func {
 	return func(ctx context.Context) error {
 		cfg, err := vaultconfig.Load(ctx, loader, configPath)
 		if err != nil {
 			return errors.Wrap(ctx, err, "load vault config for cleanup sweep")
 		}
-		sweep := cleanup.NewSweep(cleanupSweepParams(cfg, cache, launches, locks, homeDir))
+		sweep := cleanup.NewSweep(cleanupSweepParams(cfg, launches, locks, homeDir))
 
 		return sweep.RunLoop(ctx)
 	}
@@ -60,7 +57,6 @@ func CreateCleanupSweep(
 // constants — no flag, env var or config key exists for them.
 func cleanupSweepParams(
 	cfg *vaultconfig.Config,
-	cache statuscache.Cache,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,

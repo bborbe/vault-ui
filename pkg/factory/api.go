@@ -26,14 +26,12 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -144,14 +142,12 @@ func CreateStaticFS() fs.FS {
 func CreateAPIHandler(
 	loader config.Loader,
 	configPath string,
-	cache statuscache.Cache,
 	paneResolver pane.Resolver,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
-	pageIndex pageindex.PageIndex,
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
 	vaultSource *vaultapi.Source,
@@ -284,34 +280,6 @@ func sessionRefreshBroadcaster(
 // publisher.
 func CreateConnectionManager() websocket.ConnectionManager {
 	return websocket.NewConnectionManager(websocket.NewMetrics())
-}
-
-// CreateStatusCacheLoader returns a run.Func that loads every vault's status
-// and claude_session_started markers into the cache once at startup. It closes
-// ready once the load completes, so a consumer that reads the cache (the cleanup
-// sweep's startup reconcile) can wait for a populated cache instead of racing
-// the load in the shared run group.
-func CreateStatusCacheLoader(
-	loader config.Loader,
-	configPath string,
-	cache statuscache.Cache,
-	ready chan struct{},
-) run.Func {
-	return func(ctx context.Context) error {
-		cfg, err := vaultconfig.Load(ctx, loader, configPath)
-		if err != nil {
-			return errors.Wrap(ctx, err, "load vault config")
-		}
-		for _, vault := range cfg.Vaults {
-			if loadErr := cache.LoadVault(vault.Name, vault.Path, vault.TasksFolder); loadErr != nil {
-				glog.Warningf("load status cache for vault %s: %v", vault.Name, loadErr)
-			}
-		}
-		if ready != nil {
-			close(ready)
-		}
-		return nil
-	}
 }
 
 // CreateAPIServer returns a run.Func serving the API router on listen.

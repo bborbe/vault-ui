@@ -10,17 +10,13 @@ import (
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/run"
-	libtime "github.com/bborbe/time"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/fdlimit"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -48,34 +44,21 @@ func execute(ctx context.Context) error {
 	}
 	configPath := factory.CreateVaultUIConfigPath(homeDir)
 
-	cache := statuscache.NewCache()
 	paneResolver := factory.CreatePaneResolver(homeDir)
 	launches := launchregistry.NewRegistry()
 	// One session-lock registry for the process: the API's set_task_session and
 	// the cleanup sweep's re-bind write must share it to share the critical
 	// section.
 	locks := sessionlock.NewRegistry()
-	// Closed by CreateStatusCacheLoader once the status cache is loaded; the
-	// cleanup sweep's startup reconcile waits on it.
-	cacheReady := make(chan struct{})
 	manager := factory.CreateConnectionManager()
-	// The process-wide page index reads single page files through the
-	// production reader and lister seams, shared by every vault, and hydrates
-	// from the on-disk store at its fixed cache path.
-	pageIndex := factory.CreatePageIndexWithStore(
-		pageindex.NewPageReader(storage.NewPageStorage(nil)),
-		pageindex.NewDirectoryLister(),
-		libtime.NewCurrentDateTime(),
-		factory.CreatePageIndexStore(ctx),
-	)
 	sessionState := factory.CreateSessionState()
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	heartbeatStore := factory.CreateHeartbeatStore()
 	writeQueue := factory.CreateWriteQueue()
 	vaultSource := vaultapi.NewSource(vaultapi.New(vaultapi.ConfigFromEnv()))
 	apiHandler := factory.CreateAPIHandler(
-		loader, configPath, cache, paneResolver, launches, locks, homeDir, readiness, manager,
-		pageIndex, sessionSnapshot, writeQueue, vaultSource,
+		loader, configPath, paneResolver, launches, locks, homeDir, readiness, manager,
+		sessionSnapshot, writeQueue, vaultSource,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -101,15 +84,12 @@ func execute(ctx context.Context) error {
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
 		vaultSource.Run,
-		factory.CreateStatusCacheLoader(loader, configPath, cache, cacheReady),
-		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
-		pageIndex.Rescan,
 		factory.CreateSessionStateWatcher(
 			loader, manager, sessionState, heartbeatStore, sessionstate.DefaultRescanInterval,
 		),
 		sessionSnapshot.Run,
 		factory.CreateCleanupSweep(
-			loader, configPath, cache, launches, locks, homeDir, cacheReady,
+			loader, configPath, launches, locks, homeDir,
 		),
 		writeQueue.Consume,
 		factory.CreateHTTPServer(adminListen, readiness),
