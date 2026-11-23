@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/bborbe/vault-ui/pkg/factory"
@@ -89,8 +90,8 @@ func TestSeedFixtureParsesThroughTheRealLoader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasksStrict: %v", err)
 	}
-	if len(tasks) != 4 {
-		t.Fatalf("expected 4 fixture tasks, got %d", len(tasks))
+	if len(tasks) != 4+len(deferredFixtures(time.Now().UTC())) {
+		t.Fatalf("expected %d fixture tasks, got %d", 4+len(deferredFixtures(time.Now().UTC())), len(tasks))
 	}
 	for _, task := range tasks {
 		if task.Name == "Sessionless Fixture Task" && task.ClaudeSessionID() != "" {
