@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.112.5
 
 - fix: Approving a task from the board no longer demotes an active row — a todo→planning drag writes `phase: planning` plus `approved_by`/`approved_at`, promotes only a legacy `todo`/`backlog` status to `next` (the spec-035 ready-to-start contract), and leaves every other status byte-identical, so an `in_progress` row stays active instead of being demoted to `next`; `vault-cli task approve` stopped rewriting status itself in v0.167.1
 
