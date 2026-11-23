@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.114.2
 
 - fix: The page view is styled — a `.page-view` block gives the rendered page prose typography, heading hierarchy, table and code treatment, and a wikilink colour that is visible on the dark board surface (the renderer was already emitting 21 resolved links and 8 headings on a real goal page, but the sheet carried no page-view rule at all, so links took the browser's default anchor colour on `#1a1a1a` and were invisible)
 
