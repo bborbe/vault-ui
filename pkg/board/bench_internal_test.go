@@ -290,11 +290,10 @@ func benchBoard(tb testing.TB) *board {
 		Clock: libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
 			return libtime.DateTime(benchNow)
 		}),
-		Signals:   benchSignals{},
-		Sessions:  benchProbe{},
-		Index:     benchIndex{},
-		PageIndex: pageIndex,
-		HomeDir:   benchHomeDir,
+		Signals:  benchSignals{},
+		Sessions: benchProbe{},
+		Index:    benchIndex{},
+		HomeDir:  benchHomeDir,
 	}).(*board)
 }
 

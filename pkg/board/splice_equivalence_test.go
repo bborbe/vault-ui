@@ -101,11 +101,10 @@ func newSpliceHarness(pages ...*domain.Page) *spliceHarness {
 		Clock: libtime.CurrentDateTimeGetterFunc(
 			func() libtime.DateTime { return libtime.DateTime(baseTime) },
 		),
-		Signals:   fakeSignals{},
-		Sessions:  probe,
-		Index:     index,
-		PageIndex: pageIndex,
-		Source:    sourceFromPages(pages),
+		Signals:  fakeSignals{},
+		Sessions: probe,
+		Index:    index,
+		Source:   sourceFromPages(pages),
 	})
 	return h
 }

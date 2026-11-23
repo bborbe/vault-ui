@@ -162,15 +162,14 @@ func CreateAPIHandler(
 	// not V(2).
 	glog.Infof("board reads tasks from vault-api at %s", vaultSource.BaseURL())
 	service := board.New(board.Deps{
-		Vaults:    &vaultProvider{loader: loader, configPath: configPath},
-		Ops:       opsProvider{source: vaultSource},
-		Cache:     cache,
-		Launch:    launches,
-		Clock:     libtime.NewCurrentDateTime(),
-		Signals:   sessionSnapshot,
-		Sessions:  sessionSnapshot,
-		Index:     vaultSource,
-		PageIndex: pageIndex,
+		Vaults:   &vaultProvider{loader: loader, configPath: configPath},
+		Ops:      opsProvider{source: vaultSource},
+		Cache:    cache,
+		Launch:   launches,
+		Clock:    libtime.NewCurrentDateTime(),
+		Signals:  sessionSnapshot,
+		Sessions: sessionSnapshot,
+		Index:    vaultSource,
 		// The pane resolver is wired here, not just into the mutation service: the
 		// board uses it to stamp each live card's jump_pane. Left nil, the field is
 		// always null, the frontend renders no jump control on any card, and every

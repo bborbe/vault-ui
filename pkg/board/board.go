@@ -22,7 +22,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
@@ -121,9 +120,6 @@ type Deps struct {
 	// store's rebuild input and the row patch's page source.
 	// pageindex.PageIndex satisfies it.
 	Index IndexRevisions
-	// PageIndex serves a vault's task pages, which the board reads for the one
-	// derived field its list rows do not carry: a task's Open Questions section.
-	PageIndex pageindex.PageIndex
 	// Panes resolves the pane of each live session so a card can offer a jump
 	// only when one exists. A nil value means no panes: every card carries a null
 	// jump_pane, and the feature is inert. Production wires it in
@@ -150,37 +146,35 @@ type Board interface {
 }
 
 type board struct {
-	vaults    VaultsProvider
-	ops       OpsProvider
-	cache     statuscache.Cache
-	launch    launchregistry.Registry
-	clock     libtime.CurrentDateTimeGetter
-	signals   SessionSignals
-	sessions  SessionProbe
-	index     IndexRevisions
-	pageIndex pageindex.PageIndex
-	panes     PanesResolver
-	source    *vaultapi.Source
-	homeDir   string
-	snapshot  *taskSnapshotStore
-	bodies    *taskBodyCache
+	vaults   VaultsProvider
+	ops      OpsProvider
+	cache    statuscache.Cache
+	launch   launchregistry.Registry
+	clock    libtime.CurrentDateTimeGetter
+	signals  SessionSignals
+	sessions SessionProbe
+	index    IndexRevisions
+	panes    PanesResolver
+	source   *vaultapi.Source
+	homeDir  string
+	snapshot *taskSnapshotStore
+	bodies   *taskBodyCache
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
 	b := &board{
-		vaults:    deps.Vaults,
-		ops:       deps.Ops,
-		cache:     deps.Cache,
-		launch:    deps.Launch,
-		clock:     deps.Clock,
-		signals:   deps.Signals,
-		sessions:  deps.Sessions,
-		index:     deps.Index,
-		pageIndex: deps.PageIndex,
-		panes:     deps.Panes,
-		source:    deps.Source,
-		homeDir:   deps.HomeDir,
+		vaults:   deps.Vaults,
+		ops:      deps.Ops,
+		cache:    deps.Cache,
+		launch:   deps.Launch,
+		clock:    deps.Clock,
+		signals:  deps.Signals,
+		sessions: deps.Sessions,
+		index:    deps.Index,
+		panes:    deps.Panes,
+		source:   deps.Source,
+		homeDir:  deps.HomeDir,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,
