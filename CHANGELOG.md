@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.112.6
 
 - fix: The `↗` jump control now renders on live goal and topic cards, not only task cards — `GoalResponse` and `TopicResponse` carry `jump_pane` resolved once per list build (the same batch `ResolveAll` the task path uses), `POST /api/goals/{id}/jump` and `POST /api/topics/{id}/jump` activate the pane through the shared server-side jump credential, and `jumpToPane` routes by kind with the topic cache's vault-qualified key; a live topic card also gains the `● Live·<location>` label goals and tasks already carry, since `TopicResponse` now emits `location`
 
