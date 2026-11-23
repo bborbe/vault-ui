@@ -1,8 +1,10 @@
 ---
-status: approved
+status: completed
 spec: [040-page-view]
+summary: The in-process page renderer landed with prompt 186's implementation — pkg/pageview/pageview.go renders through vault-markdown and serves the /v and /open routes.
 created: "2026-11-23T14:00:00Z"
 queued: "2026-11-23T14:44:06Z"
+completed: "2026-11-23T16:50:00Z"
 branch: feat/page-view
 ---
 

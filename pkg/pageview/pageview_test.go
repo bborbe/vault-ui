@@ -192,6 +192,26 @@ func TestPageViewNotFoundCases(t *testing.T) {
 	}
 }
 
+func TestPageViewSymlinkEscapeIsNotFound(t *testing.T) {
+	dir := newFixture(t)
+	outside := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(outside, []byte("---\ntitle: Secret\n---\n\n# Secret\n"), 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "Escape.md")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	service := newService(t, dir)
+	_, err := service.Render(context.Background(), vaultName, "Escape.md")
+	if err == nil {
+		t.Fatalf("expected a NotFoundError for a symlink escaping the vault")
+	}
+	var notFound pageview.NotFoundError
+	if !stderrors.As(err, &notFound) {
+		t.Fatalf("error = %v, want NotFoundError", err)
+	}
+}
+
 func TestPageViewExists(t *testing.T) {
 	dir := newFixture(t)
 	service := newService(t, dir)

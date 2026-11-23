@@ -1,8 +1,10 @@
 ---
-status: approved
+status: completed
 spec: [040-page-view]
+summary: The page route's hardening landed with prompt 186's implementation — traversal rejection, 405 on write verbs, unknown-vault 404, script-tag drop, static fallback and symlink escape are covered by pkg/handler/page_test.go and pkg/pageview/pageview_test.go.
 created: "2026-11-23T14:20:00Z"
 queued: "2026-11-23T14:39:39Z"
+completed: "2026-11-23T16:50:00Z"
 branch: feat/page-view
 ---
 

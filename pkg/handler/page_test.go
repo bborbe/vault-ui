@@ -174,6 +174,39 @@ func TestPageRouteRendersAndIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestPageRouteRendersScriptAsText(t *testing.T) {
+	vaultDir := newPageFixture(t)
+	router := newPageTestRouter(t, vaultDir)
+
+	recorder := doPageRequest(router, http.MethodGet, "/v/private-personal/page/Echo.md")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Fatalf("page body carries an executable script tag:\n%s", body)
+	}
+	if strings.Contains(body, "alert(1)") {
+		t.Fatalf("page body carries the script text:\n%s", body)
+	}
+	if !strings.Contains(body, "<!-- raw HTML omitted -->") {
+		t.Fatalf("page body does not record that the raw HTML was dropped:\n%s", body)
+	}
+}
+
+func TestPageRouteFallsBackToStaticTree(t *testing.T) {
+	vaultDir := newPageFixture(t)
+	router := newPageTestRouter(t, vaultDir)
+
+	recorder := doPageRequest(router, http.MethodGet, "/")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "index") {
+		t.Fatalf("static fallback body = %q", recorder.Body.String())
+	}
+}
+
 func TestOpenRedirectsObsidianParameters(t *testing.T) {
 	vaultDir := newPageFixture(t)
 	router := newPageTestRouter(t, vaultDir)
