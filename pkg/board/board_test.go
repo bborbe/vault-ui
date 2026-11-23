@@ -1305,6 +1305,8 @@ var _ = Describe("ListTopics", func() {
 			"flag",
 			"id",
 			"jira",
+			"jump_pane",
+			"location",
 			"mode",
 			"obsidian_url",
 			"phase",

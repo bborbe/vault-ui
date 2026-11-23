@@ -1581,12 +1581,12 @@ function sessionButtonHtml(kind, item) {
         // badge's click ENDS the session, so navigation must not ride on it. It
         // follows pane availability, not session state: a headless session is live
         // but has no terminal, so offering the control would only fail after the
-        // click. It is also task-only — a goal card has no jump route. Route:
-        // POST /tasks/{id}/jump.
-        if (kind !== 'task' || !item.jump_pane) {
+        // click. The control is identical for tasks, goals and topics — every kind
+        // carries the session slot and the same `POST /{kind}/{id}/jump` route.
+        if (!item.jump_pane) {
             return liveBadge;
         }
-        return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}')" title="Jump to this session's terminal pane">↗</span>`;
+        return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}', '${escapeJsAttr(item.vault)}')" title="Jump to this session's terminal pane">↗</span>`;
     } else if (hasSession) {
         if (item.session_state === 'indeterminate') {
             // Session id present but no transcript found — cannot prove it dead
@@ -2312,20 +2312,21 @@ async function takeOverSession(kind, id, vault) {
 // published in the served page) and activates the pane. Mirrors takeOverSession's
 // guard + cache lookup, but is NOT destructive — the badge stays the take-over
 // affordance; this only moves the operator's focus.
-async function jumpToPane(kind, id) {
+async function jumpToPane(kind, id, vault) {
     // Arg-injection guard (mirrors takeOverSession).
     if (typeof id === 'string' && id.startsWith('-')) {
         showToast('Invalid id', true);
         return;
     }
 
-    const base = kind === 'goal' ? 'goals' : 'tasks';
-    const cache = kind === 'goal' ? goalsCache : tasksCache;
-    const item = cache[id];
+    // One lookup for all three kinds: the topic cache is vault-qualified, the
+    // task and goal caches are keyed by id alone (see sessionCacheItem).
+    const item = sessionCacheItem(kind, id, vault);
     if (!item) {
-        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
+        showToast(`${kindLabel(kind)} not found in cache`, true);
         return;
     }
+    const base = sessionRouteFor(kind);
 
     try {
         const response = await fetch(

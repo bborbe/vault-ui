@@ -116,6 +116,10 @@ type GoalResponse struct {
 	// Location is the location the attention store reports for the goal's live
 	// session, on the same terms as TaskResponse.Location.
 	Location *string `json:"location"`
+	// JumpPane is the WezTerm pane the goal's live session resolves to, on the
+	// same terms as TaskResponse.JumpPane: Go-only, null when no pane resolves,
+	// so the card offers a jump only when one exists.
+	JumpPane *string `json:"jump_pane"`
 	// Mode is the goal page's own `mode:` frontmatter value, carried verbatim
 	// and null when the page carries none, on the same terms as
 	// TaskResponse.Mode.
@@ -140,6 +144,13 @@ type TopicResponse struct {
 	// null when the page records none. It is the id the card's Resume button
 	// hands to `claude --resume`.
 	ClaudeSessionID *string `json:"claude_session_id"`
+	// Location is the location the attention store reports for the topic's live
+	// session, on the same terms as GoalResponse.Location, so the live badge
+	// reads the same on a topic card as on a goal card.
+	Location *string `json:"location"`
+	// JumpPane is the WezTerm pane the topic's live session resolves to, on the
+	// same terms as TaskResponse.JumpPane: Go-only, null when no pane resolves.
+	JumpPane *string `json:"jump_pane"`
 	// ClaudeSessionStarted is the durable launch marker a Start writes and the
 	// take-over clears, on the same terms as
 	// GoalResponse.ClaudeSessionStarted: always emitted, null when no launch is
