@@ -28,6 +28,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/golang/glog"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -36,6 +37,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sigterm"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -64,6 +66,24 @@ type EventPublisher interface {
 	PublishGoalUpdated(ctx context.Context, vault, goalID string)
 	PublishTopicUpdated(ctx context.Context, vault, topicID string)
 	PublishWriteFailed(ctx context.Context, vault, itemKind, itemID, reason string)
+}
+
+// Refresher re-reads the board's read source so it reflects a write that just
+// landed. vaultapi.Source satisfies it; without it the UI's refetch after the
+// update frame would hit the poll cache and return pre-write rows.
+//
+//counterfeiter:generate -o ./mocks/refresher.go --fake-name Refresher . Refresher
+type Refresher interface {
+	Refresh(ctx context.Context) error
+}
+
+// PendingRecorder remembers the fields a successful write set, so the board's
+// list reads keep showing them until vault-api's cache catches up with disk.
+// vaultapi.Source satisfies it.
+//
+//counterfeiter:generate -o ./mocks/pending_recorder.go --fake-name PendingRecorder . PendingRecorder
+type PendingRecorder interface {
+	RecordPending(vault, kind, id string, fields vaultapi.PendingFields)
 }
 
 // WriteQueue accepts one vault write for asynchronous, per-vault FIFO
@@ -101,6 +121,8 @@ type Deps struct {
 	Launch       launchregistry.Registry
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
+	Refresher    Refresher
+	Pending      PendingRecorder
 	Queue        WriteQueue
 	Clock        libtime.CurrentDateTimeGetter
 	Scanner      session.ProcessScanner
@@ -214,13 +236,27 @@ func failureReason(err error) string {
 // name a file exactly.
 func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(context.Context) {
 	return func(ctx context.Context) {
+		s.refreshSource(ctx)
 		s.deps.Publisher.PublishTaskUpdated(ctx, vault.Name, taskID)
+	}
+}
+
+// refreshSource re-reads the board's read source before the update frame is
+// published, so the client's refetch sees the write. A refresh failure is
+// logged and the frame still goes out: the 10s poll catches the row up.
+func (s *service) refreshSource(ctx context.Context) {
+	if s.deps.Refresher == nil {
+		return
+	}
+	if err := s.deps.Refresher.Refresh(ctx); err != nil {
+		glog.Warningf("refresh vault-api source after write: %v", err)
 	}
 }
 
 // goalWritten is taskWritten for a publishing goal route.
 func (s *service) goalWritten(vault vaultconfig.Vault, goalID string) func(context.Context) {
 	return func(ctx context.Context) {
+		s.refreshSource(ctx)
 		s.deps.Publisher.PublishGoalUpdated(ctx, vault.Name, goalID)
 	}
 }
@@ -233,6 +269,21 @@ func (s *service) itemWrittenSilently(
 	return func(context.Context) {
 	}
 }
+
+// recordPending records a successful write's field values on the board's read
+// source before the update frame goes out, keyed by vault-api's vault name.
+func (s *service) recordPending(
+	vault vaultconfig.Vault, kind, itemID string, fields vaultapi.PendingFields,
+) {
+	if s.deps.Pending == nil {
+		return
+	}
+	s.deps.Pending.RecordPending(vault.VaultName, kind, itemID, fields)
+}
+
+func strPtr(v string) *string { return &v }
+
+func boolPtr(v bool) *bool { return &v }
 
 // requireSafeID rejects an identifier beginning with '-' before any vault
 // operation runs — the Python argument-injection guard.

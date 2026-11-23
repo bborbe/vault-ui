@@ -197,6 +197,7 @@ func CreateAPIHandler(
 	mutationsService := CreateMutationService(
 		loader, configPath, launches, locks, homeDir,
 		paneResolver, websocket.NewMutationPublisher(manager), writeQueue,
+		vaultSource, vaultSource,
 	)
 	pages := pageview.NewService(vaults, storage.NewPageStorage(nil))
 	return handler.CreateHTTPRouter(

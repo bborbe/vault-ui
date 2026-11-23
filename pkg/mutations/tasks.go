@@ -18,6 +18,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/cleanup"
 	"github.com/bborbe/vault-ui/pkg/sessionresolver"
 	"github.com/bborbe/vault-ui/pkg/terminate"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -527,6 +528,9 @@ func (s *service) AssignTaskToMe(
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}
+		s.recordPending(resolved, vaultapi.KindTask, taskID, vaultapi.PendingFields{
+			Assignee: strPtr(assignee),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -560,7 +564,13 @@ func (s *service) UpdateTaskPhase(
 		set := s.opsForVault(resolved)
 		task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 		if showErr == nil && req.Phase == "planning" && task.Phase == "todo" {
-			return s.approveTask(ctx, resolved, set, taskID, req.Answers)
+			if approveErr := s.approveTask(ctx, resolved, set, taskID, req.Answers); approveErr != nil {
+				return approveErr
+			}
+			s.recordPending(resolved, vaultapi.KindTask, taskID, vaultapi.PendingFields{
+				Phase: strPtr(req.Phase),
+			})
+			return nil
 		}
 		if setErr := set.FrontmatterSet.Execute(
 			ctx, resolved.Path, taskID, "phase", req.Phase, "", "", "", false,
@@ -586,6 +596,11 @@ func (s *service) UpdateTaskPhase(
 				return newHTTPError(500, setErr.Error())
 			}
 		}
+		pending := vaultapi.PendingFields{Phase: strPtr(req.Phase)}
+		if newStatus != "" {
+			pending.Status = strPtr(newStatus)
+		}
+		s.recordPending(resolved, vaultapi.KindTask, taskID, pending)
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -777,6 +792,7 @@ func (s *service) UpdateFlag(
 			); setErr != nil {
 				return newHTTPError(500, setErr.Error())
 			}
+			s.recordPending(resolved, kind, itemID, vaultapi.PendingFields{Flag: boolPtr(true)})
 			return nil
 		}
 		if clearErr := target.ops.FrontmatterClear.Execute(
@@ -784,6 +800,7 @@ func (s *service) UpdateFlag(
 		); clearErr != nil {
 			return newHTTPError(500, clearErr.Error())
 		}
+		s.recordPending(resolved, kind, itemID, vaultapi.PendingFields{Flag: boolPtr(false)})
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -823,6 +840,9 @@ func (s *service) UpdateTaskStatus(
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}
+		s.recordPending(resolved, vaultapi.KindTask, taskID, vaultapi.PendingFields{
+			Status: strPtr(req.Status),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -857,6 +877,9 @@ func (s *service) ClearTaskSession(
 		); clearErr != nil {
 			return newHTTPError(500, clearErr.Error())
 		}
+		s.recordPending(resolved, vaultapi.KindTask, taskID, vaultapi.PendingFields{
+			ClaudeSessionID: strPtr(""),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -923,6 +946,9 @@ func (s *service) SetTaskSession(
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}
+		s.recordPending(resolved, vaultapi.KindTask, taskID, vaultapi.PendingFields{
+			ClaudeSessionID: strPtr(storedValue),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(

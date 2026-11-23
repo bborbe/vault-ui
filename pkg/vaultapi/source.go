@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bborbe/errors"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 )
 
@@ -34,6 +36,10 @@ type Source struct {
 
 	onChange func()
 
+	// refreshMu serialises whole polls (fetch + swap) across the ticker and
+	// Refresh callers.
+	refreshMu sync.Mutex
+
 	mu          sync.RWMutex
 	revision    uint64
 	tasks       []Task
@@ -42,11 +48,19 @@ type Source struct {
 	loaded      bool
 	unavailable bool
 	lastHash    [32]byte
+
+	// pending lays board writes vault-api has not reflected yet over the
+	// cached rows the list path serves.
+	pending *Overlay
 }
 
 // NewSource returns a Source polling client every DefaultPollInterval.
 func NewSource(client Client) *Source {
-	return &Source{client: client, interval: DefaultPollInterval}
+	return &Source{
+		client:   client,
+		interval: DefaultPollInterval,
+		pending:  NewOverlay(libtime.NewCurrentDateTime(), DefaultPendingTTL),
+	}
 }
 
 // NewSourceFromData returns a Source primed with fixed data and a non-zero
@@ -61,7 +75,15 @@ func NewSourceFromData(tasks []Task, goals []Goal, topics []Topic) *Source {
 		loaded:   true,
 		revision: 1,
 		lastHash: hashLists(tasks, goals, topics),
+		pending:  NewOverlay(libtime.NewCurrentDateTime(), DefaultPendingTTL),
 	}
+}
+
+// RecordPending records the fields a successful board write set on (vault,
+// kind, id), so the list path keeps serving them until vault-api catches up.
+// vault is the vault-api vault name, id the item's title.
+func (s *Source) RecordPending(vault, kind, id string, fields PendingFields) {
+	s.pending.Record(vault, kind, id, fields)
 }
 
 // SetOnChange installs the callback run after a poll observes changed content.
@@ -85,7 +107,7 @@ func (s *Source) BaseURL() string {
 // Run polls until ctx is done. Its first poll runs synchronously so the board
 // has data as soon as the run group starts serving.
 func (s *Source) Run(ctx context.Context) error {
-	s.poll(ctx)
+	_ = s.poll(ctx)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -93,32 +115,47 @@ func (s *Source) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			s.poll(ctx)
+			_ = s.poll(ctx)
 		}
 	}
+}
+
+// Refresh runs one poll synchronously and returns the first fetch error. The
+// mutation service calls it after a write so the next read of the cache sees the
+// write instead of the pre-write rows the 10s ticker has not replaced yet. It is
+// safe to call concurrently with Run: the cache is only swapped under the lock,
+// and refreshMu serialises overlapping polls so a stale fetch cannot overwrite a
+// newer one.
+func (s *Source) Refresh(ctx context.Context) error {
+	if s.client == nil {
+		return nil
+	}
+	return s.poll(ctx)
 }
 
 // poll fetches every list and advances the revision only when the content
 // changed. A failed fetch keeps the last-good cache (the board serves
 // last-known rows; the unavailable state is a later step) and logs the failure.
-func (s *Source) poll(ctx context.Context) {
+func (s *Source) poll(ctx context.Context) error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 	tasks, err := s.client.ListTasks(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll tasks: %v", err)
 		s.setUnavailable(true)
-		return
+		return errors.Wrap(ctx, err, "poll tasks")
 	}
 	goals, err := s.client.ListGoals(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll goals: %v", err)
 		s.setUnavailable(true)
-		return
+		return errors.Wrap(ctx, err, "poll goals")
 	}
 	topics, err := s.client.ListTopics(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll topics: %v", err)
 		s.setUnavailable(true)
-		return
+		return errors.Wrap(ctx, err, "poll topics")
 	}
 	hash := hashLists(tasks, goals, topics)
 
@@ -137,6 +174,7 @@ func (s *Source) poll(ctx context.Context) {
 	if changed && onChange != nil {
 		onChange()
 	}
+	return nil
 }
 
 // setUnavailable records the source's reachability after a poll.
@@ -176,11 +214,14 @@ func (s *Source) Topics(vaultName string) []Topic {
 }
 
 // Revision implements board.IndexRevisions. The global revision advances when
-// any vault's list content changes.
+// any vault's list content changes, and also when the pending-write overlay
+// changes: the board caches its task snapshot by this revision, so a write
+// recorded on the overlay must move it or the cached pre-write rows are served.
 func (s *Source) Revision(_ SnapshotKey) uint64 {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.revision
+	revision := s.revision
+	s.mu.RUnlock()
+	return revision + s.pending.Version()
 }
 
 // hashLists hashes the three lists so a change in any item advances the
