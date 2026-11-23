@@ -884,11 +884,11 @@ var _ = Describe("Mutation service edge branches", func() {
 		})
 
 		It("approves a todo task before failing on the unavailable starter", func() {
-			// An explicit missing launcher makes WorkOn fail in sessionPair
-			// before its own status write, so the approval's status: next is
-			// still on disk when RunTask returns.
+			// An explicit missing launcher makes WorkOn fail in sessionPair before
+			// its own status write, so the approval's phase move is on disk and the
+			// row's status is unchanged when RunTask returns.
 			writeFile(filepath.Join(h.dir, "24 Tasks", taskOneID+".md"),
-				"---\nstatus: todo\nphase: todo\nlauncher: missing-launcher\n---\n\n# Task One\n")
+				"---\nstatus: next\nphase: todo\nlauncher: missing-launcher\n---\n\n# Task One\n")
 			_, err := h.service.RunTask(ctx, "personal", taskOneID)
 			Expect(httpStatus(err)).To(Equal(500))
 			content := h.readTask(taskOneID)
@@ -1545,7 +1545,7 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 	})
 
 	It("approves a todo task instead of writing the phase and status by hand", func() {
-		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice")
+		h.writeTodoTask("Inbox", "status: next\nphase: todo\nassignee: alice")
 
 		result, err := h.service.UpdateTaskPhase(
 			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
@@ -1554,8 +1554,8 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(result.Phase).To(Equal("planning"))
 		h.drain()
 
-		// status is next, not in_progress: in_progress is the write that removes
-		// a freshly approved row from the ready-to-start bucket.
+		// Approval is phase-only: the status the row carried is preserved
+		// byte-identical, never demoted and never promoted.
 		content := h.readTask("Inbox")
 		Expect(content).To(ContainSubstring("phase: planning"))
 		Expect(content).To(ContainSubstring("status: next"))
@@ -1567,9 +1567,56 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
 	})
 
+	It("promotes a legacy todo row to next on approval", func() {
+		// The promotion spec 035 pins: an approved inbox row must stay in the
+		// manager sweep's ready-to-start bucket.
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: next"))
+	})
+
+	It("promotes a backlog row to next on approval", func() {
+		h.writeTodoTask("Inbox", "status: backlog\nphase: todo\nassignee: alice")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: next"))
+	})
+
+	It("preserves an active task's in_progress status instead of demoting it to next", func() {
+		// The falsifier for the demotion bug: an approved row that was already
+		// active must come back active, not queued.
+		h.writeTodoTask("Inbox", "status: in_progress\nphase: todo\nassignee: alice")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: in_progress"))
+		Expect(content).NotTo(ContainSubstring("status: next"))
+	})
+
 	It("records the answers the approval carries", func() {
 		h.writeTodoTaskWithQuestions(
-			"Inbox", "status: todo\nphase: todo\nassignee: alice",
+			"Inbox", "status: next\nphase: todo\nassignee: alice",
 			"Which database?", "Which region?",
 		)
 

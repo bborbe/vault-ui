@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.112.5
+
+- fix: Approving a task from the board no longer demotes an active row — a todo→planning drag writes `phase: planning` plus `approved_by`/`approved_at`, promotes only a legacy `todo`/`backlog` status to `next` (the spec-035 ready-to-start contract), and leaves every other status byte-identical, so an `in_progress` row stays active instead of being demoted to `next`; `vault-cli task approve` stopped rewriting status itself in v0.167.1
+
 ## v0.112.4
 
 - fix: A completed or aborted card no longer offers **Resume** or **Live** — the terminal gate now sits first in `sessionButtonHtml`, so a closed row renders the **Done** chip only and never a session control, even when it still carries a `claude_session_id`; open cards are unchanged
