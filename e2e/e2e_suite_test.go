@@ -61,6 +61,17 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(err).NotTo(HaveOccurred())
 })
 
+// AfterEach restores the fixture stub if a spec left it down. Ginkgo
+// randomises spec order, so a spec that simulates an outage and fails before
+// its own restart would strand every spec scheduled after it with no source —
+// their boards then render last-good rows that never change. Restoring here
+// makes the outage a spec-local state rather than a suite-wide one.
+var _ = AfterEach(func(ctx SpecContext) {
+	if stubServer == nil {
+		Expect(restartStub(ctx)).To(Succeed(), "restore the fixture stub for the next spec")
+	}
+})
+
 var _ = AfterSuite(func() {
 	stopStub()
 	stopBinary()

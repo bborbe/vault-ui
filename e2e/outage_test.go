@@ -23,7 +23,7 @@ var _ = Describe("Scenario: vault-api outage", func() {
 		page := newPage("/")
 		Eventually(func() int { return countOf(page, ".task-card") }, "20s", "500ms").
 			Should(BeNumerically(">", 0), "the board fetches from the stub vault-api")
-		rows := countOf(page, ".task-card")
+		rows := settledCount(page, ".task-card")
 		Expect(rows).To(BeNumerically(">", 0))
 		// The banner is absent while the source is healthy — the half that makes
 		// the down-state assertion discriminating (a permanently-rendered banner
@@ -35,8 +35,10 @@ var _ = Describe("Scenario: vault-api outage", func() {
 		_ = page.Close()
 
 		// Down: close the stub, and wait for the source's next poll to record it.
+		// No deferred stopStub here: it ran after the restart below and left the
+		// suite with no source for every spec that followed. The suite's
+		// AfterEach restores the stub if this spec fails mid-outage.
 		stopStub()
-		defer stopStub()
 		Eventually(func() bool { return sourceUnavailable() }, "25s", "500ms").
 			Should(BeTrue(), "the source polls every 10s; the outage registers on the next tick")
 
@@ -47,7 +49,8 @@ var _ = Describe("Scenario: vault-api outage", func() {
 			visible, err := banner.IsVisible()
 			return err == nil && visible
 		}, "10s", "200ms").Should(BeTrue(), "the banner renders on a load during the outage")
-		Expect(countOf(downPage, ".task-card")).To(Equal(rows), "the board keeps its last-good rows")
+		Eventually(func() int { return countOf(downPage, ".task-card") }, "10s", "300ms").
+			Should(Equal(rows), "the board keeps its last-good rows")
 		_ = downPage.Close()
 
 		// Recovery: restart the stub. The next poll clears the flag, and a fresh
@@ -63,7 +66,8 @@ var _ = Describe("Scenario: vault-api outage", func() {
 			visible, err := recoveredBanner.IsVisible()
 			return err == nil && !visible
 		}, "10s", "200ms").Should(BeTrue(), "the banner is absent after the source recovers")
-		Expect(countOf(recoveredPage, ".task-card")).To(Equal(rows), "the rows are back after recovery")
+		Eventually(func() int { return countOf(recoveredPage, ".task-card") }, "20s", "500ms").
+			Should(Equal(rows), "the rows are back after recovery")
 	})
 })
 
