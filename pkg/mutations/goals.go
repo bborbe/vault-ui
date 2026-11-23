@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bborbe/vault-ui/pkg/api"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // goalNotFound is the Python 404 text for a missing goal on the run route.
@@ -181,6 +182,9 @@ func (s *service) UpdateGoalStatus(
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}
+		s.recordPending(resolved, vaultapi.KindGoal, goalID, vaultapi.PendingFields{
+			Status: strPtr(req.Status),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -263,6 +267,9 @@ func (s *service) AssignGoalToMe(
 		); setErr != nil {
 			return newHTTPError(500, setErr.Error())
 		}
+		s.recordPending(resolved, vaultapi.KindGoal, goalID, vaultapi.PendingFields{
+			Assignee: strPtr(assignee),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(
@@ -298,6 +305,9 @@ func (s *service) ClearGoalSession(
 		// Best-effort: the id clear already succeeded, so a failure here
 		// self-heals on the next cleanup pass rather than failing the reset.
 		_ = set.GoalClear.Execute(ctx, resolved.Path, goalID, "claude_session_started")
+		s.recordPending(resolved, vaultapi.KindGoal, goalID, vaultapi.PendingFields{
+			ClaudeSessionID: strPtr(""),
+		})
 		return nil
 	}
 	if err := s.enqueueWrite(

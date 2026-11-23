@@ -74,6 +74,30 @@ var _ = Describe("Source", func() {
 		Expect(source.Revision(SnapshotKey{})).To(BeNumerically(">", revision))
 	})
 
+	It("Refresh polls synchronously so a read after it sees the new rows", func() {
+		client := &fakeClient{tasks: []Task{{Title: "First", Vault: "personal"}}}
+		source := NewSource(client)
+		Expect(source.Refresh(context.Background())).To(Succeed())
+		Expect(source.Tasks("personal")).To(HaveLen(1))
+
+		client.tasks = append(client.tasks, Task{Title: "Second", Vault: "personal"})
+		Expect(source.Refresh(context.Background())).To(Succeed())
+		Expect(source.Tasks("personal")).To(HaveLen(2))
+	})
+
+	It("Refresh returns the fetch error and keeps the last-good rows", func() {
+		source := NewSourceFromData([]Task{{Title: "Kept", Vault: "personal"}}, nil, nil)
+		source.client = &failingClient{}
+		Expect(source.Refresh(context.Background())).To(HaveOccurred())
+		Expect(source.Unavailable()).To(BeTrue())
+		Expect(source.Tasks("personal")).To(HaveLen(1))
+	})
+
+	It("Refresh is a no-op for a source with no client", func() {
+		source := NewSourceFromData(nil, nil, nil)
+		Expect(source.Refresh(context.Background())).To(Succeed())
+	})
+
 	It("records unavailability on a failed poll", func() {
 		source := NewSource(&failingClient{})
 		source.poll(context.Background())
