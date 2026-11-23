@@ -3,8 +3,9 @@
 // license that can be found in the LICENSE file.
 
 // Package pageview renders a vault page to HTML in-process, reusing the
-// released github.com/bborbe/vault-markdown renderer and the board's on-demand
-// page read. Every render reads the page from disk; nothing is cached.
+// released github.com/bborbe/vault-markdown renderer and a vault-wide page read.
+// The wikilink/backlink index spans the whole vault, not one folder, so a goal
+// linking a task resolves. The index is cached briefly to keep a page view cheap.
 package pageview
 
 import (
@@ -12,8 +13,12 @@ import (
 	"html/template"
 	"io/fs"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	stderrors "errors"
 
@@ -24,6 +29,11 @@ import (
 
 	"github.com/bborbe/vault-ui/pkg/board"
 )
+
+// indexTTL bounds how stale the cached vault index may be. A page view is a
+// read-only surface; a 30s lag after an edit is acceptable and keeps the walk
+// off the hot path.
+const indexTTL = 30 * time.Second
 
 // PageStorage is the narrow page-read seam the service reads through. It is
 // satisfied by vault-cli's storage.PageStorage.
@@ -52,6 +62,15 @@ type Service interface {
 	Exists(ctx context.Context, vaultName string, pagePath string) (bool, error)
 }
 
+// vaultIndex is the vault-wide page map: name→body and name→relative path for
+// the resolver, and relative path→body for backlinks.
+type vaultIndex struct {
+	built  time.Time
+	byName map[string]string
+	paths  map[string]string
+	bodies map[string]string
+}
+
 // PageURL returns /v/{vault}/page/{path} with each path segment escaped and the
 // slashes between segments preserved.
 func PageURL(vaultName, pagePath string) string {
@@ -66,16 +85,19 @@ func PageURL(vaultName, pagePath string) string {
 // NewService returns the page-rendering service over the vault set and the
 // page-index read seam.
 func NewService(vaults board.VaultsProvider, pages PageStorage) Service {
-	return &service{vaults: vaults, pages: pages}
+	return &service{vaults: vaults, pages: pages, index: map[string]*vaultIndex{}}
 }
 
 type service struct {
 	vaults board.VaultsProvider
 	pages  PageStorage
+
+	mu    sync.Mutex
+	index map[string]*vaultIndex
 }
 
-// Render reads the requested page, lists its folder once to build the
-// wikilink/embed/backlink maps, and renders the page wrapped in a document.
+// Render reads the requested page, builds (or reuses) the vault-wide index, and
+// renders the page wrapped in a document.
 func (s *service) Render(
 	ctx context.Context,
 	vaultName string,
@@ -93,19 +115,24 @@ func (s *service) Render(
 	if err != nil {
 		return "", err
 	}
-	pagesByName, backlinkPages, err := s.loadPages(ctx, vault, pagesDir, page)
+	idx, err := s.loadIndex(ctx, vault)
 	if err != nil {
 		return "", err
 	}
-	rendered, err := newRenderer(vault.Name, pagesDir, pagesByName).Render(
+	// Overlay the freshly-read page so an edit is reflected before the TTL.
+	idx.byName[name] = string(page.Content)
+	idx.paths[name] = pagePath
+	idx.bodies[pagePath] = string(page.Content)
+
+	rendered, err := newRenderer(vault.Name, idx.paths, idx.byName).Render(
 		ctx,
 		string(page.Content),
 	)
 	if err != nil {
 		return "", errors.Wrap(ctx, err, "render page")
 	}
-	backlinks := markdown.Backlinks(backlinkPages, name)
-	return buildDocument(ctx, vault, pagePath, name, rendered, backlinks, pagesDir)
+	backlinks := markdown.Backlinks(idx.bodies, name)
+	return buildDocument(ctx, vault, pagePath, name, rendered, backlinks)
 }
 
 // Exists resolves the vault and path, then reads the page once. A missing page,
@@ -152,7 +179,8 @@ func (s *service) resolveVault(
 }
 
 // readPage reads one page and maps a missing file or a symlink escape to a
-// NotFoundError. Any other read error is returned unchanged for a 500.
+// NotFoundError. A page without frontmatter is read raw and rendered rather than
+// rejected — the vault holds real pages that carry none.
 func (s *service) readPage(
 	ctx context.Context,
 	vault board.Vault,
@@ -164,56 +192,112 @@ func (s *service) readPage(
 		if isMissing(err) {
 			return nil, NotFoundError{Message: "Page not found: " + path.Join(pagesDir, name)}
 		}
+		if isNoFrontmatter(err) {
+			full := filepath.Join(vault.Path, pagesDir, name+".md")
+			raw, readErr := readVaultFile(ctx, full)
+			if readErr != nil {
+				if isMissing(readErr) {
+					return nil, NotFoundError{Message: "Page not found: " + path.Join(pagesDir, name)}
+				}
+				return nil, readErr
+			}
+			return &domain.Page{
+				FileMetadata: domain.FileMetadata{Name: name, FilePath: full},
+				Content:      domain.Content(raw),
+			}, nil
+		}
 		return nil, err
 	}
 	return page, nil
 }
 
-// loadPages lists the folder exactly once and reads every other page once to
-// build the name-keyed body map and the filename-keyed backlink map. The
-// requested page's body is reused, never read a second time.
-func (s *service) loadPages(
-	ctx context.Context,
-	vault board.Vault,
-	pagesDir string,
-	requested *domain.Page,
-) (map[string]string, map[string]string, error) {
-	listed, err := s.pages.ListPages(ctx, vault.Path, pagesDir)
+// readVaultFile reads a page file, refusing a symlink so a page cannot escape
+// the vault through one. Mirrors the storage layer's symlink guard.
+func readVaultFile(ctx context.Context, full string) (string, error) {
+	info, err := os.Lstat(full)
 	if err != nil {
-		return nil, nil, errors.Wrap(ctx, err, "list pages")
+		return "", errors.Wrap(ctx, err, "lstat page")
 	}
-	body := string(requested.Content)
-	pagesByName := make(map[string]string, len(listed)+1)
-	backlinkPages := make(map[string]string, len(listed)+1)
-	pagesByName[requested.Name] = body
-	backlinkPages[requested.Name+".md"] = body
-	for _, page := range listed {
-		if page == nil || page.Name == requested.Name {
-			continue
-		}
-		read, readErr := s.pages.ReadPage(ctx, vault.Path, pagesDir, page.Name)
-		if readErr != nil {
-			glog.V(2).Infof("skip page %s for page view: %v", page.Name, readErr)
-			continue
-		}
-		pagesByName[page.Name] = string(read.Content)
-		backlinkPages[page.Name+".md"] = string(read.Content)
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.Errorf(ctx, "symlink outside vault: %s", full)
 	}
-	return pagesByName, backlinkPages, nil
+	raw, err := os.ReadFile(full)
+	if err != nil {
+		return "", errors.Wrap(ctx, err, "read page")
+	}
+	return string(raw), nil
 }
 
-// newRenderer builds the vault-markdown renderer with the resolver and pages
-// adapters over the folder's name-keyed body map.
-func newRenderer(vaultName, pagesDir string, pagesByName map[string]string) markdown.Renderer {
+// loadIndex returns the cached vault-wide index, rebuilding it when older than
+// indexTTL. It walks the whole vault so cross-folder links resolve.
+func (s *service) loadIndex(ctx context.Context, vault board.Vault) (*vaultIndex, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if idx, ok := s.index[vault.Path]; ok && time.Since(idx.built) < indexTTL {
+		return idx, nil
+	}
+	idx := &vaultIndex{
+		byName: map[string]string{},
+		paths:  map[string]string{},
+		bodies: map[string]string{},
+	}
+	root := vault.Path
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") && p != root {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		// Skip a symlinked file: it may point outside the vault, and the walk
+		// must not follow it.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		raw, readErr := os.ReadFile(p)
+		if readErr != nil {
+			glog.V(2).Infof("skip page %s for page view: %v", rel, readErr)
+			return nil
+		}
+		name := strings.TrimSuffix(d.Name(), ".md")
+		body := string(raw)
+		idx.byName[name] = body
+		idx.paths[name] = rel
+		idx.bodies[rel] = body
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(ctx, err, "walk vault")
+	}
+	idx.built = time.Now()
+	s.index[vault.Path] = idx
+	return idx, nil
+}
+
+// newRenderer builds the vault-markdown renderer with a resolver over the
+// vault-wide name→path map, so a link to a page in any folder resolves.
+func newRenderer(vaultName string, paths map[string]string, byName map[string]string) markdown.Renderer {
 	return markdown.New(
 		markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
-			if _, ok := pagesByName[target]; !ok {
+			rel, ok := paths[target]
+			if !ok {
 				return "", false
 			}
-			return PageURL(vaultName, path.Join(pagesDir, target+".md")), true
+			return PageURL(vaultName, rel), true
 		})),
 		markdown.WithPages(markdown.PagesFunc(func(name string) (string, bool) {
-			body, ok := pagesByName[name]
+			body, ok := byName[name]
 			return body, ok
 		})),
 	)
@@ -247,6 +331,12 @@ func isMissing(err error) bool {
 	message := err.Error()
 	return strings.Contains(message, "symlink outside vault") ||
 		strings.Contains(message, "invalid page name")
+}
+
+// isNoFrontmatter reports whether the storage reader rejected the page only
+// because it carries no frontmatter block.
+func isNoFrontmatter(err error) bool {
+	return strings.Contains(err.Error(), "no frontmatter found")
 }
 
 // backlink is one rendered backlinks entry.
@@ -290,7 +380,8 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 `))
 
 // buildDocument renders the document wrapper. Only the renderer output is
-// inserted as HTML; every other value is escaped by html/template.
+// inserted as HTML; every other value is escaped by html/template. backlinks are
+// vault-relative paths.
 func buildDocument(
 	ctx context.Context,
 	vault board.Vault,
@@ -298,13 +389,12 @@ func buildDocument(
 	name string,
 	rendered string,
 	backlinks []string,
-	pagesDir string,
 ) (string, error) {
 	entries := make([]backlink, 0, len(backlinks))
-	for _, filename := range backlinks {
+	for _, rel := range backlinks {
 		entries = append(entries, backlink{
-			Name: strings.TrimSuffix(filename, ".md"),
-			URL:  PageURL(vault.Name, path.Join(pagesDir, filename)),
+			Name: strings.TrimSuffix(path.Base(rel), ".md"),
+			URL:  PageURL(vault.Name, rel),
 		})
 	}
 	var builder strings.Builder

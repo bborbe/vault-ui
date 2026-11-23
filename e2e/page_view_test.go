@@ -86,4 +86,42 @@ var _ = Describe("Scenario 040: the in-app page view", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(body).To(ContainSubstring("Link target body marker"))
 	})
+
+	It("renders a page that carries no frontmatter", func() {
+		page := newPage("/v/fixture/page/50%20Knowledge%20Base/No%20Frontmatter%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		body, err := page.Locator(".page-view").InnerText()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(body).To(ContainSubstring("No Frontmatter Fixture"))
+		Expect(body).To(ContainSubstring("carries no frontmatter block"))
+	})
+
+	It("resolves a wikilink to a page in another folder", func() {
+		page := newPage("/v/fixture/page/24%20Goals/Cross%20Folder%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		link := page.Locator(".page-view a", playwright.PageLocatorOptions{HasText: "Card Page Fixture"})
+		Eventually(func() int {
+			count, err := link.Count()
+			Expect(err).NotTo(HaveOccurred())
+			return count
+		}, "10s", "200ms").Should(BeNumerically(">", 0))
+
+		href, err := link.First().GetAttribute("href")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(href).To(ContainSubstring("/page/25%20Tasks/Card%20Page%20Fixture.md"))
+	})
+
+	It("lists a backlink from another folder", func() {
+		page := newPage("/v/fixture/page/25%20Tasks/Card%20Page%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		backlinks := page.Locator(".backlinks a", playwright.PageLocatorOptions{HasText: "Cross Folder Fixture"})
+		Eventually(func() int {
+			count, err := backlinks.Count()
+			Expect(err).NotTo(HaveOccurred())
+			return count
+		}, "10s", "200ms").Should(BeNumerically(">", 0))
+	})
 })

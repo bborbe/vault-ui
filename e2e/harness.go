@@ -239,7 +239,7 @@ func freePort(ctx context.Context) (int, error) {
 // seedFixture writes a throwaway vault holding what the scenarios need: two
 // tasks in different statuses (one sessionless), one goal and one topic.
 func seedFixture(ctx context.Context, root string) error {
-	for _, dir := range []string{"25 Tasks", "24 Goals", "23 Topics"} {
+	for _, dir := range []string{"25 Tasks", "24 Goals", "23 Topics", "50 Knowledge Base"} {
 		select {
 		case <-ctx.Done():
 			return errors.Wrap(ctx, ctx.Err(), "seed fixture")
@@ -250,13 +250,15 @@ func seedFixture(ctx context.Context, root string) error {
 		}
 	}
 	files := map[string]string{
-		filepath.Join("25 Tasks", "Sessionless Fixture Task.md"): taskBody("Sessionless Fixture Task", "in_progress", "execution", ""),
-		filepath.Join("25 Tasks", "Held Fixture Task.md"):        taskBody("Held Fixture Task", "hold", "todo", ""),
-		filepath.Join("25 Tasks", "Card Page Fixture.md"):        cardPageBody(),
-		filepath.Join("25 Tasks", "Link Target Fixture.md"):      linkTargetBody(),
-		filepath.Join("24 Goals", "Fixture Goal.md"):             pageBody("goal", "Fixture Goal", ""),
-		filepath.Join("23 Topics", "Fixture Topic.md"):           pageBody("topic", "Fixture Topic", ""),
-		filepath.Join("23 Topics", "Assigned Fixture Topic.md"):  pageBody("topic", "Assigned Fixture Topic", "e2e"),
+		filepath.Join("25 Tasks", "Sessionless Fixture Task.md"):        taskBody("Sessionless Fixture Task", "in_progress", "execution", ""),
+		filepath.Join("25 Tasks", "Held Fixture Task.md"):               taskBody("Held Fixture Task", "hold", "todo", ""),
+		filepath.Join("25 Tasks", "Card Page Fixture.md"):               cardPageBody(),
+		filepath.Join("25 Tasks", "Link Target Fixture.md"):             linkTargetBody(),
+		filepath.Join("24 Goals", "Cross Folder Fixture.md"):            crossFolderGoalBody(),
+		filepath.Join("50 Knowledge Base", "No Frontmatter Fixture.md"): noFrontmatterBody(),
+		filepath.Join("24 Goals", "Fixture Goal.md"):                    pageBody("goal", "Fixture Goal", ""),
+		filepath.Join("23 Topics", "Fixture Topic.md"):                  pageBody("topic", "Fixture Topic", ""),
+		filepath.Join("23 Topics", "Assigned Fixture Topic.md"):         pageBody("topic", "Assigned Fixture Topic", "e2e"),
 	}
 	for rel, body := range files {
 		select {
@@ -328,6 +330,33 @@ Tags: [[Task]]
 ---
 
 Link target body marker, written by the e2e fixture.
+`
+}
+
+// crossFolderGoalBody renders a goal that links a page in another folder, so the
+// cross-folder resolver and backlink specs have a target.
+func crossFolderGoalBody() string {
+	return `---
+page_type: goal
+status: in_progress
+created_date: "2026-11-13"
+---
+Tags: [[Goal]]
+
+---
+
+# Cross Folder Fixture
+
+See [[Card Page Fixture]] for the task.
+`
+}
+
+// noFrontmatterBody renders a page with no frontmatter block, so the page route
+// proves it renders such a page instead of erroring.
+func noFrontmatterBody() string {
+	return `# No Frontmatter Fixture
+
+This page carries no frontmatter block.
 `
 }
 
