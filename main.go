@@ -11,7 +11,6 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
-	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/bborbe/vault-cli/pkg/storage"
 	"github.com/golang/glog"
 
@@ -105,7 +104,6 @@ func execute(ctx context.Context) error {
 		factory.CreateStatusCacheLoader(loader, configPath, cache, cacheReady),
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
 		pageIndex.Rescan,
-		factory.CreateWatcher(loader, manager, pageIndex, cache, ops.NewWatchOperation()),
 		factory.CreateSessionStateWatcher(
 			loader, manager, sessionState, heartbeatStore, sessionstate.DefaultRescanInterval,
 		),

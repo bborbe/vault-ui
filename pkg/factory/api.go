@@ -36,7 +36,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
-	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	staticui "github.com/bborbe/vault-ui/src/vault_ui"
 )
@@ -285,53 +284,6 @@ func sessionRefreshBroadcaster(
 // publisher.
 func CreateConnectionManager() websocket.ConnectionManager {
 	return websocket.NewConnectionManager(websocket.NewMetrics())
-}
-
-// CreateWatcher returns a run.Func that watches the configured vaults with the
-// injected watch operation and hands every change to watchrefresh's handler,
-// which re-reads the event's single page-index file (folder stat-diff fallback),
-// invalidates the changed item in the status cache, then broadcasts the frame.
-// No vault-cli subprocess is spawned.
-func CreateWatcher(
-	loader config.Loader,
-	manager websocket.ConnectionManager,
-	pageIndex pageindex.PageIndex,
-	cache statuscache.Cache,
-	watchOperation ops.WatchOperation,
-) run.Func {
-	return func(ctx context.Context) error {
-		vaults, err := loader.GetAllVaults(ctx)
-		if err != nil {
-			return errors.Wrap(ctx, err, "load vaults for watcher")
-		}
-		targets := buildWatchTargets(vaults)
-		glog.V(2).Infof("starting vault watcher for %d vaults", len(targets))
-		return watchOperation.Execute(
-			ctx,
-			targets,
-			watchrefresh.NewHandler(ctx, vaults, pageIndex, cache, manager),
-		)
-	}
-}
-
-// buildWatchTargets assembles the vault-cli watch targets for the entity kinds
-// the Python backend watches (task, goal, theme, objective), mirroring
-// buildWatchTargets in vault-cli's pkg/cli/cli.go.
-func buildWatchTargets(vaults []*config.Vault) []ops.WatchTarget {
-	targets := make([]ops.WatchTarget, 0, len(vaults))
-	for _, vault := range vaults {
-		targets = append(targets, ops.WatchTarget{
-			VaultPath: vault.Path,
-			VaultName: vault.Name,
-			WatchDirs: []ops.WatchDir{
-				{Dir: vault.GetTasksDir(), Kind: "task"},
-				{Dir: vault.GetGoalsDir(), Kind: "goal"},
-				{Dir: vault.GetThemesDir(), Kind: "theme"},
-				{Dir: vault.GetObjectivesDir(), Kind: "objective"},
-			},
-		})
-	}
-	return targets
 }
 
 // CreateStatusCacheLoader returns a run.Func that loads every vault's status
