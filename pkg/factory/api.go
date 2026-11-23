@@ -178,7 +178,7 @@ func CreateAPIHandler(
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, cache, launches, locks, homeDir,
-		paneResolver, websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
+		paneResolver, websocket.NewMutationPublisher(manager), writeQueue,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
 }

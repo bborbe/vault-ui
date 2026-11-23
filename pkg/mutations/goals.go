@@ -33,7 +33,6 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, goalID, "goal")
 	if err := set.GoalSet.Execute(
@@ -96,7 +95,6 @@ func (s *service) TakeOverGoal(
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	sessionID := goal.ClaudeSessionID
 	terminated := false
@@ -188,7 +186,6 @@ func (s *service) ExecuteGoalCommand(
 	if !ok {
 		return api.GoalCommandResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	var runErr error
 	if req.Command == "defer-goal" {
@@ -210,7 +207,6 @@ func (s *service) ExecuteGoalCommand(
 	// Mark before publishing so a client reacting to the frame never re-fetches
 	// stale data; the deferred mark still covers error returns after a partial
 	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.GoalCommandResponse{Status: "success", GoalID: goalID, Command: req.Command}, nil
 }

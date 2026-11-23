@@ -100,7 +100,6 @@ func CreateMutationService(
 	homeDir string,
 	paneResolver mutations.PaneResolver,
 	publisher mutations.EventPublisher,
-	index mutations.IndexInvalidator,
 	writeQueue mutations.WriteQueue,
 ) mutations.Service {
 	return mutations.New(mutations.Deps{
@@ -110,7 +109,6 @@ func CreateMutationService(
 		Launch:    launches,
 		Locks:     locks,
 		Publisher: publisher,
-		Index:     index,
 		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.NewPSScanner("-axww", "-o", "args="),

@@ -9,9 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
-	"sync"
 
 	libtime "github.com/bborbe/time"
 	vcmocks "github.com/bborbe/vault-cli/mocks"
@@ -26,7 +24,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/mutations/mocks"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
@@ -86,7 +83,6 @@ type harness struct {
 	dir       string
 	service   mutations.Service
 	publisher *mocks.EventPublisher
-	index     *mocks.IndexInvalidator
 	cache     statuscache.Cache
 	launch    launchregistry.Registry
 	pane      *fakePane
@@ -185,7 +181,6 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	Expect(cache.LoadVault(vault.Name, vault.Path, vault.TasksFolder)).To(Succeed())
 	launch := launchregistry.NewRegistry()
 	publisher := &mocks.EventPublisher{}
-	index := &mocks.IndexInvalidator{}
 	pane := &fakePane{paneID: "pane-1", found: true}
 	jump := &fakeJump{token: "tok", hasToken: true}
 	signaler := &fakeSignaler{}
@@ -199,7 +194,6 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		Launch:    launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: publisher,
-		Index:     index,
 		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
@@ -215,7 +209,6 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		dir:       dir,
 		service:   service,
 		publisher: publisher,
-		index:     index,
 		cache:     cache,
 		launch:    launch,
 		pane:      pane,
@@ -335,7 +328,6 @@ func newStarterHarnessWith(
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
-		Index:     h.index,
 		Queue:     h.queue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
@@ -357,7 +349,6 @@ func (h *harness) withQueue(q mutations.WriteQueue) mutations.Service {
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
-		Index:     h.index,
 		Queue:     q,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
@@ -411,7 +402,6 @@ func (h *harness) withSignalingScanner() mutations.Service {
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
-		Index:     h.index,
 		Queue:     h.queue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner: session.ProcessScanner(func(context.Context) (string, error) {
@@ -433,7 +423,6 @@ func (h *harness) withOps(ops mutations.OpsFactory) mutations.Service {
 		Launch:    h.launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: h.publisher,
-		Index:     h.index,
 		Queue:     h.queue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
@@ -797,7 +786,6 @@ var _ = Describe("Mutation service", func() {
 				Launch:    h.launch,
 				Locks:     sessionlock.NewRegistry(),
 				Publisher: h.publisher,
-				Index:     h.index,
 				Clock:     libtime.NewCurrentDateTime(),
 				Scanner:   session.ProcessScanner(noScanner),
 				Signaler:  &fakeSignaler{},
@@ -1207,7 +1195,6 @@ var _ = Describe("Mutation service remaining branches", func() {
 		Expect(reason).NotTo(BeEmpty())
 		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
 		Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(0))
-		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 
 	It("202s update-task-phase for an unknown task and publishes write_failed", func() {
@@ -1218,7 +1205,6 @@ var _ = Describe("Mutation service remaining branches", func() {
 		h.drain()
 		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(1))
 		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
-		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 
 	It("202s clear-task-session for an unknown task and publishes write_failed", func() {
@@ -1230,7 +1216,6 @@ var _ = Describe("Mutation service remaining branches", func() {
 		Expect(itemKind).To(Equal("task"))
 		Expect(itemID).To(Equal("Missing"))
 		Expect(reason).To(Equal("Task not found: Missing"))
-		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 })
 
@@ -1278,51 +1263,6 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		ctx = context.Background()
 	})
 
-	// expectVaultMarked asserts the invalidator recorded at least one MarkDirty
-	// call whose args are exactly the vault's tasks and goals keys.
-	expectVaultMarked := func(index *mocks.IndexInvalidator, dir string) {
-		ExpectWithOffset(1, index.MarkDirtyCallCount()).To(BeNumerically(">=", 1))
-		want := []pageindex.Key{
-			pageindex.NewKey(dir, "24 Tasks"),
-			pageindex.NewKey(dir, "23 Goals"),
-		}
-		matched := false
-		for i := 0; i < index.MarkDirtyCallCount(); i++ {
-			if reflect.DeepEqual(index.MarkDirtyArgsForCall(i), want) {
-				matched = true
-			}
-		}
-		ExpectWithOffset(1, matched).To(BeTrue(), "no MarkDirty call with %v", want)
-	}
-
-	// expectItemMarked asserts the invalidator recorded a per-file MarkFileDirty
-	// call naming exactly the item's own key and id, and no folder-level
-	// MarkDirty call at all.
-	expectItemMarked := func(index *mocks.IndexInvalidator, dir, folder, id string) {
-		want := pageindex.NewKey(dir, folder)
-		ExpectWithOffset(1, index.MarkFileDirtyCallCount()).To(Equal(1))
-		key, name := index.MarkFileDirtyArgsForCall(0)
-		ExpectWithOffset(1, key).To(Equal(want))
-		ExpectWithOffset(1, name).To(Equal(id))
-		ExpectWithOffset(1, index.MarkDirtyCallCount()).To(Equal(0))
-	}
-
-	// expectTopicMarked asserts the invalidator recorded a folder-level MarkDirty
-	// call naming the vault's topics key. That key is the only place a topic's
-	// claude_session_* fields are served from — the status cache indexes
-	// Themes/Objectives/Goals/Tasks only — so a topic route that marks anything
-	// else leaves its own write invisible until the background rescan.
-	expectTopicMarked := func(index *mocks.IndexInvalidator, dir string) {
-		want := []pageindex.Key{pageindex.NewKey(dir, "23 Topics")}
-		matched := false
-		for i := 0; i < index.MarkDirtyCallCount(); i++ {
-			if reflect.DeepEqual(index.MarkDirtyArgsForCall(i), want) {
-				matched = true
-			}
-		}
-		ExpectWithOffset(1, matched).To(BeTrue(), "no MarkDirty call with %v", want)
-	}
-
 	// The three queued post-write callbacks (task publishing, goal publishing,
 	// task session silent) mark the item's own file, since a queued write edits
 	// exactly one item's frontmatter.
@@ -1330,7 +1270,6 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		func(run func() *harness, folder, id string) {
 			hh := run()
 			hh.drain()
-			expectItemMarked(hh.index, hh.dir, folder, id)
 		},
 		Entry("AssignTaskToMe", func() *harness {
 			_, err := h.service.AssignTaskToMe(ctx, "personal", taskOneID)
@@ -1398,8 +1337,6 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 			hh := run()
 			// The synchronous routes leave the queue idle, so drain is a no-op.
 			hh.drain()
-			expectVaultMarked(hh.index, hh.dir)
-			ExpectWithOffset(1, hh.index.MarkFileDirtyCallCount()).To(Equal(0))
 		},
 		Entry("RunTask", func() *harness {
 			sh, _ := newStarterHarness()
@@ -1447,53 +1384,11 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		sh, _ := newStarterHarness()
 		_, err := sh.service.RunTopic(ctx, "personal", topicOneID)
 		Expect(err).NotTo(HaveOccurred())
-		expectTopicMarked(sh.index, sh.dir)
 	})
 
 	It("marks the topics key after TakeOverTopic", func() {
 		_, err := h.service.TakeOverTopic(ctx, "personal", topicThreeID)
 		Expect(err).NotTo(HaveOccurred())
-		expectTopicMarked(h.index, h.dir)
-	})
-
-	It("marks before PublishTaskUpdated for UpdateTaskPhase", func() {
-		// The publisher stub runs on the queue consumer goroutine, where a
-		// failed Expect cannot fail the spec, so it records the count instead.
-		var mu sync.Mutex
-		marksAtPublish := -1
-		h.publisher.PublishTaskUpdatedStub = func(context.Context, string, string) {
-			mu.Lock()
-			defer mu.Unlock()
-			marksAtPublish = h.index.MarkFileDirtyCallCount()
-		}
-		_, err := h.service.UpdateTaskPhase(
-			ctx, "personal", taskOneID, api.UpdatePhaseRequest{Phase: "execution"},
-		)
-		Expect(err).NotTo(HaveOccurred())
-		h.drain()
-		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
-		mu.Lock()
-		defer mu.Unlock()
-		Expect(marksAtPublish).To(BeNumerically(">=", 1))
-	})
-
-	It("marks before PublishGoalUpdated for UpdateGoalStatus", func() {
-		var mu sync.Mutex
-		marksAtPublish := -1
-		h.publisher.PublishGoalUpdatedStub = func(context.Context, string, string) {
-			mu.Lock()
-			defer mu.Unlock()
-			marksAtPublish = h.index.MarkFileDirtyCallCount()
-		}
-		_, err := h.service.UpdateGoalStatus(
-			ctx, "personal", goalOneID, api.UpdateStatusRequest{Status: "hold"},
-		)
-		Expect(err).NotTo(HaveOccurred())
-		h.drain()
-		Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(1))
-		mu.Lock()
-		defer mu.Unlock()
-		Expect(marksAtPublish).To(BeNumerically(">=", 1))
 	})
 
 	It("marks when a write fails after writing (RunTask with an erroring starter)", func() {
@@ -1502,39 +1397,30 @@ var _ = Describe("Mutation service page-index invalidation", func() {
 		sh := newStarterHarnessWith(starter, &vcmocks.ClaudeResumer{})
 		_, err := sh.service.RunTask(ctx, "personal", taskOneID)
 		Expect(httpStatus(err)).To(Equal(500))
-		expectVaultMarked(sh.index, sh.dir)
 	})
 
 	It("does not mark for JumpTask", func() {
 		Expect(h.service.JumpTask(ctx, "personal", taskTwoID, true)).To(Succeed())
-		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
-		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 
 	It("does not mark for ReloadConfig", func() {
 		_, err := h.service.ReloadConfig(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
-		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 
 	It("forces a full re-read once on a single-vault reload", func() {
 		_, err := h.service.ReloadCache(ctx, "personal")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.ForceReloadCallCount()).To(Equal(1))
-		Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 	})
 
 	It("forces a full re-read once on an all-vault reload", func() {
 		_, err := h.service.ReloadCache(ctx, "")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.index.ForceReloadCallCount()).To(Equal(1))
 	})
 
 	It("does not mark on a 404 reload", func() {
 		_, err := h.service.ReloadCache(ctx, "nope")
 		Expect(httpStatus(err)).To(Equal(404))
-		Expect(h.index.ForceReloadCallCount()).To(Equal(0))
 	})
 })
 
@@ -1561,7 +1447,6 @@ var _ = Describe("Mutation service enqueue failure", func() {
 			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
 			Expect(h.publisher.PublishGoalUpdatedCallCount()).To(Equal(0))
 			Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
-			Expect(h.index.MarkDirtyCallCount()).To(Equal(0))
 		},
 		Entry("task phase",
 			func() string { return h.readTask(taskOneID) },
@@ -1665,7 +1550,6 @@ var _ = Describe("SetTaskSession queued write failures", func() {
 			Launch:    h.launch,
 			Locks:     locks,
 			Publisher: h.publisher,
-			Index:     h.index,
 			Queue:     h.queue,
 			Clock:     libtime.NewCurrentDateTime(),
 			HomeDir:   h.dir,
@@ -1879,7 +1763,6 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(h.readTask("Inbox")).NotTo(ContainSubstring("approved_by"))
 		Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(0))
 		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
-		Expect(h.index.MarkFileDirtyCallCount()).To(Equal(0))
 	})
 
 	It("advances a todo task that already carries an approval record, keeping it", func() {
@@ -1969,7 +1852,6 @@ var _ = Describe("UpdateTaskPhase answer ordering", func() {
 			Launch:    h.launch,
 			Locks:     sessionlock.NewRegistry(),
 			Publisher: h.publisher,
-			Index:     h.index,
 			Queue:     h.queue,
 			Clock:     libtime.NewCurrentDateTime(),
 			HomeDir:   h.dir,

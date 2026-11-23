@@ -73,7 +73,6 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, err := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if err != nil {
@@ -173,7 +172,6 @@ func (s *service) TakeOverTask(
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
@@ -397,7 +395,6 @@ func (s *service) ExecuteTaskCommand(
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
@@ -473,7 +470,6 @@ func (s *service) taskFastPath(
 	// Mark before publishing so a client reacting to the frame never re-fetches
 	// stale data; the deferred mark still covers error returns after a partial
 	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	stdout := ""
 	success := true

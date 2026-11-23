@@ -27,7 +27,6 @@ func (s *service) ReloadCache(ctx context.Context, vault string) (api.CacheReloa
 		}
 		// Reload forces a full re-read of every key, not only this vault's,
 		// ignoring the recorded fingerprints.
-		s.deps.Index.ForceReload()
 		if loadErr := s.deps.Cache.LoadVault(
 			resolved.Name, resolved.Path, resolved.TasksFolder,
 		); loadErr != nil {
@@ -40,7 +39,6 @@ func (s *service) ReloadCache(ctx context.Context, vault string) (api.CacheReloa
 	}
 	// Reload forces a full re-read of every key, not only the named vault's,
 	// ignoring the recorded fingerprints.
-	s.deps.Index.ForceReload()
 	reloaded := make([]string, 0, len(cfg.Vaults))
 	counts := make(map[string]int, len(cfg.Vaults))
 	for _, resolved := range cfg.Vaults {

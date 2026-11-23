@@ -30,8 +30,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/mutations"
-	"github.com/bborbe/vault-ui/pkg/mutations/mocks"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
@@ -80,7 +78,6 @@ type queuedFixture struct {
 	router      http.Handler
 	queue       queue.Queue
 	manager     *wsmocks.WebsocketConnectionManager
-	index       *mocks.IndexInvalidator
 	cache       *recordingCache
 	personalDir string
 	workDir     string
@@ -126,10 +123,6 @@ func newQueuedFixture() *queuedFixture {
 	f.manager.BroadcastStub = func(payload []byte) {
 		f.appendEvent("broadcast:" + string(payload))
 	}
-
-	f.index = &mocks.IndexInvalidator{}
-	f.index.MarkDirtyStub = func(...pageindex.Key) { f.appendEvent("mark") }
-	f.index.MarkFileDirtyStub = func(pageindex.Key, string) { f.appendEvent("mark") }
 
 	f.cache = &recordingCache{Cache: statuscache.NewCache(), f: f}
 
@@ -244,7 +237,6 @@ func newQueuedFixture() *queuedFixture {
 		Launch:    launchregistry.NewRegistry(),
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: websocket.NewMutationPublisher(f.manager),
-		Index:     f.index,
 		Queue:     f.queue,
 		Clock:     libtime.NewCurrentDateTime(),
 		HomeDir:   GinkgoT().TempDir(),
@@ -519,7 +511,6 @@ var _ = Describe("Queued frontmatter writes", func() {
 		).Code).To(Equal(http.StatusAccepted))
 
 		Expect(f.manager.BroadcastCallCount()).To(Equal(0))
-		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 
 		f.releaseBlock()
@@ -533,15 +524,9 @@ var _ = Describe("Queued frontmatter writes", func() {
 			"vault":     "personal",
 		}))
 		// A queued write marks one item's file, not the whole folder.
-		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(1))
-		markKey, markName := f.index.MarkFileDirtyArgsForCall(0)
-		Expect(markKey).To(Equal(pageindex.NewKey(f.personalDir, qwTasksDir)))
-		Expect(markName).To(Equal("TaskOne"))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:personal:TaskOne")).To(Equal(1))
 		Expect(f.eventsSnapshot()).To(Equal([]string{
 			"invalidate:personal:TaskOne",
-			"mark",
 			"broadcast:" + string(websocket.TaskUpdatedFrame("personal", "TaskOne")),
 		}))
 	})
@@ -556,7 +541,6 @@ var _ = Describe("Queued frontmatter writes", func() {
 		).Code).To(Equal(http.StatusAccepted))
 
 		Expect(f.manager.BroadcastCallCount()).To(Equal(0))
-		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 
 		f.releaseBlock()
@@ -570,11 +554,6 @@ var _ = Describe("Queued frontmatter writes", func() {
 			"vault":     "personal",
 		}))
 		// A queued goal write marks the goal's own file in the goals key.
-		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(1))
-		markKey, markName := f.index.MarkFileDirtyArgsForCall(0)
-		Expect(markKey).To(Equal(pageindex.NewKey(f.personalDir, qwGoalsDir)))
-		Expect(markName).To(Equal("GoalOne"))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:personal:GoalOne")).To(Equal(1))
 	})
 
@@ -601,8 +580,6 @@ var _ = Describe("Queued frontmatter writes", func() {
 		}))
 		Consistently(func() int { return f.broadcastsOfType("task_updated") }).
 			Should(Equal(0))
-		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 
 		items, err := ops.NewListOperation(storage.NewPageStorage(nil)).Execute(
@@ -641,8 +618,6 @@ var _ = Describe("Queued frontmatter writes", func() {
 		}))
 		Consistently(func() int { return f.broadcastsOfType("goal_updated") }).
 			Should(Equal(0))
-		Expect(f.index.MarkFileDirtyCallCount()).To(Equal(0))
-		Expect(f.index.MarkDirtyCallCount()).To(Equal(0))
 		Expect(f.countEvents("invalidate:")).To(Equal(0))
 	})
 

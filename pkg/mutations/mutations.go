@@ -32,7 +32,6 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
@@ -76,22 +75,6 @@ type WriteQueue interface {
 	Enqueue(ctx context.Context, write queue.Write) error
 }
 
-// IndexInvalidator marks the read-side page index stale after a vault-ui write,
-// so the next list read re-reads what the write changed. MarkDirty marks whole
-// folders, whose next read compares fingerprints and re-reads only what
-// changed; MarkFileDirty marks one item's file when its id names an existing
-// file exactly and falls back to a folder-level mark otherwise; ForceReload is
-// the operator escape hatch behind the cache-reload route. It deliberately
-// exposes no page-content read method: mutations keep reading vault files
-// directly.
-//
-//counterfeiter:generate -o ./mocks/index_invalidator.go --fake-name IndexInvalidator . IndexInvalidator
-type IndexInvalidator interface {
-	MarkDirty(keys ...pageindex.Key)
-	MarkFileDirty(key pageindex.Key, name string)
-	ForceReload()
-}
-
 // ConfigProvider resolves the merged vault-ui/vault-cli configuration. It never
 // caches: a vault added to vault-cli is visible on the next request.
 type ConfigProvider interface {
@@ -120,7 +103,6 @@ type Deps struct {
 	Launch       launchregistry.Registry
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
-	Index        IndexInvalidator
 	Queue        WriteQueue
 	Clock        libtime.CurrentDateTimeGetter
 	Scanner      session.ProcessScanner
@@ -179,29 +161,6 @@ func New(deps Deps) Service {
 	return &service{deps: deps}
 }
 
-// markVaultDirty marks the vault's tasks and goals keys dirty in the page
-// index. The keys are derived exactly as the read side derives them.
-func (s *service) markVaultDirty(vault vaultconfig.Vault) {
-	s.deps.Index.MarkDirty(
-		pageindex.NewKey(vault.Path, vault.TasksFolder),
-		pageindex.NewKey(vault.Path, vault.GoalsFolder),
-	)
-}
-
-// markTopicDirty marks the vault's topics key dirty in the page index.
-//
-// A topic route must not use markVaultDirty: it edits a topic file, and the
-// topics folder is not in that pair. The status cache indexes
-// Themes/Objectives/Goals/Tasks only, so a topic's claude_session_* fields are
-// served from the page index alone — leaving the topics key unmarked makes the
-// write invisible to every other client until the background rescan.
-func (s *service) markTopicDirty(vault vaultconfig.Vault) {
-	if vault.TopicsFolder == "" {
-		return
-	}
-	s.deps.Index.MarkDirty(pageindex.NewKey(vault.Path, vault.TopicsFolder))
-}
-
 // enqueueWrite queues one frontmatter write on the vault's FIFO. write runs
 // the vault-cli calls; onSuccess runs the route's post-write side-effects.
 // Both run on the vault's queue consumer with the consumer's context — never
@@ -257,9 +216,6 @@ func failureReason(err error) string {
 func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(context.Context) {
 	return func(ctx context.Context) {
 		s.deps.Cache.Invalidate(vault.Name, taskID)
-		s.deps.Index.MarkFileDirty(
-			pageindex.NewKey(vault.Path, vault.TasksFolder), taskID,
-		)
 		s.deps.Publisher.PublishTaskUpdated(ctx, vault.Name, taskID)
 	}
 }
@@ -268,9 +224,6 @@ func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(conte
 func (s *service) goalWritten(vault vaultconfig.Vault, goalID string) func(context.Context) {
 	return func(ctx context.Context) {
 		s.deps.Cache.Invalidate(vault.Name, goalID)
-		s.deps.Index.MarkFileDirty(
-			pageindex.NewKey(vault.Path, vault.GoalsFolder), goalID,
-		)
 		s.deps.Publisher.PublishGoalUpdated(ctx, vault.Name, goalID)
 	}
 }
@@ -282,9 +235,6 @@ func (s *service) itemWrittenSilently(
 ) func(context.Context) {
 	return func(context.Context) {
 		s.deps.Cache.Invalidate(vault.Name, itemID)
-		s.deps.Index.MarkFileDirty(
-			pageindex.NewKey(vault.Path, vault.TasksFolder), itemID,
-		)
 	}
 }
 
