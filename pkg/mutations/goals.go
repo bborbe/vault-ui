@@ -74,6 +74,29 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	return sessionResponse(resolved, resolved.ClaudeScript, result.SessionID, goal.Name), nil
 }
 
+// JumpGoal activates the WezTerm pane a live goal's manager session runs in,
+// mirroring JumpTask. sameOrigin carries the handler's same-origin verdict.
+func (s *service) JumpGoal(ctx context.Context, vault, goalID string, sameOrigin bool) error {
+	if !sameOrigin {
+		return newHTTPError(403, "cross-origin jump request rejected")
+	}
+	resolved, ok, err := s.vaultByName(ctx, vault)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return newHTTPError(500, unknownVault(vault))
+	}
+	goal, found, err := s.findGoal(ctx, resolved, goalID)
+	if err != nil {
+		return newHTTPError(500, err.Error())
+	}
+	if !found {
+		return newHTTPError(404, goalNotFound(goalID))
+	}
+	return s.jumpToSession(ctx, goal.ClaudeSessionID)
+}
+
 // TakeOverGoal terminates a live or starting goal session and returns the
 // resume command, mirroring take_over_goal.
 func (s *service) TakeOverGoal(

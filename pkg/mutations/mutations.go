@@ -138,8 +138,10 @@ type Service interface {
 	TakeOverTask(ctx context.Context, vault, taskID string) (api.SessionResponse, error)
 	ResumeTaskCommand(ctx context.Context, vault, taskID string) (api.SessionResponse, error)
 	RunGoal(ctx context.Context, vault, goalID string) (api.SessionResponse, error)
+	JumpGoal(ctx context.Context, vault, goalID string, sameOrigin bool) error
 	TakeOverGoal(ctx context.Context, vault, goalID string) (api.SessionResponse, error)
 	RunTopic(ctx context.Context, vault, topicID string) (api.SessionResponse, error)
+	JumpTopic(ctx context.Context, vault, topicID string, sameOrigin bool) error
 	TakeOverTopic(ctx context.Context, vault, topicID string) (api.SessionResponse, error)
 	ExecuteTaskCommand(
 		ctx context.Context, vault, taskID string, req api.ExecuteCommandRequest,

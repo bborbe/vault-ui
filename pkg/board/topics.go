@@ -81,12 +81,18 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 
 		for _, item := range items {
 			blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+			state := classifySessionID(ctx, item.ClaudeSessionID, params)
+			var location *string
+			if state == session.SessionStateLive {
+				location = liveLocationPtr(state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID))
+			}
 			responses = append(responses, api.TopicResponse{
 				ID:                   item.Name,
 				Title:                item.Name,
 				Status:               item.Status,
 				Phase:                strPtr(item.Phase),
-				SessionState:         sessionStatePtr(classifySessionID(ctx, item.ClaudeSessionID, params)),
+				SessionState:         sessionStatePtr(state),
+				Location:             location,
 				ClaudeSessionID:      strPtr(item.ClaudeSessionID),
 				ClaudeSessionStarted: pageFieldsByTopic[item.Name].started,
 				Flag:                 item.Flag,
@@ -110,6 +116,8 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		}
 	}
 
+	b.attachTopicJumpPanes(ctx, responses)
+
 	if query.SessionLive {
 		live := make([]api.TopicResponse, 0, len(responses))
 		for _, response := range responses {
@@ -120,6 +128,53 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		responses = live
 	}
 	return responses, nil
+}
+
+// attachTopicJumpPanes resolves the panes of the live topic rows in one batch and
+// stamps each live row's JumpPane, mirroring attachGoalJumpPanes. A nil Panes
+// dependency leaves every row's JumpPane nil, which is the feature-inert
+// configuration. Only live rows are resolved: a headless manager is live but has
+// no terminal.
+func (b *board) attachTopicJumpPanes(ctx context.Context, responses []api.TopicResponse) {
+	if b.panes == nil {
+		return
+	}
+	seen := make(map[string]bool, len(responses))
+	sessionIDs := make([]string, 0, len(responses))
+	for i := range responses {
+		sessionID := topicSessionID(responses[i])
+		if !topicRowLive(responses[i]) || sessionID == "" || seen[sessionID] {
+			continue
+		}
+		seen[sessionID] = true
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if len(sessionIDs) == 0 {
+		return
+	}
+	panes := b.panes.ResolveAll(ctx, sessionIDs)
+	for i := range responses {
+		if !topicRowLive(responses[i]) {
+			continue
+		}
+		if paneID, ok := panes[topicSessionID(responses[i])]; ok {
+			value := paneID
+			responses[i].JumpPane = &value
+		}
+	}
+}
+
+// topicRowLive reports whether the response's classified session state is live.
+func topicRowLive(response api.TopicResponse) bool {
+	return response.SessionState != nil && *response.SessionState == string(session.SessionStateLive)
+}
+
+// topicSessionID returns the response's claude session id, or "" when absent.
+func topicSessionID(response api.TopicResponse) string {
+	if response.ClaudeSessionID == nil {
+		return ""
+	}
+	return *response.ClaudeSessionID
 }
 
 // pageKeyFields is the per-page state the topic and goal boards derive from a page

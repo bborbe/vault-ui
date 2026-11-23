@@ -15,12 +15,14 @@ fresh; both happen on demand, never on a timer.
   control only on a card whose session actually has a terminal. The list path
   resolves the panes of its live sessions once per snapshot build (and once per
   session-generation refresh) with a single `wezterm cli list`; it never runs
-  one listing per session. `/api/tasks` carries the resulting `jump_pane` on a
-  live row and `null` otherwise.
+  one listing per session. `/api/tasks`, `/api/goals` and `/api/topics` each
+  carry the resulting `jump_pane` on a live row and `null` otherwise.
 - The click path still resolves fresh and validates at click time, and that is
   what keeps a recycled pane id from jumping to the wrong tab: a pane id is
   reused across tab moves and WezTerm restarts, so the id rendered on the card
-  is a hint, never a credential.
+  is a hint, never a credential. The route is `POST /api/{tasks,goals,topics}/
+  {id}/jump`; all three kinds share one service path that resolves fresh and
+  reads the credential server-side.
 - The resolver's seam is:
 
   ```go

@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
@@ -218,7 +217,7 @@ var _ = Describe("Lazy pane resolution", func() {
 		Expect(elements[0]["jump_pane"]).To(BeNil())
 	})
 
-	It("carries no pane-bearing key in a goal list response", func() {
+	It("emits jump_pane null in a goal list response without a pane resolver", func() {
 		loader, configPath, _ := apiFixture()
 		handler := newTestAPIHandler(loader, configPath)
 
@@ -227,12 +226,13 @@ var _ = Describe("Lazy pane resolution", func() {
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
 		Expect(recorder.Code).To(Equal(http.StatusOK), "%s", target)
 
-		keys := listKeys(recorder.Body.String())
-		Expect(keys).NotTo(BeEmpty(), "%s", target)
-		for _, key := range keys {
-			Expect(strings.Contains(strings.ToLower(key), "pane")).To(
-				BeFalse(), "%s carries %q", target, key,
-			)
+		elements := listElements(recorder.Body.String())
+		Expect(elements).NotTo(BeEmpty(), "%s", target)
+		// The key is always emitted on a goal, on the same terms as a task: with
+		// no pane resolver wired it is null, which is the feature-inert config.
+		for _, element := range elements {
+			Expect(element).To(HaveKey("jump_pane"), "%s", target)
+			Expect(element["jump_pane"]).To(BeNil(), "%s", target)
 		}
 	})
 })

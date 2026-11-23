@@ -43,6 +43,10 @@ var _ = Describe("Mutation handlers", func() {
 				http.MethodPost, "/api/tasks/TaskOne/run"),
 			Entry("jump task", handler.NewJumpTaskHandler(&fakeMutations{}),
 				http.MethodPost, "/api/tasks/TaskOne/jump"),
+			Entry("jump goal", handler.NewJumpGoalHandler(&fakeMutations{}),
+				http.MethodPost, "/api/goals/GoalOne/jump"),
+			Entry("jump topic", handler.NewJumpTopicHandler(&fakeMutations{}),
+				http.MethodPost, "/api/topics/TopicOne/jump"),
 			Entry("take-over task", handler.NewTakeOverTaskHandler(&fakeMutations{}),
 				http.MethodPost, "/api/tasks/TaskOne/take-over"),
 			Entry("resume task command", handler.NewResumeTaskCommandHandler(&fakeMutations{}),
@@ -172,6 +176,26 @@ var _ = Describe("Mutation handlers", func() {
 			handler.NewJumpTaskHandler(&fakeMutations{
 				jumpTask: func(_ context.Context, _, _ string, _ bool) error { return nil },
 			}), http.MethodPost, "/api/tasks/TaskOne/jump?vault=personal", "",
+		)
+		Expect(recorder.Code).To(Equal(http.StatusNoContent))
+		Expect(recorder.Body.String()).To(BeEmpty())
+	})
+
+	It("204s a successful goal jump", func() {
+		recorder := doRequest(
+			handler.NewJumpGoalHandler(&fakeMutations{
+				jumpGoal: func(_ context.Context, _, _ string, _ bool) error { return nil },
+			}), http.MethodPost, "/api/goals/GoalOne/jump?vault=personal", "",
+		)
+		Expect(recorder.Code).To(Equal(http.StatusNoContent))
+		Expect(recorder.Body.String()).To(BeEmpty())
+	})
+
+	It("204s a successful topic jump", func() {
+		recorder := doRequest(
+			handler.NewJumpTopicHandler(&fakeMutations{
+				jumpTopic: func(_ context.Context, _, _ string, _ bool) error { return nil },
+			}), http.MethodPost, "/api/topics/TopicOne/jump?vault=personal", "",
 		)
 		Expect(recorder.Code).To(Equal(http.StatusNoContent))
 		Expect(recorder.Body.String()).To(BeEmpty())
