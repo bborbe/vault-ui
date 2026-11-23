@@ -34,6 +34,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -73,13 +74,14 @@ func (p *vaultProvider) Vaults(ctx context.Context) ([]board.Vault, error) {
 }
 
 // opsProvider builds the vault-cli read operations for a vault. List reads are
-// served from the shared process-wide page index; TopicShow stays on disk.
+// served from the local vault-api — the single page parser; TopicShow stays on
+// disk until the topic detail path moves to vault-api too.
 type opsProvider struct {
-	pageIndex pageindex.PageIndex
+	client vaultapi.Client
 }
 
-func (p opsProvider) List(_ board.Vault) ops.ListOperation {
-	return ops.NewListOperation(p.pageIndex)
+func (p opsProvider) List(vault board.Vault) ops.ListOperation {
+	return vaultapi.NewListOperation(p.client, vault.VaultName)
 }
 
 func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
@@ -154,9 +156,14 @@ func CreateAPIHandler(
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
 ) http.Handler {
+	vaultClient := vaultapi.New(vaultapi.ConfigFromEnv())
+	// The startup serving proof: the board reads from this origin. Required by
+	// DoD2, so it is logged at Info (visible in the launchd StandardErrorPath),
+	// not V(2).
+	glog.Infof("board reads tasks from vault-api at %s", vaultClient.BaseURL())
 	service := board.New(board.Deps{
 		Vaults:    &vaultProvider{loader: loader, configPath: configPath},
-		Ops:       opsProvider{pageIndex: pageIndex},
+		Ops:       opsProvider{client: vaultClient},
 		Cache:     cache,
 		Launch:    launches,
 		Clock:     libtime.NewCurrentDateTime(),
