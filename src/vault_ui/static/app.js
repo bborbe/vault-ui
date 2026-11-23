@@ -3175,6 +3175,16 @@ function connectWebSocket() {
 
 function handleTaskUpdate(data) {
     const { type, vault, item_kind } = data;
+
+    // A vault-api poll observed new content. The frame carries no item identity,
+    // so re-read the view the operator is on — the job the deleted page-index
+    // watcher used to do for a change made outside the board.
+    if (type === 'source_changed') {
+        console.log('Source changed — re-fetching the current view');
+        loadCurrentView();
+        return;
+    }
+
     // Goal events use `goal_id`, task events use `task_id`. Accept either
     // so the frontend works during the deploy window where some payloads
     // still carry `task_id` for goal events.

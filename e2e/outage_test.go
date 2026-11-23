@@ -25,25 +25,45 @@ var _ = Describe("Scenario: vault-api outage", func() {
 			Should(BeNumerically(">", 0), "the board fetches from the stub vault-api")
 		rows := countOf(page, ".task-card")
 		Expect(rows).To(BeNumerically(">", 0))
+		// The banner is absent while the source is healthy — the half that makes
+		// the down-state assertion discriminating (a permanently-rendered banner
+		// would otherwise pass).
+		healthyBanner := page.Locator("[data-testid='vault-api-unavailable']")
+		healthyVisible, err := healthyBanner.IsVisible()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(healthyVisible).To(BeFalse(), "the banner is absent while vault-api is up")
 		_ = page.Close()
 
 		// Down: close the stub, and wait for the source's next poll to record it.
 		stopStub()
-		defer func() {
-			Expect(restartStub(context.Background())).To(Succeed(), "restart the fixture stub")
-		}()
+		defer stopStub()
 		Eventually(func() bool { return sourceUnavailable() }, "25s", "500ms").
 			Should(BeTrue(), "the source polls every 10s; the outage registers on the next tick")
 
 		// Reload: the banner is visible and the last-good rows are unchanged.
-		page = newPage("/")
-		defer func() { _ = page.Close() }()
-		banner := page.Locator("[data-testid='vault-api-unavailable']")
+		downPage := newPage("/")
+		banner := downPage.Locator("[data-testid='vault-api-unavailable']")
 		Eventually(func() bool {
 			visible, err := banner.IsVisible()
 			return err == nil && visible
 		}, "10s", "200ms").Should(BeTrue(), "the banner renders on a load during the outage")
-		Expect(countOf(page, ".task-card")).To(Equal(rows), "the board keeps its last-good rows")
+		Expect(countOf(downPage, ".task-card")).To(Equal(rows), "the board keeps its last-good rows")
+		_ = downPage.Close()
+
+		// Recovery: restart the stub. The next poll clears the flag, and a fresh
+		// load renders the board with no banner — the "absent when up" half again,
+		// this time after a real outage rather than on the first load.
+		Expect(restartStub(context.Background())).To(Succeed(), "restart the fixture stub")
+		Eventually(func() bool { return sourceUnavailable() }, "25s", "500ms").
+			Should(BeFalse(), "the source recovers on the next poll after the stub restarts")
+		recoveredPage := newPage("/")
+		defer func() { _ = recoveredPage.Close() }()
+		recoveredBanner := recoveredPage.Locator("[data-testid='vault-api-unavailable']")
+		Eventually(func() bool {
+			visible, err := recoveredBanner.IsVisible()
+			return err == nil && !visible
+		}, "10s", "200ms").Should(BeTrue(), "the banner is absent after the source recovers")
+		Expect(countOf(recoveredPage, ".task-card")).To(Equal(rows), "the rows are back after recovery")
 	})
 })
 

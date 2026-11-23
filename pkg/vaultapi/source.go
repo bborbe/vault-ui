@@ -32,6 +32,8 @@ type Source struct {
 	client   Client
 	interval time.Duration
 
+	onChange func()
+
 	mu          sync.RWMutex
 	revision    uint64
 	tasks       []Task
@@ -60,6 +62,15 @@ func NewSourceFromData(tasks []Task, goals []Goal, topics []Topic) *Source {
 		revision: 1,
 		lastHash: hashLists(tasks, goals, topics),
 	}
+}
+
+// SetOnChange installs the callback run after a poll observes changed content.
+// The poll calls it outside its own lock, after the new lists and revision are
+// visible to readers, so a callback that re-reads the board sees fresh data.
+func (s *Source) SetOnChange(onChange func()) {
+	s.mu.Lock()
+	s.onChange = onChange
+	s.mu.Unlock()
 }
 
 // BaseURL is the client's origin, for the startup log line. It is empty for a
@@ -120,7 +131,12 @@ func (s *Source) poll(ctx context.Context) {
 	if changed {
 		s.revision++
 	}
+	onChange := s.onChange
 	s.mu.Unlock()
+
+	if changed && onChange != nil {
+		onChange()
+	}
 }
 
 // setUnavailable records the source's reachability after a poll.

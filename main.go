@@ -56,6 +56,7 @@ func execute(ctx context.Context) error {
 	heartbeatStore := factory.CreateHeartbeatStore()
 	writeQueue := factory.CreateWriteQueue()
 	vaultSource := vaultapi.NewSource(vaultapi.New(vaultapi.ConfigFromEnv()))
+	vaultSource.SetOnChange(factory.CreateSourceChangeBroadcaster(manager))
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, paneResolver, launches, locks, homeDir, readiness, manager,
 		sessionSnapshot, writeQueue, vaultSource,

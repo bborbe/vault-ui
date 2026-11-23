@@ -88,6 +88,19 @@ func TopicUpdatedFrame(vault, topicID string) []byte {
 	})
 }
 
+// sourceChangedFrame is broadcast when a vault-api poll observes new content.
+// It carries no item identity: the board re-reads the active view.
+type sourceChangedFrame struct {
+	Type string `json:"type"`
+}
+
+// SourceChangedFrame builds the frame a vault-api poll broadcasts after it
+// swaps in changed lists. vault-api has no push signal, so this frame is what
+// keeps an open board in sync now that no page-index watcher exists.
+func SourceChangedFrame() []byte {
+	return marshal(sourceChangedFrame{Type: "source_changed"})
+}
+
 // writeFailedFrame is broadcast when a queued vault write fails. Like the
 // watcher frame, the identifier key is task_id for every item kind.
 type writeFailedFrame struct {
