@@ -19,7 +19,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/cleanup"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
 // opsCall records one VaultOps invocation.
@@ -215,14 +214,12 @@ func writeTitledTranscript(homeDir, vaultPath, sessionID, title string) {
 // the status cache (the CLI does not emit the marker, so the cache is the only
 // source the sweep reads).
 func seedMarker(
-	cache statuscache.Cache,
 	vaultName, vaultPath, tasksFolder, itemID, marker string,
 ) {
 	dir := filepath.Join(vaultPath, tasksFolder)
 	ExpectWithOffset(1, os.MkdirAll(dir, 0o750)).To(Succeed())
 	body := "---\nstatus: in_progress\nclaude_session_started: \"" + marker + "\"\n---\n\nbody\n"
 	ExpectWithOffset(1, os.WriteFile(filepath.Join(dir, itemID+".md"), []byte(body), 0o600)).To(Succeed())
-	ExpectWithOffset(1, cache.LoadVault(vaultName, vaultPath, tasksFolder)).To(Succeed())
 }
 
 // sweepFixture bundles the injectable dependencies a test needs to assert on.
@@ -231,7 +228,6 @@ type sweepFixture struct {
 	ops    *fakeOps
 	reg    launchregistry.Registry
 	lock   sessionlock.Registry
-	cache  statuscache.Cache
 	clock  libtime.CurrentDateTime
 	home   string
 	vault  cleanup.Vault
@@ -249,7 +245,6 @@ func newFixture(
 	ops := newFakeOps(tasks, goals)
 	reg := launchregistry.NewRegistry()
 	lock := sessionlock.NewRegistry()
-	cache := statuscache.NewCache()
 	clock := libtime.NewCurrentDateTime()
 	clock.SetNow(fixedNow)
 
@@ -265,7 +260,6 @@ func newFixture(
 		CurrentUser:        "alice",
 		LaunchRegistry:     reg,
 		SessionLock:        lock,
-		StatusCache:        cache,
 		LiveNames:          noLiveNames(),
 		Now:                clock,
 		MarkerTTL:          cleanup.DefaultMarkerTTL,
@@ -276,7 +270,7 @@ func newFixture(
 	}
 
 	return &sweepFixture{
-		params: params, ops: ops, reg: reg, lock: lock, cache: cache,
+		params: params, ops: ops, reg: reg, lock: lock,
 		clock: clock, home: home, vault: vault,
 	}
 }
@@ -521,70 +515,6 @@ var _ = Describe("CleanupSweep goal pass", func() {
 	})
 })
 
-var _ = Describe("CleanupSweep marker TTL pass", func() {
-	It("clears a marker older than the TTL with no registry record", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-
-		Expect(runSweep(f)).To(Equal(1))
-		clears := f.ops.callsOf("clearTask")
-		Expect(clears).To(HaveLen(1))
-		Expect(clears[0].key).To(Equal("claude_session_started"))
-	})
-
-	It("leaves a marker younger than the TTL alone", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerYoungerThanTTL)
-
-		Expect(runSweep(f)).To(Equal(0))
-		Expect(f.ops.callsOf("clearTask")).To(BeEmpty())
-	})
-
-	It("treats an unparseable legacy marker as expired", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, "true")
-
-		Expect(runSweep(f)).To(Equal(1))
-	})
-
-	It("never clears a marker while an IN_FLIGHT record exists", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-
-		Expect(runSweep(f)).To(Equal(0))
-		Expect(f.ops.callsOf("clearTask")).To(BeEmpty())
-	})
-
-	It("skips an id-bearing task whose transcript is absent", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T", ClaudeSessionID: testUUID}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-
-		Expect(runSweep(f)).To(Equal(0))
-		Expect(f.ops.callsOf("clearTask")).To(BeEmpty())
-	})
-
-	It("clears a stale goal marker from the cache", func() {
-		vaultPath := GinkgoT().TempDir()
-		goal := cleanup.Item{ID: "g", Title: "G"}
-		f := newFixture(nil, []cleanup.Item{goal}, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", goal.ID, markerOlderThanTTL)
-
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("clearGoal")[0].key).To(Equal("claude_session_started"))
-	})
-})
-
 var _ = Describe("CleanupSweep topic marker pass", func() {
 	// A topic's marker is never in the status cache — the cache indexes
 	// Themes/Objectives/Goals/Tasks only — so these fixtures leave the cache empty
@@ -640,268 +570,6 @@ var _ = Describe("CleanupSweep topic marker pass", func() {
 		Expect(f.ops.callsOf("clearTopic")).To(HaveLen(1))
 		_, present := f.reg.State(f.vault.Name, topic.ID)
 		Expect(present).To(BeFalse())
-	})
-})
-
-var _ = Describe("CleanupSweep resurrected-marker re-clear", func() {
-	It("re-clears a finished task's marker exactly once and evicts the record", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerYoungerThanTTL)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("clearTask")).To(HaveLen(1))
-		_, present := f.reg.State(f.vault.Name, task.ID)
-		Expect(present).To(BeFalse())
-
-		By("not clearing again on the next pass")
-		f.ops.calls = nil
-		Expect(runSweep(f)).To(Equal(0))
-		Expect(f.ops.callsOf("clearTask")).To(BeEmpty())
-	})
-
-	It("evicts a finished record whose marker is already gone", func() {
-		vaultPath := GinkgoT().TempDir()
-		f := newFixture(nil, nil, vaultPath, nil)
-		f.reg.Begin(f.vault.Name, "t", "task")
-		f.reg.Finish(f.vault.Name, "t")
-
-		Expect(runSweep(f)).To(Equal(0))
-		_, present := f.reg.State(f.vault.Name, "t")
-		Expect(present).To(BeFalse())
-	})
-
-	It("keeps the record when the re-clear fails", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-		f.ops.clearTaskErr = os.ErrPermission
-
-		Expect(runSweep(f)).To(Equal(0))
-		state, present := f.reg.State(f.vault.Name, task.ID)
-		Expect(present).To(BeTrue())
-		Expect(state).To(Equal(launchregistry.Finished))
-	})
-
-	It("keeps a record re-begun while the clear is in flight", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-		f.ops.onClearTask = func() {
-			f.ops.onClearTask = nil // re-begin only once
-			f.reg.Begin(f.vault.Name, task.ID, "task")
-		}
-
-		Expect(runSweep(f)).To(Equal(1))
-		state, present := f.reg.State(f.vault.Name, task.ID)
-		Expect(present).To(BeTrue())
-		Expect(state).To(Equal(launchregistry.InFlight))
-	})
-
-	It("re-clears a finished goal's marker and evicts the record", func() {
-		vaultPath := GinkgoT().TempDir()
-		goal := cleanup.Item{ID: "g", Title: "G"}
-		f := newFixture(nil, []cleanup.Item{goal}, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", goal.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, goal.ID, "goal")
-		f.reg.Finish(f.vault.Name, goal.ID)
-
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("clearGoal")).To(HaveLen(1))
-		_, present := f.reg.State(f.vault.Name, goal.ID)
-		Expect(present).To(BeFalse())
-	})
-
-	It("does not cross-clear a task record on the goal path", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("clearGoal")).To(BeEmpty())
-	})
-})
-
-// markerWrittenAt returns the exact string restoreMarkerIfInFlight writes for a
-// given clock instant — the serialization boundary the launch path also uses.
-func markerWrittenAt(f *sweepFixture) string {
-	return f.params.Now.Now().UTC().Format(time.RFC3339Nano)
-}
-
-var _ = Describe("CleanupSweep marker-restore race", func() {
-	It("restores the marker after clearItemSession when a relaunch lands in the await", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{
-			ID: "t", Title: "T", Assignee: "alice",
-			ClaudeSessionID: testUUID, ClaudeSessionStarted: markerOlderThanTTL,
-		}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-		f.ops.onClearTask = func() {
-			f.ops.onClearTask = nil
-			f.reg.Begin(f.vault.Name, task.ID, "task")
-		}
-
-		runSweep(f)
-		sets := f.ops.callsOf("setTask")
-		Expect(sets).To(HaveLen(1))
-		Expect(sets[0].id).To(Equal(task.ID))
-		Expect(sets[0].key).To(Equal("claude_session_started"))
-		Expect(sets[0].value).To(Equal(markerWrittenAt(f)))
-	})
-
-	It("restores the marker after clearOrphanedTaskMarkers when a relaunch lands in the await", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-		f.ops.onClearTask = func() {
-			f.ops.onClearTask = nil
-			f.reg.Begin(f.vault.Name, task.ID, "task")
-		}
-
-		runSweep(f)
-		sets := f.ops.callsOf("setTask")
-		Expect(sets).To(HaveLen(1))
-		Expect(sets[0].key).To(Equal("claude_session_started"))
-		Expect(sets[0].value).To(Equal(markerWrittenAt(f)))
-	})
-
-	It("restores the marker after clearOrphanedGoalMarkers when a relaunch lands in the await", func() {
-		vaultPath := GinkgoT().TempDir()
-		goal := cleanup.Item{ID: "g", Title: "G"}
-		f := newFixture(nil, []cleanup.Item{goal}, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", goal.ID, markerOlderThanTTL)
-		f.ops.onClearGoal = func() {
-			f.ops.onClearGoal = nil
-			f.reg.Begin(f.vault.Name, goal.ID, "goal")
-		}
-
-		runSweep(f)
-		sets := f.ops.callsOf("setGoal")
-		Expect(sets).To(HaveLen(1))
-		Expect(sets[0].id).To(Equal(goal.ID))
-		Expect(sets[0].key).To(Equal("claude_session_started"))
-		Expect(sets[0].value).To(Equal(markerWrittenAt(f)))
-	})
-
-	It("restores the marker after reclearResurrectedTaskMarkers when a relaunch lands in the await", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-		f.ops.onClearTask = func() {
-			f.ops.onClearTask = nil
-			f.reg.Begin(f.vault.Name, task.ID, "task")
-		}
-
-		runSweep(f)
-		sets := f.ops.callsOf("setTask")
-		Expect(sets).To(HaveLen(1))
-		Expect(sets[0].key).To(Equal("claude_session_started"))
-		Expect(sets[0].value).To(Equal(markerWrittenAt(f)))
-	})
-
-	It("restores the marker after reclearResurrectedGoalMarkers when a relaunch lands in the await", func() {
-		vaultPath := GinkgoT().TempDir()
-		goal := cleanup.Item{ID: "g", Title: "G"}
-		f := newFixture(nil, []cleanup.Item{goal}, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", goal.ID, markerOlderThanTTL)
-		f.reg.Begin(f.vault.Name, goal.ID, "goal")
-		f.reg.Finish(f.vault.Name, goal.ID)
-		f.ops.onClearGoal = func() {
-			f.ops.onClearGoal = nil
-			f.reg.Begin(f.vault.Name, goal.ID, "goal")
-		}
-
-		runSweep(f)
-		sets := f.ops.callsOf("setGoal")
-		Expect(sets).To(HaveLen(1))
-		Expect(sets[0].key).To(Equal("claude_session_started"))
-		Expect(sets[0].value).To(Equal(markerWrittenAt(f)))
-	})
-
-	It("does not restore when the record is finished", func() {
-		By("at clearItemSession, whose pre-clear state is any known record")
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{
-			ID: "t", Title: "T", Assignee: "alice",
-			ClaudeSessionID: testUUID, ClaudeSessionStarted: markerOlderThanTTL,
-		}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		f.reg.Begin(f.vault.Name, task.ID, "task")
-		f.reg.Finish(f.vault.Name, task.ID)
-
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("setTask")).To(BeEmpty())
-
-		By("at reclearResurrectedTaskMarkers")
-		taskPath := GinkgoT().TempDir()
-		task2 := cleanup.Item{ID: "t", Title: "T"}
-		f2 := newFixture([]cleanup.Item{task2}, nil, taskPath, nil)
-		seedMarker(f2.cache, f2.vault.Name, taskPath, "24 Tasks", task2.ID, markerOlderThanTTL)
-		f2.reg.Begin(f2.vault.Name, task2.ID, "task")
-		f2.reg.Finish(f2.vault.Name, task2.ID)
-
-		Expect(runSweep(f2)).To(Equal(1))
-		Expect(f2.ops.callsOf("setTask")).To(BeEmpty())
-
-		By("at reclearResurrectedGoalMarkers")
-		goalPath := GinkgoT().TempDir()
-		goal := cleanup.Item{ID: "g", Title: "G"}
-		f3 := newFixture(nil, []cleanup.Item{goal}, goalPath, nil)
-		seedMarker(f3.cache, f3.vault.Name, goalPath, "24 Tasks", goal.ID, markerOlderThanTTL)
-		f3.reg.Begin(f3.vault.Name, goal.ID, "goal")
-		f3.reg.Finish(f3.vault.Name, goal.ID)
-
-		Expect(runSweep(f3)).To(Equal(1))
-		Expect(f3.ops.callsOf("setGoal")).To(BeEmpty())
-	})
-
-	It("still clears a genuine orphan with no relaunch", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, markerOlderThanTTL)
-
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("clearTask")).To(HaveLen(1))
-		Expect(f.ops.callsOf("clearTask")[0].key).To(Equal("claude_session_started"))
-		Expect(f.ops.callsOf("setTask")).To(BeEmpty())
-	})
-
-	It("clears a marker written after construction once it passes the TTL", func() {
-		vaultPath := GinkgoT().TempDir()
-		task := cleanup.Item{ID: "t", Title: "T"}
-		f := newFixture([]cleanup.Item{task}, nil, vaultPath, nil)
-		// One minute AFTER the instant the sweep was constructed with: a frozen
-		// Now would give this marker a negative age and never clear it.
-		marker := libtime.DateTime(fixedNow.Time().Add(time.Minute)).UTC().Format(time.RFC3339Nano)
-		seedMarker(f.cache, f.vault.Name, vaultPath, "24 Tasks", task.ID, marker)
-
-		Expect(runSweep(f)).To(Equal(0))
-		Expect(f.ops.callsOf("clearTask")).To(BeEmpty())
-
-		By("clearing it on the next pass, once the clock has moved past the TTL")
-		f.clock.SetNow(libtime.DateTime(fixedNow.Time().Add(2 * time.Hour)))
-		Expect(runSweep(f)).To(Equal(1))
-		Expect(f.ops.callsOf("clearTask")).To(HaveLen(1))
-		Expect(f.ops.callsOf("clearTask")[0].key).To(Equal("claude_session_started"))
 	})
 })
 

@@ -33,7 +33,6 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, goalID, "goal")
 	if err := set.GoalSet.Execute(
@@ -65,13 +64,35 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 		return api.SessionResponse{}, newHTTPError(500, setErr.Error())
 	}
 	_ = set.GoalClear.Execute(ctx, resolved.Path, goalID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, goalID)
 	if result.SessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
 			500, "vault-cli goal work-on did not start a claude session: no warnings reported",
 		)
 	}
 	return sessionResponse(resolved, resolved.ClaudeScript, result.SessionID, goal.Name), nil
+}
+
+// JumpGoal activates the WezTerm pane a live goal's manager session runs in,
+// mirroring JumpTask. sameOrigin carries the handler's same-origin verdict.
+func (s *service) JumpGoal(ctx context.Context, vault, goalID string, sameOrigin bool) error {
+	if !sameOrigin {
+		return newHTTPError(403, "cross-origin jump request rejected")
+	}
+	resolved, ok, err := s.vaultByName(ctx, vault)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return newHTTPError(500, unknownVault(vault))
+	}
+	goal, found, err := s.findGoal(ctx, resolved, goalID)
+	if err != nil {
+		return newHTTPError(500, err.Error())
+	}
+	if !found {
+		return newHTTPError(404, goalNotFound(goalID))
+	}
+	return s.jumpToSession(ctx, goal.ClaudeSessionID)
 }
 
 // TakeOverGoal terminates a live or starting goal session and returns the
@@ -96,7 +117,6 @@ func (s *service) TakeOverGoal(
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	sessionID := goal.ClaudeSessionID
 	terminated := false
@@ -188,7 +208,6 @@ func (s *service) ExecuteGoalCommand(
 	if !ok {
 		return api.GoalCommandResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	var runErr error
 	if req.Command == "defer-goal" {
@@ -206,11 +225,9 @@ func (s *service) ExecuteGoalCommand(
 	if runErr != nil {
 		return api.GoalCommandResponse{}, newHTTPError(500, runErr.Error())
 	}
-	s.deps.Cache.Invalidate(vault, goalID)
 	// Mark before publishing so a client reacting to the frame never re-fetches
 	// stale data; the deferred mark still covers error returns after a partial
 	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.GoalCommandResponse{Status: "success", GoalID: goalID, Command: req.Command}, nil
 }

@@ -220,6 +220,40 @@ func NewJumpTaskHandler(m mutations.Service) http.Handler {
 	})
 }
 
+// NewJumpGoalHandler returns the POST /api/goals/{goal_id}/jump handler.
+func NewJumpGoalHandler(m mutations.Service) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		vault, ok := requireVault(resp, req)
+		if !ok {
+			return
+		}
+		if err := m.JumpGoal(
+			req.Context(), vault, pathVar(req, "goal_id"), sameOrigin(req),
+		); err != nil {
+			writeMutationError(resp, err)
+			return
+		}
+		resp.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// NewJumpTopicHandler returns the POST /api/topics/{topic_id}/jump handler.
+func NewJumpTopicHandler(m mutations.Service) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		vault, ok := requireVault(resp, req)
+		if !ok {
+			return
+		}
+		if err := m.JumpTopic(
+			req.Context(), vault, pathVar(req, "topic_id"), sameOrigin(req),
+		); err != nil {
+			writeMutationError(resp, err)
+			return
+		}
+		resp.WriteHeader(http.StatusNoContent)
+	})
+}
+
 // NewTakeOverTaskHandler returns the POST /api/tasks/{task_id}/take-over handler.
 func NewTakeOverTaskHandler(m mutations.Service) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
@@ -549,18 +583,6 @@ func NewSetTaskSessionHandler(m mutations.Service) http.Handler {
 			return
 		}
 		writeJSON(resp, http.StatusAccepted, result)
-	})
-}
-
-// NewCacheReloadHandler returns the POST /api/cache/reload handler.
-func NewCacheReloadHandler(m mutations.Service) http.Handler {
-	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		result, err := m.ReloadCache(req.Context(), req.URL.Query().Get("vault"))
-		if err != nil {
-			writeMutationError(resp, err)
-			return
-		}
-		writeJSON(resp, http.StatusOK, result)
 	})
 }
 

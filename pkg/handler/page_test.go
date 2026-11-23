@@ -14,14 +14,12 @@ import (
 	"testing"
 	"testing/fstest"
 
-	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/storage"
 	markdown "github.com/bborbe/vault-markdown"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
@@ -86,13 +84,7 @@ func newPageFixture(t *testing.T) string {
 // fixture vault.
 func newPageTestRouter(t *testing.T, vaultDir string) http.Handler {
 	t.Helper()
-	index := pageindex.NewPageIndex(
-		pageindex.NewPageReader(storage.NewPageStorage(nil)),
-		pageindex.NewDirectoryLister(),
-		libtime.NewCurrentDateTime(),
-		libtime.NewWaiterDuration(),
-	)
-	pages := pageview.NewService(pageTestVaults{dir: vaultDir}, index)
+	pages := pageview.NewService(pageTestVaults{dir: vaultDir}, storage.NewPageStorage(nil))
 	staticFS := fstest.MapFS{
 		"index.html": {Data: []byte("<html>index</html>")},
 	}

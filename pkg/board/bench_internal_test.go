@@ -17,14 +17,12 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
-	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
 	"github.com/bborbe/vault-ui/pkg/session"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // benchItemCount is the fixture size. It is well above the two thousand items
@@ -133,28 +131,6 @@ func benchItems() []ops.TaskListItem {
 // benchEntries builds one index entry per fixture item, each carrying the Open
 // Questions the index parses off benchPageContent, so the board serves real
 // parsed questions for every item.
-func benchEntries(items []ops.TaskListItem) []*pageindex.Entry {
-	parsed, err := storage.ParseOpenQuestions(context.Background(), benchPageContent)
-	if err != nil {
-		panic(err)
-	}
-	entries := make([]*pageindex.Entry, 0, len(items))
-	for _, item := range items {
-		questions := make([]domain.OpenQuestion, 0, len(parsed))
-		for _, q := range parsed {
-			questions = append(questions, domain.OpenQuestion{Index: q.Index, Text: q.Question})
-		}
-		entries = append(entries, &pageindex.Entry{
-			Page: domain.NewPage(
-				map[string]any{"status": item.Status},
-				domain.FileMetadata{Name: item.Name},
-				"",
-			),
-			OpenQuestions: questions,
-		})
-	}
-	return entries
-}
 
 // benchVaults returns the single fixture vault.
 type benchVaults struct{}
@@ -259,15 +235,7 @@ func (benchProbe) Generation() uint64 { return 1 }
 // it.
 type benchIndex struct{}
 
-func (benchIndex) Revision(pageindex.Key) uint64 { return 1 }
-
-func (benchIndex) ChangedPagesSince(pageindex.Key, uint64) ([]string, bool) {
-	return nil, false
-}
-
-func (benchIndex) ListEntries(context.Context, string, string) ([]*pageindex.Entry, error) {
-	return nil, nil
-}
+func (benchIndex) Revision(vaultapi.SnapshotKey) uint64 { return 1 }
 
 // benchBoard builds the board the benchmark measures, on an in-memory fixture
 // of benchItemCount task items. It needs no real vault and touches no
@@ -280,21 +248,17 @@ func (benchIndex) ListEntries(context.Context, string, string) ([]*pageindex.Ent
 func benchBoard(tb testing.TB) *board {
 	tb.Helper()
 	items := benchItems()
-	pageIndex := &pageindexmocks.PageIndex{}
-	pageIndex.ListEntriesReturns(benchEntries(items), nil)
 	return New(Deps{
 		Vaults: benchVaults{},
 		Ops:    benchOps{items: items},
-		Cache:  benchCache{},
 		Launch: launchregistry.NewRegistry(),
 		Clock: libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
 			return libtime.DateTime(benchNow)
 		}),
-		Signals:   benchSignals{},
-		Sessions:  benchProbe{},
-		Index:     benchIndex{},
-		PageIndex: pageIndex,
-		HomeDir:   benchHomeDir,
+		Signals:  benchSignals{},
+		Sessions: benchProbe{},
+		Index:    benchIndex{},
+		HomeDir:  benchHomeDir,
 	}).(*board)
 }
 
@@ -358,7 +322,7 @@ func BenchmarkBuildTaskRows(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for _, item := range items {
-				benchSink.names = bd.uncompletedBlockers(vault.Name, item.BlockedBy)
+				benchSink.names = bd.uncompletedBlockers(bd.taskStatuses(vault.VaultName), item.BlockedBy)
 			}
 		}
 	})
@@ -433,7 +397,7 @@ func BenchmarkBuildTaskRows(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			byName := bd.taskPageFieldsByTask(ctx, vault)
+			byName := bd.taskPageFieldsFromSource(vault)
 			for _, item := range items {
 				benchSink.questions = taskPageFieldsFor(byName, item.Name).openQuestions
 			}

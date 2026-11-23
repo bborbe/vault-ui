@@ -11,12 +11,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 
-	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -24,9 +21,8 @@ import (
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -97,16 +93,10 @@ func paneHandler(
 	configPath string,
 	homeDir string,
 	paneResolver *recordingPaneResolver,
+	source *vaultapi.Source,
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
-	pageIndex := factory.CreatePageIndex(
-		pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
-		libtime.NewCurrentDateTime(),
-	)
-	Expect(
-		factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
-	).To(Succeed())
 
 	// The board reads the live set from the session state, which production
 	// keeps current from the attention store with the session-state watcher.
@@ -120,10 +110,10 @@ func paneHandler(
 	Expect(sessionSnapshot.RefreshOnce(context.Background())).To(Succeed())
 
 	return factory.CreateAPIHandler(
-		loader, configPath, statuscache.NewCache(), paneResolver,
+		loader, configPath, paneResolver,
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), homeDir, readiness,
-		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
-		sessionSnapshot, startWriteQueue(),
+		websocket.NewConnectionManager(websocket.NewMetrics()),
+		sessionSnapshot, startWriteQueue(), source,
 	)
 }
 
@@ -150,11 +140,12 @@ func listElements(body string) []map[string]any {
 
 var _ = Describe("Lazy pane resolution", func() {
 	It("resolves panes in one batch on a list read and one session on a jump", func() {
-		loader, configPath, homeDir, _ := paneFixture()
+		loader, configPath, homeDir, vaultDir := paneFixture()
 		recorder := &recordingPaneResolver{
 			panes: map[string]string{liveSessionID: "7"},
 		}
-		handler := paneHandler(loader, configPath, homeDir, recorder)
+		source := sourceFromVault(vaultDir, "personal", "24 Tasks", "23 Goals", "23 Topics")
+		handler := paneHandler(loader, configPath, homeDir, recorder, source)
 
 		listRecorder := httptest.NewRecorder()
 		handler.ServeHTTP(
@@ -187,12 +178,13 @@ var _ = Describe("Lazy pane resolution", func() {
 	})
 
 	It("carries jump_pane on a live task only when a pane resolves", func() {
-		loader, configPath, homeDir, _ := paneFixture()
+		loader, configPath, homeDir, vaultDir := paneFixture()
+		source := sourceFromVault(vaultDir, "personal", "24 Tasks", "23 Goals", "23 Topics")
 
 		withPane := &recordingPaneResolver{
 			panes: map[string]string{liveSessionID: "7"},
 		}
-		handler := paneHandler(loader, configPath, homeDir, withPane)
+		handler := paneHandler(loader, configPath, homeDir, withPane, source)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(
 			recorder,
@@ -204,7 +196,7 @@ var _ = Describe("Lazy pane resolution", func() {
 		Expect(elements[0]).To(HaveKeyWithValue("jump_pane", "7"))
 
 		withoutPane := &recordingPaneResolver{panes: map[string]string{}}
-		handler = paneHandler(loader, configPath, homeDir, withoutPane)
+		handler = paneHandler(loader, configPath, homeDir, withoutPane, source)
 		recorder = httptest.NewRecorder()
 		handler.ServeHTTP(
 			recorder,
@@ -218,21 +210,25 @@ var _ = Describe("Lazy pane resolution", func() {
 		Expect(elements[0]["jump_pane"]).To(BeNil())
 	})
 
-	It("carries no pane-bearing key in a goal list response", func() {
-		loader, configPath, _ := apiFixture()
-		handler := newTestAPIHandler(loader, configPath)
+	It("emits jump_pane null in a goal list response without a pane resolver", func() {
+		loader, configPath, vaultDir := apiFixture()
+		handler := newTestAPIHandler(
+			loader, configPath,
+			sourceFromVault(vaultDir, "personal", "24 Tasks", "23 Goals", "23 Topics"),
+		)
 
 		target := "/api/goals?vault=personal"
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
 		Expect(recorder.Code).To(Equal(http.StatusOK), "%s", target)
 
-		keys := listKeys(recorder.Body.String())
-		Expect(keys).NotTo(BeEmpty(), "%s", target)
-		for _, key := range keys {
-			Expect(strings.Contains(strings.ToLower(key), "pane")).To(
-				BeFalse(), "%s carries %q", target, key,
-			)
+		elements := listElements(recorder.Body.String())
+		Expect(elements).NotTo(BeEmpty(), "%s", target)
+		// The key is always emitted on a goal, on the same terms as a task: with
+		// no pane resolver wired it is null, which is the feature-inert config.
+		for _, element := range elements {
+			Expect(element).To(HaveKey("jump_pane"), "%s", target)
+			Expect(element["jump_pane"]).To(BeNil(), "%s", target)
 		}
 	})
 })

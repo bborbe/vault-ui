@@ -13,7 +13,6 @@ import (
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/storage"
-	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -77,16 +76,22 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 
 		// One ListPages for the whole vault, exactly as the task path reads its
 		// page-derived fields: the topic's `jira:` value is not on the list item.
-		pageFieldsByTopic := b.topicPageFieldsByTopic(ctx, vault)
+		pageFieldsByTopic := b.topicPageFieldsByTopic(vault)
 
 		for _, item := range items {
-			blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+			blockers := b.uncompletedBlockers(b.taskStatuses(vault.VaultName), item.BlockedBy)
+			state := classifySessionID(ctx, item.ClaudeSessionID, params)
+			var location *string
+			if state == session.SessionStateLive {
+				location = liveLocationPtr(state, b.signals.RegistryLocation(ctx, item.ClaudeSessionID))
+			}
 			responses = append(responses, api.TopicResponse{
 				ID:                   item.Name,
 				Title:                item.Name,
 				Status:               item.Status,
 				Phase:                strPtr(item.Phase),
-				SessionState:         sessionStatePtr(classifySessionID(ctx, item.ClaudeSessionID, params)),
+				SessionState:         sessionStatePtr(state),
+				Location:             location,
 				ClaudeSessionID:      strPtr(item.ClaudeSessionID),
 				ClaudeSessionStarted: pageFieldsByTopic[item.Name].started,
 				Flag:                 item.Flag,
@@ -110,6 +115,8 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		}
 	}
 
+	b.attachTopicJumpPanes(ctx, responses)
+
 	if query.SessionLive {
 		live := make([]api.TopicResponse, 0, len(responses))
 		for _, response := range responses {
@@ -120,6 +127,53 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		responses = live
 	}
 	return responses, nil
+}
+
+// attachTopicJumpPanes resolves the panes of the live topic rows in one batch and
+// stamps each live row's JumpPane, mirroring attachGoalJumpPanes. A nil Panes
+// dependency leaves every row's JumpPane nil, which is the feature-inert
+// configuration. Only live rows are resolved: a headless manager is live but has
+// no terminal.
+func (b *board) attachTopicJumpPanes(ctx context.Context, responses []api.TopicResponse) {
+	if b.panes == nil {
+		return
+	}
+	seen := make(map[string]bool, len(responses))
+	sessionIDs := make([]string, 0, len(responses))
+	for i := range responses {
+		sessionID := topicSessionID(responses[i])
+		if !topicRowLive(responses[i]) || sessionID == "" || seen[sessionID] {
+			continue
+		}
+		seen[sessionID] = true
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if len(sessionIDs) == 0 {
+		return
+	}
+	panes := b.panes.ResolveAll(ctx, sessionIDs)
+	for i := range responses {
+		if !topicRowLive(responses[i]) {
+			continue
+		}
+		if paneID, ok := panes[topicSessionID(responses[i])]; ok {
+			value := paneID
+			responses[i].JumpPane = &value
+		}
+	}
+}
+
+// topicRowLive reports whether the response's classified session state is live.
+func topicRowLive(response api.TopicResponse) bool {
+	return response.SessionState != nil && *response.SessionState == string(session.SessionStateLive)
+}
+
+// topicSessionID returns the response's claude session id, or "" when absent.
+func topicSessionID(response api.TopicResponse) string {
+	if response.ClaudeSessionID == nil {
+		return ""
+	}
+	return *response.ClaudeSessionID
 }
 
 // pageKeyFields is the per-page state the topic and goal boards derive from a page
@@ -133,44 +187,17 @@ type pageKeyFields struct {
 	started *string
 }
 
-// topicPageFieldsByTopic returns each topic page's `jira:`, `mode:` and
-// `claude_session_started:` frontmatter values, keyed by the page's file name.
-// The launch marker is read here rather than from the status cache, which
-// indexes Themes/Objectives/Goals/Tasks and so never carries a topic's marker.
-// It is one ListPages per
-// vault, the same snapshot the topic list already reads, so it adds no walk of
-// its own.
-//
-// It is deliberately separate from taskPageFieldsByTask: that helper lists the
-// tasks folder and parses Open Questions, neither of which applies to a topic.
-// A failure is not fatal to a board read: it is logged and every topic carries
-// a nil Jira and a nil Mode rather than the whole topic list failing.
-func (b *board) topicPageFieldsByTopic(
-	ctx context.Context, vault Vault,
-) map[string]pageKeyFields {
+// topicPageFieldsByTopic returns each topic's `mode:` value from the vault-api
+// source, keyed by the page name. The vault-api topic item carries `mode`; it
+// carries no jira or started marker, and no topic page in the vault declares
+// them, so those fields stay nil.
+func (b *board) topicPageFieldsByTopic(vault Vault) map[string]pageKeyFields {
 	byName := map[string]pageKeyFields{}
-	if b.pageIndex == nil {
-		// A board built without a page index carries no page-derived fields, on
-		// the same terms as the task helper: degrade, never fail the read.
+	if b.source == nil {
 		return byName
 	}
-	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.TopicsFolder)
-	if err != nil {
-		glog.Warningf("list pages for topic fields in vault %s: %v", vault.Name, err)
-		return byName
-	}
-	for _, page := range pages {
-		select {
-		case <-ctx.Done():
-			// The caller is gone: stop rather than walk the remaining pages.
-			return byName
-		default:
-		}
-		byName[page.FileMetadata.Name] = pageKeyFields{
-			jira:    pageJira(page),
-			mode:    pageMode(page),
-			started: pageClaudeSessionStarted(page),
-		}
+	for _, t := range b.source.Topics(vault.VaultName) {
+		byName[t.Title] = pageKeyFields{mode: stringPtrOrNil(t.Mode)}
 	}
 	return byName
 }

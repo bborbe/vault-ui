@@ -11,12 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // fakeRevisions is a mutable IndexRevisions.
@@ -33,26 +32,10 @@ type fakeRevisions struct {
 	pageReads int
 }
 
-func (f *fakeRevisions) Revision(pageindex.Key) uint64 {
+func (f *fakeRevisions) Revision(vaultapi.SnapshotKey) uint64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.value
-}
-
-func (f *fakeRevisions) ChangedPagesSince(_ pageindex.Key, revision uint64) ([]string, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if revision > f.value {
-		return nil, false
-	}
-	return append([]string(nil), f.changed...), f.changedOK
-}
-
-func (f *fakeRevisions) ListEntries(context.Context, string, string) ([]*pageindex.Entry, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.pageReads++
-	return nil, nil
 }
 
 func (f *fakeRevisions) bump() {
@@ -122,7 +105,6 @@ type snapshotHarness struct {
 // leaves that path off, which is the "always rebuild in full" configuration for
 // it.
 type snapshotHooks struct {
-	patch   taskSnapshotPatchFunc
 	refresh taskSnapshotRefreshFunc
 }
 
@@ -155,17 +137,6 @@ func newSnapshotHarnessWithHooks(
 		Revisions:   h.revisions,
 		Generations: h.generations,
 		Timeout:     timeout,
-	}
-	if hooks.patch != nil {
-		params.Patch = func(
-			ctx context.Context, vault Vault, rows []taskSnapshotRow, names []string,
-		) ([]taskSnapshotRow, error) {
-			h.mu.Lock()
-			h.patches++
-			h.patchNames = append([]string(nil), names...)
-			h.mu.Unlock()
-			return hooks.patch(ctx, vault, rows, names)
-		}
 	}
 	if hooks.refresh != nil {
 		params.Refresh = func(
@@ -351,7 +322,7 @@ var _ = Describe("taskSnapshotStore", func() {
 	})
 
 	It("advances the published-rows signal only when a rebuild changes the rows", func() {
-		key := pageindex.NewKey(snapshotVaultA.Path, snapshotVaultA.TasksFolder)
+		key := vaultapi.NewSnapshotKey(snapshotVaultA.Path, snapshotVaultA.TasksFolder)
 		h := newSnapshotHarness(
 			func(_ context.Context, _ Vault, n int) ([]taskSnapshotRow, error) {
 				switch n {
@@ -588,23 +559,6 @@ func rowsBuilder(names ...string) func(context.Context, Vault, int) ([]taskSnaps
 	}
 }
 
-// statusPatch returns a patch func that sets one named row's status, leaving
-// every other row as it was.
-func statusPatch(name, status string) taskSnapshotPatchFunc {
-	return func(
-		_ context.Context, _ Vault, rows []taskSnapshotRow, _ []string,
-	) ([]taskSnapshotRow, error) {
-		patched := make([]taskSnapshotRow, len(rows))
-		copy(patched, rows)
-		for i := range patched {
-			if patched[i].item.Name == name {
-				patched[i].item.Status = status
-			}
-		}
-		return patched, nil
-	}
-}
-
 // allStatusRefresh returns a refresh func that marks every row as refreshed.
 func allStatusRefresh(status string) taskSnapshotRefreshFunc {
 	return func(_ context.Context, _ Vault, rows []taskSnapshotRow) ([]taskSnapshotRow, error) {
@@ -616,214 +570,3 @@ func allStatusRefresh(status string) taskSnapshotRefreshFunc {
 		return refreshed, nil
 	}
 }
-
-var _ = Describe("taskSnapshotStore row patch", func() {
-	var ctx context.Context
-
-	BeforeEach(func() {
-		ctx = context.Background()
-	})
-
-	It("re-derives only the changed rows and never rebuilds", func() {
-		h := newSnapshotHarnessWithHooks(
-			rowsBuilder("Alpha", "Beta"),
-			snapshotHooks{patch: statusPatch("Alpha", "patched")},
-			0,
-		)
-
-		first, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(first).To(HaveLen(2))
-		Expect(h.Builds()).To(Equal(1))
-
-		h.revisions.markPages("Alpha.md")
-		second, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(second).To(HaveLen(2))
-		Expect(second[0].item.Name).To(Equal("Alpha"))
-		Expect(second[0].item.Status).To(Equal("patched"))
-		Expect(second[1].item.Name).To(Equal("Beta"))
-		Expect(second[1].item.Status).To(Equal(""))
-
-		Expect(h.Builds()).To(Equal(1))
-		patches, names := h.Patches()
-		Expect(patches).To(Equal(1))
-		Expect(names).To(Equal([]string{"Alpha.md"}))
-
-		// The atomic swap: the slice the first read returned is untouched.
-		Expect(first).To(HaveLen(2))
-		Expect(first[0].item.Status).To(Equal(""))
-		Expect(first[1].item.Status).To(Equal(""))
-
-		// The store itself never reads a page: that belongs to the patch func.
-		Expect(h.revisions.PageReads()).To(Equal(0))
-	})
-
-	It("rebuilds in full for a folder-level mark", func() {
-		h := newSnapshotHarnessWithHooks(
-			rowsBuilder("Alpha"),
-			snapshotHooks{patch: statusPatch("Alpha", "patched")},
-			0,
-		)
-		_, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-
-		h.revisions.markFolder()
-		rows, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(rows[0].item.Status).To(Equal(""))
-		Expect(h.Builds()).To(Equal(2))
-		patches, _ := h.Patches()
-		Expect(patches).To(Equal(0))
-	})
-
-	It("rebuilds in full when no patch func is wired", func() {
-		h := newSnapshotHarness(rowsBuilder("Alpha"), 0)
-		_, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-
-		h.revisions.markPages("Alpha.md")
-		_, err = h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(h.Builds()).To(Equal(2))
-	})
-
-	It("takes the session-only refresh when only the generation moves", func() {
-		h := newSnapshotHarnessWithHooks(
-			rowsBuilder("Alpha"),
-			snapshotHooks{
-				patch:   statusPatch("Alpha", "patched"),
-				refresh: allStatusRefresh("refreshed"),
-			},
-			0,
-		)
-		_, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-
-		h.generations.bump()
-		rows, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(rows[0].item.Status).To(Equal("refreshed"))
-		Expect(h.Refreshes()).To(Equal(1))
-		Expect(h.Builds()).To(Equal(1))
-		patches, _ := h.Patches()
-		Expect(patches).To(Equal(0))
-	})
-
-	It("patches then refreshes when the page revision and the generation both move", func() {
-		h := newSnapshotHarnessWithHooks(
-			rowsBuilder("Alpha"),
-			snapshotHooks{
-				patch:   statusPatch("Alpha", "patched"),
-				refresh: allStatusRefresh("refreshed"),
-			},
-			0,
-		)
-		_, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-
-		h.revisions.markPages("Alpha.md")
-		h.generations.bump()
-		rows, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		// The patch re-derives the page-derived fields and the refresh re-derives
-		// the session fields, so a both-moved key needs no full rebuild: the
-		// refresh runs after the patch, so its status is the one published.
-		Expect(rows[0].item.Status).To(Equal("refreshed"))
-		Expect(h.Builds()).To(Equal(1))
-		Expect(h.Refreshes()).To(Equal(1))
-		patches, _ := h.Patches()
-		Expect(patches).To(Equal(1))
-	})
-
-	It("rebuilds in full when both move but the changed set is unbounded", func() {
-		h := newSnapshotHarnessWithHooks(
-			rowsBuilder("Alpha"),
-			snapshotHooks{
-				patch:   statusPatch("Alpha", "patched"),
-				refresh: allStatusRefresh("refreshed"),
-			},
-			0,
-		)
-		_, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-
-		// A folder-level mark and a session move in the same window: the page
-		// revision moved but cannot be bounded, so no patch can run.
-		h.revisions.markFolder()
-		h.generations.bump()
-		rows, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(rows[0].item.Status).To(Equal(""))
-		Expect(h.Builds()).To(Equal(2))
-		Expect(h.Refreshes()).To(Equal(0))
-		patches, _ := h.Patches()
-		Expect(patches).To(Equal(0))
-	})
-
-	It("rebuilds in full when both move and a seam is unwired", func() {
-		h := newSnapshotHarness(rowsBuilder("Alpha"), 0)
-		_, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-
-		h.revisions.markPages("Alpha.md")
-		h.generations.bump()
-		rows, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(rows[0].item.Status).To(Equal(""))
-		Expect(h.Builds()).To(Equal(2))
-		Expect(h.Refreshes()).To(Equal(0))
-		patches, _ := h.Patches()
-		Expect(patches).To(Equal(0))
-	})
-
-	It("keeps the previous rows when a patch fails and retries the next read", func() {
-		h := newSnapshotHarnessWithHooks(
-			rowsBuilder("Alpha"),
-			snapshotHooks{patch: func(
-				_ context.Context, _ Vault, _ []taskSnapshotRow, _ []string,
-			) ([]taskSnapshotRow, error) {
-				return nil, stderrors.New("boom")
-			}},
-			0,
-		)
-		first, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(first[0].item.Name).To(Equal("Alpha"))
-
-		h.revisions.markPages("Alpha.md")
-		retained, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(retained[0].item.Name).To(Equal("Alpha"))
-		patches, _ := h.Patches()
-		Expect(patches).To(Equal(1))
-
-		retried, err := h.store.List(ctx, snapshotVaultA)
-		Expect(err).To(BeNil())
-		Expect(retried[0].item.Name).To(Equal("Alpha"))
-		patches, _ = h.Patches()
-		Expect(patches).To(Equal(2))
-	})
-})
-
-var _ = Describe("changedPages", func() {
-	It("serves only the changed pages it was given", func() {
-		alpha := domain.NewPage(
-			map[string]any{"status": "todo"},
-			domain.FileMetadata{Name: "Alpha"},
-			domain.Content("# Alpha"),
-		)
-		storage := &changedPages{pages: []*domain.Page{alpha}}
-
-		pages, err := storage.ListPages(context.Background(), "/vault", "24 Tasks")
-		Expect(err).To(BeNil())
-		Expect(pages).To(Equal([]*domain.Page{alpha}))
-
-		page, err := storage.ReadPage(context.Background(), "/vault", "24 Tasks", "Alpha")
-		Expect(err).To(BeNil())
-		Expect(page).To(Equal(alpha))
-
-		_, err = storage.ReadPage(context.Background(), "/vault", "24 Tasks", "Missing")
-		Expect(err).To(HaveOccurred())
-	})
-})

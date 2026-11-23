@@ -25,8 +25,8 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 )
 
-// PageStorage is the narrow page-index seam the service reads through. It is
-// satisfied by pageindex.PageIndex and by vault-cli's storage.PageStorage.
+// PageStorage is the narrow page-read seam the service reads through. It is
+// satisfied by vault-cli's storage.PageStorage.
 type PageStorage interface {
 	ListPages(ctx context.Context, vaultPath string, pagesDir string) ([]*domain.Page, error)
 	ReadPage(

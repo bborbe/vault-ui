@@ -8,7 +8,6 @@ import (
 	"context"
 
 	"github.com/bborbe/vault-ui/pkg/api"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -35,7 +34,6 @@ func (s *service) RunTopic(ctx context.Context, vault, topicID string) (api.Sess
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, topicNotFound(topicID))
 	}
-	defer s.markTopicDirty(resolved)
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, topicID, kindTopic)
 	if err := set.TopicSet.Execute(
@@ -67,13 +65,35 @@ func (s *service) RunTopic(ctx context.Context, vault, topicID string) (api.Sess
 		return api.SessionResponse{}, newHTTPError(500, setErr.Error())
 	}
 	_ = set.TopicClear.Execute(ctx, resolved.Path, topicID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, topicID)
 	if result.SessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
 			500, "vault-cli topic work-on did not start a claude session: no warnings reported",
 		)
 	}
 	return sessionResponse(resolved, resolved.ClaudeScript, result.SessionID, topic.Name), nil
+}
+
+// JumpTopic activates the WezTerm pane a live topic's manager session runs in,
+// mirroring JumpTask. sameOrigin carries the handler's same-origin verdict.
+func (s *service) JumpTopic(ctx context.Context, vault, topicID string, sameOrigin bool) error {
+	if !sameOrigin {
+		return newHTTPError(403, "cross-origin jump request rejected")
+	}
+	resolved, ok, err := s.vaultByName(ctx, vault)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return newHTTPError(500, unknownVault(vault))
+	}
+	topic, found, err := s.findTopic(ctx, resolved, topicID)
+	if err != nil {
+		return newHTTPError(500, err.Error())
+	}
+	if !found {
+		return newHTTPError(404, topicNotFound(topicID))
+	}
+	return s.jumpToSession(ctx, topic.ClaudeSessionID)
 }
 
 // TakeOverTopic terminates a live or starting topic session and returns the
@@ -98,7 +118,6 @@ func (s *service) TakeOverTopic(
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, topicNotFound(topicID))
 	}
-	defer s.markTopicDirty(resolved)
 	set := s.opsForVault(resolved)
 	sessionID := topic.ClaudeSessionID
 	terminated := false
@@ -150,10 +169,6 @@ func (s *service) topicWritten(
 	vault vaultconfig.Vault, topicID string,
 ) func(context.Context) {
 	return func(ctx context.Context) {
-		s.deps.Cache.Invalidate(vault.Name, topicID)
-		s.deps.Index.MarkFileDirty(
-			pageindex.NewKey(vault.Path, vault.TopicsFolder), topicID,
-		)
 		s.deps.Publisher.PublishTopicUpdated(ctx, vault.Name, topicID)
 	}
 }

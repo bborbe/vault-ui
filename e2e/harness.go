@@ -12,12 +12,14 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bborbe/errors"
@@ -38,7 +40,175 @@ var (
 	// adminPort is the free port the binary's admin server binds, so the suite
 	// never competes with the live board's :9090.
 	adminPort int
+	// stubServer is the fixture vault-api the binary reads, stubURL its origin,
+	// and stubRoot the fixture vault the stub serves from.
+	stubServer *http.Server
+	stubURL    string
+	stubRoot   string
 )
+
+// startStub runs a fixture vault-api serving the seeded fixture's tasks, goals
+// and topics, so the board reads a hermetic source instead of the live one. Its
+// vault name is "fixture", which the board's case-insensitive match accepts.
+func startStub(ctx context.Context, root string) error {
+	port, err := freePort(ctx)
+	if err != nil {
+		return err
+	}
+	stubURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	stubRoot = root
+	return listenStub(ctx)
+}
+
+// restartStub re-listens on the same port after stopStub, so a spec that
+// simulated the outage does not strand the specs that run after it.
+func restartStub(ctx context.Context) error {
+	return listenStub(ctx)
+}
+
+func listenStub(ctx context.Context) error {
+	addr := strings.TrimPrefix(stubURL, "http://")
+	stubServer = &http.Server{Addr: addr, Handler: stubHandler()}
+	go func() { _ = stubServer.ListenAndServe() }()
+	return waitStub(ctx)
+}
+
+// stubHandler serves the seeded fixture as the vault-api list endpoints. It
+// re-reads the fixture vault on every request rather than answering a fixed
+// body, so a spec that writes a page into the vault sees it on the board's next
+// poll — the propagation path the board has now that no page-index watcher
+// exists.
+func stubHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, _ *http.Request) {
+		writeStubJSON(w, stubList("25 Tasks"))
+	})
+	mux.HandleFunc("/api/v1/goals", func(w http.ResponseWriter, _ *http.Request) {
+		writeStubJSON(w, stubList("24 Goals"))
+	})
+	mux.HandleFunc("/api/v1/topics", func(w http.ResponseWriter, _ *http.Request) {
+		writeStubJSON(w, stubList("23 Topics"))
+	})
+	return mux
+}
+
+// stubItem is one fixture page rendered as a vault-api list item. Only the
+// fields the board reads are filled.
+type stubItem struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Path     string `json:"path"`
+	Status   string `json:"status"`
+	Phase    string `json:"phase,omitempty"`
+	Assignee string `json:"assignee,omitempty"`
+	Vault    string `json:"vault"`
+}
+
+// stubList renders every page in the fixture's dir as a list item.
+func stubList(dir string) string {
+	items := make([]stubItem, 0, 4)
+	entries, err := os.ReadDir(filepath.Join(stubRoot, dir))
+	if err != nil {
+		glog.Warningf("stub list %s: %v", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(stubRoot, dir, entry.Name())
+		front := stubFrontmatter(path)
+		title := strings.TrimSuffix(entry.Name(), ".md")
+		items = append(items, stubItem{
+			ID:       title,
+			Title:    title,
+			Path:     path,
+			Status:   front["status"],
+			Phase:    front["phase"],
+			Assignee: front["assignee"],
+			Vault:    "fixture",
+		})
+	}
+	// Mirror the real envelope, including `warnings` as a NUMBER. The stub used
+	// to send only `items`, so a client that declared the field as []string
+	// passed the whole suite and then failed every live poll with "cannot
+	// unmarshal number into Go struct field taskList.warnings".
+	body, err := json.Marshal(map[string]any{
+		"items":             items,
+		"total":             len(items),
+		"warnings":          0,
+		"index_age_seconds": 0,
+	})
+	if err != nil {
+		glog.Warningf("stub list %s marshal: %v", dir, err)
+		return `{"items":[]}`
+	}
+	return string(body)
+}
+
+// stubFrontmatter reads a page's top-level frontmatter keys. Values are
+// unquoted; nested structures are not needed by the fixture.
+func stubFrontmatter(path string) map[string]string {
+	out := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		glog.Warningf("stub frontmatter %s: %v", path, err)
+		return out
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return out
+	}
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
+	}
+	return out
+}
+
+// waitStub polls until the stub serves its tasks route.
+func waitStub(ctx context.Context) error {
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.After(10 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(ctx, ctx.Err(), "wait stub")
+		case <-deadline:
+			return errors.Errorf(ctx, "stub did not serve within 10s")
+		case <-ticker.C:
+			resp, err := client.Get(stubURL + "/api/v1/tasks")
+			if err != nil {
+				continue
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+	}
+}
+
+// writeStubJSON writes a fixed JSON body.
+func writeStubJSON(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(body))
+}
+
+// stopStub closes the stub so the board's next poll fails — the outage state.
+func stopStub() {
+	if stubServer != nil {
+		_ = stubServer.Close()
+		stubServer = nil
+	}
+}
 
 // buildBinary compiles the real binary.
 func buildBinary(ctx context.Context, repoRoot, out string) error {
@@ -237,6 +407,7 @@ func startBinary(ctx context.Context, port int) error {
 		fmt.Sprintf("VAULT_UI_LISTEN=127.0.0.1:%d", port),
 		fmt.Sprintf("VAULT_UI_ADMIN_LISTEN=127.0.0.1:%d", adminPort),
 		"HOME="+homeDir,
+		"VAULT_API_URL="+stubURL,
 	)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

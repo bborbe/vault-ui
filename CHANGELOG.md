@@ -8,6 +8,26 @@ All notable changes to this project will be documented in this file.
 - feat: A card title opens the page inside vault-ui at `/v/{vault}/page/{path}` instead of handing it to Obsidian — a small ↗ beside the title keeps the `obsidian://` hand-off one click away, and a card whose link carries no vault or file keeps the old behaviour
 - fix: The page view resolves a vault by its display name as well as its config key and renders the "Open in Obsidian" link unescaped (html/template was emitting `#ZgotmplZ` for the `obsidian://` href), and `make e2e` binds its own API and admin ports (`VAULT_UI_ADMIN_LISTEN`) so it runs alongside the live board instead of stopping it
 
+## v0.113.1
+
+- fix: **the board's vault-api read path carries a goal's and a topic's `phase` through to the list item, so the Goals and Topics views group cards into phase columns instead of piling every card into `—`.** `pkg/vaultapi/listop.go`'s `goals()`/`topics()` mapped vault-api rows onto `ops.TaskListItem` without a `Phase` (the code assumed vault-api served none), and the `Goal`/`Topic` client structs had no `phase` key to decode. Both now carry it, on the same terms as the task list, so `pkg/board/goals.go`'s `Phase: strPtr(item.Phase)` receives a value.
+
+## v0.113.0
+
+- feat: Read the board from the local vault-api instead of a page index of vault-ui's own — tasks, goals and topics come from vault-api's list endpoints, a 10s poll replaces the in-process fsnotify watcher (a poll that sees new content broadcasts a `source_changed` frame, so an open board refreshes without a reload), `pkg/pageindex`, `pkg/statuscache`, the `ops.NewWatchOperation` wiring and the dead `pkg/watcher` package are deleted, and a `vault-api unavailable` banner shows while the source's last poll failed (the board keeps its last-known rows); goal cards lose their assignee until vault-api's goal projection carries one, so the goals assignee filter matches nothing
+
+## v0.112.6
+
+- fix: The `↗` jump control now renders on live goal and topic cards, not only task cards — `GoalResponse` and `TopicResponse` carry `jump_pane` resolved once per list build (the same batch `ResolveAll` the task path uses), `POST /api/goals/{id}/jump` and `POST /api/topics/{id}/jump` activate the pane through the shared server-side jump credential, and `jumpToPane` routes by kind with the topic cache's vault-qualified key; a live topic card also gains the `● Live·<location>` label goals and tasks already carry, since `TopicResponse` now emits `location`
+
+## v0.112.5
+
+- fix: Approving a task from the board no longer demotes an active row — a todo→planning drag writes `phase: planning` plus `approved_by`/`approved_at`, promotes only a legacy `todo`/`backlog` status to `next` (the spec-035 ready-to-start contract), and leaves every other status byte-identical, so an `in_progress` row stays active instead of being demoted to `next`; `vault-cli task approve` stopped rewriting status itself in v0.167.1
+
+## v0.112.4
+
+- fix: A completed or aborted card no longer offers **Resume** or **Live** — the terminal gate now sits first in `sessionButtonHtml`, so a closed row renders the **Done** chip only and never a session control, even when it still carries a `claude_session_id`; open cards are unchanged
+
 ## v0.112.3
 
 - fix: A completed card with no recorded session no longer offers **Start** (which read as "begin this work" on delivered work) — the shared session button now renders a **Done** chip for a terminal card with no session, across tasks, goals and topics; a terminal card that still carries a session id keeps **Resume** (many completed goals do), and only the sessionless ones previously showed Start

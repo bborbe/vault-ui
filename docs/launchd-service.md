@@ -61,6 +61,8 @@ Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
         <string>/Users/YOUR_USER/Documents/workspaces/go/bin:/opt/homebrew/bin:/usr/local/bin:/Users/YOUR_USER/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>VAULT_UI_LISTEN</key>
         <string>127.0.0.1:8000</string>
+        <key>GLOG_logtostderr</key>
+        <string>1</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -78,6 +80,7 @@ Create `~/Library/LaunchAgents/com.github.bborbe.vault-ui.plist`:
 
 - launchd does **not** expand `~` — use absolute paths everywhere.
 - **`VAULT_UI_LISTEN` pins the bind address.** The binary defaults to `:8000`, which listens on **every** interface and serves every vault page to the LAN. `host:`/`port:` in `config.yaml` do not set the API listener, so a plist without this key silently exposes the board. `127.0.0.1:8000` keeps it loopback-only.
+- **`GLOG_logtostderr=1` puts the startup proof in the log file.** glog writes INFO to a `$TMPDIR/vault-ui.*.log.INFO.*` file by default, so the "board reads tasks from vault-api at …" line would never reach `StandardErrorPath`. This env var (honoured without `flag.Parse`) redirects glog to stderr, which launchd captures into `~/Library/Logs/vault-ui.log`.
 - The `PATH` env var must include the directory holding `vault-cli`, otherwise the watchers fail with `exec: "vault-cli": executable file not found`.
 - WezTerm does **not** need to be on the `PATH`. The board resolves the `wezterm` executable itself, from its macOS application bundle (`/Applications/WezTerm.app/Contents/MacOS`), when it launches the pane-resolution helper behind the card's `↗` jump control.
 - `WEZTERM_UNIX_SOCKET` must **not** be set in the plist. launchd starts the service without it, and the board then picks the newest `~/.local/share/wezterm/gui-sock-<pid>` whose process is still alive — the GUI socket name carries the WezTerm process id and changes on every restart, so it cannot be pinned in the plist. Without this, `wezterm cli` falls back to `~/.local/share/wezterm/sock`, a separate mux server that holds almost none of the operator's panes, and the card's `↗` jump answers 409.

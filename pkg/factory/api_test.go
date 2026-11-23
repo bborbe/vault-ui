@@ -14,10 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	"github.com/bborbe/vault-cli/pkg/storage"
 	gws "github.com/gorilla/websocket"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -25,18 +23,19 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 // newTestAPIHandler wires CreateAPIHandler with a ready gate and a fresh
 // connection manager.
-func newTestAPIHandler(loader config.Loader, configPath string) http.Handler {
+func newTestAPIHandler(
+	loader config.Loader, configPath string, source *vaultapi.Source,
+) http.Handler {
 	return newTestAPIHandlerWithManager(
-		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()),
+		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()), source,
 	)
 }
 
@@ -64,18 +63,16 @@ func newTestAPIHandlerWithManager(
 	loader config.Loader,
 	configPath string,
 	manager websocket.ConnectionManager,
+	source *vaultapi.Source,
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	return factory.CreateAPIHandler(
-		loader, configPath, statuscache.NewCache(), factory.CreatePaneResolver(tempDir()),
+		loader, configPath, factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), tempDir(), readiness, manager,
-		factory.CreatePageIndex(
-			pageindex.NewPageReader(storage.NewPageStorage(nil)), pageindex.NewDirectoryLister(),
-			libtime.NewCurrentDateTime(),
-		),
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		startWriteQueue(),
+		source,
 	)
 }
 
@@ -147,7 +144,7 @@ var _ = Describe("API factory", func() {
 	Describe("CreateAPIHandler", func() {
 		It("serves the read routes", func() {
 			loader, configPath, _ := apiFixture()
-			handler := newTestAPIHandler(loader, configPath)
+			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/vaults", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
@@ -156,7 +153,7 @@ var _ = Describe("API factory", func() {
 
 		It("serves the frontend at root", func() {
 			loader, configPath, _ := apiFixture()
-			handler := newTestAPIHandler(loader, configPath)
+			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
@@ -168,7 +165,7 @@ var _ = Describe("API factory", func() {
 		It("broadcasts a task update to a connected WebSocket client", func() {
 			loader, configPath, _ := apiFixture()
 			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager))
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil)))
 			defer server.Close()
 
 			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
@@ -204,7 +201,7 @@ var _ = Describe("API factory", func() {
 		It("broadcasts a goal update to a connected WebSocket client", func() {
 			loader, configPath, _ := apiFixture()
 			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager))
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil)))
 			defer server.Close()
 
 			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
@@ -235,28 +232,6 @@ var _ = Describe("API factory", func() {
 				"item_kind": "goal",
 				"vault":     "personal",
 			}))
-		})
-	})
-
-	Describe("CreateStatusCacheLoader", func() {
-		It("loads every vault's statuses", func() {
-			loader, configPath, _ := apiFixture()
-			cache := statuscache.NewCache()
-			Expect(factory.CreateStatusCacheLoader(
-				loader, configPath, cache, make(chan struct{}),
-			)(context.Background())).To(Succeed())
-			status, ok := cache.GetStatus("personal", "Task A")
-			Expect(ok).To(BeTrue())
-			Expect(status).To(Equal("next"))
-		})
-
-		It("fails when the config cannot be loaded", func() {
-			loader, _, _ := apiFixture()
-			err := factory.CreateStatusCacheLoader(
-				loader, filepath.Join(tempDir(), "missing.yaml"), statuscache.NewCache(),
-				make(chan struct{}),
-			)(context.Background())
-			Expect(err).To(HaveOccurred())
 		})
 	})
 

@@ -1486,3 +1486,18 @@ a.obsidian-handoff:hover {
     cursor: pointer;
     margin: 0;
 }
+
+.banner {
+    background: #7a1f1f;
+    color: #fff;
+    padding: 8px 16px;
+    text-align: center;
+    font-weight: 600;
+}
+
+/* Every other `.hidden` in this sheet is compound (`.x-dropdown.hidden`), so the
+   banner needs its own rule — without it the class does nothing and the banner
+   is permanently on screen. */
+.banner.hidden {
+    display: none;
+}

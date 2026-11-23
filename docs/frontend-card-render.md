@@ -71,6 +71,17 @@ There is no `live` slot. It existed only to render a display-only pill on a topi
 card, and once a topic carries the `session` slot that pill duplicates the
 clickable take-over badge `sessionButtonHtml` already renders.
 
+Inside the `session` slot, the `↗` jump control follows `item.jump_pane` alone
+for every kind: a live card whose session resolves to a pane offers it, a
+headless one does not. There is no per-kind branch — a goal or topic card carries
+the same control as a task card, and the route is `POST /{kind}/{id}/jump`.
+
+A **terminal** card (`completed` / `aborted`) renders the `✓ Done` chip and
+nothing else. The gate sits first in `sessionButtonHtml`, above the Starting,
+Live and Resume branches, so a closed row offers no session control even when it
+still carries a `claude_session_id` — Live means an active session, not a
+recorded id.
+
 Every other slot must be identical across the three kinds — a slot added to
 `task` alone is a bug, not a per-kind choice.
 `TestCardConfigSlotParityAcrossKinds` in `pkg/board/jsasset/card_render_test.go`

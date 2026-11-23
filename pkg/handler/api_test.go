@@ -75,6 +75,8 @@ func (f *fakeBoard) ListVaults(_ context.Context) ([]api.VaultResponse, error) {
 	return f.vaults, f.err
 }
 
+func (f *fakeBoard) SourceUnavailable() bool { return false }
+
 func (f *fakeBoard) ListAssignees(_ context.Context, vaults []string) (api.AssigneesResponse, error) {
 	f.gotVaults = vaults
 	return f.assignees, f.err

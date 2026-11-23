@@ -12,7 +12,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/golang/glog"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
@@ -20,7 +19,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -39,31 +37,17 @@ import (
 func CreateCleanupSweep(
 	loader config.Loader,
 	configPath string,
-	cache statuscache.Cache,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
-	cacheReady <-chan struct{},
 ) run.Func {
 	return func(ctx context.Context) error {
 		cfg, err := vaultconfig.Load(ctx, loader, configPath)
 		if err != nil {
 			return errors.Wrap(ctx, err, "load vault config for cleanup sweep")
 		}
-		sweep := cleanup.NewSweep(cleanupSweepParams(cfg, cache, launches, locks, homeDir))
+		sweep := cleanup.NewSweep(cleanupSweepParams(cfg, launches, locks, homeDir))
 
-		select {
-		case <-cacheReady:
-		case <-ctx.Done():
-			return nil
-		}
-
-		cleared, reconcileErr := sweep.ReconcileOrphanedMarkers(ctx)
-		if reconcileErr != nil {
-			glog.Warningf("cleanup startup reconcile failed: %v", reconcileErr)
-		} else {
-			glog.V(2).Infof("cleanup startup reconcile cleared %d orphaned marker(s)", cleared)
-		}
 		return sweep.RunLoop(ctx)
 	}
 }
@@ -73,7 +57,6 @@ func CreateCleanupSweep(
 // constants — no flag, env var or config key exists for them.
 func cleanupSweepParams(
 	cfg *vaultconfig.Config,
-	cache statuscache.Cache,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
@@ -106,7 +89,6 @@ func cleanupSweepParams(
 		CurrentUser:    cfg.CurrentUser,
 		LaunchRegistry: launches,
 		SessionLock:    locks,
-		StatusCache:    cache,
 		LiveNames:      processTable.LiveSessionNames,
 		ProcessScanner: scanner,
 		// A clock, not a snapshot: RunLoop reuses one SweepParams for the whole

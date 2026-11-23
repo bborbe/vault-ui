@@ -12,12 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/storage"
 
 	"github.com/bborbe/vault-ui/pkg/board"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 )
 
@@ -72,13 +70,7 @@ func newFixture(t *testing.T) string {
 // newService builds the real service over the production page-index seam.
 func newService(t *testing.T, dir string) pageview.Service {
 	t.Helper()
-	index := pageindex.NewPageIndex(
-		pageindex.NewPageReader(storage.NewPageStorage(nil)),
-		pageindex.NewDirectoryLister(),
-		libtime.NewCurrentDateTime(),
-		libtime.NewWaiterDuration(),
-	)
-	return pageview.NewService(fixtureVaults{dir: dir}, index)
+	return pageview.NewService(fixtureVaults{dir: dir}, storage.NewPageStorage(nil))
 }
 
 // displayNameVaults separates the config key (Name) from the display name
@@ -99,13 +91,7 @@ func (v displayNameVaults) Vaults(context.Context) ([]board.Vault, error) {
 // config key, in any case.
 func TestPageViewResolvesVaultByDisplayName(t *testing.T) {
 	dir := newFixture(t)
-	index := pageindex.NewPageIndex(
-		pageindex.NewPageReader(storage.NewPageStorage(nil)),
-		pageindex.NewDirectoryLister(),
-		libtime.NewCurrentDateTime(),
-		libtime.NewWaiterDuration(),
-	)
-	service := pageview.NewService(displayNameVaults{dir: dir}, index)
+	service := pageview.NewService(displayNameVaults{dir: dir}, storage.NewPageStorage(nil))
 	for _, name := range []string{"fixture", "Fixture", "FIXTURE"} {
 		if _, err := service.Render(context.Background(), name, "Alpha.md"); err != nil {
 			t.Fatalf("render with vault name %q: %v", name, err)

@@ -17,6 +17,8 @@ import (
 type fakeMutations struct {
 	runTask            func(context.Context, string, string) (api.SessionResponse, error)
 	jumpTask           func(context.Context, string, string, bool) error
+	jumpGoal           func(context.Context, string, string, bool) error
+	jumpTopic          func(context.Context, string, string, bool) error
 	takeOverTask       func(context.Context, string, string) (api.SessionResponse, error)
 	resumeTaskCommand  func(context.Context, string, string) (api.SessionResponse, error)
 	runGoal            func(context.Context, string, string) (api.SessionResponse, error)
@@ -64,6 +66,18 @@ func (f *fakeMutations) JumpTask(
 	ctx context.Context, vault, taskID string, sameOrigin bool,
 ) error {
 	return f.jumpTask(ctx, vault, taskID, sameOrigin)
+}
+
+func (f *fakeMutations) JumpGoal(
+	ctx context.Context, vault, goalID string, sameOrigin bool,
+) error {
+	return f.jumpGoal(ctx, vault, goalID, sameOrigin)
+}
+
+func (f *fakeMutations) JumpTopic(
+	ctx context.Context, vault, topicID string, sameOrigin bool,
+) error {
+	return f.jumpTopic(ctx, vault, topicID, sameOrigin)
 }
 
 func (f *fakeMutations) TakeOverTask(
@@ -166,12 +180,6 @@ func (f *fakeMutations) SetTaskSession(
 	ctx context.Context, vault, taskID string, req api.UpdateSessionRequest,
 ) (api.SessionSetResponse, error) {
 	return f.setTaskSession(ctx, vault, taskID, req)
-}
-
-func (f *fakeMutations) ReloadCache(
-	ctx context.Context, vault string,
-) (api.CacheReloadResponse, error) {
-	return f.reloadCache(ctx, vault)
 }
 
 func (f *fakeMutations) ReloadConfig(ctx context.Context) (api.ConfigReloadResponse, error) {

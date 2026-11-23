@@ -81,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
     parseURLParams();
     renderColumnHeaders();  // builds the column DOM for currentView (always phase columns)
     loadVaults();
+    loadSourceStatus();
     setupEventListeners();
     connectWebSocket();
     startPolling();
@@ -555,6 +556,25 @@ function updateAssigneeLabel() {
     }
     const text = currentAssignees.map(a => a === '' ? 'Unassigned' : a).join(', ');
     label.textContent = text.length > 30 ? text.slice(0, 30) + '...' : text;
+}
+
+// loadSourceStatus shows the "vault-api unavailable" banner when the board's
+// source's last poll failed. The board keeps serving last-known rows, so this is
+// the only signal that the data may be stale.
+async function loadSourceStatus() {
+    try {
+        const response = await fetch('/api/source-status');
+        if (!response.ok) {
+            return;
+        }
+        const status = await response.json();
+        const banner = document.getElementById('vault-api-unavailable');
+        if (banner) {
+            banner.classList.toggle('hidden', !status.unavailable);
+        }
+    } catch (_) {
+        // A failing status endpoint is itself an outage; leave the banner as-is.
+    }
 }
 
 async function loadVaults() {
@@ -1537,9 +1557,9 @@ function sessionCacheItem(kind, id, vault) {
     return sessionCacheFor(kind)[`${vault}\u0000${id}`];
 }
 
-// A card whose work is finished. Shared by the session button so a completed
-// card never offers Start as if the work were still to begin; a terminal card
-// that still carries a session reaches the Resume branch first.
+// A card whose work is finished. A terminal card offers no session control at
+// all: Live means an ACTIVE session, so a closed row must read as closed even
+// when it still carries a session id.
 function isTerminalStatus(status) {
     return status === 'completed' || status === 'aborted';
 }
@@ -1547,6 +1567,12 @@ function isTerminalStatus(status) {
 function sessionButtonHtml(kind, item) {
     const startingSet = startingSetFor(kind);
     const hasSession = item.claude_session_id;
+    // Terminal wins over every branch below — a closed row renders no Resume,
+    // no Live, no Starting and no Start, even when it still carries a session
+    // id or a stale starting marker. One shared rule for tasks, goals, topics.
+    if (isTerminalStatus(item.status)) {
+        return `<span class="done-chip" title="Finished — no session control on a closed card">✓ Done</span>`;
+    }
     // Marker means "launch turn in flight": Starting wins even once the id lands
     // (assistant writes it mid-turn), so a reload mid-launch stays "Starting…"
     // instead of rendering the take-over badge for a booting session.
@@ -1575,12 +1601,12 @@ function sessionButtonHtml(kind, item) {
         // badge's click ENDS the session, so navigation must not ride on it. It
         // follows pane availability, not session state: a headless session is live
         // but has no terminal, so offering the control would only fail after the
-        // click. It is also task-only — a goal card has no jump route. Route:
-        // POST /tasks/{id}/jump.
-        if (kind !== 'task' || !item.jump_pane) {
+        // click. The control is identical for tasks, goals and topics — every kind
+        // carries the session slot and the same `POST /{kind}/{id}/jump` route.
+        if (!item.jump_pane) {
             return liveBadge;
         }
-        return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}')" title="Jump to this session's terminal pane">↗</span>`;
+        return liveBadge + `<span class="jump-btn" role="button" tabindex="0" onclick="jumpToPane('${kind}', '${escapeJsAttr(item.id)}', '${escapeJsAttr(item.vault)}')" title="Jump to this session's terminal pane">↗</span>`;
     } else if (hasSession) {
         if (item.session_state === 'indeterminate') {
             // Session id present but no transcript found — cannot prove it dead
@@ -1595,12 +1621,6 @@ function sessionButtonHtml(kind, item) {
             buttonClass = 'resume-btn';
             buttonDisabled = false;
         }
-    } else if (isTerminalStatus(item.status)) {
-        // A finished card with no session to resume must not offer Start — that
-        // reads as "begin this work" on work already delivered. One shared rule
-        // for tasks, goals and topics; a terminal card WITH a session already
-        // reaches the Resume branch above.
-        return `<span class="done-chip" title="Finished — no session to resume">✓ Done</span>`;
     } else {
         buttonLabel = '▶ Start';
         buttonClass = 'start-btn';
@@ -2338,20 +2358,21 @@ async function takeOverSession(kind, id, vault) {
 // published in the served page) and activates the pane. Mirrors takeOverSession's
 // guard + cache lookup, but is NOT destructive — the badge stays the take-over
 // affordance; this only moves the operator's focus.
-async function jumpToPane(kind, id) {
+async function jumpToPane(kind, id, vault) {
     // Arg-injection guard (mirrors takeOverSession).
     if (typeof id === 'string' && id.startsWith('-')) {
         showToast('Invalid id', true);
         return;
     }
 
-    const base = kind === 'goal' ? 'goals' : 'tasks';
-    const cache = kind === 'goal' ? goalsCache : tasksCache;
-    const item = cache[id];
+    // One lookup for all three kinds: the topic cache is vault-qualified, the
+    // task and goal caches are keyed by id alone (see sessionCacheItem).
+    const item = sessionCacheItem(kind, id, vault);
     if (!item) {
-        showToast(kind === 'goal' ? 'Goal not found in cache' : 'Task not found in cache', true);
+        showToast(`${kindLabel(kind)} not found in cache`, true);
         return;
     }
+    const base = sessionRouteFor(kind);
 
     try {
         const response = await fetch(
@@ -3181,6 +3202,16 @@ function connectWebSocket() {
 
 function handleTaskUpdate(data) {
     const { type, vault, item_kind } = data;
+
+    // A vault-api poll observed new content. The frame carries no item identity,
+    // so re-read the view the operator is on — the job the deleted page-index
+    // watcher used to do for a change made outside the board.
+    if (type === 'source_changed') {
+        console.log('Source changed — re-fetching the current view');
+        loadCurrentView();
+        return;
+    }
+
     // Goal events use `goal_id`, task events use `task_id`. Accept either
     // so the frontend works during the deploy window where some payloads
     // still carry `task_id` for goal events.

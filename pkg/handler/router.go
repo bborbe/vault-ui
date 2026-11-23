@@ -35,6 +35,7 @@ func CreateHTTPRouter(
 
 	router.Methods(http.MethodGet).Path(vaultsRoutePath()).Handler(NewVaultsHandler(b))
 	router.Methods(http.MethodGet).Path("/api/assignees").Handler(NewAssigneesHandler(b))
+	router.Methods(http.MethodGet).Path("/api/source-status").Handler(NewSourceStatusHandler(b))
 	router.Methods(http.MethodGet).Path("/api/tasks").Handler(NewTasksHandler(b))
 	router.Methods(http.MethodGet).Path("/api/goals").Handler(NewGoalsHandler(b))
 	router.Methods(http.MethodGet).Path("/api/topics").Handler(NewTopicsHandler(b))
@@ -50,10 +51,14 @@ func CreateHTTPRouter(
 		Handler(NewResumeTaskCommandHandler(m))
 	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/run").
 		Handler(NewRunGoalHandler(m))
+	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/jump").
+		Handler(NewJumpGoalHandler(m))
 	router.Methods(http.MethodPost).Path("/api/goals/{goal_id}/take-over").
 		Handler(NewTakeOverGoalHandler(m))
 	router.Methods(http.MethodPost).Path("/api/topics/{topic_id}/run").
 		Handler(NewRunTopicHandler(m))
+	router.Methods(http.MethodPost).Path("/api/topics/{topic_id}/jump").
+		Handler(NewJumpTopicHandler(m))
 	router.Methods(http.MethodPost).Path("/api/topics/{topic_id}/take-over").
 		Handler(NewTakeOverTopicHandler(m))
 	router.Methods(http.MethodPost).Path("/api/tasks/{task_id}/execute-command").
@@ -82,7 +87,6 @@ func CreateHTTPRouter(
 		Handler(NewClearGoalSessionHandler(m))
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/session").
 		Handler(NewSetTaskSessionHandler(m))
-	router.Methods(http.MethodPost).Path("/api/cache/reload").Handler(NewCacheReloadHandler(m))
 	router.Methods(http.MethodPost).Path("/api/config/reload").Handler(NewConfigReloadHandler(m))
 
 	router.Methods(http.MethodGet).Path("/ws").

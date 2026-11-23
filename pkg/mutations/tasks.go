@@ -6,7 +6,6 @@ package mutations
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -59,13 +58,6 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	if err != nil {
 		return api.SessionResponse{}, err
 	}
-	launching := s.launchCount(ctx)
-	if launching >= cfg.MaxConcurrentSessions {
-		return api.SessionResponse{}, newHTTPError(
-			429,
-			fmt.Sprintf("%d sessions starting, cap %d", launching, cfg.MaxConcurrentSessions),
-		)
-	}
 	resolved, ok, err := s.vaultByName(ctx, vault)
 	if err != nil {
 		return api.SessionResponse{}, err
@@ -73,7 +65,6 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, err := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if err != nil {
@@ -113,7 +104,6 @@ func (s *service) RunTask(ctx context.Context, vault, taskID string) (api.Sessio
 	}
 	s.deps.Launch.Finish(vault, taskID)
 	_ = set.FrontmatterClear.Execute(ctx, resolved.Path, taskID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, taskID)
 	sessionID := result.SessionID
 	if sessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
@@ -140,7 +130,14 @@ func (s *service) JumpTask(ctx context.Context, vault, taskID string, sameOrigin
 	if showErr != nil {
 		return newHTTPError(404, taskNotFound(taskID))
 	}
-	sessionID := task.ClaudeSessionID
+	return s.jumpToSession(ctx, task.ClaudeSessionID)
+}
+
+// jumpToSession activates the WezTerm pane the given live session resolves to,
+// on the terms the task, goal and topic jump routes share: the pane is resolved
+// fresh at click time, and the jump credential is read server-side and never
+// reaches the browser.
+func (s *service) jumpToSession(ctx context.Context, sessionID string) error {
 	if sessionID == "" {
 		return newHTTPError(409, "no session to jump to")
 	}
@@ -173,7 +170,6 @@ func (s *service) TakeOverTask(
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
@@ -297,7 +293,6 @@ func (s *service) clearStartingMarker(
 	case kindTask:
 		_ = set.FrontmatterClear.Execute(ctx, vaultCfg.Path, itemID, "claude_session_started")
 	}
-	s.deps.Cache.Invalidate(vault, itemID)
 	return nil
 }
 
@@ -397,7 +392,6 @@ func (s *service) ExecuteTaskCommand(
 	if !ok {
 		return api.SessionResponse{}, newHTTPError(500, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID)
 	if showErr != nil {
@@ -420,7 +414,6 @@ func (s *service) ExecuteTaskCommand(
 	if workErr != nil {
 		return api.SessionResponse{}, newHTTPError(500, workErr.Error())
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
 	if result.SessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
 			500, "vault-cli work-on did not start a claude session: no warnings reported",
@@ -469,11 +462,9 @@ func (s *service) taskFastPath(
 	if runErr != nil {
 		return api.SessionResponse{}, newHTTPError(500, runErr.Error())
 	}
-	s.deps.Cache.Invalidate(vault, taskID)
 	// Mark before publishing so a client reacting to the frame never re-fetches
 	// stale data; the deferred mark still covers error returns after a partial
 	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishTaskUpdated(ctx, vault, taskID)
 	stdout := ""
 	success := true
@@ -605,12 +596,16 @@ func (s *service) UpdateTaskPhase(
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
 }
 
-// approveAndQueue approves a task waiting in the inbox and restores the
-// status: next half of the approval contract. vault-cli v0.171.0's
-// task approve no longer rewrites status, so the caller writes it through the
-// same FrontmatterSet operation the non-approval branch uses. Without it an
-// approved row keeps status: todo and drops out of the manager sweep's
-// ready-to-start bucket.
+// approveAndQueue approves a task waiting in the inbox. vault-cli's task approve
+// writes phase, approved_by and approved_at; this function adds one status
+// promotion on top of it — a row still carrying the legacy todo value or the
+// queued backlog value becomes next, so the manager sweep's ready-to-start
+// bucket keeps offering it (spec 035).
+//
+// The promotion is one-directional. Every other status is left byte-identical,
+// in particular an active in_progress row is never demoted to next: the
+// canonical lifecycle runs backlog → next → in_progress → phases → completed,
+// and a phase write must not walk it backwards.
 func approveAndQueue(
 	ctx context.Context,
 	resolved vaultconfig.Vault,
@@ -618,26 +613,37 @@ func approveAndQueue(
 	taskID string,
 	currentUser string,
 ) *HTTPError {
+	// Read before approving: the promotion decision keys on the status the row
+	// carried on entry. A failed read leaves status empty and writes nothing,
+	// which is the safe default — never demote on missing information.
+	//
+	// The read normalizes the legacy todo value to next, so the condition names
+	// next rather than todo: a row on disk as `status: todo` arrives here as
+	// next, and writing next is what upgrades it to the canonical value.
+	status := ""
+	if task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID); showErr == nil {
+		status = task.Status
+	}
 	if _, approveErr := set.Approve.Execute(
 		ctx, resolved.Path, taskID, resolved.Name, "operator", "", currentUser,
 	); approveErr != nil {
 		return newHTTPError(500, approveErr.Error())
 	}
-	if setErr := set.FrontmatterSet.Execute(
-		ctx, resolved.Path, taskID, "status", "next", "", "", "", false,
-	); setErr != nil {
-		return newHTTPError(500, setErr.Error())
+	if status == "next" || status == "backlog" {
+		if setErr := set.FrontmatterSet.Execute(
+			ctx, resolved.Path, taskID, "status", "next", "", "", "", false,
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
 	}
 	return nil
 }
 
 // approveTask runs the operator's approval for a task waiting in the inbox,
 // with the same seven arguments RunTask passes. Approve writes phase: planning,
-// approved_by and approved_at; approveAndQueue adds the status: next it no
-// longer writes. This branch writes no phase or status itself: setting the
-// phase alongside the approval would race the approval's own write, and the
-// caller's status logic would overwrite "next" with "in_progress", which is the
-// write that removes a freshly approved row from the ready-to-start bucket.
+// approved_by and approved_at; approveAndQueue adds the todo/backlog → next
+// promotion it owns. This branch writes no phase or status itself: setting the
+// phase alongside the approval would race the approval's own write.
 //
 // A todo task that already carries an approval record is refused by the
 // operation; that case is not worth a request-path read, so it surfaces as an

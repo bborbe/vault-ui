@@ -43,6 +43,10 @@ var _ = Describe("Mutation handlers", func() {
 				http.MethodPost, "/api/tasks/TaskOne/run"),
 			Entry("jump task", handler.NewJumpTaskHandler(&fakeMutations{}),
 				http.MethodPost, "/api/tasks/TaskOne/jump"),
+			Entry("jump goal", handler.NewJumpGoalHandler(&fakeMutations{}),
+				http.MethodPost, "/api/goals/GoalOne/jump"),
+			Entry("jump topic", handler.NewJumpTopicHandler(&fakeMutations{}),
+				http.MethodPost, "/api/topics/TopicOne/jump"),
 			Entry("take-over task", handler.NewTakeOverTaskHandler(&fakeMutations{}),
 				http.MethodPost, "/api/tasks/TaskOne/take-over"),
 			Entry("resume task command", handler.NewResumeTaskCommandHandler(&fakeMutations{}),
@@ -82,17 +86,6 @@ var _ = Describe("Mutation handlers", func() {
 			Entry("set task session", handler.NewSetTaskSessionHandler(&fakeMutations{}),
 				http.MethodPatch, "/api/tasks/TaskOne/session"),
 		)
-	})
-
-	It("does not require vault on the maintenance routes", func() {
-		recorder := doRequest(
-			handler.NewCacheReloadHandler(&fakeMutations{
-				reloadCache: func(context.Context, string) (api.CacheReloadResponse, error) {
-					return api.CacheReloadResponse{Reloaded: []string{}, Counts: map[string]int{}}, nil
-				},
-			}), http.MethodPost, "/api/cache/reload", "",
-		)
-		Expect(recorder.Code).To(Equal(http.StatusOK))
 	})
 
 	It("422s an out-of-enum status before any vault operation", func() {
@@ -172,6 +165,26 @@ var _ = Describe("Mutation handlers", func() {
 			handler.NewJumpTaskHandler(&fakeMutations{
 				jumpTask: func(_ context.Context, _, _ string, _ bool) error { return nil },
 			}), http.MethodPost, "/api/tasks/TaskOne/jump?vault=personal", "",
+		)
+		Expect(recorder.Code).To(Equal(http.StatusNoContent))
+		Expect(recorder.Body.String()).To(BeEmpty())
+	})
+
+	It("204s a successful goal jump", func() {
+		recorder := doRequest(
+			handler.NewJumpGoalHandler(&fakeMutations{
+				jumpGoal: func(_ context.Context, _, _ string, _ bool) error { return nil },
+			}), http.MethodPost, "/api/goals/GoalOne/jump?vault=personal", "",
+		)
+		Expect(recorder.Code).To(Equal(http.StatusNoContent))
+		Expect(recorder.Body.String()).To(BeEmpty())
+	})
+
+	It("204s a successful topic jump", func() {
+		recorder := doRequest(
+			handler.NewJumpTopicHandler(&fakeMutations{
+				jumpTopic: func(_ context.Context, _, _ string, _ bool) error { return nil },
+			}), http.MethodPost, "/api/topics/TopicOne/jump?vault=personal", "",
 		)
 		Expect(recorder.Code).To(Equal(http.StatusNoContent))
 		Expect(recorder.Body.String()).To(BeEmpty())
