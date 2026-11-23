@@ -96,19 +96,16 @@ func (b *board) goalsForVault(
 			continue
 		}
 		row := goalRow{item: item}
-		if item.Status == "completed" || item.DeferDate == "" {
+		if item.Status == "completed" {
 			rows = append(rows, row)
 			continue
 		}
-		deferAt, ok := parseDeferDate(item.DeferDate)
-		if !ok {
-			return nil, errors.Errorf(ctx, "invalid defer_date %q", item.DeferDate)
+		visible, upcoming, err := deferVisibility(ctx, item.DeferDate, now, cutoff)
+		if err != nil {
+			return nil, err
 		}
-		switch {
-		case !deferAt.After(now):
-			rows = append(rows, row)
-		case !deferAt.After(cutoff):
-			row.upcoming = true
+		if visible {
+			row.upcoming = upcoming
 			rows = append(rows, row)
 		}
 	}

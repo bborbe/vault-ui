@@ -55,9 +55,15 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		page := newPage("/?view=topics")
 		defer func() { _ = page.Close() }()
 
-		// Two fixture topics: one unassigned, one assigned to e2e.
+		// Two base fixture topics: one unassigned, one assigned to e2e. The
+		// deferred-visibility fixtures live in this folder too, so assert that
+		// the view renders them rather than pinning a total every new fixture
+		// would break.
 		Eventually(func() int { return countOf(page, ".topic-card") }, "15s", "500ms").
-			Should(Equal(2))
+			Should(BeNumerically(">=", 2))
+		Eventually(func() int {
+			return countOf(page, ".topic-card:has-text('Assigned Fixture Topic')")
+		}, "10s", "200ms").Should(Equal(1))
 
 		// The filter is applied through the URL the board reads on load rather
 		// than through the dropdown: the dropdown's option set comes from

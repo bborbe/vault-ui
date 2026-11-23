@@ -92,6 +92,10 @@ type Goal struct {
 	Role            string   `json:"role"`
 	Mode            string   `json:"mode"`
 	FlagSetBy       string   `json:"flag_set_by"`
+	// DeferDate is the page's frontmatter defer_date, nil when it carries
+	// none. The service emits the raw string, so an unquoted YAML date
+	// arrives in Go's time.Time form rather than RFC3339.
+	DeferDate *string `json:"defer_date"`
 }
 
 // Topic is one vault-api topic item.
@@ -111,6 +115,9 @@ type Topic struct {
 	Role            string   `json:"role"`
 	Mode            string   `json:"mode"`
 	FlagSetBy       string   `json:"flag_set_by"`
+	// DeferDate is the page's frontmatter defer_date, nil when it carries
+	// none, on the same terms as Goal.DeferDate.
+	DeferDate *string `json:"defer_date"`
 }
 
 // OpenQuestion is one item of a task's Open Questions section.

@@ -16,9 +16,15 @@ import (
 func NewTopicsHandler(b board.Board) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		query := req.URL.Query()
+		upcomingHours, validation := parseUpcomingHours(query)
+		if validation != nil {
+			writeValidation(resp, []validationItem{*validation})
+			return
+		}
 		result, err := b.ListTopics(req.Context(), board.TopicQuery{
-			Vaults:      query["vault"],
-			SessionLive: parseBool(first(query["session_live"])),
+			Vaults:        query["vault"],
+			SessionLive:   parseBool(first(query["session_live"])),
+			UpcomingHours: upcomingHours,
 		})
 		if err != nil {
 			writeBoardError(resp, err)

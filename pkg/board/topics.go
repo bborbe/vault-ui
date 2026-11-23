@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/storage"
@@ -42,6 +43,9 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		return nil, errors.Wrap(ctx, err, "list vaults")
 	}
 	selected := b.selectVaults(all, query.Vaults)
+
+	now := b.clock.Now().UTC().Time()
+	cutoff := now.Add(time.Duration(query.UpcomingHours) * time.Hour)
 
 	registryIDs := b.signals.RegistrySessionIDs(ctx)
 	seenIDs := b.signals.SeenSessionIDs(ctx)
@@ -79,6 +83,13 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		pageFieldsByTopic := b.topicPageFieldsByTopic(vault)
 
 		for _, item := range items {
+			visible, upcoming, deferErr := deferVisibility(ctx, item.DeferDate, now, cutoff)
+			if deferErr != nil {
+				return nil, deferErr
+			}
+			if !visible {
+				continue
+			}
 			blockers := b.uncompletedBlockers(b.taskStatuses(vault.VaultName), item.BlockedBy)
 			state := classifySessionID(ctx, item.ClaudeSessionID, params)
 			var location *string
@@ -111,6 +122,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 				Mode:     pageFieldsByTopic[item.Name].mode,
 				Blockers: blockers,
 				Blocked:  len(blockers) > 0,
+				Upcoming: upcoming,
 			})
 		}
 	}

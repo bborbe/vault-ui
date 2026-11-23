@@ -74,12 +74,20 @@ func parseDateTime(value string) *libtime.DateTime {
 
 // parseDeferDate reproduces Python `_parse_defer_date`: a date-only value is
 // midnight UTC on that date, an RFC3339 datetime is taken as-is (UTC when
-// naive).
+// naive), and Go's time.Time string form is accepted because the vault-api
+// projects the raw frontmatter value for goals and topics.
 func parseDeferDate(value string) (time.Time, bool) {
 	if parsed, err := time.Parse("2006-01-02", value); err == nil {
 		return parsed.UTC(), true
 	}
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.UTC(), true
+	}
+	// An unquoted YAML date reaches the board as Go's time.Time form
+	// ("2026-08-27 00:00:00 +0000 UTC"), not RFC3339. Without this branch
+	// those goals fail to parse and ListGoals returns an error, turning the
+	// goal list into a 500 instead of merely hiding a row.
+	if parsed, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", value); err == nil {
 		return parsed.UTC(), true
 	}
 	return time.Time{}, false

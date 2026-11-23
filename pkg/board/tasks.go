@@ -632,6 +632,31 @@ func pageClaudeSessionStarted(page *domain.Page) *string {
 	return &value
 }
 
+// deferVisibility is the one deferred-visibility rule shared by the Tasks,
+// Goals and Topics list paths: a row with no defer date is visible and not
+// upcoming; a defer in the past is visible; a defer inside the upcoming window
+// is visible and marked upcoming; a defer beyond the window is hidden.
+func deferVisibility(
+	ctx context.Context,
+	deferDate string,
+	now, cutoff time.Time,
+) (visible, upcoming bool, err error) {
+	if deferDate == "" {
+		return true, false, nil
+	}
+	deferAt, ok := parseDeferDate(deferDate)
+	if !ok {
+		return false, false, errors.Errorf(ctx, "invalid defer_date %q", deferDate)
+	}
+	if !deferAt.After(now) {
+		return true, false, nil
+	}
+	if !deferAt.After(cutoff) {
+		return true, true, nil
+	}
+	return false, false, nil
+}
+
 // visibleRow applies the completed/deferred visibility rules, returning the row
 // with upcoming/recently_completed set.
 func (b *board) visibleRow(
@@ -656,21 +681,12 @@ func (b *board) visibleRow(
 		}
 		return row, false, nil
 	}
-	if item.DeferDate == "" {
-		return row, true, nil
+	visible, upcoming, err := deferVisibility(ctx, item.DeferDate, now, cutoff)
+	if err != nil {
+		return row, false, err
 	}
-	deferAt, ok := parseDeferDate(item.DeferDate)
-	if !ok {
-		return row, false, errors.Errorf(ctx, "invalid defer_date %q", item.DeferDate)
-	}
-	if !deferAt.After(now) {
-		return row, true, nil
-	}
-	if !deferAt.After(cutoff) {
-		row.upcoming = true
-		return row, true, nil
-	}
-	return row, false, nil
+	row.upcoming = upcoming
+	return row, visible, nil
 }
 
 // uncompletedBlockers returns the blockers whose status is not completed, using

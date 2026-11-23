@@ -140,6 +140,7 @@ func (l *listOperation) goals(
 			Priority:        g.Priority,
 			Vault:           g.Vault,
 			ClaudeSessionID: deref(g.ClaudeSessionID),
+			DeferDate:       deref(g.DeferDate),
 			Flag:            g.Flag,
 		})
 	}
@@ -174,6 +175,7 @@ func (l *listOperation) topics(
 			Priority:        t.Priority,
 			Vault:           t.Vault,
 			ClaudeSessionID: deref(t.ClaudeSessionID),
+			DeferDate:       deref(t.DeferDate),
 			Goals:           t.Goals,
 			Flag:            t.Flag,
 		})

@@ -102,6 +102,11 @@ type stubItem struct {
 	Phase    string `json:"phase,omitempty"`
 	Assignee string `json:"assignee,omitempty"`
 	Vault    string `json:"vault"`
+	// DeferDate mirrors the vault-api's `defer_date` projection so a seeded
+	// defer reaches the board the same way it does in production. Without it
+	// the stub silently dropped the field and the deferred-visibility specs
+	// could not fail.
+	DeferDate string `json:"defer_date,omitempty"`
 }
 
 // stubList renders every page in the fixture's dir as a list item.
@@ -119,13 +124,14 @@ func stubList(dir string) string {
 		front := stubFrontmatter(path)
 		title := strings.TrimSuffix(entry.Name(), ".md")
 		items = append(items, stubItem{
-			ID:       title,
-			Title:    title,
-			Path:     path,
-			Status:   front["status"],
-			Phase:    front["phase"],
-			Assignee: front["assignee"],
-			Vault:    "fixture",
+			ID:        title,
+			Title:     title,
+			Path:      path,
+			Status:    front["status"],
+			Phase:     front["phase"],
+			Assignee:  front["assignee"],
+			Vault:     "fixture",
+			DeferDate: front["defer_date"],
 		})
 	}
 	// Mirror the real envelope, including `warnings` as a NUMBER. The stub used
@@ -270,7 +276,104 @@ func seedFixture(ctx context.Context, root string) error {
 			return errors.Wrapf(ctx, err, "write %s", rel)
 		}
 	}
+	// Four deferred pages per folder, dated relative to seed time so the
+	// inside-window case does not decay into a past case overnight.
+	for _, dir := range deferredFixtureDirs {
+		for _, fixture := range deferredFixtures(time.Now().UTC()) {
+			rel := filepath.Join(dir, fixture.name+".md")
+			body := deferredPageBody(deferredFixtureKind[dir], fixture.name, fixture.deferDate)
+			if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o600); err != nil {
+				return errors.Wrapf(ctx, err, "write %s", rel)
+			}
+		}
+	}
 	return nil
+}
+
+// deferredFixtureDirs are the folders a deferred fixture set is written to. The
+// three views list three different directories, so each needs its own set — a
+// topic fixture cannot appear in the Tasks or Goals view.
+var deferredFixtureDirs = []string{"25 Tasks", "24 Goals", "23 Topics"}
+
+// deferredFixtureKind maps a fixture folder to the page_type its pages carry.
+var deferredFixtureKind = map[string]string{
+	"25 Tasks":  "task",
+	"24 Goals":  "goal",
+	"23 Topics": "topic",
+}
+
+// deferredFixture is one seeded page: its name and its defer_date, empty when
+// the page carries none.
+type deferredFixture struct {
+	name      string
+	deferDate string
+}
+
+// deferredFixtures returns the four cases the visibility rule distinguishes,
+// dated relative to seed time: inside the 8 h window, in the past, far beyond
+// it, and undated.
+func deferredFixtures(now time.Time) []deferredFixture {
+	return []deferredFixture{
+		{"Defer Fixture Inside Window", now.Add(2 * time.Hour).Format(time.RFC3339)},
+		{"Defer Fixture Past", now.Add(-24 * time.Hour).Format(time.RFC3339)},
+		{"Defer Fixture Far Future", now.Add(30 * 24 * time.Hour).Format(time.RFC3339)},
+		{"Defer Fixture Undated", ""},
+	}
+}
+
+// deferredPageBody renders a fixture page carrying a defer_date, or none when
+// deferDate is empty.
+func deferredPageBody(kind, title, deferDate string) string {
+	deferLine := ""
+	if deferDate != "" {
+		deferLine = fmt.Sprintf("\ndefer_date: %s", deferDate)
+	}
+	return fmt.Sprintf(`---
+page_type: %s
+status: in_progress%s
+created_date: "2026-11-13"
+---
+Tags: [[%s]]
+
+---
+
+%s, written by the e2e fixture.
+`, kind, deferLine, kind, title)
+}
+
+// countDeferredFixtures returns how many seeded deferred pages exist under
+// root. The positive control asserts 4 per folder while they are seeded, so a
+// teardown probe that would pass on a no-op cannot.
+func countDeferredFixtures(root string) int {
+	count := 0
+	for _, dir := range deferredFixtureDirs {
+		entries, err := os.ReadDir(filepath.Join(root, dir))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "Defer Fixture") {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// removeDeferredFixtures deletes the seeded deferred pages and returns how many
+// remain. Asserting on this rather than on a post-run shell probe is what makes
+// the teardown check able to fail: AfterSuite's os.RemoveAll deletes the whole
+// vault, so a probe after the suite exits reads zero on any implementation.
+func removeDeferredFixtures(root string) (int, error) {
+	for _, dir := range deferredFixtureDirs {
+		for _, fixture := range deferredFixtures(time.Now().UTC()) {
+			path := filepath.Join(root, dir, fixture.name+".md")
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return 0, errors.Wrapf(context.Background(), err, "remove %s", path)
+			}
+		}
+	}
+	return countDeferredFixtures(root), nil
 }
 
 // taskBody renders a minimal task page the board can parse.
