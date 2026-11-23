@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bborbe/errors"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 )
 
@@ -47,11 +48,19 @@ type Source struct {
 	loaded      bool
 	unavailable bool
 	lastHash    [32]byte
+
+	// pending lays board writes vault-api has not reflected yet over the
+	// cached rows the list path serves.
+	pending *Overlay
 }
 
 // NewSource returns a Source polling client every DefaultPollInterval.
 func NewSource(client Client) *Source {
-	return &Source{client: client, interval: DefaultPollInterval}
+	return &Source{
+		client:   client,
+		interval: DefaultPollInterval,
+		pending:  NewOverlay(libtime.NewCurrentDateTime(), DefaultPendingTTL),
+	}
 }
 
 // NewSourceFromData returns a Source primed with fixed data and a non-zero
@@ -66,7 +75,15 @@ func NewSourceFromData(tasks []Task, goals []Goal, topics []Topic) *Source {
 		loaded:   true,
 		revision: 1,
 		lastHash: hashLists(tasks, goals, topics),
+		pending:  NewOverlay(libtime.NewCurrentDateTime(), DefaultPendingTTL),
 	}
+}
+
+// RecordPending records the fields a successful board write set on (vault,
+// kind, id), so the list path keeps serving them until vault-api catches up.
+// vault is the vault-api vault name, id the item's title.
+func (s *Source) RecordPending(vault, kind, id string, fields PendingFields) {
+	s.pending.Record(vault, kind, id, fields)
 }
 
 // SetOnChange installs the callback run after a poll observes changed content.

@@ -37,6 +37,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sigterm"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 )
 
@@ -76,6 +77,15 @@ type Refresher interface {
 	Refresh(ctx context.Context) error
 }
 
+// PendingRecorder remembers the fields a successful write set, so the board's
+// list reads keep showing them until vault-api's cache catches up with disk.
+// vaultapi.Source satisfies it.
+//
+//counterfeiter:generate -o ./mocks/pending_recorder.go --fake-name PendingRecorder . PendingRecorder
+type PendingRecorder interface {
+	RecordPending(vault, kind, id string, fields vaultapi.PendingFields)
+}
+
 // WriteQueue accepts one vault write for asynchronous, per-vault FIFO
 // application. queue.Queue satisfies it.
 //
@@ -112,6 +122,7 @@ type Deps struct {
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
 	Refresher    Refresher
+	Pending      PendingRecorder
 	Queue        WriteQueue
 	Clock        libtime.CurrentDateTimeGetter
 	Scanner      session.ProcessScanner
@@ -258,6 +269,21 @@ func (s *service) itemWrittenSilently(
 	return func(context.Context) {
 	}
 }
+
+// recordPending records a successful write's field values on the board's read
+// source before the update frame goes out, keyed by vault-api's vault name.
+func (s *service) recordPending(
+	vault vaultconfig.Vault, kind, itemID string, fields vaultapi.PendingFields,
+) {
+	if s.deps.Pending == nil {
+		return
+	}
+	s.deps.Pending.RecordPending(vault.VaultName, kind, itemID, fields)
+}
+
+func strPtr(v string) *string { return &v }
+
+func boolPtr(v bool) *bool { return &v }
 
 // requireSafeID rejects an identifier beginning with '-' before any vault
 // operation runs — the Python argument-injection guard.

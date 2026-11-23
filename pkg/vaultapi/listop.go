@@ -83,6 +83,12 @@ func (l *listOperation) tasks(
 ) []ops.TaskListItem {
 	items := make([]ops.TaskListItem, 0)
 	for _, t := range l.source.Tasks(name) {
+		v := l.source.pending.Apply(name, KindTask, t.Title, OverlayValues{
+			Flag: t.Flag, Assignee: t.Assignee, Phase: t.Phase, Status: t.Status,
+			ClaudeSessionID: deref(t.ClaudeSessionID),
+		})
+		t.Flag, t.Assignee, t.Phase, t.Status = v.Flag, v.Assignee, v.Phase, v.Status
+		t.ClaudeSessionID = &v.ClaudeSessionID
 		if !matchesFilters(t.Status, t.Assignee, t.Goals, statusFilters, assigneeFilter, goalFilter) {
 			continue
 		}
@@ -117,6 +123,12 @@ func (l *listOperation) goals(
 ) []ops.TaskListItem {
 	items := make([]ops.TaskListItem, 0)
 	for _, g := range l.source.Goals(name) {
+		v := l.source.pending.Apply(name, KindGoal, g.Title, OverlayValues{
+			Flag: g.Flag, Assignee: g.Assignee, Phase: g.Phase, Status: g.Status,
+			ClaudeSessionID: deref(g.ClaudeSessionID),
+		})
+		g.Flag, g.Assignee, g.Phase, g.Status = v.Flag, v.Assignee, v.Phase, v.Status
+		g.ClaudeSessionID = &v.ClaudeSessionID
 		if !matchesFilters(g.Status, g.Assignee, nil, statusFilters, assigneeFilter, "") {
 			continue
 		}
@@ -145,6 +157,12 @@ func (l *listOperation) topics(
 ) []ops.TaskListItem {
 	items := make([]ops.TaskListItem, 0)
 	for _, t := range l.source.Topics(name) {
+		v := l.source.pending.Apply(name, KindTopic, t.Title, OverlayValues{
+			Flag: t.Flag, Assignee: t.Assignee, Phase: t.Phase, Status: t.Status,
+			ClaudeSessionID: deref(t.ClaudeSessionID),
+		})
+		t.Flag, t.Assignee, t.Phase, t.Status = v.Flag, v.Assignee, v.Phase, v.Status
+		t.ClaudeSessionID = &v.ClaudeSessionID
 		if !matchesFilters(t.Status, t.Assignee, nil, statusFilters, assigneeFilter, "") {
 			continue
 		}
