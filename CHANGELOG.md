@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.114.1
 
 - fix: The page view renders a page that carries no frontmatter (previously a 500 `parse frontmatter: no frontmatter found`) and resolves wikilinks and backlinks across the whole vault rather than only the page's own folder, so a goal linking a task now resolves and backlists; the vault-wide page index is cached for 30s
 - fix: The page view's vault-wide index is immutable once built, so concurrent page views cannot race on it (writing the requested page back into the cached map was a fatal `concurrent map writes`); a concurrent-render test guards it
