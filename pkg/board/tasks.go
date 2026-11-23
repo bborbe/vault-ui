@@ -21,6 +21,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/session"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // defaultStatuses is the effective status set when no status[] is supplied.
@@ -242,7 +243,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 
 	// One ListPages for the whole vault, attached to the rows so the request
 	// path never reads a page — the same precompute the other fields get.
-	pageFields := b.taskPageFieldsByTask(ctx, vault)
+	pageFields := b.taskPageFields(ctx, vault)
 
 	rows := make([]taskSnapshotRow, 0, len(items))
 	for _, item := range items {
@@ -760,25 +761,25 @@ type taskPageFields struct {
 	mode          *string
 }
 
-// taskPageFieldsByTask returns each task page's Open Questions and `jira:`
-// frontmatter value, keyed by the page's file name. It is one ListPages per
-// vault — never one per task, which would put a vault walk on the board's
-// hottest path. That listing is the same snapshot opsProvider.List already
-// takes (pkg/factory/api.go builds it as ops.NewListOperation(p.pageIndex)), so
-// it costs no extra I/O: the board is not reading pages for the first time, it
-// is reading the snapshot a second time for fields the list rows do not carry.
-// Both fields come off that one listing; a second listing for the Jira value
-// would double the walk this helper exists to avoid.
-//
-// A failure is not fatal to a board read: it is logged and every task carries
-// an empty list and a nil Jira rather than the whole task list failing.
+// taskPageFields returns the per-task Open Questions and jira/mode values. In
+// production the vault-api Source carries them on the task item; a board built
+// without a Source (the board package's own tests) falls back to the page index.
+// The fallback goes when the page index is deleted and its tests migrate.
+func (b *board) taskPageFields(ctx context.Context, vault Vault) map[string]taskPageFields {
+	if b.source != nil {
+		return b.taskPageFieldsFromSource(vault)
+	}
+	return b.taskPageFieldsByTask(ctx, vault)
+}
+
+// taskPageFieldsByTask is the page-index fallback: each task page's Open
+// Questions and `jira:`/`mode:` values, keyed by the page's file name. It is one
+// ListEntries per vault, never one per task.
 func (b *board) taskPageFieldsByTask(
 	ctx context.Context, vault Vault,
 ) map[string]taskPageFields {
 	byName := map[string]taskPageFields{}
 	if b.pageIndex == nil {
-		// A board built without a page index carries no page-derived fields, on
-		// the same terms as any other failure here: degrade, never fail the read.
 		return byName
 	}
 	entries, err := b.pageIndex.ListEntries(ctx, vault.Path, vault.TasksFolder)
@@ -789,18 +790,49 @@ func (b *board) taskPageFieldsByTask(
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			// The caller is gone: stop rather than walk the remaining pages.
 			return byName
 		default:
 		}
-		page := entry.Page
-		byName[page.FileMetadata.Name] = taskPageFields{
+		p := entry.Page
+		byName[p.FileMetadata.Name] = taskPageFields{
 			openQuestions: entry.OpenQuestions,
-			jira:          pageJira(page),
-			mode:          pageMode(page),
+			jira:          pageJira(p),
+			mode:          pageMode(p),
 		}
 	}
 	return byName
+}
+
+// taskPageFieldsFromSource returns each task's Open Questions and `jira:`/`mode:`
+// values from the vault-api source, keyed by the page name. The vault-api task
+// item carries them directly, so the board no longer reads pages for them — this
+// is what lets the page index go.
+func (b *board) taskPageFieldsFromSource(vault Vault) map[string]taskPageFields {
+	byName := map[string]taskPageFields{}
+	if b.source == nil {
+		return byName
+	}
+	for _, t := range b.source.Tasks(vault.VaultName) {
+		byName[t.Title] = taskPageFields{
+			openQuestions: convertOpenQuestions(t.OpenQuestions),
+			jira:          t.Jira,
+			mode:          t.Mode,
+		}
+	}
+	return byName
+}
+
+// convertOpenQuestions maps vault-api's Open Questions onto vault-cli's domain
+// type, which the snapshot row and the response carry.
+func convertOpenQuestions(in []vaultapi.OpenQuestion) []domain.OpenQuestion {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.OpenQuestion, 0, len(in))
+	for _, q := range in {
+		out = append(out, domain.OpenQuestion{Index: q.Index, Text: q.Text})
+	}
+	return out
 }
 
 // taskPageFieldsFor returns the task's page-derived fields. The Open Questions

@@ -24,6 +24,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // DefaultUpcomingHours is the default "upcoming" window in hours.
@@ -127,7 +128,11 @@ type Deps struct {
 	// only when one exists. A nil value means no panes: every card carries a null
 	// jump_pane, and the feature is inert. Production wires it in
 	// pkg/factory/api.go; leaving it nil there ships the feature silently dead.
-	Panes   PanesResolver
+	Panes PanesResolver
+	// Source supplies the vault-api task items the board derives jira, mode and
+	// Open Questions from — the fields its list rows do not carry. A nil value
+	// means those fields are empty (tests only).
+	Source  *vaultapi.Source
 	HomeDir string
 }
 
@@ -155,6 +160,7 @@ type board struct {
 	index     IndexRevisions
 	pageIndex pageindex.PageIndex
 	panes     PanesResolver
+	source    *vaultapi.Source
 	homeDir   string
 	snapshot  *taskSnapshotStore
 	bodies    *taskBodyCache
@@ -173,6 +179,7 @@ func New(deps Deps) Board {
 		index:     deps.Index,
 		pageIndex: deps.PageIndex,
 		panes:     deps.Panes,
+		source:    deps.Source,
 		homeDir:   deps.HomeDir,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{

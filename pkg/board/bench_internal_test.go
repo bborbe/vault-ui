@@ -433,7 +433,7 @@ func BenchmarkBuildTaskRows(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			byName := bd.taskPageFieldsByTask(ctx, vault)
+			byName := bd.taskPageFieldsFromSource(vault)
 			for _, item := range items {
 				benchSink.questions = taskPageFieldsFor(byName, item.Name).openQuestions
 			}

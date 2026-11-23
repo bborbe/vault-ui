@@ -176,6 +176,7 @@ func CreateAPIHandler(
 		// always null, the frontend renders no jump control on any card, and every
 		// test still passes — so this line is what makes the feature real.
 		Panes:   paneResolver,
+		Source:  vaultSource,
 		HomeDir: homeDir,
 	})
 	mutationsService := CreateMutationService(
