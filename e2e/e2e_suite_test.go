@@ -50,6 +50,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(seedFixture(ctx, vaultPath)).To(Succeed())
 	Expect(writeConfig(ctx, homeDir, vaultPath)).To(Succeed())
 
+	Expect(startStub(ctx)).To(Succeed(), "fixture vault-api stub failed to start")
 	port, err := freePort(ctx)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(startBinary(ctx, port)).To(Succeed(), "binary failed to start:\n%s", procStderr)
@@ -61,6 +62,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 })
 
 var _ = AfterSuite(func() {
+	stopStub()
 	stopBinary()
 	if browser != nil {
 		_ = browser.Close()

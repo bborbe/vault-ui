@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bborbe/errors"
@@ -35,7 +36,93 @@ var (
 	procStderr string
 	// homeDir is the temp HOME the binary reads its config from.
 	homeDir string
+	// stubServer is the fixture vault-api the binary reads, and stubURL its origin.
+	stubServer *http.Server
+	stubURL    string
 )
+
+// startStub runs a fixture vault-api serving the seeded fixture's tasks, goals
+// and topics, so the board reads a hermetic source instead of the live one. Its
+// vault name is "fixture", which the board's case-insensitive match accepts.
+func startStub(ctx context.Context) error {
+	port, err := freePort(ctx)
+	if err != nil {
+		return err
+	}
+	stubURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	return listenStub(ctx)
+}
+
+// restartStub re-listens on the same port after stopStub, so a spec that
+// simulated the outage does not strand the specs that run after it.
+func restartStub(ctx context.Context) error {
+	return listenStub(ctx)
+}
+
+func listenStub(ctx context.Context) error {
+	addr := strings.TrimPrefix(stubURL, "http://")
+	stubServer = &http.Server{Addr: addr, Handler: stubHandler()}
+	go func() { _ = stubServer.ListenAndServe() }()
+	return waitStub(ctx)
+}
+
+// stubHandler serves the seeded fixture as the vault-api list endpoints.
+func stubHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, _ *http.Request) {
+		writeStubJSON(w, `{"items":[`+
+			`{"title":"Sessionless Fixture Task","status":"in_progress","phase":"execution","vault":"fixture"},`+
+			`{"title":"Held Fixture Task","status":"hold","phase":"todo","vault":"fixture"}]}`)
+	})
+	mux.HandleFunc("/api/v1/goals", func(w http.ResponseWriter, _ *http.Request) {
+		writeStubJSON(w, `{"items":[{"title":"Fixture Goal","status":"in_progress","vault":"fixture"}]}`)
+	})
+	mux.HandleFunc("/api/v1/topics", func(w http.ResponseWriter, _ *http.Request) {
+		writeStubJSON(w, `{"items":[`+
+			`{"title":"Fixture Topic","status":"in_progress","vault":"fixture"},`+
+			`{"title":"Assigned Fixture Topic","status":"in_progress","vault":"fixture"}]}`)
+	})
+	return mux
+}
+
+// waitStub polls until the stub serves its tasks route.
+func waitStub(ctx context.Context) error {
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.After(10 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(ctx, ctx.Err(), "wait stub")
+		case <-deadline:
+			return errors.Errorf(ctx, "stub did not serve within 10s")
+		case <-ticker.C:
+			resp, err := client.Get(stubURL + "/api/v1/tasks")
+			if err != nil {
+				continue
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+	}
+}
+
+// writeStubJSON writes a fixed JSON body.
+func writeStubJSON(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(body))
+}
+
+// stopStub closes the stub so the board's next poll fails — the outage state.
+func stopStub() {
+	if stubServer != nil {
+		_ = stubServer.Close()
+		stubServer = nil
+	}
+}
 
 // buildBinary compiles the real binary.
 func buildBinary(ctx context.Context, repoRoot, out string) error {
@@ -183,6 +270,7 @@ func startBinary(ctx context.Context, port int) error {
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("VAULT_UI_LISTEN=127.0.0.1:%d", port),
 		"HOME="+homeDir,
+		"VAULT_API_URL="+stubURL,
 	)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
