@@ -12,7 +12,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/golang/glog"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
@@ -52,18 +51,6 @@ func CreateCleanupSweep(
 		}
 		sweep := cleanup.NewSweep(cleanupSweepParams(cfg, cache, launches, locks, homeDir))
 
-		select {
-		case <-cacheReady:
-		case <-ctx.Done():
-			return nil
-		}
-
-		cleared, reconcileErr := sweep.ReconcileOrphanedMarkers(ctx)
-		if reconcileErr != nil {
-			glog.Warningf("cleanup startup reconcile failed: %v", reconcileErr)
-		} else {
-			glog.V(2).Infof("cleanup startup reconcile cleared %d orphaned marker(s)", cleared)
-		}
 		return sweep.RunLoop(ctx)
 	}
 }
@@ -106,7 +93,6 @@ func cleanupSweepParams(
 		CurrentUser:    cfg.CurrentUser,
 		LaunchRegistry: launches,
 		SessionLock:    locks,
-		StatusCache:    cache,
 		LiveNames:      processTable.LiveSessionNames,
 		ProcessScanner: scanner,
 		// A clock, not a snapshot: RunLoop reuses one SweepParams for the whole

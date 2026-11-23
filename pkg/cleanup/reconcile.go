@@ -5,13 +5,9 @@
 package cleanup
 
 import (
-	"context"
 	"time"
 
 	libtime "github.com/bborbe/time"
-	"github.com/golang/glog"
-
-	"github.com/bborbe/vault-ui/pkg/terminate"
 )
 
 // markerTimeLayouts are the layouts accepted for a claude_session_started
@@ -48,93 +44,4 @@ func parseMarkerTime(marker string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
-}
-
-// ReconcileOrphanedMarkers clears claude_session_started markers whose launch
-// this host no longer has. It runs once at startup: a restart kills the launches
-// — they are this server's subprocesses — and the coroutines that would have
-// cleared their markers die with it, so the cards sit on "Starting…" until the
-// 45-minute TTL sweep. This closes that window to seconds: a marker is cleared
-// when the registry has no record for the item, the marker is past the grace
-// period, and no --session-id launch process for the item exists on this host.
-//
-// The trade-off is the shared-vault case: a marker written by a peer machine
-// also has no local launch process, so a peer's in-flight turn can be cleared
-// early here (the TTL sweep would clear it at 45 minutes anyway). Only the
-// display is affected — claude_session_id is untouched.
-func (s *sweep) ReconcileOrphanedMarkers(ctx context.Context) (int, error) {
-	cleared := 0
-	for _, vault := range s.params.Vaults {
-		if err := ctx.Err(); err != nil {
-			return cleared, nil
-		}
-		ops := s.params.OpsFor(vault)
-		tasks, err := s.listTasks(ctx, ops)
-		if err != nil {
-			glog.Warningf(
-				"[Cleanup] Cannot list tasks in vault %s for orphan reconciliation: %v",
-				vault.Name,
-				err,
-			)
-			continue
-		}
-
-		for _, task := range tasks {
-			if ctxDone(ctx) {
-				return cleared, nil
-			}
-			// The marker comes from the StatusCache, NOT from the listed item: the
-			// vault-cli list does not emit claude_session_started, so a read of the
-			// item's field would leave this loop body dead.
-			marker, ok := s.params.StatusCache.GetSessionStarted(vault.Name, task.ID)
-			if !ok || marker == "" {
-				continue
-			}
-			if _, known := s.params.LaunchRegistry.State(vault.Name, task.ID); known {
-				continue // this process knows the launch — leave it alone
-			}
-			age, parsed := markerAgeSeconds(marker, s.params.Now.Now())
-			if parsed && age < s.params.OrphanGrace.Seconds() {
-				continue // the launch may still be booting
-			}
-			if terminate.ItemHasLiveLaunch(
-				ctx,
-				s.params.ProcessScanner,
-				task.ClaudeSessionID,
-				task.Title,
-			) {
-				continue // a launch for this item is running here
-			}
-
-			if err := s.bounded(ctx, func(callCtx context.Context) error {
-				return ops.ClearTaskField(callCtx, task.ID, "claude_session_started")
-			}); err != nil {
-				glog.Warningf(
-					"[Cleanup] Failed to clear orphaned marker for task %s in vault %s: %v",
-					task.ID,
-					vault.Name,
-					err,
-				)
-				continue
-			}
-
-			// ORDER MATTERS. Restore first: a relaunch that began during the await
-			// is InFlight, and its fresh marker must survive this pass. Calling
-			// Finish first would immediately mark that relaunch finished, which the
-			// next re-clear pass undoes — and skipping Finish after a restore is
-			// what keeps the live record live.
-			if s.restoreMarkerIfInFlight(ctx, ops, vault.Name, task.ID, "task") {
-				continue // the marker was not left cleared; do not count it
-			}
-			s.params.LaunchRegistry.Finish(vault.Name, task.ID)
-			cleared++
-			glog.Infof(
-				"[Cleanup] Cleared orphaned claude_session_started marker for task %s in vault %s"+
-					" (no launch process on this host)",
-				task.ID,
-				vault.Name,
-			)
-		}
-	}
-	return cleared, nil
 }
