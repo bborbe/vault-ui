@@ -116,4 +116,11 @@ var _ = Describe("NewListOperation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(items[0].Assignee).To(Equal("ben"))
 	})
+
+	It("refuses a folder that is none of the three", func() {
+		_, err := newOperation().Execute(
+			context.Background(), "/vault", "personal", "99 Elsewhere", nil, true, "", "",
+		)
+		Expect(err).To(HaveOccurred())
+	})
 })

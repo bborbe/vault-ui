@@ -8,6 +8,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/ops"
 )
 
@@ -46,7 +47,7 @@ type listOperation struct {
 // pagesDir selects the kind — reading every kind from the task list is the bug
 // this switch exists to prevent.
 func (l *listOperation) Execute(
-	_ context.Context,
+	ctx context.Context,
 	_ string,
 	vaultName string,
 	pagesDir string,
@@ -64,8 +65,12 @@ func (l *listOperation) Execute(
 		return l.topics(name, statusFilters, assigneeFilter), nil
 	case l.goalsFolder != "" && pagesDir == l.goalsFolder:
 		return l.goals(name, statusFilters), nil
-	default:
+	case l.tasksFolder == "" || pagesDir == l.tasksFolder:
 		return l.tasks(name, statusFilters, assigneeFilter, goalFilter), nil
+	default:
+		// An unknown folder must not fall through to the task list: serving one
+		// kind's rows under another kind's view is the defect this switch fixes.
+		return nil, errors.Errorf(ctx, "list %q: not a task, goal or topic folder", pagesDir)
 	}
 }
 
