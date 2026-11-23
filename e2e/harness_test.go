@@ -141,3 +141,41 @@ func TestWriteConfigProducesAConfigTheLoaderAccepts(t *testing.T) {
 		t.Fatalf("expected TopicsFolder %q, got %q", "23 Topics", vault.TopicsFolder)
 	}
 }
+
+// TestDeferredFixturesAreRemovable proves the seeded deferred pages can be
+// removed, and that the probe can tell the difference — a cleanup assertion
+// that also passes with nothing seeded proves nothing. It runs without a
+// browser, on its own temp vault, so it cannot disturb the browser specs that
+// assert against the shared fixture vault.
+func TestDeferredFixturesAreRemovable(t *testing.T) {
+	root := t.TempDir()
+	if err := seedFixture(context.Background(), root); err != nil {
+		t.Fatalf("seedFixture: %v", err)
+	}
+
+	want := 4 * len(deferredFixtureDirs)
+	if got := countDeferredFixtures(root); got != want {
+		t.Fatalf("positive control: expected %d seeded deferred fixtures, got %d", want, got)
+	}
+
+	remaining, err := removeDeferredFixtures(root)
+	if err != nil {
+		t.Fatalf("removeDeferredFixtures: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected 0 deferred fixtures after teardown, got %d", remaining)
+	}
+
+	storageConfig := &storage.Config{
+		TasksDir:  "25 Tasks",
+		GoalsDir:  "24 Goals",
+		TopicsDir: "23 Topics",
+	}
+	tasks, err := storage.NewTaskStorage(storageConfig).ListTasksStrict(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ListTasksStrict: %v", err)
+	}
+	if len(tasks) != 4 {
+		t.Fatalf("expected the 4 base fixture tasks to survive the cleanup, got %d", len(tasks))
+	}
+}
