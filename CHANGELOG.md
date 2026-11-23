@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.113.1
 
 - fix: **the board's vault-api read path carries a goal's and a topic's `phase` through to the list item, so the Goals and Topics views group cards into phase columns instead of piling every card into `—`.** `pkg/vaultapi/listop.go`'s `goals()`/`topics()` mapped vault-api rows onto `ops.TaskListItem` without a `Phase` (the code assumed vault-api served none), and the `Goal`/`Topic` client structs had no `phase` key to decode. Both now carry it, on the same terms as the task list, so `pkg/board/goals.go`'s `Phase: strPtr(item.Phase)` receives a value.
 
