@@ -605,12 +605,16 @@ func (s *service) UpdateTaskPhase(
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
 }
 
-// approveAndQueue approves a task waiting in the inbox and restores the
-// status: next half of the approval contract. vault-cli v0.171.0's
-// task approve no longer rewrites status, so the caller writes it through the
-// same FrontmatterSet operation the non-approval branch uses. Without it an
-// approved row keeps status: todo and drops out of the manager sweep's
-// ready-to-start bucket.
+// approveAndQueue approves a task waiting in the inbox. Approval is a phase
+// move (todo → planning) only: vault-cli's task approve writes phase, approved_by
+// and approved_at, and this function writes no status.
+//
+// A phase write must never demote. An active row stays in_progress, and a queued
+// row stays next until the entry path (work-on) promotes it — the canonical
+// lifecycle runs backlog → next → in_progress → phases → completed, in one
+// direction. The ready-to-start bucket keys on phase: planning plus no live
+// session rather than on status: next, so leaving status alone keeps an approved
+// row offered.
 func approveAndQueue(
 	ctx context.Context,
 	resolved vaultconfig.Vault,
@@ -623,21 +627,14 @@ func approveAndQueue(
 	); approveErr != nil {
 		return newHTTPError(500, approveErr.Error())
 	}
-	if setErr := set.FrontmatterSet.Execute(
-		ctx, resolved.Path, taskID, "status", "next", "", "", "", false,
-	); setErr != nil {
-		return newHTTPError(500, setErr.Error())
-	}
 	return nil
 }
 
 // approveTask runs the operator's approval for a task waiting in the inbox,
 // with the same seven arguments RunTask passes. Approve writes phase: planning,
-// approved_by and approved_at; approveAndQueue adds the status: next it no
-// longer writes. This branch writes no phase or status itself: setting the
-// phase alongside the approval would race the approval's own write, and the
-// caller's status logic would overwrite "next" with "in_progress", which is the
-// write that removes a freshly approved row from the ready-to-start bucket.
+// approved_by and approved_at, and leaves status untouched — a phase write must
+// never demote an active row. This branch writes no phase or status itself:
+// setting the phase alongside the approval would race the approval's own write.
 //
 // A todo task that already carries an approval record is refused by the
 // operation; that case is not worth a request-path read, so it surfaces as an
