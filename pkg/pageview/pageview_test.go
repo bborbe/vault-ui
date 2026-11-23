@@ -264,6 +264,68 @@ func (e errorStorage) ReadPage(context.Context, string, string, string) (*domain
 	return nil, e.err
 }
 
+// newFolderFixture writes a fixture vault whose pages live in separate folders,
+// so cross-folder resolution and backlinks are exercised without a browser.
+func newFolderFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	files := map[string]string{
+		filepath.Join("24 Goals", "Cross Folder Goal.md"):   "---\npage_type: goal\n---\n\n# Goal\n\nSee [[Cross Folder Task]].\n",
+		filepath.Join("25 Tasks", "Cross Folder Task.md"):   "---\npage_type: task\n---\n\n# Task\n\nTask body marker.\n",
+		filepath.Join("50 Knowledge Base", "Plain Page.md"): "# Plain Page\n\nNo frontmatter body marker.\n",
+	}
+	for rel, content := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	return dir
+}
+
+func TestPageViewResolvesCrossFolderWikilink(t *testing.T) {
+	service := newService(t, newFolderFixture(t))
+	got, err := service.Render(context.Background(), vaultName, "24 Goals/Cross Folder Goal.md")
+	if err != nil {
+		t.Fatalf("render cross-folder goal: %v", err)
+	}
+	want := `href="/v/private-personal/page/25%20Tasks/Cross%20Folder%20Task.md"`
+	if !strings.Contains(got, want) {
+		t.Fatalf("cross-folder wikilink not resolved, want %s in:\n%s", want, got)
+	}
+}
+
+func TestPageViewListsCrossFolderBacklink(t *testing.T) {
+	service := newService(t, newFolderFixture(t))
+	got, err := service.Render(context.Background(), vaultName, "25 Tasks/Cross Folder Task.md")
+	if err != nil {
+		t.Fatalf("render cross-folder task: %v", err)
+	}
+	if !strings.Contains(got, `href="/v/private-personal/page/24%20Goals/Cross%20Folder%20Goal.md"`) {
+		t.Fatalf("cross-folder backlink missing:\n%s", got)
+	}
+	if !strings.Contains(got, "Cross Folder Goal") {
+		t.Fatalf("backlink display name missing:\n%s", got)
+	}
+}
+
+func TestPageViewRendersPageWithoutFrontmatter(t *testing.T) {
+	service := newService(t, newFolderFixture(t))
+	got, err := service.Render(context.Background(), vaultName, "50 Knowledge Base/Plain Page.md")
+	if err != nil {
+		t.Fatalf("render page without frontmatter: %v", err)
+	}
+	if !strings.Contains(got, "No frontmatter body marker.") {
+		t.Fatalf("page body missing:\n%s", got)
+	}
+	if strings.Contains(got, "parse frontmatter") {
+		t.Fatalf("frontmatter error leaked into the render:\n%s", got)
+	}
+}
+
 // TestPageViewConcurrentRenderIsRaceFree renders many pages at once so `go test
 // -race` (make test) catches a write to the shared cached index. It fails on a
 // design that stores the per-request page back into the cached vaultIndex after
