@@ -1501,3 +1501,173 @@ a.obsidian-handoff:hover {
 .banner.hidden {
     display: none;
 }
+
+/* Page view — the rendered vault page (`pkg/pageview`).
+
+   Everything here is scoped under `.page-view`, so no board selector changes
+   meaning. The `*` reset at the top of this sheet zeroes every margin, and
+   `body` is a dark board surface: without this block a page renders as one
+   undifferentiated block whose links take the browser's default anchor colour
+   on #1a1a1a — present in the DOM, invisible on screen. The renderer already
+   emits headings, lists, tables, code and resolved wikilinks; this block is
+   what makes them legible. */
+.page-view {
+    max-width: 52rem;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    font-size: 0.95rem;
+    line-height: 1.65;
+}
+
+.page-toolbar {
+    margin-bottom: 1.5rem;
+}
+
+.page-toolbar .obsidian-link {
+    display: inline-block;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: #7aa2f7;
+    text-decoration: none;
+}
+
+.page-toolbar .obsidian-link:hover {
+    background: #2a2a2a;
+    text-decoration: underline;
+}
+
+.page-view h1,
+.page-view h2,
+.page-view h3,
+.page-view h4 {
+    font-weight: 600;
+    line-height: 1.3;
+    color: #ffffff;
+}
+
+.page-view h1 {
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid #3a3a3a;
+    font-size: 1.5rem;
+}
+
+.page-view h2 {
+    margin: 1.6rem 0 0.6rem;
+    font-size: 1.2rem;
+}
+
+.page-view h3 {
+    margin: 1.3rem 0 0.5rem;
+    font-size: 1.05rem;
+}
+
+.page-view h4 {
+    margin: 1.1rem 0 0.4rem;
+    font-size: 1rem;
+}
+
+.page-view p {
+    margin: 0 0 0.9rem;
+}
+
+.page-view ul,
+.page-view ol {
+    margin: 0 0 0.9rem;
+    padding-left: 1.4rem;
+}
+
+.page-view li {
+    margin-bottom: 0.35rem;
+}
+
+/* A resolved wikilink and a plain markdown link are the same thing to a reader;
+   both must read as links against the dark body, which the default anchor
+   colour does not. */
+.page-view a,
+.page-view a.wikilink {
+    color: #7aa2f7;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.page-view a:hover,
+.page-view a.wikilink:hover {
+    color: #a8c7fa;
+}
+
+/* An unresolved wikilink is emitted as `span.wikilink.missing` — it has no
+   target, so it must not borrow the link colour and read as navigation that
+   silently does nothing. */
+.page-view span.wikilink.missing {
+    color: #e0a04a;
+    text-decoration: underline dotted;
+}
+
+.page-view code {
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background: #2a2a2a;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+}
+
+.page-view pre {
+    margin: 0 0 1rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    background: #2a2a2a;
+    overflow-x: auto;
+}
+
+.page-view pre code {
+    padding: 0;
+    background: none;
+}
+
+.page-view table {
+    width: 100%;
+    margin: 0 0 1rem;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.page-view th,
+.page-view td {
+    padding: 0.45rem 0.65rem;
+    border: 1px solid #3a3a3a;
+    text-align: left;
+    vertical-align: top;
+}
+
+.page-view th {
+    background: #2a2a2a;
+    color: #ffffff;
+}
+
+.page-view blockquote {
+    margin: 0 0 1rem;
+    padding-left: 1rem;
+    border-left: 3px solid #3a3a3a;
+    color: #b0b0b0;
+}
+
+.page-view hr {
+    margin: 1.5rem 0;
+    border: none;
+    border-top: 1px solid #3a3a3a;
+}
+
+.page-view .backlinks {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #3a3a3a;
+}
+
+.page-view .backlinks h2 {
+    margin-bottom: 0.6rem;
+    font-size: 1rem;
+}
