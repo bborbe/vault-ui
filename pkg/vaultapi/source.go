@@ -32,13 +32,14 @@ type Source struct {
 	client   Client
 	interval time.Duration
 
-	mu       sync.RWMutex
-	revision uint64
-	tasks    []Task
-	goals    []Goal
-	topics   []Topic
-	loaded   bool
-	lastHash [32]byte
+	mu          sync.RWMutex
+	revision    uint64
+	tasks       []Task
+	goals       []Goal
+	topics      []Topic
+	loaded      bool
+	unavailable bool
+	lastHash    [32]byte
 }
 
 // NewSource returns a Source polling client every DefaultPollInterval.
@@ -93,16 +94,19 @@ func (s *Source) poll(ctx context.Context) {
 	tasks, err := s.client.ListTasks(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll tasks: %v", err)
+		s.setUnavailable(true)
 		return
 	}
 	goals, err := s.client.ListGoals(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll goals: %v", err)
+		s.setUnavailable(true)
 		return
 	}
 	topics, err := s.client.ListTopics(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll topics: %v", err)
+		s.setUnavailable(true)
 		return
 	}
 	hash := hashLists(tasks, goals, topics)
@@ -112,10 +116,26 @@ func (s *Source) poll(ctx context.Context) {
 	s.tasks, s.goals, s.topics = tasks, goals, topics
 	s.lastHash = hash
 	s.loaded = true
+	s.unavailable = false
 	if changed {
 		s.revision++
 	}
 	s.mu.Unlock()
+}
+
+// setUnavailable records the source's reachability after a poll.
+func (s *Source) setUnavailable(unavailable bool) {
+	s.mu.Lock()
+	s.unavailable = unavailable
+	s.mu.Unlock()
+}
+
+// Unavailable reports whether the last poll failed — the board then serves the
+// last-good rows and the frontend shows the "vault-api unavailable" banner.
+func (s *Source) Unavailable() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.unavailable
 }
 
 // Tasks returns the cached tasks for the named vault.

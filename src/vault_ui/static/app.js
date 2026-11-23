@@ -81,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
     parseURLParams();
     renderColumnHeaders();  // builds the column DOM for currentView (always phase columns)
     loadVaults();
+    loadSourceStatus();
     setupEventListeners();
     connectWebSocket();
     startPolling();
@@ -555,6 +556,25 @@ function updateAssigneeLabel() {
     }
     const text = currentAssignees.map(a => a === '' ? 'Unassigned' : a).join(', ');
     label.textContent = text.length > 30 ? text.slice(0, 30) + '...' : text;
+}
+
+// loadSourceStatus shows the "vault-api unavailable" banner when the board's
+// source's last poll failed. The board keeps serving last-known rows, so this is
+// the only signal that the data may be stale.
+async function loadSourceStatus() {
+    try {
+        const response = await fetch('/api/source-status');
+        if (!response.ok) {
+            return;
+        }
+        const status = await response.json();
+        const banner = document.getElementById('vault-api-unavailable');
+        if (banner) {
+            banner.classList.toggle('hidden', !status.unavailable);
+        }
+    } catch (_) {
+        // A failing status endpoint is itself an outage; leave the banner as-is.
+    }
 }
 
 async function loadVaults() {

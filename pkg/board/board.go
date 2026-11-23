@@ -141,6 +141,17 @@ type Board interface {
 	ListGoals(ctx context.Context, query GoalQuery) ([]api.GoalResponse, error)
 	ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicResponse, error)
 	ShowTopic(ctx context.Context, vault, topicID string) (api.TopicDetailResponse, error)
+	// SourceUnavailable reports whether the vault-api source's last poll failed;
+	// the board keeps serving last-good rows and the frontend shows a banner.
+	SourceUnavailable() bool
+}
+
+// SourceUnavailable reports the vault-api source's reachability.
+func (b *board) SourceUnavailable() bool {
+	if b.source == nil {
+		return false
+	}
+	return b.source.Unavailable()
 }
 
 type board struct {
