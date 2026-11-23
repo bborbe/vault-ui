@@ -17,6 +17,8 @@ import (
 type fakeMutations struct {
 	runTask            func(context.Context, string, string) (api.SessionResponse, error)
 	jumpTask           func(context.Context, string, string, bool) error
+	jumpGoal           func(context.Context, string, string, bool) error
+	jumpTopic          func(context.Context, string, string, bool) error
 	takeOverTask       func(context.Context, string, string) (api.SessionResponse, error)
 	resumeTaskCommand  func(context.Context, string, string) (api.SessionResponse, error)
 	runGoal            func(context.Context, string, string) (api.SessionResponse, error)
@@ -64,6 +66,18 @@ func (f *fakeMutations) JumpTask(
 	ctx context.Context, vault, taskID string, sameOrigin bool,
 ) error {
 	return f.jumpTask(ctx, vault, taskID, sameOrigin)
+}
+
+func (f *fakeMutations) JumpGoal(
+	ctx context.Context, vault, goalID string, sameOrigin bool,
+) error {
+	return f.jumpGoal(ctx, vault, goalID, sameOrigin)
+}
+
+func (f *fakeMutations) JumpTopic(
+	ctx context.Context, vault, topicID string, sameOrigin bool,
+) error {
+	return f.jumpTopic(ctx, vault, topicID, sameOrigin)
 }
 
 func (f *fakeMutations) TakeOverTask(

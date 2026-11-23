@@ -129,7 +129,55 @@ func (b *board) goalsForVault(
 			pageFieldsByGoal[row.item.Name].mode,
 		))
 	}
+	b.attachGoalJumpPanes(ctx, responses)
 	return responses, nil
+}
+
+// attachGoalJumpPanes resolves the panes of the live goal rows in one batch and
+// stamps each live row's JumpPane, mirroring attachJumpPanes on the task path.
+// A nil Panes dependency leaves every row's JumpPane nil, which is the
+// feature-inert configuration. Only live rows are resolved: a headless manager
+// is live but has no terminal.
+func (b *board) attachGoalJumpPanes(ctx context.Context, responses []api.GoalResponse) {
+	if b.panes == nil {
+		return
+	}
+	seen := make(map[string]bool, len(responses))
+	sessionIDs := make([]string, 0, len(responses))
+	for i := range responses {
+		sessionID := goalSessionID(responses[i])
+		if !goalRowLive(responses[i]) || sessionID == "" || seen[sessionID] {
+			continue
+		}
+		seen[sessionID] = true
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if len(sessionIDs) == 0 {
+		return
+	}
+	panes := b.panes.ResolveAll(ctx, sessionIDs)
+	for i := range responses {
+		if !goalRowLive(responses[i]) {
+			continue
+		}
+		if paneID, ok := panes[goalSessionID(responses[i])]; ok {
+			value := paneID
+			responses[i].JumpPane = &value
+		}
+	}
+}
+
+// goalRowLive reports whether the response's classified session state is live.
+func goalRowLive(response api.GoalResponse) bool {
+	return response.SessionState != nil && *response.SessionState == string(session.SessionStateLive)
+}
+
+// goalSessionID returns the response's claude session id, or "" when absent.
+func goalSessionID(response api.GoalResponse) string {
+	if response.ClaudeSessionID == nil {
+		return ""
+	}
+	return *response.ClaudeSessionID
 }
 
 // goalPageFieldsByGoal returns each goal's `mode:` value from the vault-api

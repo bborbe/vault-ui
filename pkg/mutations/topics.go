@@ -73,6 +73,29 @@ func (s *service) RunTopic(ctx context.Context, vault, topicID string) (api.Sess
 	return sessionResponse(resolved, resolved.ClaudeScript, result.SessionID, topic.Name), nil
 }
 
+// JumpTopic activates the WezTerm pane a live topic's manager session runs in,
+// mirroring JumpTask. sameOrigin carries the handler's same-origin verdict.
+func (s *service) JumpTopic(ctx context.Context, vault, topicID string, sameOrigin bool) error {
+	if !sameOrigin {
+		return newHTTPError(403, "cross-origin jump request rejected")
+	}
+	resolved, ok, err := s.vaultByName(ctx, vault)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return newHTTPError(500, unknownVault(vault))
+	}
+	topic, found, err := s.findTopic(ctx, resolved, topicID)
+	if err != nil {
+		return newHTTPError(500, err.Error())
+	}
+	if !found {
+		return newHTTPError(404, topicNotFound(topicID))
+	}
+	return s.jumpToSession(ctx, topic.ClaudeSessionID)
+}
+
 // TakeOverTopic terminates a live or starting topic session and returns the
 // resume command, mirroring TakeOverGoal.
 func (s *service) TakeOverTopic(

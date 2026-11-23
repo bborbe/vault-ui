@@ -130,7 +130,14 @@ func (s *service) JumpTask(ctx context.Context, vault, taskID string, sameOrigin
 	if showErr != nil {
 		return newHTTPError(404, taskNotFound(taskID))
 	}
-	sessionID := task.ClaudeSessionID
+	return s.jumpToSession(ctx, task.ClaudeSessionID)
+}
+
+// jumpToSession activates the WezTerm pane the given live session resolves to,
+// on the terms the task, goal and topic jump routes share: the pane is resolved
+// fresh at click time, and the jump credential is read server-side and never
+// reaches the browser.
+func (s *service) jumpToSession(ctx context.Context, sessionID string) error {
 	if sessionID == "" {
 		return newHTTPError(409, "no session to jump to")
 	}
