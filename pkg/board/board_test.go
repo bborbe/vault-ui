@@ -1306,6 +1306,7 @@ var _ = Describe("ListTopics", func() {
 			"session_state",
 			"status",
 			"title",
+			"upcoming",
 			"vault",
 		}))
 	})

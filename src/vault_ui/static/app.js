@@ -1191,6 +1191,10 @@ async function loadTopics() {
             params.set('vault', currentVault);
         }
 
+        // Upcoming-window cutoff (hours ahead) — 0 hides all deferred topics,
+        // the same param the task and goal fetches send.
+        params.set('upcoming_hours', String(upcomingHours));
+
         // Live-session filter — server-side, mirroring the task fetch.
         if (currentLiveOnly) {
             params.set('session_live', 'true');
@@ -1906,7 +1910,7 @@ function mapTopicCard(topic) {
         phase: topic.phase,
         flag: topic.flag === true,
         hold: topic.status === 'hold',
-        upcoming: false,
+        upcoming: topic.upcoming === true,
         recentlyCompleted: false,
         urgencyTier: null,
         assignee: topic.assignee || '',

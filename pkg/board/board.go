@@ -236,6 +236,10 @@ type TopicQuery struct {
 	Vaults []string
 	// SessionLive keeps only topics whose session_state is live when true.
 	SessionLive bool
+	// UpcomingHours is the width of the upcoming window, on the same terms as
+	// GoalQuery.UpcomingHours: a topic deferred inside it is marked upcoming,
+	// one deferred beyond it is hidden.
+	UpcomingHours int
 }
 
 // UnknownVaultError reports a vault name the config does not know. Its message

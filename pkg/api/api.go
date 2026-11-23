@@ -188,6 +188,11 @@ type TopicResponse struct {
 	// and null when the page carries none, on the same terms as
 	// TaskResponse.Mode.
 	Mode *string `json:"mode"`
+	// Upcoming is true when the topic's `defer_date` falls inside the upcoming
+	// window, on the same terms as TaskResponse.Upcoming: always emitted, false
+	// when the topic is not deferred or its defer is in the past. A topic
+	// deferred beyond the window is omitted from the list entirely.
+	Upcoming bool `json:"upcoming"`
 }
 
 // TopicDetailResponse is the wire shape of a single topic and the work it
