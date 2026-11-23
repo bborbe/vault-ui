@@ -22,10 +22,10 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot/mocks"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // The generated fake must keep satisfying the interface it was generated from.
@@ -573,15 +573,7 @@ func newSnapshotBoard(snapshot sessionsnapshot.Snapshot) board.Board {
 // pages, so every read takes the full build.
 type staticIndex struct{}
 
-func (staticIndex) Revision(pageindex.Key) uint64 { return 0 }
-
-func (staticIndex) ChangedPagesSince(pageindex.Key, uint64) ([]string, bool) {
-	return nil, false
-}
-
-func (staticIndex) ListEntries(context.Context, string, string) ([]*pageindex.Entry, error) {
-	return nil, nil
-}
+func (staticIndex) Revision(vaultapi.SnapshotKey) uint64 { return 0 }
 
 // classifyFirstTask lists the single fixture task and returns its rendered
 // session state.

@@ -12,10 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bborbe/errors"
 	"github.com/golang/glog"
-
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 )
 
 // DefaultPollInterval is how often the source refetches vault-api.
@@ -144,25 +141,10 @@ func (s *Source) Topics(vaultName string) []Topic {
 
 // Revision implements board.IndexRevisions. The global revision advances when
 // any vault's list content changes.
-func (s *Source) Revision(_ pageindex.Key) uint64 {
+func (s *Source) Revision(_ SnapshotKey) uint64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.revision
-}
-
-// ChangedPagesSince implements board.IndexRevisions. vault-api carries no
-// per-page change marks, so it cannot bound the changed set; the store falls
-// back to a full rebuild.
-func (s *Source) ChangedPagesSince(_ pageindex.Key, _ uint64) ([]string, bool) {
-	return nil, false
-}
-
-// ListEntries implements board.IndexRevisions but is never called: the store
-// takes it only on a bounded patch, which ChangedPagesSince never reports.
-func (s *Source) ListEntries(
-	ctx context.Context, _, _ string,
-) ([]*pageindex.Entry, error) {
-	return nil, errors.Errorf(ctx, "ListEntries is not supported by the vault-api source")
 }
 
 // hashLists hashes the three lists so a change in any item advances the

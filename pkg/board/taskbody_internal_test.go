@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/api"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // bodyBaseTime is the fixed request time the body tests build their fixtures
@@ -622,7 +622,7 @@ func newContentGateHarnessWith(
 			for _, vault := range selected {
 				signals = append(signals, VaultSignal{
 					Name:   vault.Name,
-					Signal: h.store.Signal(pageindex.NewKey(vault.Path, vault.TasksFolder)),
+					Signal: h.store.Signal(vaultapi.NewSnapshotKey(vault.Path, vault.TasksFolder)),
 				})
 			}
 			return signals
@@ -944,19 +944,7 @@ func (v bodyRowsVaults) Vaults(_ context.Context) ([]Vault, error) {
 // the store takes its full-build path.
 type bodyRowsRevisions struct{}
 
-func (bodyRowsRevisions) Revision(_ pageindex.Key) uint64 { return 1 }
-
-func (bodyRowsRevisions) ChangedPagesSince(
-	_ pageindex.Key, _ uint64,
-) ([]string, bool) {
-	return nil, false
-}
-
-func (bodyRowsRevisions) ListEntries(
-	_ context.Context, _, _ string,
-) ([]*pageindex.Entry, error) {
-	return nil, nil
-}
+func (bodyRowsRevisions) Revision(_ vaultapi.SnapshotKey) uint64 { return 1 }
 
 // bodyRowsGenerations is a fixed generationSource.
 type bodyRowsGenerations uint64

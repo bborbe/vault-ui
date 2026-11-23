@@ -118,7 +118,7 @@ type Deps struct {
 	// Index reports the page-index revision the task-list store rebuilds on, the
 	// pages that moved since a revision, and the key's current pages. It is the
 	// store's rebuild input and the row patch's page source.
-	// pageindex.PageIndex satisfies it.
+	// The vault-api Source satisfies it.
 	Index IndexRevisions
 	// Panes resolves the pane of each live session so a card can offer a jump
 	// only when one exists. A nil value means no panes: every card carries a null
@@ -179,7 +179,6 @@ func New(deps Deps) Board {
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,
 		Refresh:     b.refreshTaskRows,
-		Patch:       b.patchTaskRows,
 		Revisions:   deps.Index,
 		Generations: deps.Sessions,
 	})

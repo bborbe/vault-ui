@@ -23,8 +23,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
-	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -234,26 +232,10 @@ type fakeIndex struct {
 	pageReads int
 }
 
-func (f *fakeIndex) Revision(pageindex.Key) uint64 {
+func (f *fakeIndex) Revision(vaultapi.SnapshotKey) uint64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.value
-}
-
-func (f *fakeIndex) ChangedPagesSince(_ pageindex.Key, revision uint64) ([]string, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if revision > f.value {
-		return nil, false
-	}
-	return append([]string(nil), f.changed...), f.changedOK
-}
-
-func (f *fakeIndex) ListEntries(_ context.Context, _, _ string) ([]*pageindex.Entry, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.pageReads++
-	return asEntries(f.pages), nil
 }
 
 func (f *fakeIndex) bump() {
@@ -327,17 +309,16 @@ func item(name string, mutate ...func(*ops.TaskListItem)) ops.TaskListItem {
 }
 
 type harness struct {
-	board     board.Board
-	list      *fakeList
-	show      *fakeShow
-	cache     fakeCache
-	signals   fakeSignals
-	sessions  *fakeProbe
-	index     *fakeIndex
-	pageIndex *pageindexmocks.PageIndex
-	source    *vaultapi.Source
-	counter   *listCounter
-	launch    launchregistry.Registry
+	board    board.Board
+	list     *fakeList
+	show     *fakeShow
+	cache    fakeCache
+	signals  fakeSignals
+	sessions *fakeProbe
+	index    *fakeIndex
+	source   *vaultapi.Source
+	counter  *listCounter
+	launch   launchregistry.Registry
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
@@ -355,15 +336,14 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 	}
 	launch := launchregistry.NewRegistry()
 	h := &harness{
-		list:      list,
-		show:      show,
-		cache:     cache,
-		signals:   signals,
-		sessions:  &fakeProbe{},
-		index:     &fakeIndex{},
-		pageIndex: &pageindexmocks.PageIndex{},
-		counter:   counter,
-		launch:    launch,
+		list:     list,
+		show:     show,
+		cache:    cache,
+		signals:  signals,
+		sessions: &fakeProbe{},
+		index:    &fakeIndex{},
+		counter:  counter,
+		launch:   launch,
 	}
 	h.build()
 	return h
@@ -395,22 +375,6 @@ func pageWithFrontmatter(
 // asEntries converts in-memory pages into what the page index serves: each page
 // with its Open Questions pre-parsed off the body and its Content dropped, so a
 // test proves the board reads the questions from the entry, never the body.
-func asEntries(pages []*domain.Page) []*pageindex.Entry {
-	entries := make([]*pageindex.Entry, 0, len(pages))
-	for _, p := range pages {
-		items, err := storage.ParseOpenQuestions(context.Background(), p.Content.String())
-		Expect(err).NotTo(HaveOccurred())
-		questions := make([]domain.OpenQuestion, 0, len(items))
-		for _, it := range items {
-			questions = append(questions, domain.OpenQuestion{Index: it.Index, Text: it.Question})
-		}
-		entries = append(entries, &pageindex.Entry{
-			Page:          &domain.Page{FrontmatterMap: p.FrontmatterMap, FileMetadata: p.FileMetadata},
-			OpenQuestions: questions,
-		})
-	}
-	return entries
-}
 
 // build (re)constructs the board from the current fakes, so a test can mutate a
 // fake and rebuild.
