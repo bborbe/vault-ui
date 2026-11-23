@@ -164,7 +164,6 @@ func CreateAPIHandler(
 	service := board.New(board.Deps{
 		Vaults:   &vaultProvider{loader: loader, configPath: configPath},
 		Ops:      opsProvider{source: vaultSource},
-		Cache:    cache,
 		Launch:   launches,
 		Clock:    libtime.NewCurrentDateTime(),
 		Signals:  sessionSnapshot,

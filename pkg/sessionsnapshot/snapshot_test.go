@@ -24,7 +24,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot/mocks"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -558,7 +557,6 @@ func newSnapshotBoard(snapshot sessionsnapshot.Snapshot) board.Board {
 	return board.New(board.Deps{
 		Vaults:   staticVaults{},
 		Ops:      staticOps{},
-		Cache:    statuscache.NewCache(),
 		Launch:   launchregistry.NewRegistry(),
 		Clock:    fixedClock(),
 		Signals:  snapshot,

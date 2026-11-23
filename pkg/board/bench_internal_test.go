@@ -251,7 +251,6 @@ func benchBoard(tb testing.TB) *board {
 	return New(Deps{
 		Vaults: benchVaults{},
 		Ops:    benchOps{items: items},
-		Cache:  benchCache{},
 		Launch: launchregistry.NewRegistry(),
 		Clock: libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime {
 			return libtime.DateTime(benchNow)
@@ -323,7 +322,7 @@ func BenchmarkBuildTaskRows(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for _, item := range items {
-				benchSink.names = bd.uncompletedBlockers(vault.Name, item.BlockedBy)
+				benchSink.names = bd.uncompletedBlockers(bd.taskStatuses(vault.VaultName), item.BlockedBy)
 			}
 		}
 	})

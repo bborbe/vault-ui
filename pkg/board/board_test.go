@@ -382,7 +382,6 @@ func (h *harness) build() {
 	h.board = board.New(board.Deps{
 		Vaults:   fakeVaults{vaults: []board.Vault{vault}},
 		Ops:      fakeOps{list: *h.list, show: *h.show},
-		Cache:    h.cache,
 		Launch:   h.launch,
 		Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 		Signals:  h.signals,
@@ -397,6 +396,17 @@ func (h *harness) build() {
 // the board against it.
 func (h *harness) usePages(pages ...*domain.Page) {
 	h.source = sourceFromPages(pages)
+	h.build()
+}
+
+// setStatuses primes the board's source with page-name → status, so blocker
+// resolution (which reads statuses from the source) sees them.
+func (h *harness) setStatuses(statuses map[string]string) {
+	tasks := make([]vaultapi.Task, 0, len(statuses))
+	for name, status := range statuses {
+		tasks = append(tasks, vaultapi.Task{Title: name, Vault: vault.VaultName, Status: status})
+	}
+	h.source = vaultapi.NewSourceFromData(tasks, nil, nil)
 	h.build()
 }
 
@@ -585,8 +595,7 @@ var _ = Describe("ListTasks", func() {
 			}),
 			item("Open"),
 		)
-		h.cache.statuses["Open"] = "in_progress"
-		h.cache.statuses["Closed"] = "completed"
+		h.setStatuses(map[string]string{"Open": "in_progress", "Closed": "completed"})
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		var blocked boardTask
@@ -599,25 +608,6 @@ var _ = Describe("ListTasks", func() {
 		Expect(blocked.blockers).To(Equal([]string{"Open"}))
 	})
 
-	It("surfaces claude_session_started from the cache", func() {
-		h := newHarness(item("Starting"))
-		h.cache.started["Starting"] = "2026-10-04T11:00:00Z"
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses[0].ClaudeSessionStarted).NotTo(BeNil())
-		Expect(*responses[0].ClaudeSessionStarted).To(Equal("2026-10-04T11:00:00Z"))
-	})
-
-	It("suppresses the marker once the launch registry is finished", func() {
-		h := newHarness(item("Starting"))
-		h.cache.started["Starting"] = "2026-10-04T11:00:00Z"
-		h.launch.Begin("personal", "Starting", "task")
-		h.launch.Finish("personal", "Starting")
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses[0].ClaudeSessionStarted).To(BeNil())
-	})
-
 	It("classifies a session from the registry", func() {
 		h := newHarness(item("Live", func(i *ops.TaskListItem) {
 			i.ClaudeSessionID = "11111111-1111-1111-1111-111111111111"
@@ -628,7 +618,6 @@ var _ = Describe("ListTasks", func() {
 		service := board.New(board.Deps{
 			Vaults:   fakeVaults{vaults: []board.Vault{vault}},
 			Ops:      fakeOps{list: *h.list, show: *h.show},
-			Cache:    h.cache,
 			Launch:   h.launch,
 			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 			Signals:  h.signals,
@@ -1123,7 +1112,6 @@ var _ = Describe("goal session id", func() {
 		h.sessions = &fakeProbe{
 			mtimes: map[string]*libtime.DateTime{sessionID: &fresh},
 		}
-		h.cache.started["Goal"] = "2026-10-04T09:00:00Z"
 		h.build()
 
 		response := listGoal(h)
@@ -1131,8 +1119,6 @@ var _ = Describe("goal session id", func() {
 		Expect(*response.SessionState).To(Equal("live"))
 		Expect(response.ClaudeSessionID).NotTo(BeNil())
 		Expect(*response.ClaudeSessionID).To(Equal(sessionID))
-		Expect(response.ClaudeSessionStarted).NotTo(BeNil())
-		Expect(*response.ClaudeSessionStarted).To(Equal("2026-10-04T09:00:00Z"))
 		Expect(response.ActivityDate).NotTo(BeNil())
 		Expect(*response.ActivityDate).To(Equal("2026-10-04T12:00:00Z"))
 	})
@@ -1346,7 +1332,7 @@ var _ = Describe("ListTopics", func() {
 
 	It("excludes a completed blocker and reports only the open ones", func() {
 		h := newHarness()
-		h.cache.statuses["Done"] = "completed"
+		h.setStatuses(map[string]string{"Done": "completed"})
 		h.list.items["23 Topics"] = []ops.TaskListItem{{
 			Name:      "TopicOne",
 			Status:    "in_progress",
@@ -1362,7 +1348,7 @@ var _ = Describe("ListTopics", func() {
 
 	It("serves an empty blockers list when every blocker is completed", func() {
 		h := newHarness()
-		h.cache.statuses["Done"] = "completed"
+		h.setStatuses(map[string]string{"Done": "completed"})
 		h.list.items["23 Topics"] = []ops.TaskListItem{{
 			Name:      "TopicOne",
 			Status:    "in_progress",
@@ -1440,7 +1426,6 @@ var _ = Describe("ListTopics", func() {
 		service := board.New(board.Deps{
 			Vaults:   fakeVaults{vaults: []board.Vault{noTopics}},
 			Ops:      fakeOps{list: *h.list, show: *h.show},
-			Cache:    h.cache,
 			Launch:   h.launch,
 			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
 			Signals:  h.signals,

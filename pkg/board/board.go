@@ -22,7 +22,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -108,7 +107,6 @@ type PanesResolver interface {
 type Deps struct {
 	Vaults  VaultsProvider
 	Ops     OpsProvider
-	Cache   statuscache.Cache
 	Launch  launchregistry.Registry
 	Clock   libtime.CurrentDateTimeGetter
 	Signals SessionSignals
@@ -148,7 +146,6 @@ type Board interface {
 type board struct {
 	vaults   VaultsProvider
 	ops      OpsProvider
-	cache    statuscache.Cache
 	launch   launchregistry.Registry
 	clock    libtime.CurrentDateTimeGetter
 	signals  SessionSignals
@@ -166,7 +163,6 @@ func New(deps Deps) Board {
 	b := &board{
 		vaults:   deps.Vaults,
 		ops:      deps.Ops,
-		cache:    deps.Cache,
 		launch:   deps.Launch,
 		clock:    deps.Clock,
 		signals:  deps.Signals,

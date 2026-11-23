@@ -17,7 +17,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
-	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
@@ -242,12 +241,13 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 	// One ListPages for the whole vault, attached to the rows so the request
 	// path never reads a page — the same precompute the other fields get.
 	pageFields := b.taskPageFields(vault)
+	statuses := b.taskStatuses(vault.VaultName)
 
 	rows := make([]taskSnapshotRow, 0, len(items))
 	for _, item := range items {
 		rows = append(
 			rows,
-			b.deriveTaskRow(ctx, vault, item, taskPageFieldsFor(pageFields, item.Name), sig),
+			b.deriveTaskRow(ctx, vault, item, taskPageFieldsFor(pageFields, item.Name), statuses, sig),
 		)
 	}
 	b.attachJumpPanes(ctx, rows)
@@ -289,9 +289,10 @@ func (b *board) deriveTaskRow(
 	vault Vault,
 	item ops.TaskListItem,
 	fields taskPageFields,
+	statuses map[string]string,
 	sig taskRowSignals,
 ) taskSnapshotRow {
-	blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+	blockers := b.uncompletedBlockers(statuses, item.BlockedBy)
 	state := session.ClassifySessionState(ctx, session.ClassifyParams{
 		SessionID:          item.ClaudeSessionID,
 		ProjectDir:         sig.projectDir,
@@ -471,7 +472,7 @@ func (b *board) recomputeDependentBlockers(
 		if !blockedByNamesChangedPage(rows[i].item.BlockedBy, changed) {
 			continue
 		}
-		blockers := b.uncompletedBlockers(vaultName, rows[i].item.BlockedBy)
+		blockers := b.uncompletedBlockers(b.taskStatuses(vaultName), rows[i].item.BlockedBy)
 		rows[i].blockers = blockers
 		rows[i].blocked = len(blockers) > 0
 	}
@@ -672,26 +673,36 @@ func (b *board) visibleRow(
 	return row, false, nil
 }
 
-func (b *board) uncompletedBlockers(vaultName string, blockedBy []string) []string {
+// uncompletedBlockers returns the blockers whose status is not completed, using
+// the statuses the board already holds from the vault-api source — no status
+// cache.
+func (b *board) uncompletedBlockers(statuses map[string]string, blockedBy []string) []string {
 	uncompleted := make([]string, 0, len(blockedBy))
 	for _, wikilink := range blockedBy {
 		name := stripBrackets(wikilink)
-		status, _ := b.cache.GetStatus(vaultName, name)
-		if status != "completed" {
+		if statuses[name] != "completed" {
 			uncompleted = append(uncompleted, name)
 		}
 	}
 	return uncompleted
 }
 
-func (b *board) sessionStarted(vaultName, itemID string) *string {
-	if state, ok := b.launch.State(vaultName, itemID); ok && state == launchregistry.Finished {
-		return nil
+// sessionStarted is always nil: the started marker lived in the status cache,
+// which the board no longer reads, and the vault-api task payload carries no
+// started marker.
+func (b *board) sessionStarted(_, _ string) *string { return nil }
+
+// taskStatuses maps each task's page name to its status from the vault-api
+// source, so blocker resolution needs no status cache.
+func (b *board) taskStatuses(vaultName string) map[string]string {
+	statuses := map[string]string{}
+	if b.source == nil {
+		return statuses
 	}
-	if started, ok := b.cache.GetSessionStarted(vaultName, itemID); ok {
-		return &started
+	for _, t := range b.source.Tasks(vaultName) {
+		statuses[t.Title] = t.Status
 	}
-	return nil
+	return statuses
 }
 
 // taskResponse renders one visible row. activityDate is the precomputed

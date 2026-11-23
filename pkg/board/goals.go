@@ -166,7 +166,7 @@ func (b *board) goalResponse(
 ) api.GoalResponse {
 	item := row.item
 
-	blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+	blockers := b.uncompletedBlockers(b.taskStatuses(vault.VaultName), item.BlockedBy)
 	if blockers == nil {
 		blockers = []string{}
 	}

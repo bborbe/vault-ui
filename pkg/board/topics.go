@@ -79,7 +79,7 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 		pageFieldsByTopic := b.topicPageFieldsByTopic(vault)
 
 		for _, item := range items {
-			blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+			blockers := b.uncompletedBlockers(b.taskStatuses(vault.VaultName), item.BlockedBy)
 			responses = append(responses, api.TopicResponse{
 				ID:                   item.Name,
 				Title:                item.Name,
