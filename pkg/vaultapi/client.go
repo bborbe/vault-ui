@@ -115,11 +115,17 @@ type OpenQuestion struct {
 }
 
 // taskList is the GET /api/v1/tasks envelope.
+//
+// warnings is a COUNT, not a list: vault-api answers `"warnings": 112` for a
+// vault with that many pages it could not parse. Declaring it []string made
+// every live poll fail to decode ("cannot unmarshal number into Go struct
+// field taskList.warnings"), so the board served no rows at all while the
+// e2e stayed green — its stub never sent the field.
 type taskList struct {
-	Items           []Task   `json:"items"`
-	Total           int      `json:"total"`
-	Warnings        []string `json:"warnings"`
-	IndexAgeSeconds int      `json:"index_age_seconds"`
+	Items           []Task `json:"items"`
+	Total           int    `json:"total"`
+	Warnings        int    `json:"warnings"`
+	IndexAgeSeconds int    `json:"index_age_seconds"`
 }
 
 // goalList is the GET /api/v1/goals envelope.
