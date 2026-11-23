@@ -22,8 +22,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // DefaultUpcomingHours is the default "upcoming" window in hours.
@@ -108,7 +107,6 @@ type PanesResolver interface {
 type Deps struct {
 	Vaults  VaultsProvider
 	Ops     OpsProvider
-	Cache   statuscache.Cache
 	Launch  launchregistry.Registry
 	Clock   libtime.CurrentDateTimeGetter
 	Signals SessionSignals
@@ -118,16 +116,17 @@ type Deps struct {
 	// Index reports the page-index revision the task-list store rebuilds on, the
 	// pages that moved since a revision, and the key's current pages. It is the
 	// store's rebuild input and the row patch's page source.
-	// pageindex.PageIndex satisfies it.
+	// The vault-api Source satisfies it.
 	Index IndexRevisions
-	// PageIndex serves a vault's task pages, which the board reads for the one
-	// derived field its list rows do not carry: a task's Open Questions section.
-	PageIndex pageindex.PageIndex
 	// Panes resolves the pane of each live session so a card can offer a jump
 	// only when one exists. A nil value means no panes: every card carries a null
 	// jump_pane, and the feature is inert. Production wires it in
 	// pkg/factory/api.go; leaving it nil there ships the feature silently dead.
-	Panes   PanesResolver
+	Panes PanesResolver
+	// Source supplies the vault-api task items the board derives jira, mode and
+	// Open Questions from — the fields its list rows do not carry. A nil value
+	// means those fields are empty (tests only).
+	Source  *vaultapi.Source
 	HomeDir string
 }
 
@@ -142,43 +141,51 @@ type Board interface {
 	ListGoals(ctx context.Context, query GoalQuery) ([]api.GoalResponse, error)
 	ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicResponse, error)
 	ShowTopic(ctx context.Context, vault, topicID string) (api.TopicDetailResponse, error)
+	// SourceUnavailable reports whether the vault-api source's last poll failed;
+	// the board keeps serving last-good rows and the frontend shows a banner.
+	SourceUnavailable() bool
+}
+
+// SourceUnavailable reports the vault-api source's reachability.
+func (b *board) SourceUnavailable() bool {
+	if b.source == nil {
+		return false
+	}
+	return b.source.Unavailable()
 }
 
 type board struct {
-	vaults    VaultsProvider
-	ops       OpsProvider
-	cache     statuscache.Cache
-	launch    launchregistry.Registry
-	clock     libtime.CurrentDateTimeGetter
-	signals   SessionSignals
-	sessions  SessionProbe
-	index     IndexRevisions
-	pageIndex pageindex.PageIndex
-	panes     PanesResolver
-	homeDir   string
-	snapshot  *taskSnapshotStore
-	bodies    *taskBodyCache
+	vaults   VaultsProvider
+	ops      OpsProvider
+	launch   launchregistry.Registry
+	clock    libtime.CurrentDateTimeGetter
+	signals  SessionSignals
+	sessions SessionProbe
+	index    IndexRevisions
+	panes    PanesResolver
+	source   *vaultapi.Source
+	homeDir  string
+	snapshot *taskSnapshotStore
+	bodies   *taskBodyCache
 }
 
 // New returns a Board backed by the given dependencies.
 func New(deps Deps) Board {
 	b := &board{
-		vaults:    deps.Vaults,
-		ops:       deps.Ops,
-		cache:     deps.Cache,
-		launch:    deps.Launch,
-		clock:     deps.Clock,
-		signals:   deps.Signals,
-		sessions:  deps.Sessions,
-		index:     deps.Index,
-		pageIndex: deps.PageIndex,
-		panes:     deps.Panes,
-		homeDir:   deps.HomeDir,
+		vaults:   deps.Vaults,
+		ops:      deps.Ops,
+		launch:   deps.Launch,
+		clock:    deps.Clock,
+		signals:  deps.Signals,
+		sessions: deps.Sessions,
+		index:    deps.Index,
+		panes:    deps.Panes,
+		source:   deps.Source,
+		homeDir:  deps.HomeDir,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,
 		Refresh:     b.refreshTaskRows,
-		Patch:       b.patchTaskRows,
 		Revisions:   deps.Index,
 		Generations: deps.Sessions,
 	})

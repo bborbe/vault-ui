@@ -33,7 +33,6 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	s.deps.Launch.Begin(vault, goalID, "goal")
 	if err := set.GoalSet.Execute(
@@ -65,7 +64,6 @@ func (s *service) RunGoal(ctx context.Context, vault, goalID string) (api.Sessio
 		return api.SessionResponse{}, newHTTPError(500, setErr.Error())
 	}
 	_ = set.GoalClear.Execute(ctx, resolved.Path, goalID, "claude_session_started")
-	s.deps.Cache.Invalidate(vault, goalID)
 	if result.SessionID == "" {
 		return api.SessionResponse{}, newHTTPError(
 			500, "vault-cli goal work-on did not start a claude session: no warnings reported",
@@ -119,7 +117,6 @@ func (s *service) TakeOverGoal(
 	if !found {
 		return api.SessionResponse{}, newHTTPError(404, goalNotFound(goalID))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	sessionID := goal.ClaudeSessionID
 	terminated := false
@@ -211,7 +208,6 @@ func (s *service) ExecuteGoalCommand(
 	if !ok {
 		return api.GoalCommandResponse{}, newHTTPError(400, unknownVault(vault))
 	}
-	defer s.markVaultDirty(resolved)
 	set := s.opsForVault(resolved)
 	var runErr error
 	if req.Command == "defer-goal" {
@@ -229,11 +225,9 @@ func (s *service) ExecuteGoalCommand(
 	if runErr != nil {
 		return api.GoalCommandResponse{}, newHTTPError(500, runErr.Error())
 	}
-	s.deps.Cache.Invalidate(vault, goalID)
 	// Mark before publishing so a client reacting to the frame never re-fetches
 	// stale data; the deferred mark still covers error returns after a partial
 	// write, and the extra mark costs at most one extra rebuild.
-	s.markVaultDirty(resolved)
 	s.deps.Publisher.PublishGoalUpdated(ctx, vault, goalID)
 	return api.GoalCommandResponse{Status: "success", GoalID: goalID, Command: req.Command}, nil
 }

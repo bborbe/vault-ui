@@ -120,7 +120,7 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 
 		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
 			Should(BeNumerically(">", 0))
-		before := countOf(page, ".task-card")
+		before := settledCount(page, ".task-card")
 
 		Expect(writeFixtureTask(ctx, vaultPath, "Arrived During The Walk")).To(Succeed())
 
@@ -188,6 +188,22 @@ func countOf(page playwright.Page, sel string) int {
 	count, err := page.Locator(sel).Count()
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return count
+}
+
+// settledCount returns the element count once it has stopped changing. The
+// board fetches from vault-api client-side, so a count read straight after a
+// navigation is routinely 0 or partial — waiting only for "> 0" returns at
+// whatever intermediate number happened to be on screen. Every assertion that
+// treats a count as a fixed baseline goes through here.
+func settledCount(page playwright.Page, sel string) int {
+	prev := -1
+	EventuallyWithOffset(1, func() bool {
+		now := countOf(page, sel)
+		settled := now == prev && now > 0
+		prev = now
+		return settled
+	}, "20s", "400ms").Should(BeTrue(), "the count of %s never settled above zero", sel)
+	return prev
 }
 
 // clickView clicks a view toggle.

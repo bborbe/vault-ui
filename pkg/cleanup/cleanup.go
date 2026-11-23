@@ -38,7 +38,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionresolver"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
 // Frozen values carried from the Python constants. The Go identifiers are
@@ -109,7 +108,6 @@ type SweepParams struct {
 	CurrentUser    string
 	LaunchRegistry launchregistry.Registry
 	SessionLock    sessionlock.Registry
-	StatusCache    statuscache.Cache
 	LiveNames      func(ctx context.Context) map[string]string
 	ProcessScanner session.ProcessScanner
 	// Now is a clock, read at each consumer (never a snapshot taken at
@@ -132,9 +130,6 @@ type Sweep interface {
 	// RunLoop runs Run every CleanupInterval until ctx is cancelled (the port of
 	// run_cleanup_loop).
 	RunLoop(ctx context.Context) error
-	// ReconcileOrphanedMarkers clears claude_session_started markers whose launch
-	// this host no longer has (startup reconciliation) and returns the count.
-	ReconcileOrphanedMarkers(ctx context.Context) (int, error)
 }
 
 // NewSweep creates a Sweep from the given params.
@@ -213,8 +208,6 @@ func (s *sweep) runVault(ctx context.Context, vault Vault, liveNames map[string]
 	// Every branch above operates on tasks that carry a session id, so a task
 	// with an EMPTY claude_session_id is invisible to the rest of the sweep.
 	s.rebindEmptySessionIDs(ctx, vault, ops, tasks, projectDir, liveNames)
-	cleared += s.clearOrphanedTaskMarkers(ctx, vault, ops, tasks, projectDir)
-	cleared += s.reclearResurrectedTaskMarkers(ctx, vault, ops)
 	cleared += s.runGoalPass(ctx, vault, ops, projectDir, liveNames)
 	cleared += s.runTopicPass(ctx, vault, ops)
 	return cleared
@@ -291,8 +284,6 @@ func (s *sweep) runGoalPass(
 
 	cleared := 0
 	cleared += s.clearStaleGoalSessions(ctx, vault, ops, goals, projectDir, liveNames)
-	cleared += s.clearOrphanedGoalMarkers(ctx, vault, ops, goals, projectDir)
-	cleared += s.reclearResurrectedGoalMarkers(ctx, vault, ops)
 	return cleared
 }
 
@@ -537,114 +528,9 @@ func (s *sweep) clearItemSession(
 
 // clearOrphanedTaskMarkers reproduces the task marker TTL pass. The marker comes
 // from the StatusCache, NOT from the listed item (the CLI does not emit it).
-func (s *sweep) clearOrphanedTaskMarkers(
-	ctx context.Context,
-	vault Vault,
-	ops VaultOps,
-	tasks []Item,
-	projectDir string,
-) int {
-	cleared := 0
-	for _, task := range tasks {
-		if ctxDone(ctx) {
-			return cleared
-		}
-		marker, ok := s.params.StatusCache.GetSessionStarted(vault.Name, task.ID)
-		if !ok || marker == "" {
-			continue
-		}
-		// A launch the registry knows about is never cleared by this TTL loop: an
-		// IN_FLIGHT record means the turn is still running (never clear,
-		// regardless of age), and a FINISHED record is handled by the re-clear
-		// pass below.
-		if _, known := s.params.LaunchRegistry.State(vault.Name, task.ID); known {
-			continue
-		}
-		// An id-bearing task whose session file does NOT exist is a stale session
-		// the main sweep already cleared (id AND marker in lockstep) — skip the
-		// redundant second clear.
-		if task.ClaudeSessionID != "" {
-			if !fileExists(filepath.Join(projectDir, task.ClaudeSessionID+".jsonl")) {
-				continue
-			}
-		}
-		if s.markerIsYoung(marker, s.params.MarkerTTL) {
-			continue // a turn this young may still be running
-		}
-		if err := s.bounded(ctx, func(callCtx context.Context) error {
-			return ops.ClearTaskField(callCtx, task.ID, "claude_session_started")
-		}); err != nil {
-			glog.Errorf(
-				"[Cleanup] Failed to clear orphaned Starting marker on task %s in vault %s: %v",
-				task.ID,
-				vault.Name,
-				err,
-			)
-			continue
-		}
-		glog.Infof(
-			"[Cleanup] Cleared orphaned Starting marker from task %s in vault %s",
-			task.ID,
-			vault.Name,
-		)
-		// A relaunch that began during the clear has a fresh marker this pass just
-		// wiped; put it back.
-		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, task.ID, "task")
-		cleared++
-	}
-	return cleared
-}
 
 // clearOrphanedGoalMarkers is the goal mirror of clearOrphanedTaskMarkers. The
 // Goal model has no started field, so the cache is the only source.
-func (s *sweep) clearOrphanedGoalMarkers(
-	ctx context.Context,
-	vault Vault,
-	ops VaultOps,
-	goals []Item,
-	projectDir string,
-) int {
-	cleared := 0
-	for _, goal := range goals {
-		if ctxDone(ctx) {
-			return cleared
-		}
-		marker, ok := s.params.StatusCache.GetSessionStarted(vault.Name, goal.ID)
-		if !ok || marker == "" {
-			continue
-		}
-		if _, known := s.params.LaunchRegistry.State(vault.Name, goal.ID); known {
-			continue
-		}
-		if goal.ClaudeSessionID != "" {
-			if !fileExists(filepath.Join(projectDir, goal.ClaudeSessionID+".jsonl")) {
-				continue
-			}
-		}
-		if s.markerIsYoung(marker, s.params.MarkerTTL) {
-			continue
-		}
-		if err := s.bounded(ctx, func(callCtx context.Context) error {
-			return ops.ClearGoalField(callCtx, goal.ID, "claude_session_started")
-		}); err != nil {
-			glog.Errorf(
-				"[Cleanup] Failed to clear orphaned Starting marker on goal %s in vault %s: %v",
-				goal.ID,
-				vault.Name,
-				err,
-			)
-			continue
-		}
-		glog.Infof(
-			"[Cleanup] Cleared orphaned Starting marker from goal %s in vault %s",
-			goal.ID,
-			vault.Name,
-		)
-		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, goal.ID, "goal")
-		cleared++
-	}
-	return cleared
-}
 
 // clearOrphanedTopicMarkers is the topic marker TTL pass. Unlike the task and
 // goal passes it reads the marker from the page, not the StatusCache: the cache
@@ -709,85 +595,9 @@ func (s *sweep) clearOrphanedTopicMarkers(
 // from disk. Fires at most once per finished record: the record is evicted once
 // the clear succeeds or the marker is already gone, and a failed clear is logged
 // (not swallowed) so the next pass retries.
-func (s *sweep) reclearResurrectedTaskMarkers(ctx context.Context, vault Vault, ops VaultOps) int {
-	cleared := 0
-	for _, record := range s.params.LaunchRegistry.Finished(vault.Name) {
-		if ctxDone(ctx) {
-			return cleared
-		}
-		if record.Kind != "task" {
-			continue
-		}
-		if !s.markerPresent(vault.Name, record.ItemID) {
-			s.params.LaunchRegistry.Evict(vault.Name, record.ItemID)
-			continue
-		}
-		if err := s.bounded(ctx, func(callCtx context.Context) error {
-			return ops.ClearTaskField(callCtx, record.ItemID, "claude_session_started")
-		}); err != nil {
-			glog.Warningf(
-				"[Cleanup] Failed to clear resurrected Starting marker on task %s in vault %s: %v",
-				record.ItemID,
-				vault.Name,
-				err,
-			)
-			continue // record retained -> retried on the next pass
-		}
-		glog.Infof(
-			"[Cleanup] Cleared resurrected Starting marker from task %s in vault %s",
-			record.ItemID,
-			vault.Name,
-		)
-		cleared++
-		// A relaunch that began while the clear was awaited is InFlight; restore
-		// its fresh marker. The two compose without ordering: restore is a no-op
-		// for a Finished record, and EvictIfFinished refuses to evict a live one.
-		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, record.ItemID, "task")
-		// Evict only if the record is still FINISHED — a concurrent launch may
-		// have re-begun it while the clear was awaited, and that fresh record
-		// must survive.
-		s.params.LaunchRegistry.EvictIfFinished(vault.Name, record.ItemID)
-	}
-	return cleared
-}
 
 // reclearResurrectedGoalMarkers is the goal mirror of
 // reclearResurrectedTaskMarkers.
-func (s *sweep) reclearResurrectedGoalMarkers(ctx context.Context, vault Vault, ops VaultOps) int {
-	cleared := 0
-	for _, record := range s.params.LaunchRegistry.Finished(vault.Name) {
-		if ctxDone(ctx) {
-			return cleared
-		}
-		if record.Kind != "goal" {
-			continue
-		}
-		if !s.markerPresent(vault.Name, record.ItemID) {
-			s.params.LaunchRegistry.Evict(vault.Name, record.ItemID)
-			continue
-		}
-		if err := s.bounded(ctx, func(callCtx context.Context) error {
-			return ops.ClearGoalField(callCtx, record.ItemID, "claude_session_started")
-		}); err != nil {
-			glog.Warningf(
-				"[Cleanup] Failed to clear resurrected Starting marker on goal %s in vault %s: %v",
-				record.ItemID,
-				vault.Name,
-				err,
-			)
-			continue // record retained -> retried on the next pass
-		}
-		glog.Infof(
-			"[Cleanup] Cleared resurrected Starting marker from goal %s in vault %s",
-			record.ItemID,
-			vault.Name,
-		)
-		cleared++
-		s.restoreMarkerIfInFlight(ctx, ops, vault.Name, record.ItemID, "goal")
-		s.params.LaunchRegistry.EvictIfFinished(vault.Name, record.ItemID)
-	}
-	return cleared
-}
 
 // reclearResurrectedTopicMarkers is the topic mirror of
 // reclearResurrectedTaskMarkers. Presence is read from the page for the same
@@ -857,10 +667,6 @@ func (s *sweep) topicMarker(
 }
 
 // markerPresent reports whether the status cache holds a non-empty marker.
-func (s *sweep) markerPresent(vaultName, itemID string) bool {
-	marker, ok := s.params.StatusCache.GetSessionStarted(vaultName, itemID)
-	return ok && marker != ""
-}
 
 // markerIsYoung reports whether a marker's age is below ttl. An unparseable
 // marker (legacy "true") has an unknown age and is treated as expired, so it is

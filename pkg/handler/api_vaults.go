@@ -25,6 +25,15 @@ func NewVaultsHandler(b board.Board) http.Handler {
 	})
 }
 
+// NewSourceStatusHandler returns the GET /api/source-status handler: whether the
+// vault-api source's last poll failed, which the frontend renders as the
+// "vault-api unavailable" banner.
+func NewSourceStatusHandler(b board.Board) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+		writeJSON(resp, http.StatusOK, map[string]bool{"unavailable": b.SourceUnavailable()})
+	})
+}
+
 // NewAssigneesHandler returns the GET /api/assignees handler.
 func NewAssigneesHandler(b board.Board) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {

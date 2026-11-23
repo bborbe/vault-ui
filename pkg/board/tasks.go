@@ -13,14 +13,12 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/cleanup"
-	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/session"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // defaultStatuses is the effective status set when no status[] is supplied.
@@ -185,7 +183,7 @@ func (b *board) taskSnapshotSignals(selected []Vault) []VaultSignal {
 	for _, vault := range selected {
 		signals = append(signals, VaultSignal{
 			Name:   vault.Name,
-			Signal: b.snapshot.Signal(pageindex.NewKey(vault.Path, vault.TasksFolder)),
+			Signal: b.snapshot.Signal(vaultapi.NewSnapshotKey(vault.Path, vault.TasksFolder)),
 		})
 	}
 	return signals
@@ -242,13 +240,14 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 
 	// One ListPages for the whole vault, attached to the rows so the request
 	// path never reads a page — the same precompute the other fields get.
-	pageFields := b.taskPageFieldsByTask(ctx, vault)
+	pageFields := b.taskPageFields(vault)
+	statuses := b.taskStatuses(vault.VaultName)
 
 	rows := make([]taskSnapshotRow, 0, len(items))
 	for _, item := range items {
 		rows = append(
 			rows,
-			b.deriveTaskRow(ctx, vault, item, taskPageFieldsFor(pageFields, item.Name), sig),
+			b.deriveTaskRow(ctx, vault, item, taskPageFieldsFor(pageFields, item.Name), statuses, sig),
 		)
 	}
 	b.attachJumpPanes(ctx, rows)
@@ -290,9 +289,10 @@ func (b *board) deriveTaskRow(
 	vault Vault,
 	item ops.TaskListItem,
 	fields taskPageFields,
+	statuses map[string]string,
 	sig taskRowSignals,
 ) taskSnapshotRow {
-	blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+	blockers := b.uncompletedBlockers(statuses, item.BlockedBy)
 	state := session.ClassifySessionState(ctx, session.ClassifyParams{
 		SessionID:          item.ClaudeSessionID,
 		ProjectDir:         sig.projectDir,
@@ -452,220 +452,6 @@ func (b *board) refreshTaskRows(
 	return refreshed, nil
 }
 
-// patchTaskRows re-derives only the rows whose pages the page index reports as
-// changed, so a per-file write mark costs a bounded set of row derivations
-// instead of a vault-wide rebuild.
-//
-// names are the changed pages' base filenames including their ".md" suffix. The
-// pages come from the page index, whose read resolves any pending write mark, so
-// a row is derived from the page the write produced rather than the one the
-// snapshot held before it.
-//
-// Beyond the changed page's own row, two kinds of field need care:
-//
-//   - The classified session state, the activity date and the location are
-//     carried over from the held row. They come from the session snapshot, and the store only
-//     takes this path when the session generation has not moved, so those values
-//     are already the current generation's; recomputing them would need the
-//     process spawn and transcript probe this path exists to avoid.
-//   - The session-started marker is NOT carried over. It derives from the launch
-//     registry and the status cache, both in memory and both moved by the write
-//     that marked the page — Cache.Invalidate refreshes the cache and the launch
-//     registry updates on Begin/Finish — so it is recomputed here at no I/O.
-//     Carrying it over would republish a marker a ClearTaskSession write had
-//     just cleared, for up to a session refresh.
-//
-// blockers and blocked are cross-row derived — uncompletedBlockers filters a
-// row's own BlockedBy through the status cache, so one row's badge depends on
-// another row's status — and are handled by recomputeDependentBlockers once the
-// changed rows are spliced in.
-//
-// It returns a new slice. The rows it is given are shared with every reader, so
-// each is copied before a field is written, and a row that is replaced is
-// replaced whole rather than mutated.
-//
-// Row order is not part of the equivalence with a full rebuild: a spliced new
-// row is appended rather than inserted at its status-priority position, and the
-// frontend re-sorts every render, so the served card order is unchanged. The
-// snapshot's row set and every row's fields are what the equivalence asserts.
-//
-// Anything this path cannot derive without data it does not already hold falls
-// back to the full build for the whole key rather than fetching it. A page with
-// no held row is not such a case: its item is derived from the page the index
-// already parsed and its session fields are classified against the vault's
-// in-memory precompute, so the row is spliced in rather than rebuilt. Only a
-// page the list operation drops (patch_page_not_listed) still forces the full
-// build.
-func (b *board) patchTaskRows(
-	ctx context.Context,
-	vault Vault,
-	rows []taskSnapshotRow,
-	names []string,
-) ([]taskSnapshotRow, error) {
-	kind := rebuildKindPatch
-	fullReason := ""
-	// Record exactly one rebuild kind per call, on every return path: the
-	// bounded path counts as a patch, and a fallback to the full build counts
-	// as a full rebuild attributed to the site that forced it, never as a patch.
-	defer func() {
-		recordRebuild(kind)
-		if fullReason != "" {
-			recordFullRebuild(fullReason)
-		}
-	}()
-
-	entries, err := b.index.ListEntries(ctx, vault.Path, vault.TasksFolder)
-	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "list task pages for vault %s", vault.Name)
-	}
-
-	byName := make(map[string]*domain.Page, len(entries))
-	questionsByName := make(map[string][]domain.OpenQuestion, len(entries))
-	for _, entry := range entries {
-		byName[entry.Page.FileMetadata.Name+".md"] = entry.Page
-		questionsByName[entry.Page.FileMetadata.Name] = entry.OpenQuestions
-	}
-	held := make(map[string]int, len(rows))
-	for i, row := range rows {
-		held[row.item.Name+".md"] = i
-	}
-
-	changed := make([]*domain.Page, 0, len(names))
-	newPages := make([]*domain.Page, 0, len(names))
-	var dropped []int
-	for _, name := range names {
-		page, present := byName[name]
-		at, wasHeld := held[name]
-		switch {
-		case present && wasHeld:
-			changed = append(changed, page)
-		case present:
-			// A page the snapshot does not hold yet. Its session fields cannot be
-			// carried over from a held row, so the row is derived whole — but from
-			// the page the index already parsed and only this page's item, never a
-			// vault-wide re-list. It is spliced in below rather than rebuilt.
-			newPages = append(newPages, page)
-		case wasHeld:
-			dropped = append(dropped, at)
-		}
-	}
-
-	derive := make([]*domain.Page, 0, len(changed)+len(newPages))
-	derive = append(derive, changed...)
-	derive = append(derive, newPages...)
-
-	items, err := ops.NewListOperation(&changedPages{pages: derive}).Execute(
-		ctx, vault.Path, vault.Name, vault.TasksFolder, nil, true, "", "",
-	)
-	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "derive changed task rows for vault %s", vault.Name)
-	}
-	itemByName := make(map[string]ops.TaskListItem, len(items))
-	for _, item := range items {
-		itemByName[item.Name] = item
-	}
-
-	patched := make([]taskSnapshotRow, len(rows))
-	copy(patched, rows)
-	for _, page := range changed {
-		name := page.FileMetadata.Name
-		item, ok := itemByName[name]
-		if !ok {
-			// The list operation dropped the page the snapshot holds.
-			kind = rebuildKindFull
-			fullReason = fullReasonPatchPageNotListed
-			return b.buildTaskRows(ctx, vault)
-		}
-		at := held[name+".md"]
-		blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
-		// The index parsed the Open Questions when it read the page; the body
-		// itself is never held.
-		questions := questionsByName[name]
-		if questions == nil {
-			questions = []domain.OpenQuestion{}
-		}
-		patched[at] = taskSnapshotRow{
-			item:     item,
-			vault:    vault,
-			blockers: blockers,
-			blocked:  len(blockers) > 0,
-			// The marker is recomputed, not carried over: it reads the launch
-			// registry and the status cache, both in memory and both moved by the
-			// write that marked this page, so it is free and it is current.
-			started:       b.sessionStarted(vault.Name, item.Name),
-			sessionState:  rows[at].sessionState,
-			location:      rows[at].location,
-			jumpPane:      rows[at].jumpPane,
-			activityDate:  rows[at].activityDate,
-			jira:          pageJira(page),
-			mode:          pageMode(page),
-			openQuestions: questions,
-		}
-	}
-	if len(newPages) > 0 {
-		// A page with no held row is derived whole, exactly as the full build
-		// derives it, and appended. The session precompute is read once here.
-		sig := b.taskRowSignals(ctx, vault)
-		firstSpliced := len(patched)
-		for _, page := range newPages {
-			name := page.FileMetadata.Name
-			item, ok := itemByName[name]
-			if !ok {
-				// The list operation dropped a page the index lists.
-				kind = rebuildKindFull
-				fullReason = fullReasonPatchPageNotListed
-				return b.buildTaskRows(ctx, vault)
-			}
-			questions := questionsByName[name]
-			if questions == nil {
-				questions = []domain.OpenQuestion{}
-			}
-			patched = append(patched, b.deriveTaskRow(
-				ctx, vault, item,
-				taskPageFields{
-					openQuestions: questions,
-					jira:          pageJira(page),
-					mode:          pageMode(page),
-				},
-				sig,
-			))
-		}
-		// A newly spliced live row needs its pane resolved, exactly as the full
-		// build resolves it. Only the spliced rows are resolved: the held rows
-		// keep the pane they already carry, so the patch pays no pane resolution
-		// (and no process spawn) for them.
-		b.attachJumpPanes(ctx, patched[firstSpliced:])
-	}
-	if len(dropped) > 0 {
-		patched = withoutRows(patched, dropped)
-	}
-	b.recomputeDependentBlockers(vault.Name, patched, names)
-	return patched, nil
-}
-
-// recomputeDependentBlockers re-derives blockers and blocked for every row that
-// names one of the changed pages in its own BlockedBy, after the changed rows
-// have been spliced into patched.
-//
-// blockers/blocked are cross-row derived: uncompletedBlockers filters a row's
-// own BlockedBy through the status cache, so row B's badge depends on row A's
-// status. Re-deriving only the changed page's own row would leave every
-// dependent of a changed page publishing the blockers it had before the write —
-// completing a blocking task would leave its dependents showing as blocked until
-// the next full build, which is the regression this walk closes.
-//
-// It keeps the patch's I/O bounded by the changed set: it reads only the
-// BlockedBy lists the held rows already carry and re-runs the same in-memory
-// cache lookups uncompletedBlockers already makes, so it adds no vault list, no
-// page scan and no process spawn. The alternative — falling back to the full
-// build whenever any held row depends on a changed page — would give the patch
-// up entirely for the common case of a single blocked task, which is the cost
-// this path exists to remove.
-//
-// names are the changed pages' base filenames including their ".md" suffix; a
-// row whose own page is one of them was rebuilt by the caller and is skipped.
-// Rows are copied by the caller before this runs, so a field write here never
-// reaches a row a concurrent reader is holding.
 func (b *board) recomputeDependentBlockers(
 	vaultName string,
 	rows []taskSnapshotRow,
@@ -686,7 +472,7 @@ func (b *board) recomputeDependentBlockers(
 		if !blockedByNamesChangedPage(rows[i].item.BlockedBy, changed) {
 			continue
 		}
-		blockers := b.uncompletedBlockers(vaultName, rows[i].item.BlockedBy)
+		blockers := b.uncompletedBlockers(b.taskStatuses(vaultName), rows[i].item.BlockedBy)
 		rows[i].blockers = blockers
 		rows[i].blocked = len(blockers) > 0
 	}
@@ -760,47 +546,42 @@ type taskPageFields struct {
 	mode          *string
 }
 
-// taskPageFieldsByTask returns each task page's Open Questions and `jira:`
-// frontmatter value, keyed by the page's file name. It is one ListPages per
-// vault — never one per task, which would put a vault walk on the board's
-// hottest path. That listing is the same snapshot opsProvider.List already
-// takes (pkg/factory/api.go builds it as ops.NewListOperation(p.pageIndex)), so
-// it costs no extra I/O: the board is not reading pages for the first time, it
-// is reading the snapshot a second time for fields the list rows do not carry.
-// Both fields come off that one listing; a second listing for the Jira value
-// would double the walk this helper exists to avoid.
-//
-// A failure is not fatal to a board read: it is logged and every task carries
-// an empty list and a nil Jira rather than the whole task list failing.
-func (b *board) taskPageFieldsByTask(
-	ctx context.Context, vault Vault,
-) map[string]taskPageFields {
+// taskPageFields returns the per-task Open Questions and jira/mode values from
+// the vault-api source, which carries them on the task item.
+func (b *board) taskPageFields(vault Vault) map[string]taskPageFields {
+	return b.taskPageFieldsFromSource(vault)
+}
+
+// taskPageFieldsFromSource returns each task's Open Questions and `jira:`/`mode:`
+// values from the vault-api source, keyed by the page name. The vault-api task
+// item carries them directly, so the board no longer reads pages for them — this
+// is what lets the page index go.
+func (b *board) taskPageFieldsFromSource(vault Vault) map[string]taskPageFields {
 	byName := map[string]taskPageFields{}
-	if b.pageIndex == nil {
-		// A board built without a page index carries no page-derived fields, on
-		// the same terms as any other failure here: degrade, never fail the read.
+	if b.source == nil {
 		return byName
 	}
-	entries, err := b.pageIndex.ListEntries(ctx, vault.Path, vault.TasksFolder)
-	if err != nil {
-		glog.Warningf("list pages for task fields in vault %s: %v", vault.Name, err)
-		return byName
-	}
-	for _, entry := range entries {
-		select {
-		case <-ctx.Done():
-			// The caller is gone: stop rather than walk the remaining pages.
-			return byName
-		default:
-		}
-		page := entry.Page
-		byName[page.FileMetadata.Name] = taskPageFields{
-			openQuestions: entry.OpenQuestions,
-			jira:          pageJira(page),
-			mode:          pageMode(page),
+	for _, t := range b.source.Tasks(vault.VaultName) {
+		byName[t.Title] = taskPageFields{
+			openQuestions: convertOpenQuestions(t.OpenQuestions),
+			jira:          t.Jira,
+			mode:          t.Mode,
 		}
 	}
 	return byName
+}
+
+// convertOpenQuestions maps vault-api's Open Questions onto vault-cli's domain
+// type, which the snapshot row and the response carry.
+func convertOpenQuestions(in []vaultapi.OpenQuestion) []domain.OpenQuestion {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.OpenQuestion, 0, len(in))
+	for _, q := range in {
+		out = append(out, domain.OpenQuestion{Index: q.Index, Text: q.Text})
+	}
+	return out
 }
 
 // taskPageFieldsFor returns the task's page-derived fields. The Open Questions
@@ -892,26 +673,36 @@ func (b *board) visibleRow(
 	return row, false, nil
 }
 
-func (b *board) uncompletedBlockers(vaultName string, blockedBy []string) []string {
+// uncompletedBlockers returns the blockers whose status is not completed, using
+// the statuses the board already holds from the vault-api source — no status
+// cache.
+func (b *board) uncompletedBlockers(statuses map[string]string, blockedBy []string) []string {
 	uncompleted := make([]string, 0, len(blockedBy))
 	for _, wikilink := range blockedBy {
 		name := stripBrackets(wikilink)
-		status, _ := b.cache.GetStatus(vaultName, name)
-		if status != "completed" {
+		if statuses[name] != "completed" {
 			uncompleted = append(uncompleted, name)
 		}
 	}
 	return uncompleted
 }
 
-func (b *board) sessionStarted(vaultName, itemID string) *string {
-	if state, ok := b.launch.State(vaultName, itemID); ok && state == launchregistry.Finished {
-		return nil
+// sessionStarted is always nil: the started marker lived in the status cache,
+// which the board no longer reads, and the vault-api task payload carries no
+// started marker.
+func (b *board) sessionStarted(_, _ string) *string { return nil }
+
+// taskStatuses maps each task's page name to its status from the vault-api
+// source, so blocker resolution needs no status cache.
+func (b *board) taskStatuses(vaultName string) map[string]string {
+	statuses := map[string]string{}
+	if b.source == nil {
+		return statuses
 	}
-	if started, ok := b.cache.GetSessionStarted(vaultName, itemID); ok {
-		return &started
+	for _, t := range b.source.Tasks(vaultName) {
+		statuses[t.Title] = t.Status
 	}
-	return nil
+	return statuses
 }
 
 // taskResponse renders one visible row. activityDate is the precomputed

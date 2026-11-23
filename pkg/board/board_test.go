@@ -23,8 +23,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
-	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 var baseTime = time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
@@ -233,26 +232,10 @@ type fakeIndex struct {
 	pageReads int
 }
 
-func (f *fakeIndex) Revision(pageindex.Key) uint64 {
+func (f *fakeIndex) Revision(vaultapi.SnapshotKey) uint64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.value
-}
-
-func (f *fakeIndex) ChangedPagesSince(_ pageindex.Key, revision uint64) ([]string, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if revision > f.value {
-		return nil, false
-	}
-	return append([]string(nil), f.changed...), f.changedOK
-}
-
-func (f *fakeIndex) ListEntries(_ context.Context, _, _ string) ([]*pageindex.Entry, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.pageReads++
-	return asEntries(f.pages), nil
 }
 
 func (f *fakeIndex) bump() {
@@ -326,16 +309,16 @@ func item(name string, mutate ...func(*ops.TaskListItem)) ops.TaskListItem {
 }
 
 type harness struct {
-	board     board.Board
-	list      *fakeList
-	show      *fakeShow
-	cache     fakeCache
-	signals   fakeSignals
-	sessions  *fakeProbe
-	index     *fakeIndex
-	pageIndex *pageindexmocks.PageIndex
-	counter   *listCounter
-	launch    launchregistry.Registry
+	board    board.Board
+	list     *fakeList
+	show     *fakeShow
+	cache    fakeCache
+	signals  fakeSignals
+	sessions *fakeProbe
+	index    *fakeIndex
+	source   *vaultapi.Source
+	counter  *listCounter
+	launch   launchregistry.Registry
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
@@ -353,15 +336,14 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 	}
 	launch := launchregistry.NewRegistry()
 	h := &harness{
-		list:      list,
-		show:      show,
-		cache:     cache,
-		signals:   signals,
-		sessions:  &fakeProbe{},
-		index:     &fakeIndex{},
-		pageIndex: &pageindexmocks.PageIndex{},
-		counter:   counter,
-		launch:    launch,
+		list:     list,
+		show:     show,
+		cache:    cache,
+		signals:  signals,
+		sessions: &fakeProbe{},
+		index:    &fakeIndex{},
+		counter:  counter,
+		launch:   launch,
 	}
 	h.build()
 	return h
@@ -393,37 +375,72 @@ func pageWithFrontmatter(
 // asEntries converts in-memory pages into what the page index serves: each page
 // with its Open Questions pre-parsed off the body and its Content dropped, so a
 // test proves the board reads the questions from the entry, never the body.
-func asEntries(pages []*domain.Page) []*pageindex.Entry {
-	entries := make([]*pageindex.Entry, 0, len(pages))
-	for _, p := range pages {
-		items, err := storage.ParseOpenQuestions(context.Background(), p.Content.String())
-		Expect(err).NotTo(HaveOccurred())
-		questions := make([]domain.OpenQuestion, 0, len(items))
-		for _, it := range items {
-			questions = append(questions, domain.OpenQuestion{Index: it.Index, Text: it.Question})
-		}
-		entries = append(entries, &pageindex.Entry{
-			Page:          &domain.Page{FrontmatterMap: p.FrontmatterMap, FileMetadata: p.FileMetadata},
-			OpenQuestions: questions,
-		})
-	}
-	return entries
-}
 
 // build (re)constructs the board from the current fakes, so a test can mutate a
 // fake and rebuild.
 func (h *harness) build() {
 	h.board = board.New(board.Deps{
-		Vaults:    fakeVaults{vaults: []board.Vault{vault}},
-		Ops:       fakeOps{list: *h.list, show: *h.show},
-		Cache:     h.cache,
-		Launch:    h.launch,
-		Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-		Signals:   h.signals,
-		Sessions:  h.sessions,
-		Index:     h.index,
-		PageIndex: h.pageIndex,
+		Vaults:   fakeVaults{vaults: []board.Vault{vault}},
+		Ops:      fakeOps{list: *h.list, show: *h.show},
+		Launch:   h.launch,
+		Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+		Signals:  h.signals,
+		Sessions: h.sessions,
+		Index:    h.index,
+		Source:   h.source,
 	})
+}
+
+// usePages primes the board's vault-api source from the given pages — the
+// jira/mode/open-questions the board now reads from the source — and rebuilds
+// the board against it.
+func (h *harness) usePages(pages ...*domain.Page) {
+	h.source = sourceFromPages(pages)
+	h.build()
+}
+
+// setStatuses primes the board's source with page-name → status, so blocker
+// resolution (which reads statuses from the source) sees them.
+func (h *harness) setStatuses(statuses map[string]string) {
+	tasks := make([]vaultapi.Task, 0, len(statuses))
+	for name, status := range statuses {
+		tasks = append(tasks, vaultapi.Task{Title: name, Vault: vault.VaultName, Status: status})
+	}
+	h.source = vaultapi.NewSourceFromData(tasks, nil, nil)
+	h.build()
+}
+
+// sourceFromPages builds a vault-api source carrying the same task fields the
+// page index used to serve: jira/mode from the frontmatter and Open Questions
+// parsed off the body.
+func sourceFromPages(pages []*domain.Page) *vaultapi.Source {
+	tasks := make([]vaultapi.Task, 0, len(pages))
+	goals := make([]vaultapi.Goal, 0, len(pages))
+	topics := make([]vaultapi.Topic, 0, len(pages))
+	for _, p := range pages {
+		items, err := storage.ParseOpenQuestions(context.Background(), p.Content.String())
+		Expect(err).NotTo(HaveOccurred())
+		questions := make([]vaultapi.OpenQuestion, 0, len(items))
+		for _, it := range items {
+			questions = append(questions, vaultapi.OpenQuestion{Index: it.Index, Text: it.Question})
+		}
+		title := p.FileMetadata.Name
+		mode := p.FrontmatterMap.GetString("mode")
+		jira := p.FrontmatterMap.GetString("jira")
+		task := vaultapi.Task{Title: title, Vault: vault.VaultName, OpenQuestions: questions}
+		if jira != "" {
+			task.Jira = &jira
+		}
+		if mode != "" {
+			task.Mode = &mode
+		}
+		tasks = append(tasks, task)
+		// The goal/topic list paths read the same page set, so prime those lists
+		// with the page's mode too; a test that lists one kind ignores the others.
+		goals = append(goals, vaultapi.Goal{Title: title, Vault: vault.VaultName, Mode: mode})
+		topics = append(topics, vaultapi.Topic{Title: title, Vault: vault.VaultName, Mode: mode})
+	}
+	return vaultapi.NewSourceFromData(tasks, goals, topics)
 }
 
 var _ = Describe("ListVaults", func() {
@@ -578,8 +595,7 @@ var _ = Describe("ListTasks", func() {
 			}),
 			item("Open"),
 		)
-		h.cache.statuses["Open"] = "in_progress"
-		h.cache.statuses["Closed"] = "completed"
+		h.setStatuses(map[string]string{"Open": "in_progress", "Closed": "completed"})
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
 		var blocked boardTask
@@ -592,25 +608,6 @@ var _ = Describe("ListTasks", func() {
 		Expect(blocked.blockers).To(Equal([]string{"Open"}))
 	})
 
-	It("surfaces claude_session_started from the cache", func() {
-		h := newHarness(item("Starting"))
-		h.cache.started["Starting"] = "2026-10-04T11:00:00Z"
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses[0].ClaudeSessionStarted).NotTo(BeNil())
-		Expect(*responses[0].ClaudeSessionStarted).To(Equal("2026-10-04T11:00:00Z"))
-	})
-
-	It("suppresses the marker once the launch registry is finished", func() {
-		h := newHarness(item("Starting"))
-		h.cache.started["Starting"] = "2026-10-04T11:00:00Z"
-		h.launch.Begin("personal", "Starting", "task")
-		h.launch.Finish("personal", "Starting")
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses[0].ClaudeSessionStarted).To(BeNil())
-	})
-
 	It("classifies a session from the registry", func() {
 		h := newHarness(item("Live", func(i *ops.TaskListItem) {
 			i.ClaudeSessionID = "11111111-1111-1111-1111-111111111111"
@@ -619,15 +616,13 @@ var _ = Describe("ListTasks", func() {
 			{ID: "11111111-1111-1111-1111-111111111111"},
 		}
 		service := board.New(board.Deps{
-			Vaults:    fakeVaults{vaults: []board.Vault{vault}},
-			Ops:       fakeOps{list: *h.list, show: *h.show},
-			Cache:     h.cache,
-			Launch:    h.launch,
-			Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals:   h.signals,
-			Sessions:  h.sessions,
-			Index:     h.index,
-			PageIndex: h.pageIndex,
+			Vaults:   fakeVaults{vaults: []board.Vault{vault}},
+			Ops:      fakeOps{list: *h.list, show: *h.show},
+			Launch:   h.launch,
+			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals:  h.signals,
+			Sessions: h.sessions,
+			Index:    h.index,
 		})
 		responses, err := service.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1117,7 +1112,6 @@ var _ = Describe("goal session id", func() {
 		h.sessions = &fakeProbe{
 			mtimes: map[string]*libtime.DateTime{sessionID: &fresh},
 		}
-		h.cache.started["Goal"] = "2026-10-04T09:00:00Z"
 		h.build()
 
 		response := listGoal(h)
@@ -1125,8 +1119,6 @@ var _ = Describe("goal session id", func() {
 		Expect(*response.SessionState).To(Equal("live"))
 		Expect(response.ClaudeSessionID).NotTo(BeNil())
 		Expect(*response.ClaudeSessionID).To(Equal(sessionID))
-		Expect(response.ClaudeSessionStarted).NotTo(BeNil())
-		Expect(*response.ClaudeSessionStarted).To(Equal("2026-10-04T09:00:00Z"))
 		Expect(response.ActivityDate).NotTo(BeNil())
 		Expect(*response.ActivityDate).To(Equal("2026-10-04T12:00:00Z"))
 	})
@@ -1318,7 +1310,7 @@ var _ = Describe("ListTopics", func() {
 		}))
 	})
 
-	It("round-trips assignee, priority, jira and the open blockers", func() {
+	It("round-trips assignee, priority and the open blockers", func() {
 		h := newHarness()
 		h.list.items["23 Topics"] = []ops.TaskListItem{{
 			Name:      "TopicOne",
@@ -1327,9 +1319,6 @@ var _ = Describe("ListTopics", func() {
 			Priority:  2,
 			BlockedBy: []string{"[[OpenTask]]"},
 		}}
-		h.pageIndex.ListPagesReturns([]*domain.Page{
-			pageWithFrontmatter("TopicOne", map[string]any{"jira": "ABC-1"}, ""),
-		}, nil)
 
 		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
@@ -1339,37 +1328,13 @@ var _ = Describe("ListTopics", func() {
 		Expect(response.Assignee).NotTo(BeNil())
 		Expect(*response.Assignee).To(Equal("alice"))
 		Expect(response.Priority).To(Equal(2))
-		Expect(response.Jira).NotTo(BeNil())
-		Expect(*response.Jira).To(Equal("ABC-1"))
 		Expect(response.Blockers).To(Equal([]string{"OpenTask"}))
 		Expect(response.Blocked).To(BeTrue())
 	})
 
-	// The status cache indexes Themes/Objectives/Goals/Tasks only, so a topic's
-	// claude_session_started is never in it. Reading the marker from the page is
-	// what keeps "Starting…" alive across a reload.
-	It("carries the launch marker from the page, not the status cache", func() {
-		h := newHarness()
-		h.list.items["23 Topics"] = []ops.TaskListItem{{
-			Name:   "TopicOne",
-			Status: "in_progress",
-		}}
-		h.pageIndex.ListPagesReturns([]*domain.Page{
-			pageWithFrontmatter("TopicOne", map[string]any{
-				"claude_session_started": "2026-01-01T00:00:00Z",
-			}, ""),
-		}, nil)
-
-		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(1))
-		Expect(responses[0].ClaudeSessionStarted).NotTo(BeNil())
-		Expect(*responses[0].ClaudeSessionStarted).To(Equal("2026-01-01T00:00:00Z"))
-	})
-
 	It("excludes a completed blocker and reports only the open ones", func() {
 		h := newHarness()
-		h.cache.statuses["Done"] = "completed"
+		h.setStatuses(map[string]string{"Done": "completed"})
 		h.list.items["23 Topics"] = []ops.TaskListItem{{
 			Name:      "TopicOne",
 			Status:    "in_progress",
@@ -1385,7 +1350,7 @@ var _ = Describe("ListTopics", func() {
 
 	It("serves an empty blockers list when every blocker is completed", func() {
 		h := newHarness()
-		h.cache.statuses["Done"] = "completed"
+		h.setStatuses(map[string]string{"Done": "completed"})
 		h.list.items["23 Topics"] = []ops.TaskListItem{{
 			Name:      "TopicOne",
 			Status:    "in_progress",
@@ -1461,15 +1426,13 @@ var _ = Describe("ListTopics", func() {
 		noTopics := vault
 		noTopics.TopicsFolder = ""
 		service := board.New(board.Deps{
-			Vaults:    fakeVaults{vaults: []board.Vault{noTopics}},
-			Ops:       fakeOps{list: *h.list, show: *h.show},
-			Cache:     h.cache,
-			Launch:    h.launch,
-			Clock:     libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
-			Signals:   h.signals,
-			Sessions:  h.sessions,
-			Index:     h.index,
-			PageIndex: h.pageIndex,
+			Vaults:   fakeVaults{vaults: []board.Vault{noTopics}},
+			Ops:      fakeOps{list: *h.list, show: *h.show},
+			Launch:   h.launch,
+			Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
+			Signals:  h.signals,
+			Sessions: h.sessions,
+			Index:    h.index,
 		})
 		responses, err := service.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())
@@ -1688,9 +1651,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("serialises [] for a task with no Open Questions section", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(
-			asEntries([]*domain.Page{page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n")}), nil,
-		)
+		h.usePages(page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n"))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1705,7 +1666,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("maps the parsed section items in section order", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{page("TaskOne", questions)}), nil)
+		h.usePages(page("TaskOne", questions))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1725,25 +1686,6 @@ var _ = Describe("ListTasks open_questions", func() {
 		))
 	})
 
-	It("lists the vault's pages once, not once per task", func() {
-		h := newHarness(item("One"), item("Two"), item("Three"))
-		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{page("One", questions)}), nil)
-
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(3))
-		Expect(h.pageIndex.ListEntriesCallCount()).To(Equal(1))
-	})
-
-	It("carries an empty list rather than failing when the pages cannot be listed", func() {
-		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(nil, errors.New("boom"))
-
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(1))
-		Expect(responses[0].OpenQuestions).To(BeEmpty())
-	})
 })
 
 var _ = Describe("ListTasks jira", func() {
@@ -1778,9 +1720,7 @@ var _ = Describe("ListTasks jira", func() {
 	} {
 		It("carries "+testCase.name+" from the task page", func() {
 			h := newHarness(item("TaskOne"))
-			h.pageIndex.ListEntriesReturns(
-				asEntries([]*domain.Page{pageWithFrontmatter("TaskOne", testCase.frontmatter, "")}), nil,
-			)
+			h.usePages(pageWithFrontmatter("TaskOne", testCase.frontmatter, ""))
 
 			responses, err := h.board.ListTasks(
 				context.Background(), board.TaskQuery{UpcomingHours: 8},
@@ -1796,15 +1736,6 @@ var _ = Describe("ListTasks jira", func() {
 		})
 	}
 
-	It("carries null rather than failing when the pages cannot be listed", func() {
-		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(nil, errors.New("boom"))
-
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(1))
-		Expect(responses[0].Jira).To(BeNil())
-	})
 })
 
 var _ = Describe("live badge location", func() {
@@ -1936,11 +1867,11 @@ var _ = Describe("mode payload", func() {
 
 	It("serves the task's own mode, and null when the page declares none", func() {
 		h := newHarness(item("WithMode"), item("NoMode"), item("EmptyMode"))
-		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{
+		h.usePages(
 			pageWithFrontmatter("WithMode", map[string]any{"mode": "headless"}, ""),
 			pageWithFrontmatter("NoMode", map[string]any{}, ""),
 			pageWithFrontmatter("EmptyMode", map[string]any{"mode": ""}, ""),
-		}), nil)
+		)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1965,21 +1896,19 @@ var _ = Describe("mode payload", func() {
 		Expect(string(byID["EmptyMode"]["mode"])).To(Equal("null"))
 	})
 
-	It("serves the goal's own mode, reading pages once per vault", func() {
+	It("serves the goal's own mode", func() {
 		h := newHarness()
 		h.list.items["23 Goals"] = []ops.TaskListItem{
 			{Name: "WithMode", Status: "in_progress"},
 			{Name: "NoMode", Status: "in_progress"},
 		}
-		h.build()
-		h.pageIndex.ListPagesReturns([]*domain.Page{
+		h.usePages(
 			pageWithFrontmatter("WithMode", map[string]any{"mode": "headless"}, ""),
 			pageWithFrontmatter("NoMode", map[string]any{}, ""),
-		}, nil)
+		)
 
 		responses, err := h.board.ListGoals(context.Background(), board.GoalQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.pageIndex.ListPagesCallCount()).To(Equal(1))
 
 		rows := decodeRows(responses)
 		byID := map[string]map[string]json.RawMessage{}
@@ -1999,11 +1928,10 @@ var _ = Describe("mode payload", func() {
 			{Name: "WithMode", Status: "in_progress"},
 			{Name: "NoMode", Status: "in_progress"},
 		}
-		h.build()
-		h.pageIndex.ListPagesReturns([]*domain.Page{
+		h.usePages(
 			pageWithFrontmatter("WithMode", map[string]any{"mode": "interactive"}, ""),
 			pageWithFrontmatter("NoMode", map[string]any{}, ""),
-		}, nil)
+		)
 
 		responses, err := h.board.ListTopics(context.Background(), board.TopicQuery{})
 		Expect(err).NotTo(HaveOccurred())

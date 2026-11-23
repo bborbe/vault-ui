@@ -33,6 +33,7 @@ func CreateHTTPRouter(
 
 	router.Methods(http.MethodGet).Path(vaultsRoutePath()).Handler(NewVaultsHandler(b))
 	router.Methods(http.MethodGet).Path("/api/assignees").Handler(NewAssigneesHandler(b))
+	router.Methods(http.MethodGet).Path("/api/source-status").Handler(NewSourceStatusHandler(b))
 	router.Methods(http.MethodGet).Path("/api/tasks").Handler(NewTasksHandler(b))
 	router.Methods(http.MethodGet).Path("/api/goals").Handler(NewGoalsHandler(b))
 	router.Methods(http.MethodGet).Path("/api/topics").Handler(NewTopicsHandler(b))
@@ -84,7 +85,6 @@ func CreateHTTPRouter(
 		Handler(NewClearGoalSessionHandler(m))
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/session").
 		Handler(NewSetTaskSessionHandler(m))
-	router.Methods(http.MethodPost).Path("/api/cache/reload").Handler(NewCacheReloadHandler(m))
 	router.Methods(http.MethodPost).Path("/api/config/reload").Handler(NewConfigReloadHandler(m))
 
 	router.Methods(http.MethodGet).Path("/ws").

@@ -26,16 +26,14 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
-	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionsnapshot"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
-	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
-	"github.com/bborbe/vault-ui/pkg/watchrefresh"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 	staticui "github.com/bborbe/vault-ui/src/vault_ui"
 )
@@ -73,13 +71,20 @@ func (p *vaultProvider) Vaults(ctx context.Context) ([]board.Vault, error) {
 }
 
 // opsProvider builds the vault-cli read operations for a vault. List reads are
-// served from the shared process-wide page index; TopicShow stays on disk.
+// served from the local vault-api — the single page parser; TopicShow stays on
+// disk until the topic detail path moves to vault-api too.
 type opsProvider struct {
-	pageIndex pageindex.PageIndex
+	source *vaultapi.Source
 }
 
-func (p opsProvider) List(_ board.Vault) ops.ListOperation {
-	return ops.NewListOperation(p.pageIndex)
+func (p opsProvider) List(vault board.Vault) ops.ListOperation {
+	return vaultapi.NewListOperation(
+		p.source,
+		vault.VaultName,
+		vault.TasksFolder,
+		vault.GoalsFolder,
+		vault.TopicsFolder,
+	)
 }
 
 func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
@@ -143,37 +148,39 @@ func CreateStaticFS() fs.FS {
 func CreateAPIHandler(
 	loader config.Loader,
 	configPath string,
-	cache statuscache.Cache,
 	paneResolver pane.Resolver,
 	launches launchregistry.Registry,
 	locks sessionlock.Registry,
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
-	pageIndex pageindex.PageIndex,
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
+	vaultSource *vaultapi.Source,
 ) http.Handler {
+	// The startup serving proof: the board reads from this origin. Required by
+	// DoD2, so it is logged at Info (visible in the launchd StandardErrorPath),
+	// not V(2).
+	glog.Infof("board reads tasks from vault-api at %s", vaultSource.BaseURL())
 	service := board.New(board.Deps{
-		Vaults:    &vaultProvider{loader: loader, configPath: configPath},
-		Ops:       opsProvider{pageIndex: pageIndex},
-		Cache:     cache,
-		Launch:    launches,
-		Clock:     libtime.NewCurrentDateTime(),
-		Signals:   sessionSnapshot,
-		Sessions:  sessionSnapshot,
-		Index:     pageIndex,
-		PageIndex: pageIndex,
+		Vaults:   &vaultProvider{loader: loader, configPath: configPath},
+		Ops:      opsProvider{source: vaultSource},
+		Launch:   launches,
+		Clock:    libtime.NewCurrentDateTime(),
+		Signals:  sessionSnapshot,
+		Sessions: sessionSnapshot,
+		Index:    vaultSource,
 		// The pane resolver is wired here, not just into the mutation service: the
 		// board uses it to stamp each live card's jump_pane. Left nil, the field is
 		// always null, the frontend renders no jump control on any card, and every
 		// test still passes — so this line is what makes the feature real.
 		Panes:   paneResolver,
+		Source:  vaultSource,
 		HomeDir: homeDir,
 	})
 	mutationsService := CreateMutationService(
-		loader, configPath, cache, launches, locks, homeDir,
-		paneResolver, websocket.NewMutationPublisher(manager), pageIndex, writeQueue,
+		loader, configPath, launches, locks, homeDir,
+		paneResolver, websocket.NewMutationPublisher(manager), writeQueue,
 	)
 	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
 }
@@ -281,79 +288,12 @@ func CreateConnectionManager() websocket.ConnectionManager {
 	return websocket.NewConnectionManager(websocket.NewMetrics())
 }
 
-// CreateWatcher returns a run.Func that watches the configured vaults with the
-// injected watch operation and hands every change to watchrefresh's handler,
-// which re-reads the event's single page-index file (folder stat-diff fallback),
-// invalidates the changed item in the status cache, then broadcasts the frame.
-// No vault-cli subprocess is spawned.
-func CreateWatcher(
-	loader config.Loader,
-	manager websocket.ConnectionManager,
-	pageIndex pageindex.PageIndex,
-	cache statuscache.Cache,
-	watchOperation ops.WatchOperation,
-) run.Func {
-	return func(ctx context.Context) error {
-		vaults, err := loader.GetAllVaults(ctx)
-		if err != nil {
-			return errors.Wrap(ctx, err, "load vaults for watcher")
-		}
-		targets := buildWatchTargets(vaults)
-		glog.V(2).Infof("starting vault watcher for %d vaults", len(targets))
-		return watchOperation.Execute(
-			ctx,
-			targets,
-			watchrefresh.NewHandler(ctx, vaults, pageIndex, cache, manager),
-		)
-	}
-}
-
-// buildWatchTargets assembles the vault-cli watch targets for the entity kinds
-// the Python backend watches (task, goal, theme, objective), mirroring
-// buildWatchTargets in vault-cli's pkg/cli/cli.go.
-func buildWatchTargets(vaults []*config.Vault) []ops.WatchTarget {
-	targets := make([]ops.WatchTarget, 0, len(vaults))
-	for _, vault := range vaults {
-		targets = append(targets, ops.WatchTarget{
-			VaultPath: vault.Path,
-			VaultName: vault.Name,
-			WatchDirs: []ops.WatchDir{
-				{Dir: vault.GetTasksDir(), Kind: "task"},
-				{Dir: vault.GetGoalsDir(), Kind: "goal"},
-				{Dir: vault.GetThemesDir(), Kind: "theme"},
-				{Dir: vault.GetObjectivesDir(), Kind: "objective"},
-			},
-		})
-	}
-	return targets
-}
-
-// CreateStatusCacheLoader returns a run.Func that loads every vault's status
-// and claude_session_started markers into the cache once at startup. It closes
-// ready once the load completes, so a consumer that reads the cache (the cleanup
-// sweep's startup reconcile) can wait for a populated cache instead of racing
-// the load in the shared run group.
-func CreateStatusCacheLoader(
-	loader config.Loader,
-	configPath string,
-	cache statuscache.Cache,
-	ready chan struct{},
-) run.Func {
-	return func(ctx context.Context) error {
-		cfg, err := vaultconfig.Load(ctx, loader, configPath)
-		if err != nil {
-			return errors.Wrap(ctx, err, "load vault config")
-		}
-		for _, vault := range cfg.Vaults {
-			if loadErr := cache.LoadVault(vault.Name, vault.Path, vault.TasksFolder); loadErr != nil {
-				glog.Warningf("load status cache for vault %s: %v", vault.Name, loadErr)
-			}
-		}
-		if ready != nil {
-			close(ready)
-		}
-		return nil
-	}
+// CreateSourceChangeBroadcaster returns the callback the vault-api Source runs
+// after a poll observes changed content. vault-api has no push signal, so this
+// broadcast is what refreshes an open board — the job the deleted page-index
+// watcher used to do.
+func CreateSourceChangeBroadcaster(manager websocket.ConnectionManager) func() {
+	return func() { manager.Broadcast(websocket.SourceChangedFrame()) }
 }
 
 // CreateAPIServer returns a run.Func serving the API router on listen.

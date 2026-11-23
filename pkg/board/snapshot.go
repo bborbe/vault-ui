@@ -16,11 +16,11 @@ import (
 	"github.com/bborbe/vault-cli/pkg/ops"
 	"github.com/golang/glog"
 
-	"github.com/bborbe/vault-ui/pkg/pageindex"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // snapshotBuildTimeout bounds one build so a hung vault read cannot hold the
-// key's readers past it. It mirrors pkg/pageindex's rebuildTimeout.
+// key's readers past it. It mirrors the page-index rebuild timeout.
 const snapshotBuildTimeout = 2 * time.Minute
 
 // taskSnapshotRow is one precomputed task row: the vault-cli list item plus
@@ -42,24 +42,13 @@ type taskSnapshotRow struct {
 	openQuestions []domain.OpenQuestion
 }
 
-// IndexRevisions is the page index as the board's task-list store reads it: the
-// per-key revision, which of the key's pages moved since a revision, and the
-// key's current pages. pageindex.PageIndex satisfies it.
-//
-// It is deliberately narrow. A rebuild reads Revision to detect that its page
-// input moved, ChangedPagesSince to bound which rows moved, and ListEntries to
-// re-derive those rows from the pages the index already holds. It exposes no
-// write, no mark and no directory listing.
+// IndexRevisions is the board's freshness seam for the task-list store: the
+// per-key revision. The vault-api Source satisfies it — its revision advances
+// when any vault's fetched list content changes. The page index used to satisfy
+// it with a per-page patch; the store now rebuilds in full on a revision move,
+// so this is the only method it needs.
 type IndexRevisions interface {
-	Revision(key pageindex.Key) uint64
-	// ChangedPagesSince returns the names of the pages whose parsed form changed
-	// in the key's publications and marks after revision, each with its ".md"
-	// suffix, or ok == false when the key cannot bound the set.
-	ChangedPagesSince(key pageindex.Key, revision uint64) (names []string, ok bool)
-	// ListEntries returns the key's current pages with their pre-parsed Open
-	// Questions, resolving any pending write mark first, so a row patch reads
-	// what the index already holds rather than the vault.
-	ListEntries(ctx context.Context, vaultPath string, pagesDir string) ([]*pageindex.Entry, error)
+	Revision(key vaultapi.SnapshotKey) uint64
 }
 
 // generationSource reports a value that advances when a new session snapshot is
@@ -88,31 +77,13 @@ type taskSnapshotRefreshFunc func(
 	rows []taskSnapshotRow,
 ) ([]taskSnapshotRow, error)
 
-// taskSnapshotPatchFunc re-derives only the rows whose pages the page index
-// reports as changed, against the rows already built. It runs off the store
-// mutex and under its own bounded context, like Build.
-//
-// names are the changed pages' base filenames including their ".md" suffix, as
-// ChangedPagesSince reports them. It returns a new slice: the rows it is given
-// are shared with every reader and are never mutated.
-type taskSnapshotPatchFunc func(
-	ctx context.Context,
-	vault Vault,
-	rows []taskSnapshotRow,
-	names []string,
-) ([]taskSnapshotRow, error)
-
 // taskSnapshotParams carries the store's injectable dependencies.
 type taskSnapshotParams struct {
 	Build taskSnapshotBuildFunc
 	// Refresh re-derives only the session-derived fields of rows already built.
 	// A nil value means every invalidation takes the full build path, which is
 	// correct but pays the page-derived work again on a session move.
-	Refresh taskSnapshotRefreshFunc
-	// Patch re-derives only the rows whose pages changed, when a page-index
-	// revision move can be attributed to a bounded set of single files. A nil
-	// value means every page move takes the full build path.
-	Patch       taskSnapshotPatchFunc
+	Refresh     taskSnapshotRefreshFunc
 	Revisions   IndexRevisions
 	Generations generationSource
 	// Timeout bounds one build; a non-positive value falls back to
@@ -125,10 +96,9 @@ type taskSnapshotParams struct {
 // so a reader sees either the whole previous list or the whole new one.
 type taskSnapshotStore struct {
 	mu          sync.Mutex
-	entries     map[pageindex.Key]*taskSnapshotEntry
+	entries     map[vaultapi.SnapshotKey]*taskSnapshotEntry
 	build       taskSnapshotBuildFunc
 	refresh     taskSnapshotRefreshFunc
-	patch       taskSnapshotPatchFunc
 	revisions   IndexRevisions
 	generations generationSource
 	timeout     time.Duration
@@ -162,18 +132,6 @@ type taskSnapshotBuild struct {
 	// refreshOnly records that only the session generation moved, so the held
 	// rows can be re-derived instead of rebuilt from the vault.
 	refreshOnly bool
-	// patchOnly records that only the page revision moved and the changed set is
-	// known, so the named rows can be re-derived instead of rebuilt.
-	patchOnly bool
-	// changed names the pages a patch re-derives, as base filenames including
-	// their ".md" suffix. It is set only when patchOnly is set.
-	changed []string
-	// refreshAfterPatch records that the session generation moved together with
-	// the page revision, so after the patch re-derives the page-derived fields
-	// the session-dependent fields must be refreshed too. Without it a
-	// both-moved key would publish the session fields it held before the
-	// generation advanced.
-	refreshAfterPatch bool
 	// fullReason is the cause to attribute when this build ends up a full build.
 	// It is empty for a build whose cause has no enum value, which is the
 	// session-only move with the refresh seam unwired (a test-only
@@ -192,10 +150,9 @@ func newTaskSnapshotStore(params taskSnapshotParams) *taskSnapshotStore {
 		timeout = snapshotBuildTimeout
 	}
 	return &taskSnapshotStore{
-		entries:     map[pageindex.Key]*taskSnapshotEntry{},
+		entries:     map[vaultapi.SnapshotKey]*taskSnapshotEntry{},
 		build:       params.Build,
 		refresh:     params.Refresh,
-		patch:       params.Patch,
 		revisions:   params.Revisions,
 		generations: params.Generations,
 		timeout:     timeout,
@@ -217,7 +174,7 @@ func newTaskSnapshotStore(params taskSnapshotParams) *taskSnapshotStore {
 // rather than starting a second one, and the returned slice is shared with every
 // other reader and must be treated as read-only.
 func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapshotRow, error) {
-	key := pageindex.NewKey(vault.Path, vault.TasksFolder)
+	key := vaultapi.NewSnapshotKey(vault.Path, vault.TasksFolder)
 	for {
 		s.mu.Lock()
 		e := s.entryLocked(key)
@@ -263,46 +220,25 @@ func (s *taskSnapshotStore) List(ctx context.Context, vault Vault) ([]taskSnapsh
 		// reaches either cheaper kind: e.pageRevision is meaningless until a
 		// snapshot has been built.
 		refreshOnly := !pageMoved && sessionMoved && s.refresh != nil
-		var changed []string
-		patchOnly := false
-		refreshAfterPatch := false
 		fullReason := ""
 		switch {
 		case !e.hasSnapshot:
 			fullReason = fullReasonColdKey
 		case pageMoved && sessionMoved:
-			if s.patch == nil || s.refresh == nil {
-				fullReason = fullReasonBothMoved
-			} else if names, ok := s.revisions.ChangedPagesSince(key, e.pageRevision); ok {
-				patchOnly = true
-				changed = names
-				refreshAfterPatch = true
-			} else {
-				fullReason = fullReasonChangedSetUnbounded
-			}
+			fullReason = fullReasonBothMoved
 		case pageMoved:
-			if s.patch == nil {
-				fullReason = fullReasonPatchNotWired
-			} else if names, ok := s.revisions.ChangedPagesSince(key, e.pageRevision); ok {
-				patchOnly = true
-				changed = names
-			} else {
-				fullReason = fullReasonChangedSetUnbounded
-			}
+			fullReason = fullReasonPatchNotWired
 		case sessionMoved:
 			// Only the session generation moved and the refresh seam is unwired, so
 			// the key rebuilds in full. The spec's cause enum has no label for this
 			// (test-only) configuration, so the kind is counted with no cause.
 		}
 		b := &taskSnapshotBuild{
-			startRevision:     revision,
-			startGeneration:   generation,
-			refreshOnly:       refreshOnly,
-			patchOnly:         patchOnly,
-			changed:           changed,
-			refreshAfterPatch: refreshAfterPatch,
-			fullReason:        fullReason,
-			done:              make(chan struct{}),
+			startRevision:   revision,
+			startGeneration: generation,
+			refreshOnly:     refreshOnly,
+			fullReason:      fullReason,
+			done:            make(chan struct{}),
 		}
 		e.inflight = b
 		s.mu.Unlock()
@@ -326,7 +262,7 @@ func awaitSnapshotBuild(ctx context.Context, b *taskSnapshotBuild) error {
 // nobody completes.
 func (s *taskSnapshotStore) runBuild(
 	ctx context.Context,
-	key pageindex.Key,
+	key vaultapi.SnapshotKey,
 	vault Vault,
 	b *taskSnapshotBuild,
 ) ([]taskSnapshotRow, error) {
@@ -336,25 +272,6 @@ func (s *taskSnapshotStore) runBuild(
 	var rows []taskSnapshotRow
 	var buildErr error
 	switch {
-	case b.patchOnly:
-		// The patch func records its own rebuild kind and any full-rebuild cause,
-		// because only it knows whether it fell back to the full build.
-		// The held rows are read under the mutex and never mutated: Patch splices
-		// the changed rows into a copy of them, so the slice a concurrent reader
-		// is holding stays intact.
-		s.mu.Lock()
-		held := s.entryLocked(key).rows
-		s.mu.Unlock()
-		rows, buildErr = s.patch(buildCtx, vault, held, b.changed)
-		if buildErr == nil && b.refreshAfterPatch {
-			// The session generation moved with the page revision: the patch
-			// re-derived the page-derived fields, and this re-derives the
-			// session-dependent ones against the patched rows. The rebuild is
-			// counted once — as the patch that drove it — so
-			// sum(rebuilds_total) stays the rebuild count; the refresh work
-			// inside it is not a separate rebuild.
-			rows, buildErr = s.refresh(buildCtx, vault, rows)
-		}
 	case b.refreshOnly:
 		recordRebuild(rebuildKindRefresh)
 		// The held rows are read under the mutex and never mutated: Refresh
@@ -417,7 +334,7 @@ func (s *taskSnapshotStore) runBuild(
 // content-gated counter at the key's last content-changing publication, or 0
 // when the key has never published rows. It is the input a held body is gated
 // on for the vaults a query selects.
-func (s *taskSnapshotStore) Signal(key pageindex.Key) uint64 {
+func (s *taskSnapshotStore) Signal(key vaultapi.SnapshotKey) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.entryLocked(key).signal
@@ -433,7 +350,7 @@ func rowsEqual(a, b []taskSnapshotRow) bool {
 
 // entryLocked returns the key's entry, creating it when missing. The caller
 // must hold the mutex.
-func (s *taskSnapshotStore) entryLocked(key pageindex.Key) *taskSnapshotEntry {
+func (s *taskSnapshotStore) entryLocked(key vaultapi.SnapshotKey) *taskSnapshotEntry {
 	e, ok := s.entries[key]
 	if !ok {
 		e = &taskSnapshotEntry{}

@@ -12,7 +12,6 @@ import (
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/golang/glog"
 	"github.com/google/uuid"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
@@ -120,7 +119,7 @@ func (b *board) goalsForVault(
 
 	// One ListPages for the whole vault, exactly as the topic path reads its
 	// page-derived fields: a goal's `mode:` value is not on the list item.
-	pageFieldsByGoal := b.goalPageFieldsByGoal(ctx, vault)
+	pageFieldsByGoal := b.goalPageFieldsByGoal(vault)
 
 	responses := make([]api.GoalResponse, 0, len(rows))
 	for _, row := range rows {
@@ -181,40 +180,27 @@ func goalSessionID(response api.GoalResponse) string {
 	return *response.ClaudeSessionID
 }
 
-// goalPageFieldsByGoal returns each goal page's `mode:` frontmatter value, keyed
-// by the page's file name. It is one ListPages per vault — never one per goal,
-// which would put a vault walk on the board's hottest path. It mirrors
-// topicPageFieldsByTopic: the goals folder is a different listing, so the topic
-// helper cannot be reused.
-//
-// A failure is not fatal to a board read: it is logged and every goal carries a
-// nil Mode rather than the whole goal list failing.
-func (b *board) goalPageFieldsByGoal(
-	ctx context.Context, vault Vault,
-) map[string]pageKeyFields {
+// goalPageFieldsByGoal returns each goal's `mode:` value from the vault-api
+// source, keyed by the page name. The vault-api goal item carries it, so the
+// board no longer reads pages for it.
+func (b *board) goalPageFieldsByGoal(vault Vault) map[string]pageKeyFields {
 	byName := map[string]pageKeyFields{}
-	if b.pageIndex == nil {
-		// A board built without a page index carries no page-derived fields, on
-		// the same terms as the task and topic helpers: degrade, never fail.
+	if b.source == nil {
 		return byName
 	}
-	pages, err := b.pageIndex.ListPages(ctx, vault.Path, vault.GoalsFolder)
-	if err != nil {
-		glog.Warningf("list pages for goal fields in vault %s: %v", vault.Name, err)
-		return byName
-	}
-	for _, page := range pages {
-		select {
-		case <-ctx.Done():
-			// The caller is gone: stop rather than walk the remaining pages.
-			return byName
-		default:
-		}
-		byName[page.FileMetadata.Name] = pageKeyFields{
-			mode: pageMode(page),
-		}
+	for _, g := range b.source.Goals(vault.VaultName) {
+		byName[g.Title] = pageKeyFields{mode: stringPtrOrNil(g.Mode)}
 	}
 	return byName
+}
+
+// stringPtrOrNil returns a pointer to s, or nil when s is empty, so an absent
+// frontmatter value serialises as null rather than "".
+func stringPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func (b *board) goalResponse(
@@ -228,7 +214,7 @@ func (b *board) goalResponse(
 ) api.GoalResponse {
 	item := row.item
 
-	blockers := b.uncompletedBlockers(vault.Name, item.BlockedBy)
+	blockers := b.uncompletedBlockers(b.taskStatuses(vault.VaultName), item.BlockedBy)
 	if blockers == nil {
 		blockers = []string{}
 	}

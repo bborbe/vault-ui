@@ -50,6 +50,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(seedFixture(ctx, vaultPath)).To(Succeed())
 	Expect(writeConfig(ctx, homeDir, vaultPath)).To(Succeed())
 
+	Expect(startStub(ctx, vaultPath)).To(Succeed(), "fixture vault-api stub failed to start")
 	port, err := freePort(ctx)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(startBinary(ctx, port)).To(Succeed(), "binary failed to start:\n%s", procStderr)
@@ -60,7 +61,19 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(err).NotTo(HaveOccurred())
 })
 
+// AfterEach restores the fixture stub if a spec left it down. Ginkgo
+// randomises spec order, so a spec that simulates an outage and fails before
+// its own restart would strand every spec scheduled after it with no source —
+// their boards then render last-good rows that never change. Restoring here
+// makes the outage a spec-local state rather than a suite-wide one.
+var _ = AfterEach(func(ctx SpecContext) {
+	if stubServer == nil {
+		Expect(restartStub(ctx)).To(Succeed(), "restore the fixture stub for the next spec")
+	}
+})
+
 var _ = AfterSuite(func() {
+	stopStub()
 	stopBinary()
 	if browser != nil {
 		_ = browser.Close()

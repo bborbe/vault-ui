@@ -86,6 +86,14 @@ var _ = Describe("Frames", func() {
 		})
 	})
 
+	Describe("SourceChangedFrame", func() {
+		// No item identity: the client re-reads the view it is showing, so a
+		// vault-api change needs no id to resolve against.
+		It("carries only the type", func() {
+			Expect(string(websocket.SourceChangedFrame())).To(Equal(`{"type":"source_changed"}`))
+		})
+	})
+
 	Describe("TopicUpdatedFrame", func() {
 		// The identifier rides under task_id, not topic_id: the client reads
 		// `data.goal_id || data.task_id`, so a topic_id key would leave the id
