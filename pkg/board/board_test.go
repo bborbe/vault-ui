@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	pageindexmocks "github.com/bborbe/vault-ui/pkg/pageindex/mocks"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 var baseTime = time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
@@ -334,6 +335,7 @@ type harness struct {
 	sessions  *fakeProbe
 	index     *fakeIndex
 	pageIndex *pageindexmocks.PageIndex
+	source    *vaultapi.Source
 	counter   *listCounter
 	launch    launchregistry.Registry
 }
@@ -423,7 +425,44 @@ func (h *harness) build() {
 		Sessions:  h.sessions,
 		Index:     h.index,
 		PageIndex: h.pageIndex,
+		Source:    h.source,
 	})
+}
+
+// usePages primes the board's vault-api source from the given pages — the
+// jira/mode/open-questions the board now reads from the source — and rebuilds
+// the board against it.
+func (h *harness) usePages(pages ...*domain.Page) {
+	h.source = sourceFromPages(pages)
+	h.build()
+}
+
+// sourceFromPages builds a vault-api source carrying the same task fields the
+// page index used to serve: jira/mode from the frontmatter and Open Questions
+// parsed off the body.
+func sourceFromPages(pages []*domain.Page) *vaultapi.Source {
+	tasks := make([]vaultapi.Task, 0, len(pages))
+	for _, p := range pages {
+		items, err := storage.ParseOpenQuestions(context.Background(), p.Content.String())
+		Expect(err).NotTo(HaveOccurred())
+		questions := make([]vaultapi.OpenQuestion, 0, len(items))
+		for _, it := range items {
+			questions = append(questions, vaultapi.OpenQuestion{Index: it.Index, Text: it.Question})
+		}
+		task := vaultapi.Task{
+			Title:         p.FileMetadata.Name,
+			Vault:         vault.VaultName,
+			OpenQuestions: questions,
+		}
+		if value := p.FrontmatterMap.GetString("jira"); value != "" {
+			task.Jira = &value
+		}
+		if value := p.FrontmatterMap.GetString("mode"); value != "" {
+			task.Mode = &value
+		}
+		tasks = append(tasks, task)
+	}
+	return vaultapi.NewSourceFromData(tasks, nil, nil)
 }
 
 var _ = Describe("ListVaults", func() {
@@ -1686,9 +1725,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("serialises [] for a task with no Open Questions section", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(
-			asEntries([]*domain.Page{page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n")}), nil,
-		)
+		h.usePages(page("TaskOne", "# Task One\n\n## Notes\n\n- nothing\n"))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1703,7 +1740,7 @@ var _ = Describe("ListTasks open_questions", func() {
 
 	It("maps the parsed section items in section order", func() {
 		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{page("TaskOne", questions)}), nil)
+		h.usePages(page("TaskOne", questions))
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())
@@ -1723,25 +1760,6 @@ var _ = Describe("ListTasks open_questions", func() {
 		))
 	})
 
-	It("lists the vault's pages once, not once per task", func() {
-		h := newHarness(item("One"), item("Two"), item("Three"))
-		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{page("One", questions)}), nil)
-
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(3))
-		Expect(h.pageIndex.ListEntriesCallCount()).To(Equal(1))
-	})
-
-	It("carries an empty list rather than failing when the pages cannot be listed", func() {
-		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(nil, errors.New("boom"))
-
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(1))
-		Expect(responses[0].OpenQuestions).To(BeEmpty())
-	})
 })
 
 var _ = Describe("ListTasks jira", func() {
@@ -1776,9 +1794,7 @@ var _ = Describe("ListTasks jira", func() {
 	} {
 		It("carries "+testCase.name+" from the task page", func() {
 			h := newHarness(item("TaskOne"))
-			h.pageIndex.ListEntriesReturns(
-				asEntries([]*domain.Page{pageWithFrontmatter("TaskOne", testCase.frontmatter, "")}), nil,
-			)
+			h.usePages(pageWithFrontmatter("TaskOne", testCase.frontmatter, ""))
 
 			responses, err := h.board.ListTasks(
 				context.Background(), board.TaskQuery{UpcomingHours: 8},
@@ -1794,15 +1810,6 @@ var _ = Describe("ListTasks jira", func() {
 		})
 	}
 
-	It("carries null rather than failing when the pages cannot be listed", func() {
-		h := newHarness(item("TaskOne"))
-		h.pageIndex.ListEntriesReturns(nil, errors.New("boom"))
-
-		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responses).To(HaveLen(1))
-		Expect(responses[0].Jira).To(BeNil())
-	})
 })
 
 var _ = Describe("live badge location", func() {
@@ -1934,11 +1941,11 @@ var _ = Describe("mode payload", func() {
 
 	It("serves the task's own mode, and null when the page declares none", func() {
 		h := newHarness(item("WithMode"), item("NoMode"), item("EmptyMode"))
-		h.pageIndex.ListEntriesReturns(asEntries([]*domain.Page{
+		h.usePages(
 			pageWithFrontmatter("WithMode", map[string]any{"mode": "headless"}, ""),
 			pageWithFrontmatter("NoMode", map[string]any{}, ""),
 			pageWithFrontmatter("EmptyMode", map[string]any{"mode": ""}, ""),
-		}), nil)
+		)
 
 		responses, err := h.board.ListTasks(context.Background(), board.TaskQuery{UpcomingHours: 8})
 		Expect(err).NotTo(HaveOccurred())

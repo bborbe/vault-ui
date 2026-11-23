@@ -105,6 +105,7 @@ func newSpliceHarness(pages ...*domain.Page) *spliceHarness {
 		Sessions:  probe,
 		Index:     index,
 		PageIndex: pageIndex,
+		Source:    sourceFromPages(pages),
 	})
 	return h
 }

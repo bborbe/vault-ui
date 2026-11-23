@@ -13,7 +13,6 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/ops"
-	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -243,7 +242,7 @@ func (b *board) buildTaskRows(ctx context.Context, vault Vault) ([]taskSnapshotR
 
 	// One ListPages for the whole vault, attached to the rows so the request
 	// path never reads a page — the same precompute the other fields get.
-	pageFields := b.taskPageFields(ctx, vault)
+	pageFields := b.taskPageFields(vault)
 
 	rows := make([]taskSnapshotRow, 0, len(items))
 	for _, item := range items {
@@ -761,46 +760,10 @@ type taskPageFields struct {
 	mode          *string
 }
 
-// taskPageFields returns the per-task Open Questions and jira/mode values. In
-// production the vault-api Source carries them on the task item; a board built
-// without a Source (the board package's own tests) falls back to the page index.
-// The fallback goes when the page index is deleted and its tests migrate.
-func (b *board) taskPageFields(ctx context.Context, vault Vault) map[string]taskPageFields {
-	if b.source != nil {
-		return b.taskPageFieldsFromSource(vault)
-	}
-	return b.taskPageFieldsByTask(ctx, vault)
-}
-
-// taskPageFieldsByTask is the page-index fallback: each task page's Open
-// Questions and `jira:`/`mode:` values, keyed by the page's file name. It is one
-// ListEntries per vault, never one per task.
-func (b *board) taskPageFieldsByTask(
-	ctx context.Context, vault Vault,
-) map[string]taskPageFields {
-	byName := map[string]taskPageFields{}
-	if b.pageIndex == nil {
-		return byName
-	}
-	entries, err := b.pageIndex.ListEntries(ctx, vault.Path, vault.TasksFolder)
-	if err != nil {
-		glog.Warningf("list pages for task fields in vault %s: %v", vault.Name, err)
-		return byName
-	}
-	for _, entry := range entries {
-		select {
-		case <-ctx.Done():
-			return byName
-		default:
-		}
-		p := entry.Page
-		byName[p.FileMetadata.Name] = taskPageFields{
-			openQuestions: entry.OpenQuestions,
-			jira:          pageJira(p),
-			mode:          pageMode(p),
-		}
-	}
-	return byName
+// taskPageFields returns the per-task Open Questions and jira/mode values from
+// the vault-api source, which carries them on the task item.
+func (b *board) taskPageFields(vault Vault) map[string]taskPageFields {
+	return b.taskPageFieldsFromSource(vault)
 }
 
 // taskPageFieldsFromSource returns each task's Open Questions and `jira:`/`mode:`
