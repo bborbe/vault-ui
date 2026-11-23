@@ -139,7 +139,12 @@ func (s *service) resolveVault(
 		return board.Vault{}, errors.Wrap(ctx, err, "load vaults")
 	}
 	for _, vault := range vaults {
-		if vault.Name == vaultName {
+		// The board's Obsidian deep links carry the vault's display name
+		// (VaultName), while the config key is Name. The page route must accept
+		// both, case-insensitively, or a card's in-app link and a real
+		// obsidian:// link both 404 for every vault whose display name differs
+		// from its key.
+		if strings.EqualFold(vault.Name, vaultName) || strings.EqualFold(vault.VaultName, vaultName) {
 			return vault, nil
 		}
 	}
@@ -252,8 +257,10 @@ type backlink struct {
 
 // document is the template data for the page wrapper.
 type document struct {
-	Title       string
-	ObsidianURL string
+	Title string
+	// ObsidianURL is a template.URL because html/template refuses an
+	// `obsidian://` href as an unsafe scheme and renders `#ZgotmplZ` instead.
+	ObsidianURL template.URL
 	Body        template.HTML
 	Backlinks   []backlink
 }
@@ -303,7 +310,7 @@ func buildDocument(
 	var builder strings.Builder
 	err := pageTemplate.Execute(&builder, document{
 		Title:       name,
-		ObsidianURL: board.ObsidianURL(vault.VaultName, pagePath),
+		ObsidianURL: template.URL(board.ObsidianURL(vault.VaultName, pagePath)),
 		Body:        template.HTML(rendered), //#nosec G203 -- renderer output is trusted HTML
 		Backlinks:   entries,
 	})

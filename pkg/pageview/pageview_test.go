@@ -81,6 +81,38 @@ func newService(t *testing.T, dir string) pageview.Service {
 	return pageview.NewService(fixtureVaults{dir: dir}, index)
 }
 
+// displayNameVaults separates the config key (Name) from the display name
+// (VaultName), which is what a real vault config produces and what the board's
+// Obsidian deep links carry.
+type displayNameVaults struct{ dir string }
+
+func (v displayNameVaults) Vaults(context.Context) ([]board.Vault, error) {
+	return []board.Vault{{
+		Name:      "fixture",
+		VaultName: "Fixture",
+		Path:      v.dir,
+	}}, nil
+}
+
+// TestPageViewResolvesVaultByDisplayName guards the card and obsidian:// links:
+// both carry the display name, so the resolver must accept it as well as the
+// config key, in any case.
+func TestPageViewResolvesVaultByDisplayName(t *testing.T) {
+	dir := newFixture(t)
+	index := pageindex.NewPageIndex(
+		pageindex.NewPageReader(storage.NewPageStorage(nil)),
+		pageindex.NewDirectoryLister(),
+		libtime.NewCurrentDateTime(),
+		libtime.NewWaiterDuration(),
+	)
+	service := pageview.NewService(displayNameVaults{dir: dir}, index)
+	for _, name := range []string{"fixture", "Fixture", "FIXTURE"} {
+		if _, err := service.Render(context.Background(), name, "Alpha.md"); err != nil {
+			t.Fatalf("render with vault name %q: %v", name, err)
+		}
+	}
+}
+
 func TestPageViewRendersWikilinksAndBacklinks(t *testing.T) {
 	dir := newFixture(t)
 	service := newService(t, dir)

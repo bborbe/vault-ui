@@ -89,8 +89,8 @@ func TestSeedFixtureParsesThroughTheRealLoader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasksStrict: %v", err)
 	}
-	if len(tasks) != 2 {
-		t.Fatalf("expected 2 fixture tasks, got %d", len(tasks))
+	if len(tasks) != 4 {
+		t.Fatalf("expected 4 fixture tasks, got %d", len(tasks))
 	}
 	for _, task := range tasks {
 		if task.Name == "Sessionless Fixture Task" && task.ClaudeSessionID() != "" {

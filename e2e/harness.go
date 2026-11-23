@@ -35,6 +35,9 @@ var (
 	procStderr string
 	// homeDir is the temp HOME the binary reads its config from.
 	homeDir string
+	// adminPort is the free port the binary's admin server binds, so the suite
+	// never competes with the live board's :9090.
+	adminPort int
 )
 
 // buildBinary compiles the real binary.
@@ -79,6 +82,8 @@ func seedFixture(ctx context.Context, root string) error {
 	files := map[string]string{
 		filepath.Join("25 Tasks", "Sessionless Fixture Task.md"): taskBody("Sessionless Fixture Task", "in_progress", "execution", ""),
 		filepath.Join("25 Tasks", "Held Fixture Task.md"):        taskBody("Held Fixture Task", "hold", "todo", ""),
+		filepath.Join("25 Tasks", "Card Page Fixture.md"):        cardPageBody(),
+		filepath.Join("25 Tasks", "Link Target Fixture.md"):      linkTargetBody(),
 		filepath.Join("24 Goals", "Fixture Goal.md"):             pageBody("goal", "Fixture Goal", ""),
 		filepath.Join("23 Topics", "Fixture Topic.md"):           pageBody("topic", "Fixture Topic", ""),
 		filepath.Join("23 Topics", "Assigned Fixture Topic.md"):  pageBody("topic", "Assigned Fixture Topic", "e2e"),
@@ -111,6 +116,49 @@ Tags: [[Task]]
 
 %s, written by the e2e fixture.
 `, status, phase, assigneeLine(assignee), title)
+}
+
+// cardPageBody renders a task whose page carries a table and a resolvable
+// wikilink, so the page-view specs assert rendered HTML and in-app navigation
+// instead of a URL match.
+func cardPageBody() string {
+	return `---
+page_type: task
+status: in_progress
+phase: execution
+priority: 2
+created_date: "2026-11-13"
+---
+Tags: [[Task]]
+
+---
+
+## Fixture table
+
+| Col A | Col B |
+| --- | --- |
+| alpha | beta |
+
+See [[Link Target Fixture]] for more.
+`
+}
+
+// linkTargetBody renders the wikilink target, carrying a body marker the
+// navigation assertion looks for.
+func linkTargetBody() string {
+	return `---
+page_type: task
+status: in_progress
+phase: execution
+priority: 2
+created_date: "2026-11-13"
+---
+Tags: [[Task]]
+
+---
+
+Link target body marker, written by the e2e fixture.
+`
 }
 
 // assigneeLine renders the assignee frontmatter key, or nothing when unset.
@@ -179,9 +227,15 @@ vaults:
 // HOME is set on the child's environment only — never os.Setenv, which would
 // repoint Playwright's driver cache out of the real home.
 func startBinary(ctx context.Context, port int) error {
+	reservedAdminPort, err := freePort(ctx)
+	if err != nil {
+		return errors.Wrap(ctx, err, "reserve admin port")
+	}
+	adminPort = reservedAdminPort
 	cmd := exec.Command(binaryPath)
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("VAULT_UI_LISTEN=127.0.0.1:%d", port),
+		fmt.Sprintf("VAULT_UI_ADMIN_LISTEN=127.0.0.1:%d", adminPort),
 		"HOME="+homeDir,
 	)
 	var stderr bytes.Buffer
@@ -220,7 +274,7 @@ func waitReady(ctx context.Context) error {
 		case <-deadline:
 			return errors.Errorf(ctx, "readiness did not answer 200 within 30s")
 		case <-ticker.C:
-			resp, err := client.Get("http://127.0.0.1:9090/readiness")
+			resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/readiness", adminPort))
 			if err != nil {
 				continue
 			}

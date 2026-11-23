@@ -126,6 +126,20 @@ func CreateAPIListen() string {
 	return defaultAPIListen
 }
 
+// defaultAdminListen is the canonical bborbe admin port. It stays the default
+// the production service uses; VAULT_UI_ADMIN_LISTEN overrides it so the e2e
+// suite can bind its own port and never disturb the live board.
+const defaultAdminListen = ":9090"
+
+// CreateAdminListen returns the admin listen address from
+// VAULT_UI_ADMIN_LISTEN, defaulting to :9090.
+func CreateAdminListen() string {
+	if listen := os.Getenv("VAULT_UI_ADMIN_LISTEN"); listen != "" {
+		return listen
+	}
+	return defaultAdminListen
+}
+
 // CreateStaticFS returns the embedded frozen frontend tree, rooted at the
 // static directory.
 func CreateStaticFS() fs.FS {

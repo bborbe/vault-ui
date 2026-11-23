@@ -24,9 +24,9 @@ import (
 	"github.com/bborbe/vault-ui/pkg/statuscache"
 )
 
-// adminListen is the canonical bborbe admin port. It is deliberately NOT a
-// flag or env var — spec 021 Non-goals forbid a port knob.
-const adminListen = ":9090"
+// The admin port defaults to :9090 and is overridable through
+// VAULT_UI_ADMIN_LISTEN (see factory.CreateAdminListen), which is what lets
+// `make e2e` bind its own port instead of stopping the live board.
 
 func main() {
 	defer glog.Flush()
@@ -111,7 +111,7 @@ func execute(ctx context.Context) error {
 			loader, configPath, cache, launches, locks, homeDir, cacheReady,
 		),
 		writeQueue.Consume,
-		factory.CreateHTTPServer(adminListen, readiness),
+		factory.CreateHTTPServer(factory.CreateAdminListen(), readiness),
 		factory.CreateAPIServer(factory.CreateAPIListen(), apiHandler),
 	); err != nil {
 		return errors.Wrap(ctx, err, "run failed")
