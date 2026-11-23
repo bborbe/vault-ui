@@ -125,7 +125,16 @@ func stubList(dir string) string {
 			Vault:    "fixture",
 		})
 	}
-	body, err := json.Marshal(map[string]any{"items": items})
+	// Mirror the real envelope, including `warnings` as a NUMBER. The stub used
+	// to send only `items`, so a client that declared the field as []string
+	// passed the whole suite and then failed every live poll with "cannot
+	// unmarshal number into Go struct field taskList.warnings".
+	body, err := json.Marshal(map[string]any{
+		"items":             items,
+		"total":             len(items),
+		"warnings":          0,
+		"index_age_seconds": 0,
+	})
 	if err != nil {
 		glog.Warningf("stub list %s marshal: %v", dir, err)
 		return `{"items":[]}`
