@@ -78,7 +78,13 @@ type opsProvider struct {
 }
 
 func (p opsProvider) List(vault board.Vault) ops.ListOperation {
-	return vaultapi.NewListOperation(p.source, vault.VaultName)
+	return vaultapi.NewListOperation(
+		p.source,
+		vault.VaultName,
+		vault.TasksFolder,
+		vault.GoalsFolder,
+		vault.TopicsFolder,
+	)
 }
 
 func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
@@ -280,6 +286,14 @@ func sessionRefreshBroadcaster(
 // publisher.
 func CreateConnectionManager() websocket.ConnectionManager {
 	return websocket.NewConnectionManager(websocket.NewMetrics())
+}
+
+// CreateSourceChangeBroadcaster returns the callback the vault-api Source runs
+// after a poll observes changed content. vault-api has no push signal, so this
+// broadcast is what refreshes an open board — the job the deleted page-index
+// watcher used to do.
+func CreateSourceChangeBroadcaster(manager websocket.ConnectionManager) func() {
+	return func() { manager.Broadcast(websocket.SourceChangedFrame()) }
 }
 
 // CreateAPIServer returns a run.Func serving the API router on listen.
