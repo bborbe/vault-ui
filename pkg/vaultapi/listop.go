@@ -106,8 +106,9 @@ func (l *listOperation) tasks(
 	return items
 }
 
-// goals maps the vault's cached goals onto list items. A goal carries no phase,
-// priority or assignee in vault-api's projection, so those stay zero.
+// goals maps the vault's cached goals onto list items. A goal carries no
+// priority or assignee in vault-api's projection, so those stay zero; its phase
+// is carried so the board can group goals into phase columns like tasks.
 func (l *listOperation) goals(
 	name string,
 	statusFilters []string,
@@ -120,6 +121,7 @@ func (l *listOperation) goals(
 		items = append(items, ops.TaskListItem{
 			Name:            g.Title,
 			Status:          g.Status,
+			Phase:           g.Phase,
 			Vault:           g.Vault,
 			ClaudeSessionID: deref(g.ClaudeSessionID),
 			Flag:            g.Flag,
@@ -129,8 +131,8 @@ func (l *listOperation) goals(
 }
 
 // topics maps the vault's cached topics onto list items. A topic carries no
-// phase or priority, so those stay zero; its Goals list is what the topic detail
-// view resolves against.
+// priority, so it stays zero; its Goals list is what the topic detail view
+// resolves against, and its phase is carried for the phase columns.
 func (l *listOperation) topics(
 	name string,
 	statusFilters []string,
@@ -144,6 +146,7 @@ func (l *listOperation) topics(
 		items = append(items, ops.TaskListItem{
 			Name:            t.Title,
 			Status:          t.Status,
+			Phase:           t.Phase,
 			Assignee:        t.Assignee,
 			Vault:           t.Vault,
 			ClaudeSessionID: deref(t.ClaudeSessionID),

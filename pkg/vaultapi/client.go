@@ -82,6 +82,7 @@ type Goal struct {
 	Title           string   `json:"title"`
 	Path            string   `json:"path"`
 	Status          string   `json:"status"`
+	Phase           string   `json:"phase"`
 	Themes          []string `json:"themes"`
 	Vault           string   `json:"vault"`
 	Flag            bool     `json:"flag"`
@@ -97,6 +98,7 @@ type Topic struct {
 	Title           string   `json:"title"`
 	Path            string   `json:"path"`
 	Status          string   `json:"status"`
+	Phase           string   `json:"phase"`
 	Goals           []string `json:"goals"`
 	Themes          []string `json:"themes"`
 	Assignee        string   `json:"assignee"`
