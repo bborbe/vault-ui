@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,9 +169,9 @@ func (s *Source) ListEntries(
 // revision.
 func hashLists(tasks []Task, goals []Goal, topics []Topic) [32]byte {
 	payload, err := json.Marshal(struct {
-		Tasks  []Task   `json:"tasks"`
-		Goals  []Goal   `json:"goals"`
-		Topics []Topic  `json:"topics"`
+		Tasks  []Task  `json:"tasks"`
+		Goals  []Goal  `json:"goals"`
+		Topics []Topic `json:"topics"`
 	}{tasks, goals, topics})
 	if err != nil {
 		// The three types marshal unconditionally; an error here would be a
@@ -187,7 +188,7 @@ func filterTasks(all []Task, vaultName string) []Task {
 	}
 	out := make([]Task, 0, len(all))
 	for _, t := range all {
-		if t.Vault == vaultName {
+		if matchesVault(t.Vault, vaultName) {
 			out = append(out, t)
 		}
 	}
@@ -200,7 +201,7 @@ func filterGoals(all []Goal, vaultName string) []Goal {
 	}
 	out := make([]Goal, 0, len(all))
 	for _, g := range all {
-		if g.Vault == vaultName {
+		if matchesVault(g.Vault, vaultName) {
 			out = append(out, g)
 		}
 	}
@@ -213,9 +214,17 @@ func filterTopics(all []Topic, vaultName string) []Topic {
 	}
 	out := make([]Topic, 0, len(all))
 	for _, t := range all {
-		if t.Vault == vaultName {
+		if matchesVault(t.Vault, vaultName) {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// matchesVault compares a vault-api item's vault name to the board's. vault-ui
+// derives its display name by title-casing the vault-cli key (or a vault_name
+// override), while vault-api reports the raw vault-cli name, so the two differ
+// only by case for the common vault — compare case-insensitively.
+func matchesVault(itemVault, boardVault string) bool {
+	return strings.EqualFold(itemVault, boardVault)
 }
