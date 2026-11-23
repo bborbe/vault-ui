@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: **the board's vault-api read path carries a goal's and a topic's `phase` through to the list item, so the Goals and Topics views group cards into phase columns instead of piling every card into `—`.** `pkg/vaultapi/listop.go`'s `goals()`/`topics()` mapped vault-api rows onto `ops.TaskListItem` without a `Phase` (the code assumed vault-api served none), and the `Goal`/`Topic` client structs had no `phase` key to decode. Both now carry it, on the same terms as the task list, so `pkg/board/goals.go`'s `Phase: strPtr(item.Phase)` receives a value.
+
 ## v0.113.0
 
 - feat: Read the board from the local vault-api instead of a page index of vault-ui's own — tasks, goals and topics come from vault-api's list endpoints, a 10s poll replaces the in-process fsnotify watcher (a poll that sees new content broadcasts a `source_changed` frame, so an open board refreshes without a reload), `pkg/pageindex`, `pkg/statuscache`, the `ops.NewWatchOperation` wiring and the dead `pkg/watcher` package are deleted, and a `vault-api unavailable` banner shows while the source's last poll failed (the board keeps its last-known rows); goal cards lose their assignee until vault-api's goal projection carries one, so the goals assignee filter matches nothing
