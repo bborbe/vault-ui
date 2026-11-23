@@ -13,6 +13,7 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/mutations"
+	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -27,6 +28,7 @@ func CreateHTTPRouter(
 	staticFS fs.FS,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
+	pages pageview.Service,
 ) http.Handler {
 	router := mux.NewRouter()
 	router.SkipClean(true)
@@ -89,6 +91,12 @@ func CreateHTTPRouter(
 
 	router.Methods(http.MethodGet).Path("/ws").
 		Handler(NewWebSocketHandler(readiness, manager))
+
+	// The page routes are registered without a method restriction so a non-GET
+	// request is refused by the handler with 405 rather than swallowed by the
+	// catch-all below, which matches every path and verb.
+	router.Path("/v/{vault}/page/{path:.+}").Handler(NewPageHandler(pages))
+	router.Path("/open").Handler(NewOpenHandler(pages))
 
 	router.PathPrefix("/").Handler(NewStaticHandler(staticFS))
 	return router

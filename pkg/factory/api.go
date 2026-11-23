@@ -26,6 +26,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/session"
@@ -130,6 +131,20 @@ func CreateAPIListen() string {
 	return defaultAPIListen
 }
 
+// defaultAdminListen is the canonical bborbe admin port. It stays the default
+// the production service uses; VAULT_UI_ADMIN_LISTEN overrides it so the e2e
+// suite can bind its own port and never disturb the live board.
+const defaultAdminListen = ":9090"
+
+// CreateAdminListen returns the admin listen address from
+// VAULT_UI_ADMIN_LISTEN, defaulting to :9090.
+func CreateAdminListen() string {
+	if listen := os.Getenv("VAULT_UI_ADMIN_LISTEN"); listen != "" {
+		return listen
+	}
+	return defaultAdminListen
+}
+
 // CreateStaticFS returns the embedded frozen frontend tree, rooted at the
 // static directory.
 func CreateStaticFS() fs.FS {
@@ -162,8 +177,9 @@ func CreateAPIHandler(
 	// DoD2, so it is logged at Info (visible in the launchd StandardErrorPath),
 	// not V(2).
 	glog.Infof("board reads tasks from vault-api at %s", vaultSource.BaseURL())
+	vaults := &vaultProvider{loader: loader, configPath: configPath}
 	service := board.New(board.Deps{
-		Vaults:   &vaultProvider{loader: loader, configPath: configPath},
+		Vaults:   vaults,
 		Ops:      opsProvider{source: vaultSource},
 		Launch:   launches,
 		Clock:    libtime.NewCurrentDateTime(),
@@ -183,7 +199,10 @@ func CreateAPIHandler(
 		paneResolver, websocket.NewMutationPublisher(manager), writeQueue,
 		vaultSource, vaultSource,
 	)
-	return handler.CreateHTTPRouter(service, mutationsService, CreateStaticFS(), readiness, manager)
+	pages := pageview.NewService(vaults, storage.NewPageStorage(nil))
+	return handler.CreateHTTPRouter(
+		service, mutationsService, CreateStaticFS(), readiness, manager, pages,
+	)
 }
 
 // CreateWriteQueue returns the process-wide per-vault write queue. Its

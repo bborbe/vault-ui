@@ -233,7 +233,9 @@ func newQueuedFixture() *queuedFixture {
 		"app.js":     {Data: []byte("console.log('app')")},
 		"style.css":  {Data: []byte("body{}")},
 	}
-	f.router = handler.CreateHTTPRouter(&fakeBoard{}, service, staticFS, readiness, f.manager)
+	f.router = handler.CreateHTTPRouter(
+		&fakeBoard{}, service, staticFS, readiness, f.manager, newStubPageService(),
+	)
 	return f
 }
 

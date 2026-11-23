@@ -137,6 +137,10 @@ func obsidianURL(vaultName, filePath string) string {
 	return "obsidian://open?vault=" + pythonQuote(vaultName) + "&file=" + pythonQuote(filePath)
 }
 
+// ObsidianURL builds the Obsidian deep link, matching the shape the board's
+// cards already emit.
+func ObsidianURL(vaultName, filePath string) string { return obsidianURL(vaultName, filePath) }
+
 // hasString reports whether values contains needle (exact match).
 func hasString(values []string, needle string) bool {
 	for _, value := range values {

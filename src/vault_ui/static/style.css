@@ -668,6 +668,17 @@ h1 {
     flex-shrink: 0;
 }
 
+/* Once the title links to the in-app page, the hand-off arrow becomes its own
+   anchor beside it. It keeps the icon's look rather than the link's. */
+a.obsidian-handoff {
+    text-decoration: none;
+    color: #9ca3af;
+}
+
+a.obsidian-handoff:hover {
+    color: #6b7280;
+}
+
 .project-badge {
     font-size: 0.75rem;
     color: #9ca3af;

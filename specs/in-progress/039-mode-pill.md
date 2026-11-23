@@ -1,5 +1,5 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-11-12T08:04:02Z"
 generating: "2026-11-12T12:03:17Z"
 prompted: "2026-11-12T12:03:17Z"
