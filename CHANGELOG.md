@@ -2,11 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The page view is styled — a `.page-view` block gives the rendered page prose typography, heading hierarchy, table and code treatment, and a wikilink colour that is visible on the dark board surface (the renderer was already emitting 21 resolved links and 8 headings on a real goal page, but the sheet carried no page-view rule at all, so links took the browser's default anchor colour on `#1a1a1a` and were invisible)
+
 ## v0.114.1
 
 - fix: The page view renders a page that carries no frontmatter (previously a 500 `parse frontmatter: no frontmatter found`) and resolves wikilinks and backlinks across the whole vault rather than only the page's own folder, so a goal linking a task now resolves and backlists; the vault-wide page index is cached for 30s
 - fix: The page view's vault-wide index is immutable once built, so concurrent page views cannot race on it (writing the requested page back into the cached map was a fatal `concurrent map writes`); a concurrent-render test guards it
-- fix: The page view is styled — a `.page-view` block gives the rendered page prose typography, heading hierarchy, table and code treatment, and a wikilink colour that is visible on the dark board surface (the renderer was already emitting 21 resolved links and 8 headings on a real goal page, but the sheet carried no page-view rule at all, so links took the browser's default anchor colour on `#1a1a1a` and were invisible)
 
 ## v0.114.0
 
