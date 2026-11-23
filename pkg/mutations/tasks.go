@@ -605,16 +605,16 @@ func (s *service) UpdateTaskPhase(
 	return api.PhaseUpdateResponse{Status: "success", TaskID: taskID, Phase: req.Phase}, nil
 }
 
-// approveAndQueue approves a task waiting in the inbox. Approval is a phase
-// move (todo → planning) only: vault-cli's task approve writes phase, approved_by
-// and approved_at, and this function writes no status.
+// approveAndQueue approves a task waiting in the inbox. vault-cli's task approve
+// writes phase, approved_by and approved_at; this function adds one status
+// promotion on top of it — a row still carrying the legacy todo value or the
+// queued backlog value becomes next, so the manager sweep's ready-to-start
+// bucket keeps offering it (spec 035).
 //
-// A phase write must never demote. An active row stays in_progress, and a queued
-// row stays next until the entry path (work-on) promotes it — the canonical
-// lifecycle runs backlog → next → in_progress → phases → completed, in one
-// direction. The ready-to-start bucket keys on phase: planning plus no live
-// session rather than on status: next, so leaving status alone keeps an approved
-// row offered.
+// The promotion is one-directional. Every other status is left byte-identical,
+// in particular an active in_progress row is never demoted to next: the
+// canonical lifecycle runs backlog → next → in_progress → phases → completed,
+// and a phase write must not walk it backwards.
 func approveAndQueue(
 	ctx context.Context,
 	resolved vaultconfig.Vault,
@@ -622,19 +622,37 @@ func approveAndQueue(
 	taskID string,
 	currentUser string,
 ) *HTTPError {
+	// Read before approving: the promotion decision keys on the status the row
+	// carried on entry. A failed read leaves status empty and writes nothing,
+	// which is the safe default — never demote on missing information.
+	//
+	// The read normalizes the legacy todo value to next, so the condition names
+	// next rather than todo: a row on disk as `status: todo` arrives here as
+	// next, and writing next is what upgrades it to the canonical value.
+	status := ""
+	if task, showErr := set.Show.Execute(ctx, resolved.Path, resolved.Name, taskID); showErr == nil {
+		status = task.Status
+	}
 	if _, approveErr := set.Approve.Execute(
 		ctx, resolved.Path, taskID, resolved.Name, "operator", "", currentUser,
 	); approveErr != nil {
 		return newHTTPError(500, approveErr.Error())
+	}
+	if status == "next" || status == "backlog" {
+		if setErr := set.FrontmatterSet.Execute(
+			ctx, resolved.Path, taskID, "status", "next", "", "", "", false,
+		); setErr != nil {
+			return newHTTPError(500, setErr.Error())
+		}
 	}
 	return nil
 }
 
 // approveTask runs the operator's approval for a task waiting in the inbox,
 // with the same seven arguments RunTask passes. Approve writes phase: planning,
-// approved_by and approved_at, and leaves status untouched — a phase write must
-// never demote an active row. This branch writes no phase or status itself:
-// setting the phase alongside the approval would race the approval's own write.
+// approved_by and approved_at; approveAndQueue adds the todo/backlog → next
+// promotion it owns. This branch writes no phase or status itself: setting the
+// phase alongside the approval would race the approval's own write.
 //
 // A todo task that already carries an approval record is refused by the
 // operation; that case is not worth a request-path read, so it surfaces as an

@@ -1774,6 +1774,36 @@ var _ = Describe("UpdateTaskPhase todo-to-planning", func() {
 		Expect(h.publisher.PublishWriteFailedCallCount()).To(Equal(0))
 	})
 
+	It("promotes a legacy todo row to next on approval", func() {
+		// The promotion spec 035 pins: an approved inbox row must stay in the
+		// manager sweep's ready-to-start bucket.
+		h.writeTodoTask("Inbox", "status: todo\nphase: todo\nassignee: alice")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: next"))
+	})
+
+	It("promotes a backlog row to next on approval", func() {
+		h.writeTodoTask("Inbox", "status: backlog\nphase: todo\nassignee: alice")
+
+		_, err := h.service.UpdateTaskPhase(
+			ctx, "personal", "Inbox", api.UpdatePhaseRequest{Phase: "planning"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		h.drain()
+
+		content := h.readTask("Inbox")
+		Expect(content).To(ContainSubstring("phase: planning"))
+		Expect(content).To(ContainSubstring("status: next"))
+	})
+
 	It("preserves an active task's in_progress status instead of demoting it to next", func() {
 		// The falsifier for the demotion bug: an approved row that was already
 		// active must come back active, not queued.
