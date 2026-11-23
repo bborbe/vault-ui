@@ -77,11 +77,11 @@ func (p *vaultProvider) Vaults(ctx context.Context) ([]board.Vault, error) {
 // served from the local vault-api — the single page parser; TopicShow stays on
 // disk until the topic detail path moves to vault-api too.
 type opsProvider struct {
-	client vaultapi.Client
+	source *vaultapi.Source
 }
 
 func (p opsProvider) List(vault board.Vault) ops.ListOperation {
-	return vaultapi.NewListOperation(p.client, vault.VaultName)
+	return vaultapi.NewListOperation(p.source, vault.VaultName)
 }
 
 func (opsProvider) TopicShow(vault board.Vault) ops.EntityShowOperation {
@@ -155,21 +155,21 @@ func CreateAPIHandler(
 	pageIndex pageindex.PageIndex,
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
+	vaultSource *vaultapi.Source,
 ) http.Handler {
-	vaultClient := vaultapi.New(vaultapi.ConfigFromEnv())
 	// The startup serving proof: the board reads from this origin. Required by
 	// DoD2, so it is logged at Info (visible in the launchd StandardErrorPath),
 	// not V(2).
-	glog.Infof("board reads tasks from vault-api at %s", vaultClient.BaseURL())
+	glog.Infof("board reads tasks from vault-api at %s", vaultSource.BaseURL())
 	service := board.New(board.Deps{
 		Vaults:    &vaultProvider{loader: loader, configPath: configPath},
-		Ops:       opsProvider{client: vaultClient},
+		Ops:       opsProvider{source: vaultSource},
 		Cache:     cache,
 		Launch:    launches,
 		Clock:     libtime.NewCurrentDateTime(),
 		Signals:   sessionSnapshot,
 		Sessions:  sessionSnapshot,
-		Index:     pageIndex,
+		Index:     vaultSource,
 		PageIndex: pageIndex,
 		// The pane resolver is wired here, not just into the mutation service: the
 		// board uses it to stamp each live card's jump_pane. Left nil, the field is

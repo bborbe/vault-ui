@@ -8,30 +8,27 @@ import (
 	"context"
 	"slices"
 
-	"github.com/bborbe/errors"
 	"github.com/bborbe/vault-cli/pkg/ops"
 )
 
-// NewListOperation returns an ops.ListOperation backed by the vault-api client.
+// NewListOperation returns an ops.ListOperation backed by the source's cache.
 // The board's buildTaskRows calls Execute with the vault it wants; this
-// operation filters the client's all-vault list to that vault and maps each
-// item to vault-cli's TaskListItem, so the board's row derivation is unchanged.
-func NewListOperation(client Client, vaultName string) ops.ListOperation {
-	return &listOperation{client: client, vaultName: vaultName}
+// operation filters the cached all-vault list to that vault and maps each item
+// to vault-cli's TaskListItem, so the board's row derivation is unchanged.
+func NewListOperation(source *Source, vaultName string) ops.ListOperation {
+	return &listOperation{source: source, vaultName: vaultName}
 }
 
 type listOperation struct {
-	client    Client
+	source    *Source
 	vaultName string
 }
 
 // Execute implements ops.ListOperation. The board passes showAll=true and no
-// filters, so every task for the vault is returned and the board applies its own
-// visibility rules; the statusFilters/assigneeFilter/goalFilter arguments are
-// accepted for interface compatibility and applied here too, so a caller that
-// does filter is not silently ignored.
+// filters, so every cached task for the vault is returned and the board applies
+// its own visibility rules; a caller that does filter is honoured here too.
 func (l *listOperation) Execute(
-	ctx context.Context,
+	_ context.Context,
 	_ string,
 	vaultName string,
 	_ string,
@@ -44,15 +41,9 @@ func (l *listOperation) Execute(
 	if name == "" {
 		name = vaultName
 	}
-	tasks, err := l.client.ListTasks(ctx)
-	if err != nil {
-		return nil, errors.Wrap(ctx, err, "list tasks from vault-api")
-	}
+	tasks := l.source.Tasks(name)
 	items := make([]ops.TaskListItem, 0, len(tasks))
 	for _, t := range tasks {
-		if name != "" && t.Vault != name {
-			continue
-		}
 		if len(statusFilters) > 0 && !slices.Contains(statusFilters, t.Status) {
 			continue
 		}

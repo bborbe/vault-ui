@@ -22,6 +22,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/sessionstate"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 // adminListen is the canonical bborbe admin port. It is deliberately NOT a
@@ -72,9 +73,10 @@ func execute(ctx context.Context) error {
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	heartbeatStore := factory.CreateHeartbeatStore()
 	writeQueue := factory.CreateWriteQueue()
+	vaultSource := vaultapi.NewSource(vaultapi.New(vaultapi.ConfigFromEnv()))
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, cache, paneResolver, launches, locks, homeDir, readiness, manager,
-		pageIndex, sessionSnapshot, writeQueue,
+		pageIndex, sessionSnapshot, writeQueue, vaultSource,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -99,6 +101,7 @@ func execute(ctx context.Context) error {
 
 	if err := run.CancelOnFirstErrorWait(ctx,
 		factory.CreateVaultDiscovery(loader, readiness),
+		vaultSource.Run,
 		factory.CreateStatusCacheLoader(loader, configPath, cache, cacheReady),
 		factory.CreatePageIndexWarmup(loader, configPath, pageIndex),
 		pageIndex.Rescan,
