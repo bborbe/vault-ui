@@ -28,6 +28,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/ops"
+	"github.com/golang/glog"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
@@ -66,6 +67,15 @@ type EventPublisher interface {
 	PublishWriteFailed(ctx context.Context, vault, itemKind, itemID, reason string)
 }
 
+// Refresher re-reads the board's read source so it reflects a write that just
+// landed. vaultapi.Source satisfies it; without it the UI's refetch after the
+// update frame would hit the poll cache and return pre-write rows.
+//
+//counterfeiter:generate -o ./mocks/refresher.go --fake-name Refresher . Refresher
+type Refresher interface {
+	Refresh(ctx context.Context) error
+}
+
 // WriteQueue accepts one vault write for asynchronous, per-vault FIFO
 // application. queue.Queue satisfies it.
 //
@@ -101,6 +111,7 @@ type Deps struct {
 	Launch       launchregistry.Registry
 	Locks        sessionlock.Registry
 	Publisher    EventPublisher
+	Refresher    Refresher
 	Queue        WriteQueue
 	Clock        libtime.CurrentDateTimeGetter
 	Scanner      session.ProcessScanner
@@ -214,13 +225,27 @@ func failureReason(err error) string {
 // name a file exactly.
 func (s *service) taskWritten(vault vaultconfig.Vault, taskID string) func(context.Context) {
 	return func(ctx context.Context) {
+		s.refreshSource(ctx)
 		s.deps.Publisher.PublishTaskUpdated(ctx, vault.Name, taskID)
+	}
+}
+
+// refreshSource re-reads the board's read source before the update frame is
+// published, so the client's refetch sees the write. A refresh failure is
+// logged and the frame still goes out: the 10s poll catches the row up.
+func (s *service) refreshSource(ctx context.Context) {
+	if s.deps.Refresher == nil {
+		return
+	}
+	if err := s.deps.Refresher.Refresh(ctx); err != nil {
+		glog.Warningf("refresh vault-api source after write: %v", err)
 	}
 }
 
 // goalWritten is taskWritten for a publishing goal route.
 func (s *service) goalWritten(vault vaultconfig.Vault, goalID string) func(context.Context) {
 	return func(ctx context.Context) {
+		s.refreshSource(ctx)
 		s.deps.Publisher.PublishGoalUpdated(ctx, vault.Name, goalID)
 	}
 }

@@ -99,6 +99,7 @@ func CreateMutationService(
 	paneResolver mutations.PaneResolver,
 	publisher mutations.EventPublisher,
 	writeQueue mutations.WriteQueue,
+	refresher mutations.Refresher,
 ) mutations.Service {
 	return mutations.New(mutations.Deps{
 		Config:    &mutationConfigProvider{loader: loader, configPath: configPath},
@@ -106,6 +107,7 @@ func CreateMutationService(
 		Launch:    launches,
 		Locks:     locks,
 		Publisher: publisher,
+		Refresher: refresher,
 		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.NewPSScanner("-axww", "-o", "args="),

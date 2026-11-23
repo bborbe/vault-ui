@@ -84,6 +84,8 @@ type Goal struct {
 	Status          string   `json:"status"`
 	Phase           string   `json:"phase"`
 	Themes          []string `json:"themes"`
+	Assignee        string   `json:"assignee"`
+	Priority        int      `json:"priority"`
 	Vault           string   `json:"vault"`
 	Flag            bool     `json:"flag"`
 	ClaudeSessionID *string  `json:"claude_session_id"`
@@ -102,6 +104,7 @@ type Topic struct {
 	Goals           []string `json:"goals"`
 	Themes          []string `json:"themes"`
 	Assignee        string   `json:"assignee"`
+	Priority        int      `json:"priority"`
 	Vault           string   `json:"vault"`
 	Flag            bool     `json:"flag"`
 	ClaudeSessionID *string  `json:"claude_session_id"`

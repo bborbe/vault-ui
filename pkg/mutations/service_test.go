@@ -82,6 +82,7 @@ type harness struct {
 	dir       string
 	service   mutations.Service
 	publisher *mocks.EventPublisher
+	refresher *mocks.Refresher
 	launch    launchregistry.Registry
 	pane      *fakePane
 	jump      *fakeJump
@@ -176,6 +177,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	}
 	launch := launchregistry.NewRegistry()
 	publisher := &mocks.EventPublisher{}
+	refresher := &mocks.Refresher{}
 	pane := &fakePane{paneID: "pane-1", found: true}
 	jump := &fakeJump{token: "tok", hasToken: true}
 	signaler := &fakeSignaler{}
@@ -188,6 +190,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		Launch:    launch,
 		Locks:     sessionlock.NewRegistry(),
 		Publisher: publisher,
+		Refresher: refresher,
 		Queue:     writeQueue,
 		Clock:     libtime.NewCurrentDateTime(),
 		Scanner:   session.ProcessScanner(noScanner),
@@ -203,6 +206,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 		dir:       dir,
 		service:   service,
 		publisher: publisher,
+		refresher: refresher,
 		launch:    launch,
 		pane:      pane,
 		jump:      jump,
@@ -523,6 +527,46 @@ var _ = Describe("Mutation service", func() {
 			h.drain()
 			Expect(h.readTopic(topicOneID)).NotTo(ContainSubstring("flag:"))
 			Expect(h.publisher.PublishTopicUpdatedCallCount()).To(Equal(2))
+		})
+	})
+
+	Describe("refreshing the read source after a write", func() {
+		It("refreshes before publishing for a task, goal and topic flag write", func() {
+			var order []string
+			h.refresher.RefreshStub = func(context.Context) error {
+				order = append(order, "refresh")
+				return nil
+			}
+			h.publisher.PublishTaskUpdatedStub = func(context.Context, string, string) {
+				order = append(order, "task")
+			}
+			h.publisher.PublishGoalUpdatedStub = func(context.Context, string, string) {
+				order = append(order, "goal")
+			}
+			h.publisher.PublishTopicUpdatedStub = func(context.Context, string, string) {
+				order = append(order, "topic")
+			}
+
+			for _, kind := range []string{"task", "goal", "topic"} {
+				id := map[string]string{"task": taskOneID, "goal": goalOneID, "topic": topicOneID}[kind]
+				_, err := h.service.UpdateFlag(
+					ctx, "personal", id, api.UpdateFlagRequest{Kind: kind},
+				)
+				Expect(err).NotTo(HaveOccurred())
+				h.drain()
+			}
+			Expect(order).To(Equal([]string{"refresh", "task", "refresh", "goal", "refresh", "topic"}))
+		})
+
+		It("still publishes the frame when the refresh fails", func() {
+			h.refresher.RefreshReturns(errors.New("vault-api unreachable"))
+			_, err := h.service.UpdateFlag(
+				ctx, "personal", taskOneID, api.UpdateFlagRequest{Kind: "task"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			h.drain()
+			Expect(h.refresher.RefreshCallCount()).To(Equal(1))
+			Expect(h.publisher.PublishTaskUpdatedCallCount()).To(Equal(1))
 		})
 	})
 

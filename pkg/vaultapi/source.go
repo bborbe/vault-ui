@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 )
 
@@ -33,6 +34,10 @@ type Source struct {
 	interval time.Duration
 
 	onChange func()
+
+	// refreshMu serialises whole polls (fetch + swap) across the ticker and
+	// Refresh callers.
+	refreshMu sync.Mutex
 
 	mu          sync.RWMutex
 	revision    uint64
@@ -85,7 +90,7 @@ func (s *Source) BaseURL() string {
 // Run polls until ctx is done. Its first poll runs synchronously so the board
 // has data as soon as the run group starts serving.
 func (s *Source) Run(ctx context.Context) error {
-	s.poll(ctx)
+	_ = s.poll(ctx)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -93,32 +98,47 @@ func (s *Source) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			s.poll(ctx)
+			_ = s.poll(ctx)
 		}
 	}
+}
+
+// Refresh runs one poll synchronously and returns the first fetch error. The
+// mutation service calls it after a write so the next read of the cache sees the
+// write instead of the pre-write rows the 10s ticker has not replaced yet. It is
+// safe to call concurrently with Run: the cache is only swapped under the lock,
+// and refreshMu serialises overlapping polls so a stale fetch cannot overwrite a
+// newer one.
+func (s *Source) Refresh(ctx context.Context) error {
+	if s.client == nil {
+		return nil
+	}
+	return s.poll(ctx)
 }
 
 // poll fetches every list and advances the revision only when the content
 // changed. A failed fetch keeps the last-good cache (the board serves
 // last-known rows; the unavailable state is a later step) and logs the failure.
-func (s *Source) poll(ctx context.Context) {
+func (s *Source) poll(ctx context.Context) error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 	tasks, err := s.client.ListTasks(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll tasks: %v", err)
 		s.setUnavailable(true)
-		return
+		return errors.Wrap(ctx, err, "poll tasks")
 	}
 	goals, err := s.client.ListGoals(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll goals: %v", err)
 		s.setUnavailable(true)
-		return
+		return errors.Wrap(ctx, err, "poll goals")
 	}
 	topics, err := s.client.ListTopics(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll topics: %v", err)
 		s.setUnavailable(true)
-		return
+		return errors.Wrap(ctx, err, "poll topics")
 	}
 	hash := hashLists(tasks, goals, topics)
 
@@ -137,6 +157,7 @@ func (s *Source) poll(ctx context.Context) {
 	if changed && onChange != nil {
 		onChange()
 	}
+	return nil
 }
 
 // setUnavailable records the source's reachability after a poll.

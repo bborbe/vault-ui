@@ -169,6 +169,7 @@ func (s *service) topicWritten(
 	vault vaultconfig.Vault, topicID string,
 ) func(context.Context) {
 	return func(ctx context.Context) {
+		s.refreshSource(ctx)
 		s.deps.Publisher.PublishTopicUpdated(ctx, vault.Name, topicID)
 	}
 }

@@ -64,7 +64,7 @@ func (l *listOperation) Execute(
 	case l.topicsFolder != "" && pagesDir == l.topicsFolder:
 		return l.topics(name, statusFilters, assigneeFilter), nil
 	case l.goalsFolder != "" && pagesDir == l.goalsFolder:
-		return l.goals(name, statusFilters), nil
+		return l.goals(name, statusFilters, assigneeFilter), nil
 	case l.tasksFolder == "" || pagesDir == l.tasksFolder:
 		return l.tasks(name, statusFilters, assigneeFilter, goalFilter), nil
 	default:
@@ -106,22 +106,26 @@ func (l *listOperation) tasks(
 	return items
 }
 
-// goals maps the vault's cached goals onto list items. A goal carries no
-// priority or assignee in vault-api's projection, so those stay zero; its phase
-// is carried so the board can group goals into phase columns like tasks.
+// goals maps the vault's cached goals onto list items. A goal carries its
+// assignee and priority like a task, so the assignee filter and the card's
+// assignee/priority render; its phase is carried so the board can group goals
+// into phase columns.
 func (l *listOperation) goals(
 	name string,
 	statusFilters []string,
+	assigneeFilter string,
 ) []ops.TaskListItem {
 	items := make([]ops.TaskListItem, 0)
 	for _, g := range l.source.Goals(name) {
-		if !matchesFilters(g.Status, "", nil, statusFilters, "", "") {
+		if !matchesFilters(g.Status, g.Assignee, nil, statusFilters, assigneeFilter, "") {
 			continue
 		}
 		items = append(items, ops.TaskListItem{
 			Name:            g.Title,
 			Status:          g.Status,
 			Phase:           g.Phase,
+			Assignee:        g.Assignee,
+			Priority:        g.Priority,
 			Vault:           g.Vault,
 			ClaudeSessionID: deref(g.ClaudeSessionID),
 			Flag:            g.Flag,
@@ -131,7 +135,8 @@ func (l *listOperation) goals(
 }
 
 // topics maps the vault's cached topics onto list items. A topic carries no
-// priority, so it stays zero; its Goals list is what the topic detail view
+// priority in vault-api's projection today, so it stays zero unless the API adds
+// one; its Goals list is what the topic detail view
 // resolves against, and its phase is carried for the phase columns.
 func (l *listOperation) topics(
 	name string,
@@ -148,6 +153,7 @@ func (l *listOperation) topics(
 			Status:          t.Status,
 			Phase:           t.Phase,
 			Assignee:        t.Assignee,
+			Priority:        t.Priority,
 			Vault:           t.Vault,
 			ClaudeSessionID: deref(t.ClaudeSessionID),
 			Goals:           t.Goals,

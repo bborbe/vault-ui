@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Goal cards carry `assignee` and `priority` from vault-api's goal projection (and topics carry `priority`), so the goals assignee filter matches again and cards show their assignee and priority; `pkg/vaultapi/listop.go` threads the assignee filter into the goal list like topics
+- fix: Clicking a flag (or any other board write) no longer reverts until the next poll — the mutation service now calls `Source.Refresh` (a synchronous vault-api poll, safe alongside the 10s ticker) before publishing the task/goal/topic update frame, so the UI's refetch reads post-write rows; a refresh error is logged and the frame still goes out
+
 ## v0.113.1
 
 - fix: **the board's vault-api read path carries a goal's and a topic's `phase` through to the list item, so the Goals and Topics views group cards into phase columns instead of piling every card into `—`.** `pkg/vaultapi/listop.go`'s `goals()`/`topics()` mapped vault-api rows onto `ops.TaskListItem` without a `Phase` (the code assumed vault-api served none), and the `Goal`/`Topic` client structs had no `phase` key to decode. Both now carry it, on the same terms as the task list, so `pkg/board/goals.go`'s `Phase: strPtr(item.Phase)` receives a value.
