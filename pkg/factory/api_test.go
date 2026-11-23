@@ -29,14 +29,17 @@ import (
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 // newTestAPIHandler wires CreateAPIHandler with a ready gate and a fresh
 // connection manager.
-func newTestAPIHandler(loader config.Loader, configPath string) http.Handler {
+func newTestAPIHandler(
+	loader config.Loader, configPath string, source *vaultapi.Source,
+) http.Handler {
 	return newTestAPIHandlerWithManager(
-		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()),
+		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()), source,
 	)
 }
 
@@ -64,6 +67,7 @@ func newTestAPIHandlerWithManager(
 	loader config.Loader,
 	configPath string,
 	manager websocket.ConnectionManager,
+	source *vaultapi.Source,
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
@@ -76,6 +80,7 @@ func newTestAPIHandlerWithManager(
 		),
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		startWriteQueue(),
+		source,
 	)
 }
 
@@ -147,7 +152,7 @@ var _ = Describe("API factory", func() {
 	Describe("CreateAPIHandler", func() {
 		It("serves the read routes", func() {
 			loader, configPath, _ := apiFixture()
-			handler := newTestAPIHandler(loader, configPath)
+			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/vaults", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
@@ -156,7 +161,7 @@ var _ = Describe("API factory", func() {
 
 		It("serves the frontend at root", func() {
 			loader, configPath, _ := apiFixture()
-			handler := newTestAPIHandler(loader, configPath)
+			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
@@ -168,7 +173,7 @@ var _ = Describe("API factory", func() {
 		It("broadcasts a task update to a connected WebSocket client", func() {
 			loader, configPath, _ := apiFixture()
 			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager))
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil)))
 			defer server.Close()
 
 			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
@@ -204,7 +209,7 @@ var _ = Describe("API factory", func() {
 		It("broadcasts a goal update to a connected WebSocket client", func() {
 			loader, configPath, _ := apiFixture()
 			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager))
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil)))
 			defer server.Close()
 
 			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"

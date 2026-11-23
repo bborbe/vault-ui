@@ -27,6 +27,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/pageindex"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -97,6 +98,7 @@ func paneHandler(
 	configPath string,
 	homeDir string,
 	paneResolver *recordingPaneResolver,
+	source *vaultapi.Source,
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
@@ -123,7 +125,7 @@ func paneHandler(
 		loader, configPath, statuscache.NewCache(), paneResolver,
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), homeDir, readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
-		sessionSnapshot, startWriteQueue(),
+		sessionSnapshot, startWriteQueue(), source,
 	)
 }
 
@@ -150,11 +152,12 @@ func listElements(body string) []map[string]any {
 
 var _ = Describe("Lazy pane resolution", func() {
 	It("resolves panes in one batch on a list read and one session on a jump", func() {
-		loader, configPath, homeDir, _ := paneFixture()
+		loader, configPath, homeDir, vaultDir := paneFixture()
 		recorder := &recordingPaneResolver{
 			panes: map[string]string{liveSessionID: "7"},
 		}
-		handler := paneHandler(loader, configPath, homeDir, recorder)
+		source := sourceFromVault(vaultDir, "personal", "24 Tasks", "23 Goals", "23 Topics")
+		handler := paneHandler(loader, configPath, homeDir, recorder, source)
 
 		listRecorder := httptest.NewRecorder()
 		handler.ServeHTTP(
@@ -187,12 +190,13 @@ var _ = Describe("Lazy pane resolution", func() {
 	})
 
 	It("carries jump_pane on a live task only when a pane resolves", func() {
-		loader, configPath, homeDir, _ := paneFixture()
+		loader, configPath, homeDir, vaultDir := paneFixture()
+		source := sourceFromVault(vaultDir, "personal", "24 Tasks", "23 Goals", "23 Topics")
 
 		withPane := &recordingPaneResolver{
 			panes: map[string]string{liveSessionID: "7"},
 		}
-		handler := paneHandler(loader, configPath, homeDir, withPane)
+		handler := paneHandler(loader, configPath, homeDir, withPane, source)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(
 			recorder,
@@ -204,7 +208,7 @@ var _ = Describe("Lazy pane resolution", func() {
 		Expect(elements[0]).To(HaveKeyWithValue("jump_pane", "7"))
 
 		withoutPane := &recordingPaneResolver{panes: map[string]string{}}
-		handler = paneHandler(loader, configPath, homeDir, withoutPane)
+		handler = paneHandler(loader, configPath, homeDir, withoutPane, source)
 		recorder = httptest.NewRecorder()
 		handler.ServeHTTP(
 			recorder,
@@ -219,8 +223,11 @@ var _ = Describe("Lazy pane resolution", func() {
 	})
 
 	It("carries no pane-bearing key in a goal list response", func() {
-		loader, configPath, _ := apiFixture()
-		handler := newTestAPIHandler(loader, configPath)
+		loader, configPath, vaultDir := apiFixture()
+		handler := newTestAPIHandler(
+			loader, configPath,
+			sourceFromVault(vaultDir, "personal", "24 Tasks", "23 Goals", "23 Topics"),
+		)
 
 		target := "/api/goals?vault=personal"
 		recorder := httptest.NewRecorder()

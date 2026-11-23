@@ -7,16 +7,13 @@ package factory_test
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 
-	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
 	"github.com/bborbe/vault-cli/pkg/storage"
-	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
@@ -26,6 +23,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/queue"
 	"github.com/bborbe/vault-ui/pkg/sessionlock"
 	"github.com/bborbe/vault-ui/pkg/statuscache"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -200,8 +198,9 @@ func (c *countingSeams) totalListCalls() int {
 	return len(c.listCalls)
 }
 
-// indexHandler wires CreateAPIHandler exactly as production does, over the
-// given index and write queue.
+// indexHandler wires CreateAPIHandler over the given index and write queue. The
+// board's read source is an empty vault-api source: these mutation fixtures
+// assert page-index invalidation, not board rows.
 func indexHandler(
 	loader config.Loader,
 	configPath string,
@@ -216,108 +215,6 @@ func indexHandler(
 		websocket.NewConnectionManager(websocket.NewMetrics()), pageIndex,
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		writeQueue,
+		vaultapi.NewSourceFromData(nil, nil, nil),
 	)
 }
-
-var _ = Describe("Page index read wiring", func() {
-	It("serves warm list reads without touching page storage", func() {
-		alpha := newIndexVault("alpha")
-		beta := newIndexVault("beta")
-		loader, configPath := indexLoader(alpha, beta)
-		seams := newCountingSeams()
-		pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
-		handler := indexHandler(loader, configPath, pageIndex, startWriteQueue())
-
-		Expect(
-			factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
-		).To(Succeed())
-
-		// Positive control: the warm-up built every (vault, folder) pair.
-		counts := seams.listCounts()
-		for _, pair := range [][2]string{
-			{alpha.path, alpha.tasks}, {alpha.path, alpha.goals}, {alpha.path, alpha.topics},
-			{beta.path, beta.tasks}, {beta.path, beta.goals}, {beta.path, beta.topics},
-		} {
-			Expect(counts[pair]).To(BeNumerically(">=", 1), "warm-up must build %v", pair)
-		}
-
-		warmCalls := seams.totalListCalls()
-
-		targets := []struct {
-			target string
-			body   string
-		}{
-			{"/api/tasks", "Task A"},
-			{"/api/assignees", "alice"},
-			{"/api/goals", "Goal A"},
-			{"/api/topics", "TopicOne"},
-			{"/api/topics/TopicOne?vault=alpha", "TopicOne"},
-		}
-		for _, target := range targets {
-			for i := 0; i < 5; i++ {
-				recorder := httptest.NewRecorder()
-				handler.ServeHTTP(
-					recorder,
-					httptest.NewRequest(http.MethodGet, target.target, nil),
-				)
-				Expect(recorder.Code).To(Equal(http.StatusOK), "%s", target.target)
-				Expect(recorder.Body.String()).To(ContainSubstring(target.body), "%s", target.target)
-			}
-		}
-
-		// Evidence: 25 warm requests caused exactly 0 additional reads.
-		Expect(seams.totalListCalls()).To(Equal(warmCalls))
-	})
-
-	Describe("CreatePageIndexWarmup", func() {
-		It("fails when the config cannot be loaded", func() {
-			loader, _ := indexLoader(newIndexVault("alpha"))
-			seams := newCountingSeams()
-			pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
-
-			err := factory.CreatePageIndexWarmup(
-				loader, filepath.Join(tempDir(), "missing.yaml"), pageIndex,
-			)(context.Background())
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("returns nil when the context is cancelled", func() {
-			loader, configPath := indexLoader(newIndexVault("alpha"))
-			seams := newCountingSeams()
-			pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
-
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			Expect(
-				factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(ctx),
-			).To(Succeed())
-		})
-
-		It("skips the topics key for a vault without a topics folder", func() {
-			dir := tempDir()
-			Expect(os.MkdirAll(filepath.Join(dir, "Tasks"), 0750)).To(Succeed())
-			Expect(os.MkdirAll(filepath.Join(dir, "Goals"), 0750)).To(Succeed())
-			writeFile(dir, "Tasks/Task A.md", "---\nstatus: next\n---\n# Task A\n")
-			writeFile(dir, "Goals/Goal A.md", "---\nstatus: in_progress\n---\n# Goal A\n")
-
-			loader := &mocks.Loader{}
-			loader.GetAllVaultsReturns([]*config.Vault{{
-				Name: "alpha", Path: dir, TasksDir: "Tasks", GoalsDir: "Goals",
-			}}, nil)
-			loader.GetCurrentUserReturns("tester", nil)
-			configPath := filepath.Join(tempDir(), "config.yaml")
-			Expect(os.WriteFile(configPath, []byte("host: 127.0.0.1\n"), 0600)).To(Succeed())
-
-			seams := newCountingSeams()
-			pageIndex := factory.CreatePageIndex(seams, seams, libtime.NewCurrentDateTime())
-			Expect(
-				factory.CreatePageIndexWarmup(loader, configPath, pageIndex)(context.Background()),
-			).To(Succeed())
-
-			counts := seams.listCounts()
-			Expect(counts[[2]string{dir, "Tasks"}]).To(BeNumerically(">=", 1))
-			Expect(counts[[2]string{dir, "Goals"}]).To(BeNumerically(">=", 1))
-			Expect(counts[[2]string{dir, ""}]).To(Equal(0))
-		})
-	})
-})

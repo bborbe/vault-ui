@@ -48,8 +48,29 @@ func NewSource(client Client) *Source {
 	return &Source{client: client, interval: DefaultPollInterval}
 }
 
-// BaseURL is the client's origin, for the startup log line.
-func (s *Source) BaseURL() string { return s.client.BaseURL() }
+// NewSourceFromData returns a Source primed with fixed data and a non-zero
+// revision, without a client or a poller. It is the test seam: production uses
+// NewSource + Run.
+func NewSourceFromData(tasks []Task, goals []Goal, topics []Topic) *Source {
+	return &Source{
+		interval: DefaultPollInterval,
+		tasks:    tasks,
+		goals:    goals,
+		topics:   topics,
+		loaded:   true,
+		revision: 1,
+		lastHash: hashLists(tasks, goals, topics),
+	}
+}
+
+// BaseURL is the client's origin, for the startup log line. It is empty for a
+// source built from data with no client (the test seam).
+func (s *Source) BaseURL() string {
+	if s.client == nil {
+		return ""
+	}
+	return s.client.BaseURL()
+}
 
 // Run polls until ctx is done. Its first poll runs synchronously so the board
 // has data as soon as the run group starts serving.
