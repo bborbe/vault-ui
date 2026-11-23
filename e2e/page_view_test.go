@@ -86,4 +86,84 @@ var _ = Describe("Scenario 040: the in-app page view", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(body).To(ContainSubstring("Link target body marker"))
 	})
+
+	It("renders a page that carries no frontmatter", func() {
+		page := newPage("/v/fixture/page/50%20Knowledge%20Base/No%20Frontmatter%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		body, err := page.Locator(".page-view").InnerText()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(body).To(ContainSubstring("No Frontmatter Fixture"))
+		Expect(body).To(ContainSubstring("carries no frontmatter block"))
+	})
+
+	It("resolves a wikilink to a page in another folder", func() {
+		page := newPage("/v/fixture/page/24%20Goals/Cross%20Folder%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		link := page.Locator(".page-view a", playwright.PageLocatorOptions{HasText: "Card Page Fixture"})
+		Eventually(func() int {
+			count, err := link.Count()
+			Expect(err).NotTo(HaveOccurred())
+			return count
+		}, "10s", "200ms").Should(BeNumerically(">", 0))
+
+		href, err := link.First().GetAttribute("href")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(href).To(ContainSubstring("/page/25%20Tasks/Card%20Page%20Fixture.md"))
+	})
+
+	It("lists a backlink from another folder", func() {
+		page := newPage("/v/fixture/page/25%20Tasks/Card%20Page%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		backlinks := page.Locator(".backlinks a", playwright.PageLocatorOptions{HasText: "Cross Folder Fixture"})
+		Eventually(func() int {
+			count, err := backlinks.Count()
+			Expect(err).NotTo(HaveOccurred())
+			return count
+		}, "10s", "200ms").Should(BeNumerically(">", 0))
+	})
+
+	It("styles a rendered page so its links and headings read as such", func() {
+		page := newPage("/v/fixture/page/25%20Tasks/Card%20Page%20Fixture.md")
+		defer func() { _ = page.Close() }()
+
+		link := page.Locator(".page-view a", playwright.PageLocatorOptions{HasText: "Link Target Fixture"})
+		Eventually(func() int {
+			count, err := link.Count()
+			Expect(err).NotTo(HaveOccurred())
+			return count
+		}, "10s", "200ms").Should(BeNumerically(">", 0))
+
+		// An href alone passes on an invisible link. The renderer emitted this
+		// link all along; the sheet carried no page-view rule, so it painted in
+		// the browser's default anchor colour on the #1a1a1a body. Assert the
+		// computed style, not the markup.
+		linkColour, err := link.First().Evaluate(`el => getComputedStyle(el).color`, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		paragraph := page.Locator(".page-view p").First()
+		bodyColour, err := paragraph.Evaluate(`el => getComputedStyle(el).color`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(linkColour).NotTo(Equal(bodyColour), "a link must not paint in the body colour")
+
+		decoration, err := link.First().Evaluate(`el => getComputedStyle(el).textDecorationLine`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decoration).To(ContainSubstring("underline"))
+
+		heading := page.Locator(".page-view h2", playwright.PageLocatorOptions{HasText: "Fixture table"})
+		Eventually(func() int {
+			count, err := heading.Count()
+			Expect(err).NotTo(HaveOccurred())
+			return count
+		}, "10s", "200ms").Should(BeNumerically(">", 0))
+
+		headingSize, err := heading.First().Evaluate(`el => parseFloat(getComputedStyle(el).fontSize)`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		bodySize, err := paragraph.Evaluate(`el => parseFloat(getComputedStyle(el).fontSize)`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(headingSize.(float64)).To(BeNumerically(">", bodySize.(float64)),
+			"a heading must not render at body size")
+	})
 })
