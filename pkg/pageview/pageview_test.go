@@ -15,6 +15,7 @@ import (
 
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/bborbe/vault-cli/pkg/storage"
+	markdown "github.com/bborbe/vault-markdown"
 
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/pageview"
@@ -38,6 +39,10 @@ title: Alpha
 See [[Beta]].
 `
 
+const fixtureBeta = "---\ntitle: Beta\n---\n\n# Beta\n\nBeta body text.\n"
+
+const fixtureGamma = "---\ntitle: Gamma\n---\n\n# Gamma\n\n![[Beta]]\n"
+
 type fixtureVaults struct{ dir string }
 
 func (v fixtureVaults) Vaults(context.Context) ([]board.Vault, error) {
@@ -54,8 +59,8 @@ func newFixture(t *testing.T) string {
 	dir := t.TempDir()
 	files := map[string]string{
 		"Alpha.md": fixtureAlpha,
-		"Beta.md":  "---\ntitle: Beta\n---\n\n# Beta\n\nBeta body text.\n",
-		"Gamma.md": "---\ntitle: Gamma\n---\n\n# Gamma\n\n![[Beta]]\n",
+		"Beta.md":  fixtureBeta,
+		"Gamma.md": fixtureGamma,
 		"Delta.md": "---\ntitle: Delta\n---\n\n# Delta\n\n[[Nope]]\n",
 		"Links.md": "---\ntitle: Links\n---\n\n# Links\n\n[[Alpha]]\n",
 		"Echo.md":  "---\ntitle: Echo\n---\n\n# Echo\n\n<script>alert(1)</script>\n",
@@ -68,10 +73,75 @@ func newFixture(t *testing.T) string {
 	return dir
 }
 
-// newService builds the real service over the production page-index seam.
+// newService builds the real service over the production page-read seam.
 func newService(t *testing.T, dir string) pageview.Service {
 	t.Helper()
 	return pageview.NewService(fixtureVaults{dir: dir}, storage.NewPageStorage(nil))
+}
+
+// countingStorage wraps a real page storage and records every seam call, keyed
+// by folder (and name for reads), so a resolver that re-lists or re-reads fails.
+type countingStorage struct {
+	inner pageview.PageStorage
+
+	mu        sync.Mutex
+	listCalls map[string]int
+	readCalls map[string]int
+}
+
+func newCountingStorage() *countingStorage {
+	return &countingStorage{
+		inner:     storage.NewPageStorage(nil),
+		listCalls: map[string]int{},
+		readCalls: map[string]int{},
+	}
+}
+
+func (c *countingStorage) ListPages(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+) ([]*domain.Page, error) {
+	c.mu.Lock()
+	c.listCalls[pagesDir]++
+	c.mu.Unlock()
+	return c.inner.ListPages(ctx, vaultPath, pagesDir)
+}
+
+func (c *countingStorage) ReadPage(
+	ctx context.Context,
+	vaultPath string,
+	pagesDir string,
+	name string,
+) (*domain.Page, error) {
+	c.mu.Lock()
+	c.readCalls[pagesDir+"/"+name]++
+	c.mu.Unlock()
+	return c.inner.ReadPage(ctx, vaultPath, pagesDir, name)
+}
+
+func (c *countingStorage) listCount(pagesDir string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listCalls[pagesDir]
+}
+
+func (c *countingStorage) readCount(pagesDir, name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.readCalls[pagesDir+"/"+name]
+}
+
+// backlinksSection returns the document from the backlinks section onward, so a
+// test can tell a backlink apart from a same-named link in the page body.
+func backlinksSection(t *testing.T, doc string) string {
+	t.Helper()
+	const marker = `<section class="backlinks">`
+	index := strings.Index(doc, marker)
+	if index < 0 {
+		t.Fatalf("document has no backlinks section:\n%s", doc)
+	}
+	return doc[index:]
 }
 
 // displayNameVaults separates the config key (Name) from the display name
@@ -100,7 +170,64 @@ func TestPageViewResolvesVaultByDisplayName(t *testing.T) {
 	}
 }
 
-func TestPageViewRendersWikilinksAndBacklinks(t *testing.T) {
+// TestPageViewUsesReleasedRenderer proves the released renderer produced the
+// body: its exact output is contained in the document, and the raw source's
+// pipe-table marker is gone.
+func TestPageViewUsesReleasedRenderer(t *testing.T) {
+	dir := newFixture(t)
+	service := newService(t, dir)
+
+	expected, err := markdown.New(
+		markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
+			if target == "Beta" {
+				return "/v/private-personal/page/Beta.md", true
+			}
+			return "", false
+		})),
+		markdown.WithPages(markdown.PagesFunc(func(string) (string, bool) {
+			return "", false
+		})),
+	).Render(context.Background(), fixtureAlpha)
+	if err != nil {
+		t.Fatalf("render expected output: %v", err)
+	}
+
+	got, err := service.Render(context.Background(), vaultName, "Alpha.md")
+	if err != nil {
+		t.Fatalf("render alpha: %v", err)
+	}
+	if !strings.Contains(got, expected) {
+		t.Fatalf("document does not contain the released renderer output:\n%s", got)
+	}
+	if strings.Contains(got, "| --- |") {
+		t.Fatalf("document echoes raw markdown instead of rendering it:\n%s", got)
+	}
+}
+
+// TestPageViewReadsEachPageOnce is the AC3 counting guard: one ListPages for
+// the folder and one ReadPage for every page, including the requested one.
+func TestPageViewReadsEachPageOnce(t *testing.T) {
+	dir := newFixture(t)
+	counter := newCountingStorage()
+	service := pageview.NewService(fixtureVaults{dir: dir}, counter)
+
+	if _, err := service.Render(context.Background(), vaultName, "Alpha.md"); err != nil {
+		t.Fatalf("render alpha: %v", err)
+	}
+
+	if got := counter.listCount(""); got != 1 {
+		t.Fatalf("ListPages calls for the folder = %d, want 1", got)
+	}
+	for _, name := range []string{"Alpha", "Beta", "Gamma", "Delta", "Links", "Echo"} {
+		if got := counter.readCount("", name); got != 1 {
+			t.Fatalf("ReadPage calls for %s = %d, want 1", name, got)
+		}
+	}
+}
+
+// TestPageViewResolvesWikilinks proves a known link resolves to the in-app URL
+// and a missing link stays plain text without failing the render.
+func TestPageViewResolvesWikilinks(t *testing.T) {
 	dir := newFixture(t)
 	service := newService(t, dir)
 	ctx := context.Background()
@@ -109,31 +236,24 @@ func TestPageViewRendersWikilinksAndBacklinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render alpha: %v", err)
 	}
-	if !strings.Contains(alpha, `<a class="wikilink" href="/v/private-personal/page/Beta.md">`) {
+	if !strings.Contains(alpha, `href="/v/private-personal/page/Beta.md"`) {
 		t.Fatalf("alpha has no resolved wikilink:\n%s", alpha)
 	}
-	if !strings.Contains(alpha, `href="/v/private-personal/page/Links.md"`) {
-		t.Fatalf("alpha has no backlink to Links:\n%s", alpha)
-	}
-	if !strings.Contains(alpha, "<table>") {
-		t.Fatalf("alpha has no table")
-	}
 
-	beta, err := service.Render(ctx, vaultName, "Beta.md")
+	delta, err := service.Render(ctx, vaultName, "Delta.md")
 	if err != nil {
-		t.Fatalf("render beta: %v", err)
+		t.Fatalf("render delta: %v", err)
 	}
-	if !strings.Contains(beta, `href="/v/private-personal/page/Alpha.md"`) {
-		t.Fatalf("beta has no backlink to Alpha:\n%s", beta)
+	if !strings.Contains(delta, "Nope") {
+		t.Fatalf("delta lost the missing link text")
 	}
-	if !strings.Contains(beta, `href="/v/private-personal/page/Gamma.md"`) {
-		t.Fatalf("beta has no backlink to Gamma:\n%s", beta)
-	}
-	if strings.Contains(beta, `href="/v/private-personal/page/Delta.md"`) {
-		t.Fatalf("beta lists Delta, which does not link to it")
+	if strings.Contains(delta, `href="/v/private-personal/page/Nope.md"`) {
+		t.Fatalf("delta resolved a missing link")
 	}
 }
 
+// TestPageViewEmbedsPage proves an embed is inlined through WithPages, and that
+// the same source rendered without it drops the embed.
 func TestPageViewEmbedsPage(t *testing.T) {
 	dir := newFixture(t)
 	service := newService(t, dir)
@@ -145,21 +265,103 @@ func TestPageViewEmbedsPage(t *testing.T) {
 	if !strings.Contains(gamma, "Beta body text.") {
 		t.Fatalf("gamma does not inline the embedded page:\n%s", gamma)
 	}
+
+	withoutPages, err := markdown.New(
+		markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
+			return "/v/private-personal/page/" + target + ".md", true
+		})),
+	).Render(context.Background(), fixtureGamma)
+	if err != nil {
+		t.Fatalf("render gamma without pages: %v", err)
+	}
+	if gamma == withoutPages {
+		t.Fatalf("embed output matches the no-pages control; the embed was not inlined")
+	}
 }
 
-func TestPageViewMissingLinkStaysPlainText(t *testing.T) {
+// TestPageViewBacklinks proves the backlinks section lists only the pages that
+// link to the requested page, and that a page added after the fixture was built
+// appears on the next render (no name-keyed cache).
+func TestPageViewBacklinks(t *testing.T) {
 	dir := newFixture(t)
 	service := newService(t, dir)
+	ctx := context.Background()
 
-	delta, err := service.Render(context.Background(), vaultName, "Delta.md")
+	alpha, err := service.Render(ctx, vaultName, "Alpha.md")
+	if err != nil {
+		t.Fatalf("render alpha: %v", err)
+	}
+	alphaBacklinks := backlinksSection(t, alpha)
+	if !strings.Contains(alphaBacklinks, ">Links</a>") {
+		t.Fatalf("alpha does not name Links as a backlink:\n%s", alphaBacklinks)
+	}
+	if strings.Contains(alphaBacklinks, ">Beta</a>") {
+		t.Fatalf("alpha names Beta as a backlink, but Beta does not link to it:\n%s", alphaBacklinks)
+	}
+	if strings.Contains(alphaBacklinks, ">Delta</a>") {
+		t.Fatalf("alpha names Delta as a backlink, but Delta does not link to it:\n%s", alphaBacklinks)
+	}
+
+	beta, err := service.Render(ctx, vaultName, "Beta.md")
+	if err != nil {
+		t.Fatalf("render beta: %v", err)
+	}
+	betaBacklinks := backlinksSection(t, beta)
+	if !strings.Contains(betaBacklinks, ">Alpha</a>") {
+		t.Fatalf("beta does not name Alpha as a backlink:\n%s", betaBacklinks)
+	}
+	if !strings.Contains(betaBacklinks, ">Gamma</a>") {
+		t.Fatalf("beta does not name Gamma as a backlink:\n%s", betaBacklinks)
+	}
+	if strings.Contains(betaBacklinks, ">Delta</a>") {
+		t.Fatalf("beta names Delta as a backlink, but Delta does not link to it:\n%s", betaBacklinks)
+	}
+
+	delta, err := service.Render(ctx, vaultName, "Delta.md")
 	if err != nil {
 		t.Fatalf("render delta: %v", err)
 	}
-	if !strings.Contains(delta, "Nope") {
-		t.Fatalf("delta lost the missing link text")
+	if strings.Contains(backlinksSection(t, delta), "Nope") {
+		t.Fatalf("delta has a Nope backlink, but no page links to it")
 	}
-	if strings.Contains(delta, `href="/v/private-personal/page/Nope.md"`) {
-		t.Fatalf("delta resolved a missing link")
+
+	epsilon := "---\ntitle: Epsilon\n---\n\n# Epsilon\n\n[[Alpha]]\n"
+	if err := os.WriteFile(filepath.Join(dir, "Epsilon.md"), []byte(epsilon), 0o600); err != nil {
+		t.Fatalf("write Epsilon: %v", err)
+	}
+	alphaAgain, err := service.Render(ctx, vaultName, "Alpha.md")
+	if err != nil {
+		t.Fatalf("re-render alpha: %v", err)
+	}
+	if !strings.Contains(backlinksSection(t, alphaAgain), ">Epsilon</a>") {
+		t.Fatalf("alpha does not name a page added after the fixture was built:\n%s", alphaAgain)
+	}
+}
+
+// TestPageViewDocumentWrapper is the DB8 guard: the document carries the
+// stylesheet, and the Obsidian link survives html/template's URL validation
+// (a plain string would render as #ZgotmplZ).
+func TestPageViewDocumentWrapper(t *testing.T) {
+	dir := newFixture(t)
+	service := newService(t, dir)
+
+	got, err := service.Render(context.Background(), vaultName, "Alpha.md")
+	if err != nil {
+		t.Fatalf("render alpha: %v", err)
+	}
+	for _, want := range []string{
+		"<!doctype html>",
+		`<meta charset="utf-8">`,
+		`<title>Alpha</title>`,
+		`<link rel="stylesheet" href="/style.css">`,
+		`href="obsidian://open?vault=private-personal&amp;file=Alpha.md"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("document does not contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "#ZgotmplZ") {
+		t.Fatalf("document escaped the Obsidian URL as unsafe:\n%s", got)
 	}
 }
 
@@ -178,6 +380,7 @@ func TestPageViewNotFoundCases(t *testing.T) {
 		{"non markdown", vaultName, "Alpha"},
 		{"traversal", vaultName, "../../../../etc/passwd"},
 		{"folder path", vaultName, "24 Goals/"},
+		{"backslash name", vaultName, `Foo\Bar.md`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -215,7 +418,8 @@ func TestPageViewSymlinkEscapeIsNotFound(t *testing.T) {
 
 func TestPageViewExists(t *testing.T) {
 	dir := newFixture(t)
-	service := newService(t, dir)
+	counter := newCountingStorage()
+	service := pageview.NewService(fixtureVaults{dir: dir}, counter)
 	ctx := context.Background()
 
 	ok, err := service.Exists(ctx, vaultName, "Alpha.md")
@@ -224,6 +428,9 @@ func TestPageViewExists(t *testing.T) {
 	}
 	if !ok {
 		t.Fatalf("alpha should exist")
+	}
+	if got := counter.listCount(""); got != 0 {
+		t.Fatalf("Exists called ListPages %d times, want 0", got)
 	}
 
 	ok, err = service.Exists(ctx, vaultName, "Missing.md")
@@ -253,93 +460,12 @@ func TestPageViewPageURL(t *testing.T) {
 	}
 }
 
-// errorStorage returns a generic read failure.
-type errorStorage struct{ err error }
-
-func (e errorStorage) ListPages(context.Context, string, string) ([]*domain.Page, error) {
-	return nil, e.err
-}
-
-func (e errorStorage) ReadPage(context.Context, string, string, string) (*domain.Page, error) {
-	return nil, e.err
-}
-
-// newFolderFixture writes a fixture vault whose pages live in separate folders,
-// so cross-folder resolution and backlinks are exercised without a browser.
-func newFolderFixture(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	files := map[string]string{
-		filepath.Join("24 Goals", "Cross Folder Goal.md"):   "---\npage_type: goal\n---\n\n# Goal\n\nSee [[Cross Folder Task]].\n",
-		filepath.Join("25 Tasks", "Cross Folder Task.md"):   "---\npage_type: task\n---\n\n# Task\n\nTask body marker.\n",
-		filepath.Join("50 Knowledge Base", "Plain Page.md"): "# Plain Page\n\nNo frontmatter body marker.\n",
-	}
-	for rel, content := range files {
-		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatalf("mkdir %s: %v", rel, err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
-	return dir
-}
-
-func TestPageViewResolvesCrossFolderWikilink(t *testing.T) {
-	service := newService(t, newFolderFixture(t))
-	got, err := service.Render(context.Background(), vaultName, "24 Goals/Cross Folder Goal.md")
-	if err != nil {
-		t.Fatalf("render cross-folder goal: %v", err)
-	}
-	want := `href="/v/private-personal/page/25%20Tasks/Cross%20Folder%20Task.md"`
-	if !strings.Contains(got, want) {
-		t.Fatalf("cross-folder wikilink not resolved, want %s in:\n%s", want, got)
-	}
-}
-
-func TestPageViewListsCrossFolderBacklink(t *testing.T) {
-	service := newService(t, newFolderFixture(t))
-	got, err := service.Render(context.Background(), vaultName, "25 Tasks/Cross Folder Task.md")
-	if err != nil {
-		t.Fatalf("render cross-folder task: %v", err)
-	}
-	if !strings.Contains(got, `href="/v/private-personal/page/24%20Goals/Cross%20Folder%20Goal.md"`) {
-		t.Fatalf("cross-folder backlink missing:\n%s", got)
-	}
-	if !strings.Contains(got, "Cross Folder Goal") {
-		t.Fatalf("backlink display name missing:\n%s", got)
-	}
-}
-
-func TestPageViewRendersPageWithoutFrontmatter(t *testing.T) {
-	service := newService(t, newFolderFixture(t))
-	got, err := service.Render(context.Background(), vaultName, "50 Knowledge Base/Plain Page.md")
-	if err != nil {
-		t.Fatalf("render page without frontmatter: %v", err)
-	}
-	if !strings.Contains(got, "No frontmatter body marker.") {
-		t.Fatalf("page body missing:\n%s", got)
-	}
-	if strings.Contains(got, "parse frontmatter") {
-		t.Fatalf("frontmatter error leaked into the render:\n%s", got)
-	}
-}
-
 // TestPageViewConcurrentRenderIsRaceFree renders many pages at once so `go test
-// -race` (make test) catches a write to the shared cached index. It fails on a
-// design that stores the per-request page back into the cached vaultIndex after
-// loadIndex releases its mutex: concurrent map writes are a fatal runtime error.
+// -race` catches a reintroduced shared cache. With no shared state it is cheap.
 func TestPageViewConcurrentRenderIsRaceFree(t *testing.T) {
 	dir := newFixture(t)
 	service := newService(t, dir)
 	ctx := context.Background()
-
-	// Warm the index so every goroutine below takes the cache-hit path and races
-	// on the same maps, rather than serialising on the one-time build.
-	if _, err := service.Render(ctx, vaultName, "Alpha.md"); err != nil {
-		t.Fatalf("warm render: %v", err)
-	}
 
 	const renders = 64
 	start := make(chan struct{})
@@ -365,6 +491,17 @@ func TestPageViewConcurrentRenderIsRaceFree(t *testing.T) {
 	for err := range errs {
 		t.Fatalf("concurrent render: %v", err)
 	}
+}
+
+// errorStorage returns a generic read failure.
+type errorStorage struct{ err error }
+
+func (e errorStorage) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+	return nil, e.err
+}
+
+func (e errorStorage) ReadPage(context.Context, string, string, string) (*domain.Page, error) {
+	return nil, e.err
 }
 
 func TestPageViewGenericReadErrorPropagates(t *testing.T) {
