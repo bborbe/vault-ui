@@ -95,6 +95,13 @@ func (s *Source) SetOnChange(onChange func()) {
 	s.mu.Unlock()
 }
 
+// Client returns the source's vault-api client. The page view reads its page
+// and backlink data through it, so the factory can wire the page service from
+// the same client the board polls with.
+func (s *Source) Client() Client {
+	return s.client
+}
+
 // BaseURL is the client's origin, for the startup log line. It is empty for a
 // source built from data with no client (the test seam).
 func (s *Source) BaseURL() string {

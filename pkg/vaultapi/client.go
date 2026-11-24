@@ -12,7 +12,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/bborbe/errors"
@@ -39,13 +41,50 @@ func ConfigFromEnv() Config {
 	return Config{BaseURL: base}
 }
 
-// Client reads vault-api's list endpoints.
+// Client reads vault-api's list and page endpoints.
 type Client interface {
 	// BaseURL is the origin this client reads from, for the startup log line.
 	BaseURL() string
 	ListTasks(ctx context.Context) ([]Task, error)
 	ListGoals(ctx context.Context) ([]Goal, error)
 	ListTopics(ctx context.Context) ([]Topic, error)
+	// Page reads one page's body together with the link and embed maps the
+	// renderer needs. vaultName is the vault-cli name; empty selects the
+	// service's primary vault.
+	Page(ctx context.Context, vaultName string, pagePath string) (*Page, error)
+	// Backlinks reads the pages that link to pagePath.
+	Backlinks(ctx context.Context, vaultName string, pagePath string) ([]Backlink, error)
+}
+
+// Page is one vault-api page read: its body plus the resolver inputs the
+// renderer needs. Links maps a wikilink target to the target's vault-relative
+// path; Embeds maps an embedded page name to its body.
+type Page struct {
+	Vault   string            `json:"vault"`
+	Path    string            `json:"path"`
+	Name    string            `json:"name"`
+	Content string            `json:"content"`
+	Links   map[string]string `json:"links"`
+	Embeds  map[string]string `json:"embeds"`
+}
+
+// Backlink is one page that links to the requested page.
+type Backlink struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+// NotFoundError reports that vault-api answered 404: the page or vault does not
+// exist. It is returned as a value so callers can classify it with
+// stderrors.As and map it to their own not-found response.
+type NotFoundError struct{ Message string }
+
+// Error implements error.
+func (e NotFoundError) Error() string { return e.Message }
+
+// backlinkList is the GET /api/v1/pages/{path}/backlinks envelope.
+type backlinkList struct {
+	Backlinks []Backlink `json:"backlinks"`
 }
 
 // Task is one vault-api task item. It carries the full field set the board
@@ -194,6 +233,61 @@ func (c *client) ListTopics(ctx context.Context) ([]Topic, error) {
 	return body.Items, nil
 }
 
+// Page reads GET /api/v1/pages/{path}?vault={name}. The path is escaped per
+// segment with the slashes preserved, matching pageview.PageURL's shape. A 404
+// becomes a NotFoundError; every other failure is a plain error.
+func (c *client) Page(ctx context.Context, vaultName string, pagePath string) (*Page, error) {
+	var body Page
+	if err := c.get(ctx, pageURL(pagePath, vaultName), &body); err != nil {
+		return nil, err
+	}
+	return &body, nil
+}
+
+// Backlinks reads GET /api/v1/pages/{path}/backlinks?vault={name}.
+func (c *client) Backlinks(
+	ctx context.Context,
+	vaultName string,
+	pagePath string,
+) ([]Backlink, error) {
+	var body backlinkList
+	if err := c.get(ctx, backlinksURL(pagePath, vaultName), &body); err != nil {
+		return nil, err
+	}
+	return body.Backlinks, nil
+}
+
+// pageURL builds the page endpoint path with each segment escaped and the
+// vault query parameter appended only when one is configured.
+func pageURL(pagePath, vaultName string) string {
+	return "/api/v1/pages/" + escapeSegments(pagePath) + vaultQuery(vaultName)
+}
+
+// backlinksURL builds the backlinks endpoint path.
+func backlinksURL(pagePath, vaultName string) string {
+	return "/api/v1/pages/" + escapeSegments(pagePath) + "/backlinks" + vaultQuery(vaultName)
+}
+
+// escapeSegments escapes a vault-relative path segment by segment so the
+// slashes that separate folders survive.
+func escapeSegments(pagePath string) string {
+	segments := strings.Split(pagePath, "/")
+	escaped := make([]string, len(segments))
+	for i, segment := range segments {
+		escaped[i] = url.PathEscape(segment)
+	}
+	return strings.Join(escaped, "/")
+}
+
+// vaultQuery renders ?vault=name, or nothing when the name is empty (the
+// service then uses its primary vault).
+func vaultQuery(vaultName string) string {
+	if vaultName == "" {
+		return ""
+	}
+	return "?vault=" + url.QueryEscape(vaultName)
+}
+
 // get performs one GET and decodes the JSON body into out.
 func (c *client) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
@@ -205,6 +299,9 @@ func (c *client) get(ctx context.Context, path string, out any) error {
 		return errors.Wrapf(ctx, err, "get %s", path)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return NotFoundError{Message: "get " + path + ": not found"}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return errors.Errorf(ctx, "get %s: status %d", path, resp.StatusCode)
 	}

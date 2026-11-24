@@ -7,17 +7,19 @@ package pageview_test
 import (
 	"context"
 	stderrors "errors"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
-	"sync"
-	"testing"
 
-	"github.com/bborbe/vault-cli/pkg/domain"
-	"github.com/bborbe/vault-cli/pkg/storage"
+	markdown "github.com/bborbe/vault-markdown"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/pageview"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
 const vaultName = "private-personal"
@@ -48,32 +50,6 @@ func (v fixtureVaults) Vaults(context.Context) ([]board.Vault, error) {
 	}}, nil
 }
 
-// newFixture writes the shared fixture vault and returns its directory.
-func newFixture(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	files := map[string]string{
-		"Alpha.md": fixtureAlpha,
-		"Beta.md":  "---\ntitle: Beta\n---\n\n# Beta\n\nBeta body text.\n",
-		"Gamma.md": "---\ntitle: Gamma\n---\n\n# Gamma\n\n![[Beta]]\n",
-		"Delta.md": "---\ntitle: Delta\n---\n\n# Delta\n\n[[Nope]]\n",
-		"Links.md": "---\ntitle: Links\n---\n\n# Links\n\n[[Alpha]]\n",
-		"Echo.md":  "---\ntitle: Echo\n---\n\n# Echo\n\n<script>alert(1)</script>\n",
-	}
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
-			t.Fatalf("write fixture %s: %v", name, err)
-		}
-	}
-	return dir
-}
-
-// newService builds the real service over the production page-index seam.
-func newService(t *testing.T, dir string) pageview.Service {
-	t.Helper()
-	return pageview.NewService(fixtureVaults{dir: dir}, storage.NewPageStorage(nil))
-}
-
 // displayNameVaults separates the config key (Name) from the display name
 // (VaultName), which is what a real vault config produces and what the board's
 // Obsidian deep links carry.
@@ -87,188 +63,153 @@ func (v displayNameVaults) Vaults(context.Context) ([]board.Vault, error) {
 	}}, nil
 }
 
-// TestPageViewResolvesVaultByDisplayName guards the card and obsidian:// links:
-// both carry the display name, so the resolver must accept it as well as the
-// config key, in any case.
-func TestPageViewResolvesVaultByDisplayName(t *testing.T) {
-	dir := newFixture(t)
-	service := pageview.NewService(displayNameVaults{dir: dir}, storage.NewPageStorage(nil))
-	for _, name := range []string{"fixture", "Fixture", "FIXTURE"} {
-		if _, err := service.Render(context.Background(), name, "Alpha.md"); err != nil {
-			t.Fatalf("render with vault name %q: %v", name, err)
+// testHelper is the slice of testing.TB GinkgoT implements.
+type testHelper interface {
+	Helper()
+	TempDir() string
+	Fatalf(format string, args ...any)
+}
+
+// fixtureSource is a PageSource over a fixture vault on disk. It stands in for
+// the vault service: a Page read answers the body plus the link and embed maps
+// the renderer needs, and a Backlinks read answers the inbound set computed over
+// the whole fixture vault.
+type fixtureSource struct {
+	bodies map[string]string
+	byName map[string]string
+}
+
+// newFixtureSource walks dir once and records every markdown page by relative
+// path and by bare page name.
+func newFixtureSource(tb testHelper, dir string) *fixtureSource {
+	tb.Helper()
+	source := &fixtureSource{
+		bodies: map[string]string{},
+		byName: map[string]string{},
+	}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(dir, p)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		raw, readErr := os.ReadFile(p)
+		if readErr != nil {
+			return readErr
+		}
+		source.bodies[rel] = string(raw)
+		source.byName[strings.TrimSuffix(d.Name(), ".md")] = rel
+		return nil
+	})
+	if err != nil {
+		tb.Fatalf("index fixture vault: %v", err)
+	}
+	return source
+}
+
+func (f *fixtureSource) Page(_ context.Context, _ string, pagePath string) (*vaultapi.Page, error) {
+	body, ok := f.bodies[pagePath]
+	if !ok {
+		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
+	}
+	links := make(map[string]string, len(f.byName))
+	embeds := make(map[string]string, len(f.byName))
+	for name, rel := range f.byName {
+		links[name] = rel
+		embeds[name] = f.bodies[rel]
+	}
+	return &vaultapi.Page{
+		Vault:   vaultName,
+		Path:    pagePath,
+		Name:    strings.TrimSuffix(path.Base(pagePath), ".md"),
+		Content: body,
+		Links:   links,
+		Embeds:  embeds,
+	}, nil
+}
+
+func (f *fixtureSource) Backlinks(
+	_ context.Context,
+	_ string,
+	pagePath string,
+) ([]vaultapi.Backlink, error) {
+	if _, ok := f.bodies[pagePath]; !ok {
+		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
+	}
+	name := strings.TrimSuffix(path.Base(pagePath), ".md")
+	rels := markdown.Backlinks(f.bodies, name)
+	out := make([]vaultapi.Backlink, 0, len(rels))
+	for _, rel := range rels {
+		out = append(out, vaultapi.Backlink{
+			Path: rel,
+			Name: strings.TrimSuffix(path.Base(rel), ".md"),
+		})
+	}
+	return out, nil
+}
+
+// newFixture writes the shared fixture vault and returns its directory.
+func newFixture(tb testHelper) string {
+	tb.Helper()
+	dir := tb.TempDir()
+	files := map[string]string{
+		"Alpha.md": fixtureAlpha,
+		"Beta.md":  "---\ntitle: Beta\n---\n\n# Beta\n\nBeta body text.\n",
+		"Gamma.md": "---\ntitle: Gamma\n---\n\n# Gamma\n\n![[Beta]]\n",
+		"Delta.md": "---\ntitle: Delta\n---\n\n# Delta\n\n[[Nope]]\n",
+		"Links.md": "---\ntitle: Links\n---\n\n# Links\n\n[[Alpha]]\n",
+		"Echo.md":  "---\ntitle: Echo\n---\n\n# Echo\n\n<script>alert(1)</script>\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			tb.Fatalf("write fixture %s: %v", name, err)
 		}
 	}
+	return dir
 }
 
-func TestPageViewRendersWikilinksAndBacklinks(t *testing.T) {
-	dir := newFixture(t)
-	service := newService(t, dir)
-	ctx := context.Background()
-
-	alpha, err := service.Render(ctx, vaultName, "Alpha.md")
-	if err != nil {
-		t.Fatalf("render alpha: %v", err)
-	}
-	if !strings.Contains(alpha, `<a class="wikilink" href="/v/private-personal/page/Beta.md">`) {
-		t.Fatalf("alpha has no resolved wikilink:\n%s", alpha)
-	}
-	if !strings.Contains(alpha, `href="/v/private-personal/page/Links.md"`) {
-		t.Fatalf("alpha has no backlink to Links:\n%s", alpha)
-	}
-	if !strings.Contains(alpha, "<table>") {
-		t.Fatalf("alpha has no table")
-	}
-
-	beta, err := service.Render(ctx, vaultName, "Beta.md")
-	if err != nil {
-		t.Fatalf("render beta: %v", err)
-	}
-	if !strings.Contains(beta, `href="/v/private-personal/page/Alpha.md"`) {
-		t.Fatalf("beta has no backlink to Alpha:\n%s", beta)
-	}
-	if !strings.Contains(beta, `href="/v/private-personal/page/Gamma.md"`) {
-		t.Fatalf("beta has no backlink to Gamma:\n%s", beta)
-	}
-	if strings.Contains(beta, `href="/v/private-personal/page/Delta.md"`) {
-		t.Fatalf("beta lists Delta, which does not link to it")
-	}
+// newService builds the real service over a fixture PageSource.
+func newService(tb testHelper, dir string) pageview.Service {
+	tb.Helper()
+	return pageview.NewService(fixtureVaults{dir: dir}, newFixtureSource(tb, dir))
 }
 
-func TestPageViewEmbedsPage(t *testing.T) {
-	dir := newFixture(t)
-	service := newService(t, dir)
+// errorSource fails every page read with a generic (non-not-found) error.
+type errorSource struct{ err error }
 
-	gamma, err := service.Render(context.Background(), vaultName, "Gamma.md")
-	if err != nil {
-		t.Fatalf("render gamma: %v", err)
-	}
-	if !strings.Contains(gamma, "Beta body text.") {
-		t.Fatalf("gamma does not inline the embedded page:\n%s", gamma)
-	}
-}
-
-func TestPageViewMissingLinkStaysPlainText(t *testing.T) {
-	dir := newFixture(t)
-	service := newService(t, dir)
-
-	delta, err := service.Render(context.Background(), vaultName, "Delta.md")
-	if err != nil {
-		t.Fatalf("render delta: %v", err)
-	}
-	if !strings.Contains(delta, "Nope") {
-		t.Fatalf("delta lost the missing link text")
-	}
-	if strings.Contains(delta, `href="/v/private-personal/page/Nope.md"`) {
-		t.Fatalf("delta resolved a missing link")
-	}
-}
-
-func TestPageViewNotFoundCases(t *testing.T) {
-	dir := newFixture(t)
-	service := newService(t, dir)
-	ctx := context.Background()
-
-	cases := []struct {
-		name  string
-		vault string
-		path  string
-	}{
-		{"unknown vault", "nonexistent", "Alpha.md"},
-		{"empty path", vaultName, ""},
-		{"non markdown", vaultName, "Alpha"},
-		{"traversal", vaultName, "../../../../etc/passwd"},
-		{"folder path", vaultName, "24 Goals/"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := service.Render(ctx, tc.vault, tc.path)
-			if err == nil {
-				t.Fatalf("expected an error")
-			}
-			var notFound pageview.NotFoundError
-			if !stderrors.As(err, &notFound) {
-				t.Fatalf("error = %v, want NotFoundError", err)
-			}
-		})
-	}
-}
-
-func TestPageViewSymlinkEscapeIsNotFound(t *testing.T) {
-	dir := newFixture(t)
-	outside := filepath.Join(t.TempDir(), "secret.md")
-	if err := os.WriteFile(outside, []byte("---\ntitle: Secret\n---\n\n# Secret\n"), 0o600); err != nil {
-		t.Fatalf("write outside file: %v", err)
-	}
-	if err := os.Symlink(outside, filepath.Join(dir, "Escape.md")); err != nil {
-		t.Fatalf("create symlink: %v", err)
-	}
-	service := newService(t, dir)
-	_, err := service.Render(context.Background(), vaultName, "Escape.md")
-	if err == nil {
-		t.Fatalf("expected a NotFoundError for a symlink escaping the vault")
-	}
-	var notFound pageview.NotFoundError
-	if !stderrors.As(err, &notFound) {
-		t.Fatalf("error = %v, want NotFoundError", err)
-	}
-}
-
-func TestPageViewExists(t *testing.T) {
-	dir := newFixture(t)
-	service := newService(t, dir)
-	ctx := context.Background()
-
-	ok, err := service.Exists(ctx, vaultName, "Alpha.md")
-	if err != nil {
-		t.Fatalf("exists alpha: %v", err)
-	}
-	if !ok {
-		t.Fatalf("alpha should exist")
-	}
-
-	ok, err = service.Exists(ctx, vaultName, "Missing.md")
-	if ok {
-		t.Fatalf("missing page reported as existing")
-	}
-	var notFound pageview.NotFoundError
-	if !stderrors.As(err, &notFound) {
-		t.Fatalf("error = %v, want NotFoundError", err)
-	}
-}
-
-func TestPageViewPageURL(t *testing.T) {
-	cases := map[string]struct{ path, want string }{
-		"simple": {"Beta.md", "/v/private-personal/page/Beta.md"},
-		"nested": {
-			"24 Goals/Some Goal.md",
-			"/v/private-personal/page/24%20Goals/Some%20Goal.md",
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			if got := pageview.PageURL(vaultName, tc.path); got != tc.want {
-				t.Fatalf("PageURL = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// errorStorage returns a generic read failure.
-type errorStorage struct{ err error }
-
-func (e errorStorage) ListPages(context.Context, string, string) ([]*domain.Page, error) {
+func (e errorSource) Page(context.Context, string, string) (*vaultapi.Page, error) {
 	return nil, e.err
 }
 
-func (e errorStorage) ReadPage(context.Context, string, string, string) (*domain.Page, error) {
+func (e errorSource) Backlinks(context.Context, string, string) ([]vaultapi.Backlink, error) {
 	return nil, e.err
+}
+
+// backlinkErrorSource serves a page but fails the backlink read.
+type backlinkErrorSource struct {
+	page *vaultapi.Page
+	err  error
+}
+
+func (b backlinkErrorSource) Page(context.Context, string, string) (*vaultapi.Page, error) {
+	return b.page, nil
+}
+
+func (b backlinkErrorSource) Backlinks(context.Context, string, string) ([]vaultapi.Backlink, error) {
+	return nil, b.err
 }
 
 // newFolderFixture writes a fixture vault whose pages live in separate folders,
 // so cross-folder resolution and backlinks are exercised without a browser.
-func newFolderFixture(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
+func newFolderFixture(tb testHelper) string {
+	tb.Helper()
+	dir := tb.TempDir()
 	files := map[string]string{
 		filepath.Join("24 Goals", "Cross Folder Goal.md"):   "---\npage_type: goal\n---\n\n# Goal\n\nSee [[Cross Folder Task]].\n",
 		filepath.Join("25 Tasks", "Cross Folder Task.md"):   "---\npage_type: task\n---\n\n# Task\n\nTask body marker.\n",
@@ -277,106 +218,162 @@ func newFolderFixture(t *testing.T) string {
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatalf("mkdir %s: %v", rel, err)
+			tb.Fatalf("mkdir %s: %v", rel, err)
 		}
 		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
+			tb.Fatalf("write %s: %v", rel, err)
 		}
 	}
 	return dir
 }
 
-func TestPageViewResolvesCrossFolderWikilink(t *testing.T) {
-	service := newService(t, newFolderFixture(t))
-	got, err := service.Render(context.Background(), vaultName, "24 Goals/Cross Folder Goal.md")
-	if err != nil {
-		t.Fatalf("render cross-folder goal: %v", err)
-	}
-	want := `href="/v/private-personal/page/25%20Tasks/Cross%20Folder%20Task.md"`
-	if !strings.Contains(got, want) {
-		t.Fatalf("cross-folder wikilink not resolved, want %s in:\n%s", want, got)
-	}
-}
+var _ = Describe("Page view", func() {
+	// The card and obsidian:// links both carry the display name, so the
+	// resolver must accept it as well as the config key, in any case.
+	DescribeTable("resolves the vault by display name or config key",
+		func(name string) {
+			dir := newFixture(GinkgoT())
+			service := pageview.NewService(displayNameVaults{dir: dir}, newFixtureSource(GinkgoT(), dir))
+			_, err := service.Render(context.Background(), name, "Alpha.md")
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("config key", "fixture"),
+		Entry("display name", "Fixture"),
+		Entry("uppercase display name", "FIXTURE"),
+	)
 
-func TestPageViewListsCrossFolderBacklink(t *testing.T) {
-	service := newService(t, newFolderFixture(t))
-	got, err := service.Render(context.Background(), vaultName, "25 Tasks/Cross Folder Task.md")
-	if err != nil {
-		t.Fatalf("render cross-folder task: %v", err)
-	}
-	if !strings.Contains(got, `href="/v/private-personal/page/24%20Goals/Cross%20Folder%20Goal.md"`) {
-		t.Fatalf("cross-folder backlink missing:\n%s", got)
-	}
-	if !strings.Contains(got, "Cross Folder Goal") {
-		t.Fatalf("backlink display name missing:\n%s", got)
-	}
-}
+	It("renders wikilinks and backlinks", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		ctx := context.Background()
 
-func TestPageViewRendersPageWithoutFrontmatter(t *testing.T) {
-	service := newService(t, newFolderFixture(t))
-	got, err := service.Render(context.Background(), vaultName, "50 Knowledge Base/Plain Page.md")
-	if err != nil {
-		t.Fatalf("render page without frontmatter: %v", err)
-	}
-	if !strings.Contains(got, "No frontmatter body marker.") {
-		t.Fatalf("page body missing:\n%s", got)
-	}
-	if strings.Contains(got, "parse frontmatter") {
-		t.Fatalf("frontmatter error leaked into the render:\n%s", got)
-	}
-}
+		alpha, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(alpha).To(ContainSubstring(`<a class="wikilink" href="/v/private-personal/page/Beta.md">`))
+		Expect(alpha).To(ContainSubstring(`href="/v/private-personal/page/Links.md"`))
+		Expect(alpha).To(ContainSubstring("<table>"))
 
-// TestPageViewConcurrentRenderIsRaceFree renders many pages at once so `go test
-// -race` (make test) catches a write to the shared cached index. It fails on a
-// design that stores the per-request page back into the cached vaultIndex after
-// loadIndex releases its mutex: concurrent map writes are a fatal runtime error.
-func TestPageViewConcurrentRenderIsRaceFree(t *testing.T) {
-	dir := newFixture(t)
-	service := newService(t, dir)
-	ctx := context.Background()
-
-	// Warm the index so every goroutine below takes the cache-hit path and races
-	// on the same maps, rather than serialising on the one-time build.
-	if _, err := service.Render(ctx, vaultName, "Alpha.md"); err != nil {
-		t.Fatalf("warm render: %v", err)
-	}
-
-	const renders = 64
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	errs := make(chan error, renders)
-	for i := 0; i < renders; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			pagePath := "Alpha.md"
-			if i%2 == 1 {
-				pagePath = "Beta.md"
-			}
-			if _, err := service.Render(ctx, vaultName, pagePath); err != nil {
-				errs <- err
-			}
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatalf("concurrent render: %v", err)
-	}
-}
-
-func TestPageViewGenericReadErrorPropagates(t *testing.T) {
-	service := pageview.NewService(fixtureVaults{dir: t.TempDir()}, errorStorage{
-		err: stderrors.New("permission denied"),
+		beta, err := service.Render(ctx, vaultName, "Beta.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(beta).To(ContainSubstring(`href="/v/private-personal/page/Alpha.md"`))
+		Expect(beta).To(ContainSubstring(`href="/v/private-personal/page/Gamma.md"`))
+		Expect(beta).NotTo(ContainSubstring(`href="/v/private-personal/page/Delta.md"`))
 	})
-	_, err := service.Render(context.Background(), vaultName, "Alpha.md")
-	if err == nil {
-		t.Fatalf("expected an error")
-	}
-	var notFound pageview.NotFoundError
-	if stderrors.As(err, &notFound) {
-		t.Fatalf("generic read error classified as NotFoundError: %v", err)
-	}
-}
+
+	It("inlines an embedded page", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		gamma, err := service.Render(context.Background(), vaultName, "Gamma.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gamma).To(ContainSubstring("Beta body text."))
+	})
+
+	It("leaves a missing link as plain text", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		delta, err := service.Render(context.Background(), vaultName, "Delta.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(delta).To(ContainSubstring("Nope"))
+		Expect(delta).NotTo(ContainSubstring(`href="/v/private-personal/page/Nope.md"`))
+	})
+
+	// The traversal case stays here even though the symlink guard moved to the
+	// vault service: path validation still happens before any read.
+	DescribeTable("returns a NotFoundError",
+		func(vault, pagePath string) {
+			service := newService(GinkgoT(), newFixture(GinkgoT()))
+			_, err := service.Render(context.Background(), vault, pagePath)
+			Expect(err).To(HaveOccurred())
+			var notFound pageview.NotFoundError
+			Expect(stderrors.As(err, &notFound)).To(BeTrue())
+		},
+		Entry("unknown vault", "nonexistent", "Alpha.md"),
+		Entry("empty path", vaultName, ""),
+		Entry("non markdown", vaultName, "Alpha"),
+		Entry("traversal", vaultName, "../../../../etc/passwd"),
+		Entry("folder path", vaultName, "24 Goals/"),
+	)
+
+	It("reports whether a page exists", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		ctx := context.Background()
+
+		ok, err := service.Exists(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+
+		// A missing page is (false, nil): the vault service's not-found is
+		// mapped rather than propagated.
+		ok, err = service.Exists(ctx, vaultName, "Missing.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeFalse())
+	})
+
+	It("maps a vault-service not-found to a page NotFoundError", func() {
+		source := errorSource{err: vaultapi.NotFoundError{Message: "not found"}}
+		service := pageview.NewService(fixtureVaults{dir: GinkgoT().TempDir()}, source)
+		_, err := service.Render(context.Background(), vaultName, "Alpha.md")
+		Expect(err).To(HaveOccurred())
+		var notFound pageview.NotFoundError
+		Expect(stderrors.As(err, &notFound)).To(BeTrue())
+		Expect(err.Error()).To(ContainSubstring("Page not found: "))
+	})
+
+	It("wraps a generic read error and does not classify it as not-found", func() {
+		source := errorSource{err: stderrors.New("permission denied")}
+		service := pageview.NewService(fixtureVaults{dir: GinkgoT().TempDir()}, source)
+		_, err := service.Render(context.Background(), vaultName, "Alpha.md")
+		Expect(err).To(HaveOccurred())
+		var notFound pageview.NotFoundError
+		Expect(stderrors.As(err, &notFound)).To(BeFalse())
+	})
+
+	It("fails the render when the backlink read fails", func() {
+		source := backlinkErrorSource{
+			page: &vaultapi.Page{
+				Name:    "Alpha",
+				Content: "# Alpha\n",
+				Links:   map[string]string{},
+				Embeds:  map[string]string{},
+			},
+			err: stderrors.New("vault-api unreachable"),
+		}
+		service := pageview.NewService(fixtureVaults{dir: GinkgoT().TempDir()}, source)
+		_, err := service.Render(context.Background(), vaultName, "Alpha.md")
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("renders a page without frontmatter", func() {
+		service := newService(GinkgoT(), newFolderFixture(GinkgoT()))
+		got, err := service.Render(context.Background(), vaultName, "50 Knowledge Base/Plain Page.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring("No frontmatter body marker."))
+		Expect(got).NotTo(ContainSubstring("parse frontmatter"))
+	})
+
+	It("resolves a wikilink to a page in another folder", func() {
+		service := newService(GinkgoT(), newFolderFixture(GinkgoT()))
+		got, err := service.Render(context.Background(), vaultName, "24 Goals/Cross Folder Goal.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring(`href="/v/private-personal/page/25%20Tasks/Cross%20Folder%20Task.md"`))
+	})
+
+	It("lists a backlink from another folder", func() {
+		service := newService(GinkgoT(), newFolderFixture(GinkgoT()))
+		got, err := service.Render(context.Background(), vaultName, "25 Tasks/Cross Folder Task.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring(`href="/v/private-personal/page/24%20Goals/Cross%20Folder%20Goal.md"`))
+		Expect(got).To(ContainSubstring("Cross Folder Goal"))
+	})
+})
+
+var _ = Describe("PageURL", func() {
+	DescribeTable("escapes each segment and preserves the slashes",
+		func(pagePath, want string) {
+			Expect(pageview.PageURL(vaultName, pagePath)).To(Equal(want))
+		},
+		Entry("simple", "Beta.md", "/v/private-personal/page/Beta.md"),
+		Entry("nested", "24 Goals/Some Goal.md", "/v/private-personal/page/24%20Goals/Some%20Goal.md"),
+	)
+})
+
+// The symlink-escape test is deleted with the file read: the vault service now
+// owns the guard and refuses to serve a page reached through a symlink. The
+// traversal case above still covers the page view's own path validation.

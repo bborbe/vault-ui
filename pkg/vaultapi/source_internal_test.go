@@ -33,6 +33,14 @@ func (f *fakeClient) ListGoals(_ context.Context) ([]Goal, error) { return nil, 
 
 func (f *fakeClient) ListTopics(_ context.Context) ([]Topic, error) { return nil, nil }
 
+func (f *fakeClient) Page(_ context.Context, _ string, _ string) (*Page, error) {
+	return nil, nil
+}
+
+func (f *fakeClient) Backlinks(_ context.Context, _ string, _ string) ([]Backlink, error) {
+	return nil, nil
+}
+
 // failingClient fails every list read.
 type failingClient struct{}
 
@@ -47,6 +55,14 @@ func (f *failingClient) ListGoals(_ context.Context) ([]Goal, error) {
 }
 
 func (f *failingClient) ListTopics(_ context.Context) ([]Topic, error) {
+	return nil, stderrors.New("vault-api unreachable")
+}
+
+func (f *failingClient) Page(_ context.Context, _ string, _ string) (*Page, error) {
+	return nil, stderrors.New("vault-api unreachable")
+}
+
+func (f *failingClient) Backlinks(_ context.Context, _ string, _ string) ([]Backlink, error) {
 	return nil, stderrors.New("vault-api unreachable")
 }
 
