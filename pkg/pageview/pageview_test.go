@@ -364,6 +364,51 @@ var _ = Describe("Page view", func() {
 	})
 })
 
+var _ = Describe("Frontmatter metadata table", func() {
+	// A quoted-scalar frontmatter wikilink must render as a real anchor through
+	// this package's resolver, not as literal [[...]] text.
+	It("renders a quoted frontmatter wikilink as an anchor", func() {
+		source := &recordingSource{
+			page: &vaultapi.Page{
+				Name:    "Goal",
+				Content: "---\ngoals: '[[Target Goal]]'\n---\n\nBody.",
+				Links:   map[string]string{"Target Goal": "24 Goals/Target Goal.md"},
+				Embeds:  map[string]string{},
+			},
+		}
+		service := pageview.NewService(fixtureVaults{}, source)
+
+		got, err := service.Render(context.Background(), vaultName, "Goal.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring(
+			`<td>goals</td><td><a class="wikilink" href="/v/private-personal/page/24%20Goals/Target%20Goal.md">Target Goal</a></td>`,
+		))
+	})
+
+	// An unquoted multi-link frontmatter value previously failed the whole page
+	// with a YAML parse error. It must now render both links.
+	It("renders an unquoted multi-link frontmatter value", func() {
+		source := &recordingSource{
+			page: &vaultapi.Page{
+				Name:    "Tags",
+				Content: "---\ntags: [[Go]] [[Trading]]\n---\n\nBody.",
+				Links:   map[string]string{"Go": "Go.md", "Trading": "Trading.md"},
+				Embeds:  map[string]string{},
+			},
+		}
+		service := pageview.NewService(fixtureVaults{}, source)
+
+		got, err := service.Render(context.Background(), vaultName, "Tags.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring(
+			`<a class="wikilink" href="/v/private-personal/page/Go.md">Go</a>`,
+		))
+		Expect(got).To(ContainSubstring(
+			`<a class="wikilink" href="/v/private-personal/page/Trading.md">Trading</a>`,
+		))
+	})
+})
+
 var _ = Describe("PageURL", func() {
 	DescribeTable("escapes each segment and preserves the slashes",
 		func(pagePath, want string) {
