@@ -3337,13 +3337,12 @@ function setView(newView) {
     if (newView !== 'tasks' && newView !== 'goals' && newView !== 'topics') return;
     currentView = newView;
     // Every view groups by phase — tasks, goals and topics alike. No user override.
-    // Reset the status filter to the kind-aware default when toggling views so
-    // that switching from Tasks (in_progress + completed) to Goals/Topics doesn't
-    // leave BACKLOG / NEXT columns empty (and vice versa). The operator can still
-    // narrow afterwards via the status dropdown.
-    currentStatuses = newView === 'tasks'
-        ? ['in_progress', 'hold', 'completed']
-        : ['backlog', 'next', 'in_progress', 'hold', 'completed'];
+    // The status filter is deliberately NOT reset here: it belongs to the operator,
+    // not to the view. Rewriting it on a tab switch silently re-admitted rows the
+    // operator had filtered out — switching Tasks -> Goals injected `next`, so
+    // `next` goals appeared in a view that had explicitly excluded them — and
+    // updateURL() then persisted the rewrite into the address bar. A view-specific
+    // default applies only on first load, when the URL carries no `status` at all.
     updateStatusLabel();
     renderStatusDropdown();
     updateViewToggle();
