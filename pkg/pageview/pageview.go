@@ -77,15 +77,15 @@ func (s *service) Render(
 ) (string, error) {
 	vault, err := s.resolveVault(ctx, vaultName)
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(ctx, err, "resolve vault")
 	}
 	_, name, err := splitPagePath(pagePath)
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(ctx, err, "validate page path")
 	}
 	page, err := s.readPage(ctx, vault, pagePath)
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(ctx, err, "load page")
 	}
 	rendered, err := newRenderer(vault.Name, pagePath, name, page).Render(ctx, page.Content)
 	if err != nil {
@@ -111,17 +111,17 @@ func (s *service) Exists(
 ) (bool, error) {
 	vault, err := s.resolveVault(ctx, vaultName)
 	if err != nil {
-		return false, err
+		return false, errors.Wrap(ctx, err, "resolve vault")
 	}
 	if _, _, err := splitPagePath(pagePath); err != nil {
-		return false, err
+		return false, errors.Wrap(ctx, err, "validate page path")
 	}
 	if _, err := s.readPage(ctx, vault, pagePath); err != nil {
 		var notFound NotFoundError
 		if stderrors.As(err, &notFound) {
 			return false, nil
 		}
-		return false, err
+		return false, errors.Wrap(ctx, err, "load page")
 	}
 	return true, nil
 }

@@ -40,6 +40,13 @@ title: Alpha
 See [[Beta]].
 `
 
+const fixtureBeta = "---\ntitle: Beta\n---\n\n# Beta\n\nBeta body text.\n"
+const fixtureGamma = "---\ntitle: Gamma\n---\n\n# Gamma\n\n![[Beta]]\n"
+const fixtureDelta = "---\ntitle: Delta\n---\n\n# Delta\n\n[[Nope]]\n"
+const fixtureLinks = "---\ntitle: Links\n---\n\n# Links\n\n[[Alpha]]\n"
+const fixtureEcho = "---\ntitle: Echo\n---\n\n# Echo\n\n<script>alert(1)</script>\n"
+const fixtureNested = "---\ntitle: Some Goal\n---\n\n# Some Goal\n\nNested body text.\n"
+
 type fixtureVaults struct{ dir string }
 
 func (v fixtureVaults) Vaults(context.Context) ([]board.Vault, error) {
@@ -73,28 +80,32 @@ type testHelper interface {
 // fixtureSource is a PageSource over a fixture vault on disk. It stands in for
 // the vault service: a Page read answers the body plus the link and embed maps
 // the renderer needs, and a Backlinks read answers the inbound set computed over
-// the whole fixture vault.
+// the whole fixture vault. It reads the directory on every call rather than
+// snapshotting at construction, so a page written after the fixture is built is
+// visible to the next render.
 type fixtureSource struct {
-	bodies map[string]string
-	byName map[string]string
+	tb  testHelper
+	dir string
 }
 
-// newFixtureSource walks dir once and records every markdown page by relative
-// path and by bare page name.
 func newFixtureSource(tb testHelper, dir string) *fixtureSource {
-	tb.Helper()
-	source := &fixtureSource{
-		bodies: map[string]string{},
-		byName: map[string]string{},
-	}
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+	return &fixtureSource{tb: tb, dir: dir}
+}
+
+// snapshot walks dir and records every markdown page by relative path and by
+// bare page name. It is called per read, not once at construction.
+func (f *fixtureSource) snapshot() (map[string]string, map[string]string) {
+	f.tb.Helper()
+	bodies := map[string]string{}
+	byName := map[string]string{}
+	err := filepath.WalkDir(f.dir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		rel, relErr := filepath.Rel(dir, p)
+		rel, relErr := filepath.Rel(f.dir, p)
 		if relErr != nil {
 			return relErr
 		}
@@ -103,26 +114,27 @@ func newFixtureSource(tb testHelper, dir string) *fixtureSource {
 		if readErr != nil {
 			return readErr
 		}
-		source.bodies[rel] = string(raw)
-		source.byName[strings.TrimSuffix(d.Name(), ".md")] = rel
+		bodies[rel] = string(raw)
+		byName[strings.TrimSuffix(d.Name(), ".md")] = rel
 		return nil
 	})
 	if err != nil {
-		tb.Fatalf("index fixture vault: %v", err)
+		f.tb.Fatalf("index fixture vault: %v", err)
 	}
-	return source
+	return bodies, byName
 }
 
 func (f *fixtureSource) Page(_ context.Context, _ string, pagePath string) (*vaultapi.Page, error) {
-	body, ok := f.bodies[pagePath]
+	bodies, byName := f.snapshot()
+	body, ok := bodies[pagePath]
 	if !ok {
 		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
 	}
-	links := make(map[string]string, len(f.byName))
-	embeds := make(map[string]string, len(f.byName))
-	for name, rel := range f.byName {
+	links := make(map[string]string, len(byName))
+	embeds := make(map[string]string, len(byName))
+	for name, rel := range byName {
 		links[name] = rel
-		embeds[name] = f.bodies[rel]
+		embeds[name] = bodies[rel]
 	}
 	return &vaultapi.Page{
 		Vault:   vaultName,
@@ -139,11 +151,12 @@ func (f *fixtureSource) Backlinks(
 	_ string,
 	pagePath string,
 ) ([]vaultapi.Backlink, error) {
-	if _, ok := f.bodies[pagePath]; !ok {
+	bodies, _ := f.snapshot()
+	if _, ok := bodies[pagePath]; !ok {
 		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
 	}
 	name := strings.TrimSuffix(path.Base(pagePath), ".md")
-	rels := markdown.Backlinks(f.bodies, name)
+	rels := markdown.Backlinks(bodies, name)
 	out := make([]vaultapi.Backlink, 0, len(rels))
 	for _, rel := range rels {
 		out = append(out, vaultapi.Backlink{
@@ -160,14 +173,19 @@ func newFixture(tb testHelper) string {
 	dir := tb.TempDir()
 	files := map[string]string{
 		"Alpha.md": fixtureAlpha,
-		"Beta.md":  "---\ntitle: Beta\n---\n\n# Beta\n\nBeta body text.\n",
-		"Gamma.md": "---\ntitle: Gamma\n---\n\n# Gamma\n\n![[Beta]]\n",
-		"Delta.md": "---\ntitle: Delta\n---\n\n# Delta\n\n[[Nope]]\n",
-		"Links.md": "---\ntitle: Links\n---\n\n# Links\n\n[[Alpha]]\n",
-		"Echo.md":  "---\ntitle: Echo\n---\n\n# Echo\n\n<script>alert(1)</script>\n",
+		"Beta.md":  fixtureBeta,
+		"Gamma.md": fixtureGamma,
+		"Delta.md": fixtureDelta,
+		"Links.md": fixtureLinks,
+		"Echo.md":  fixtureEcho,
+		filepath.Join("24 Goals", "Some Goal.md"): fixtureNested,
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			tb.Fatalf("mkdir fixture %s: %v", name, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 			tb.Fatalf("write fixture %s: %v", name, err)
 		}
 	}
@@ -178,6 +196,56 @@ func newFixture(tb testHelper) string {
 func newService(tb testHelper, dir string) pageview.Service {
 	tb.Helper()
 	return pageview.NewService(fixtureVaults{dir: dir}, newFixtureSource(tb, dir))
+}
+
+// expectedRenderer builds the same renderer the service builds, over the
+// fixture vault's current contents, so a spec can compare its output verbatim.
+func expectedRenderer(
+	tb testHelper,
+	dir string,
+	pagePath string,
+	pageName string,
+	pageContent string,
+) markdown.Renderer {
+	tb.Helper()
+	bodies, byName := newFixtureSource(tb, dir).snapshot()
+	links := make(map[string]string, len(byName))
+	embeds := make(map[string]string, len(byName))
+	for name, rel := range byName {
+		links[name] = rel
+		embeds[name] = bodies[rel]
+	}
+	return markdown.New(
+		markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
+			if target == pageName {
+				return pageview.PageURL(vaultName, pagePath), true
+			}
+			rel, ok := links[target]
+			if !ok {
+				return "", false
+			}
+			return pageview.PageURL(vaultName, rel), true
+		})),
+		markdown.WithPages(markdown.PagesFunc(func(name string) (string, bool) {
+			if name == pageName {
+				return pageContent, true
+			}
+			body, ok := embeds[name]
+			return body, ok
+		})),
+	)
+}
+
+// backlinksSection returns the document from the backlinks section onward, so a
+// spec asserts on the backlink labels rather than on body text that happens to
+// repeat a page name.
+func backlinksSection(document string) string {
+	const marker = `<section class="backlinks">`
+	index := strings.Index(document, marker)
+	if index < 0 {
+		return ""
+	}
+	return document[index:]
 }
 
 // errorSource fails every page read with a generic (non-not-found) error.
@@ -259,11 +327,85 @@ var _ = Describe("Page view", func() {
 		Expect(beta).NotTo(ContainSubstring(`href="/v/private-personal/page/Delta.md"`))
 	})
 
-	It("inlines an embedded page", func() {
-		service := newService(GinkgoT(), newFixture(GinkgoT()))
-		gamma, err := service.Render(context.Background(), vaultName, "Gamma.md")
+	It("renders the released renderer's output verbatim", func() {
+		dir := newFixture(GinkgoT())
+		service := newService(GinkgoT(), dir)
+		ctx := context.Background()
+
+		alpha, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+
+		want, err := expectedRenderer(GinkgoT(), dir, "Alpha.md", "Alpha", fixtureAlpha).
+			Render(ctx, fixtureAlpha)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(alpha).To(ContainSubstring(want))
+
+		// AC1/AC2: the GFM table and the callout title come from the released
+		// renderer, not from a reimplementation here.
+		Expect(alpha).To(ContainSubstring("<table>"))
+		Expect(alpha).To(ContainSubstring("Important Title"))
+
+		beta, err := service.Render(ctx, vaultName, "Beta.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(beta).NotTo(Equal(alpha))
+	})
+
+	It("inlines an embedded page and drops it without WithPages", func() {
+		dir := newFixture(GinkgoT())
+		service := newService(GinkgoT(), dir)
+		ctx := context.Background()
+
+		gamma, err := service.Render(ctx, vaultName, "Gamma.md")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gamma).To(ContainSubstring("Beta body text."))
+
+		// Negative control: the same source through a renderer with no Pages
+		// source drops the embed, so the two bodies differ.
+		plain, err := markdown.New().Render(ctx, fixtureGamma)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(plain).NotTo(ContainSubstring("Beta body text."))
+		Expect(plain).NotTo(Equal(gamma))
+	})
+
+	It("lists backlinks and picks up a page created after the fixture", func() {
+		dir := newFixture(GinkgoT())
+		service := newService(GinkgoT(), dir)
+		ctx := context.Background()
+
+		alpha, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		alphaLinks := backlinksSection(alpha)
+		Expect(alphaLinks).To(ContainSubstring(">Links</a>"))
+		Expect(alphaLinks).NotTo(ContainSubstring(">Beta</a>"))
+		Expect(alphaLinks).NotTo(ContainSubstring(">Delta</a>"))
+		Expect(alphaLinks).NotTo(ContainSubstring(">Gamma</a>"))
+
+		beta, err := service.Render(ctx, vaultName, "Beta.md")
+		Expect(err).NotTo(HaveOccurred())
+		betaLinks := backlinksSection(beta)
+		Expect(betaLinks).To(ContainSubstring(">Alpha</a>"))
+		Expect(betaLinks).To(ContainSubstring(">Gamma</a>"))
+		Expect(betaLinks).NotTo(ContainSubstring(">Delta</a>"))
+
+		delta, err := service.Render(ctx, vaultName, "Delta.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(backlinksSection(delta)).NotTo(ContainSubstring(">Nope</a>"))
+
+		// A page written after the fixture is built must be visible to the next
+		// render: the fixture source reads the directory per call.
+		epsilon := "---\ntitle: Epsilon\n---\n\n# Epsilon\n\n[[Alpha]]\n"
+		Expect(os.WriteFile(filepath.Join(dir, "Epsilon.md"), []byte(epsilon), 0o600)).To(Succeed())
+		alphaAgain, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(backlinksSection(alphaAgain)).To(ContainSubstring(">Epsilon</a>"))
+	})
+
+	It("never emits a raw script tag as executable HTML", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		echo, err := service.Render(context.Background(), vaultName, "Echo.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo).To(ContainSubstring("Echo"))
+		Expect(echo).NotTo(ContainSubstring("<script>alert(1)</script>"))
 	})
 
 	It("leaves a missing link as plain text", func() {
