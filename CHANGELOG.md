@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: Render a vault page in-process over the page-storage seam — `pkg/pageview` now reads the requested page and each page of its folder once through `PageStorage.ReadPage`, resolves wikilinks and inlines embeds with the pinned `github.com/bborbe/vault-markdown` v0.1.0 renderer, appends a backlinks section, and drops the 30s vault-wide cache and the raw-file fallback
+
 ## v0.115.0
 
 - feat: The Topics view applies the same `defer_date` visibility rule as the Tasks and Goals views — one shared `deferVisibility` helper now serves all three list paths (the goals copy of the inline switch is gone), `TopicQuery` carries `upcoming_hours` and `TopicResponse` carries `upcoming`, and the frontend sends the window and reads the flag instead of hardcoding it
