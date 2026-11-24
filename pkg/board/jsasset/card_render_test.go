@@ -107,6 +107,38 @@ func TestTopicMapperReadsPayloadFields(t *testing.T) {
 	}
 }
 
+// TestGoalMapperReadsJiraField pins the goal card's badge source: the payload's
+// own `jira` value wins, the title's key is only the fallback, and the heading
+// still comes from the title. A goal whose filename does not lead with the key
+// badges through the first clause alone, so dropping it fails here.
+func TestGoalMapperReadsJiraField(t *testing.T) {
+	source := loadAsset(t)
+	body, err := jsasset.FunctionBody(source, "mapGoalCard")
+	if err != nil {
+		t.Fatalf("FunctionBody(mapGoalCard): %v", err)
+	}
+	collapsed := jsasset.CollapseWhitespace(body)
+	if !strings.Contains(collapsed, "goal.jira") {
+		t.Fatal("mapGoalCard does not read the payload's own jira value")
+	}
+	if !strings.Contains(collapsed, ": goal.title;") {
+		t.Fatal("mapGoalCard has no title fallback for the badge source")
+	}
+	if !strings.Contains(collapsed, "extractJiraIssue(goal.title)") {
+		t.Fatal("mapGoalCard no longer derives the heading from the title")
+	}
+	view, err := jsasset.ReturnedObject(source, "mapGoalCard")
+	if err != nil {
+		t.Fatalf("ReturnedObject(mapGoalCard): %v", err)
+	}
+	if !strings.Contains(view["jiraKey"], "issueKey") {
+		t.Fatalf("mapGoalCard jiraKey = %q, want issueKey", view["jiraKey"])
+	}
+	if !strings.Contains(view["jiraUrl"], "issueUrl") {
+		t.Fatalf("mapGoalCard jiraUrl = %q, want issueUrl", view["jiraUrl"])
+	}
+}
+
 // TestAssignControlOnlyWhenAssignFunctionSet pins that the assign control is
 // emitted in the empty-assignee branch, behind a non-null assign function. A
 // kind with a null assign function (the topic) renders no assign control, while

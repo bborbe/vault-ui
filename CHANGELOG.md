@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- fix: Goal cards badge their linked Jira issue from the page's `jira:` frontmatter instead of guessing it from the title — `/api/goals` now carries `jira` (null when the page declares none), and `mapGoalCard` prefers it with the title's key as fallback, mirroring the task card. 29 goal pages in `seibert-brogrammers` carry a `jira:` their card could never show, and one of them (`Self-Serve Drop Zone for Plan Data` → BRO-22521) had no key in its title at all. The heading still comes from the title. Topic cards get the same field carried end to end; no topic page declares one today, so their badge stays invisible until a topic tracks an issue.
 - fix: The goals and topics boards grey out a finished card exactly as the tasks board does — a terminal card (`completed` / `aborted`, the same status that renders the `✓ Done` chip) now carries the shared `recently-completed` class and its dimmed treatment, chosen per kind by a new `CARD_CONFIG.greyWhenTerminal` field (`true` for goal and topic, `false` for task, which keeps its server-side 8-hour `recently_completed` window); the rule the old goal board was supposed to use (`[data-status="completed"] .goal-card`) never matched anything and is deleted
 
 ## v0.115.1

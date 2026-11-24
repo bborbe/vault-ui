@@ -1880,9 +1880,16 @@ function mapTaskCard(task) {
 }
 
 function mapGoalCard(goal) {
-    // A goal response carries no `jira` field, so the badge and the heading both
-    // come from the title.
-    const { title, issueKey, issueUrl } = extractJiraIssue(goal.title);
+    // The heading always comes from the title, for the same reason as a task's:
+    // the helper strips the matched key out of the title it returns, so feeding
+    // it the bare `jira` value would blank the heading. The badge prefers the
+    // goal's own `jira:` frontmatter and falls back to the title's key — a goal
+    // whose filename does not lead with the key has nothing else to badge from.
+    const { title } = extractJiraIssue(goal.title);
+    const jiraSource = typeof goal.jira === 'string' && goal.jira.trim() !== ''
+        ? goal.jira
+        : goal.title;
+    const { issueKey, issueUrl } = extractJiraIssue(jiraSource);
     return {
         id: goal.id,
         vault: goal.vault,
