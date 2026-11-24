@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [040-page-view]
+summary: Verified the page route and /open compatibility redirect already satisfy the full contract (handlers, registration before the catch-all, read-only 405s, 404 classification, HTML body) with passing route tests, and added the CHANGELOG Unreleased entry.
+execution_id: 29e53a11-e329-5358-88b9-aa8fdfdf5d84-exec-191-spec-040-page-routes-and-open-redirect
+dark-factory-version: dev
 created: "2026-11-24T15:01:22Z"
 queued: "2026-11-24T15:29:27Z"
+started: "2026-11-24T15:33:29Z"
+completed: "2026-11-24T15:41:42Z"
 branch: test/spec-040-order-run2
 ---
 

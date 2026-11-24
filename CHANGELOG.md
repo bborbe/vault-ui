@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- test: The page route and `/open` compatibility redirect are pinned by route specs against the real `CreateHTTPRouter` — a page is served as `text/html; charset=utf-8`, `/open` answers Obsidian's `vault`/`file` parameters with a `302` (including an encoded nested path), non-GET verbs are `405` on both routes, an unknown vault or missing page is a `404`, and the page routes are registered ahead of the static catch-all
 - test: The page view's specs now pin the rendered body to the released `vault-markdown` renderer's output verbatim — table and callout title included — and prove the view keeps no cache: a page created after the fixture is built is listed as a backlink on the very next render of the page it links. The fixture source now reads the vault on every call, mirroring the vault service, so a stale answer would fail the spec.
 
 ## v0.115.3
