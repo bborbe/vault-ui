@@ -1,6 +1,8 @@
 ---
-status: approved
+status: prompted
 approved: "2026-11-23T08:35:00Z"
+generating: "2026-11-24T08:58:00Z"
+prompted: "2026-11-24T09:16:53Z"
 branch: feat/page-view
 ---
 
