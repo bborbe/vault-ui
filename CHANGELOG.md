@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- test: Pin the page view's renderer contract over the vault-api seam — the page body must contain the released `github.com/bborbe/vault-markdown` renderer's output verbatim, an embed is dropped without `WithPages`, a backlink written after startup appears on the next render, and the document carries the doctype, `<meta charset="utf-8">`, `/style.css` and the `obsidian://` hand-off
+
 ## v0.115.5
 
 - fix: Switching between the tasks, goals and topics views no longer rewrites the operator's status filter — `setView()` reset `currentStatuses` to a per-view default on every tab switch and `updateURL()` persisted that reset, so a filter excluding `next` gained it back on the way to Goals and re-admitted rows the operator had filtered out; the filter now belongs to the operator, and a view-specific default applies only on first load with no `status` parameter

@@ -7,6 +7,7 @@ package pageview_test
 import (
 	"context"
 	stderrors "errors"
+	"html"
 	"io/fs"
 	"os"
 	"path"
@@ -73,28 +74,39 @@ type testHelper interface {
 // fixtureSource is a PageSource over a fixture vault on disk. It stands in for
 // the vault service: a Page read answers the body plus the link and embed maps
 // the renderer needs, and a Backlinks read answers the inbound set computed over
-// the whole fixture vault.
+// the whole fixture vault. Every call re-reads the directory, so a page written
+// after the source was built is visible on the next render — the service keeps
+// no cache, and neither should its double.
 type fixtureSource struct {
+	dir    string
 	bodies map[string]string
 	byName map[string]string
 }
 
-// newFixtureSource walks dir once and records every markdown page by relative
-// path and by bare page name.
+// newFixtureSource indexes dir once and fails the spec if the fixture is
+// unreadable.
 func newFixtureSource(tb testHelper, dir string) *fixtureSource {
 	tb.Helper()
-	source := &fixtureSource{
-		bodies: map[string]string{},
-		byName: map[string]string{},
+	source := &fixtureSource{dir: dir}
+	if err := source.refresh(); err != nil {
+		tb.Fatalf("index fixture vault: %v", err)
 	}
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+	return source
+}
+
+// refresh records every markdown page under the fixture vault by relative path
+// and by bare page name.
+func (f *fixtureSource) refresh() error {
+	f.bodies = map[string]string{}
+	f.byName = map[string]string{}
+	return filepath.WalkDir(f.dir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		rel, relErr := filepath.Rel(dir, p)
+		rel, relErr := filepath.Rel(f.dir, p)
 		if relErr != nil {
 			return relErr
 		}
@@ -103,17 +115,16 @@ func newFixtureSource(tb testHelper, dir string) *fixtureSource {
 		if readErr != nil {
 			return readErr
 		}
-		source.bodies[rel] = string(raw)
-		source.byName[strings.TrimSuffix(d.Name(), ".md")] = rel
+		f.bodies[rel] = string(raw)
+		f.byName[strings.TrimSuffix(d.Name(), ".md")] = rel
 		return nil
 	})
-	if err != nil {
-		tb.Fatalf("index fixture vault: %v", err)
-	}
-	return source
 }
 
 func (f *fixtureSource) Page(_ context.Context, _ string, pagePath string) (*vaultapi.Page, error) {
+	if err := f.refresh(); err != nil {
+		return nil, err
+	}
 	body, ok := f.bodies[pagePath]
 	if !ok {
 		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
@@ -139,6 +150,9 @@ func (f *fixtureSource) Backlinks(
 	_ string,
 	pagePath string,
 ) ([]vaultapi.Backlink, error) {
+	if err := f.refresh(); err != nil {
+		return nil, err
+	}
 	if _, ok := f.bodies[pagePath]; !ok {
 		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
 	}
@@ -178,6 +192,39 @@ func newFixture(tb testHelper) string {
 func newService(tb testHelper, dir string) pageview.Service {
 	tb.Helper()
 	return pageview.NewService(fixtureVaults{dir: dir}, newFixtureSource(tb, dir))
+}
+
+// directRenderer builds the released renderer independently of the service,
+// with the same link and embed mapping, so a spec can prove the service's body
+// is exactly what the pinned library produces for the same source.
+func directRenderer(
+	source *fixtureSource,
+	pageName string,
+	pagePath string,
+	pageContent string,
+) markdown.Renderer {
+	return markdown.New(
+		markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
+			if target == pageName {
+				return pageview.PageURL(vaultName, pagePath), true
+			}
+			rel, ok := source.byName[target]
+			if !ok {
+				return "", false
+			}
+			return pageview.PageURL(vaultName, rel), true
+		})),
+		markdown.WithPages(markdown.PagesFunc(func(name string) (string, bool) {
+			if name == pageName {
+				return pageContent, true
+			}
+			rel, ok := source.byName[name]
+			if !ok {
+				return "", false
+			}
+			return source.bodies[rel], true
+		})),
+	)
 }
 
 // errorSource fails every page read with a generic (non-not-found) error.
@@ -259,11 +306,37 @@ var _ = Describe("Page view", func() {
 		Expect(beta).NotTo(ContainSubstring(`href="/v/private-personal/page/Delta.md"`))
 	})
 
-	It("inlines an embedded page", func() {
-		service := newService(GinkgoT(), newFixture(GinkgoT()))
-		gamma, err := service.Render(context.Background(), vaultName, "Gamma.md")
+	It("inlines an embedded page only when WithPages is supplied", func() {
+		dir := newFixture(GinkgoT())
+		source := newFixtureSource(GinkgoT(), dir)
+		service := pageview.NewService(fixtureVaults{dir: dir}, source)
+		ctx := context.Background()
+
+		gamma, err := service.Render(ctx, vaultName, "Gamma.md")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gamma).To(ContainSubstring("Beta body text."))
+
+		// Positive control: the same source through the same mapping with
+		// WithPages inlines the embed.
+		gammaSource := source.bodies["Gamma.md"]
+		withPages, err := directRenderer(source, "Gamma", "Gamma.md", gammaSource).Render(ctx, gammaSource)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(withPages).To(ContainSubstring("Beta body text."))
+
+		// Negative control: dropping WithPages drops the embed, so a passing
+		// AC4 cannot come from a renderer that ignores the option.
+		withoutPages, err := markdown.New(
+			markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
+				rel, ok := source.byName[target]
+				if !ok {
+					return "", false
+				}
+				return pageview.PageURL(vaultName, rel), true
+			})),
+		).Render(ctx, gammaSource)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(withoutPages).NotTo(ContainSubstring("Beta body text."))
+		Expect(withoutPages).NotTo(Equal(withPages))
 	})
 
 	It("leaves a missing link as plain text", func() {
@@ -272,6 +345,56 @@ var _ = Describe("Page view", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(delta).To(ContainSubstring("Nope"))
 		Expect(delta).NotTo(ContainSubstring(`href="/v/private-personal/page/Nope.md"`))
+		// Nope is not a page, so it is not a backlink either.
+		Expect(delta).NotTo(ContainSubstring(">Nope</a>"))
+	})
+
+	It("renders Alpha's body exactly as the released renderer does", func() {
+		dir := newFixture(GinkgoT())
+		source := newFixtureSource(GinkgoT(), dir)
+		service := pageview.NewService(fixtureVaults{dir: dir}, source)
+		ctx := context.Background()
+
+		alpha, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+
+		want, err := directRenderer(source, "Alpha", "Alpha.md", fixtureAlpha).Render(ctx, fixtureAlpha)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(alpha).To(ContainSubstring(want))
+		Expect(alpha).To(ContainSubstring("<table>"))
+		Expect(alpha).NotTo(ContainSubstring("| --- |"))
+	})
+
+	It("wraps the body in a document that loads the board stylesheet", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		doc, err := service.Render(context.Background(), vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(doc).To(ContainSubstring("<!doctype html>"))
+		Expect(doc).To(ContainSubstring(`<meta charset="utf-8">`))
+		Expect(doc).To(ContainSubstring(`href="/style.css"`))
+		Expect(doc).To(ContainSubstring(`class="page-view"`))
+		Expect(html.UnescapeString(doc)).To(ContainSubstring(
+			"obsidian://open?vault=private-personal&file=Alpha.md",
+		))
+	})
+
+	It("reflects a page written after the service was built", func() {
+		dir := newFixture(GinkgoT())
+		service := pageview.NewService(fixtureVaults{dir: dir}, newFixtureSource(GinkgoT(), dir))
+		ctx := context.Background()
+
+		before, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(before).NotTo(ContainSubstring(">Epsilon</a>"))
+
+		epsilon := "---\ntitle: Epsilon\n---\n\n# Epsilon\n\n[[Alpha]]\n"
+		Expect(os.WriteFile(filepath.Join(dir, "Epsilon.md"), []byte(epsilon), 0o600)).To(Succeed())
+
+		after, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(ContainSubstring(">Epsilon</a>"))
+		Expect(after).To(ContainSubstring(`href="/v/private-personal/page/Epsilon.md"`))
 	})
 
 	// The traversal case stays here even though the symlink guard moved to the
