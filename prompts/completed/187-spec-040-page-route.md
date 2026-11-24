@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [040-page-view]
+summary: Verified the page route and /open redirect implementation (current-HEAD vault-api variant), added the missing CHANGELOG Unreleased entry, and confirmed make precommit exits 0.
+execution_id: 394ed506-7abc-5ce4-9d51-55a4b71c40e1-exec-187-spec-040-page-route
+dark-factory-version: dev
 created: "2026-11-24T22:56:00Z"
 queued: "2026-11-24T22:11:06Z"
+started: "2026-11-24T22:19:27Z"
+completed: "2026-11-24T22:26:00Z"
 branch: test/spec-040-order-runC
 ---
 

@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- feat: A vault page can now be read inside vault-ui without launching Obsidian — the read-only `GET /v/{vault}/page/{path}` route renders the page (tables, callouts, embeds, resolved wikilinks and backlinks) as HTML, and `GET /open?vault=…&file=…` answers an existing `obsidian://` link with a `302` to that page so links that already exist keep working unchanged; both routes serve `GET` only and answer every other verb `405`, and an unknown vault or a missing page is a `404`, never a `500`
 - test: Pin the page view's renderer contract over the vault-api seam — the page body must contain the released `github.com/bborbe/vault-markdown` renderer's output verbatim, an embed is dropped without `WithPages`, a backlink written after startup appears on the next render, and the document carries the doctype, `<meta charset="utf-8">`, `/style.css` and the `obsidian://` hand-off
 
 ## v0.115.5
