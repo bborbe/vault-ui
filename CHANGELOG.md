@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.115.0
 
 - feat: The Topics view applies the same `defer_date` visibility rule as the Tasks and Goals views — one shared `deferVisibility` helper now serves all three list paths (the goals copy of the inline switch is gone), `TopicQuery` carries `upcoming_hours` and `TopicResponse` carries `upcoming`, and the frontend sends the window and reads the flag instead of hardcoding it
 - fix: The Goals view's defer rule fires again — `vaultapi.Goal` and `vaultapi.Topic` now carry `defer_date` and the `listop` mapper sets it, so `/api/goals` returns the value it had been dropping (0 of 414 goals carried one); `parseDeferDate` also accepts the vault-api's Go-time string form, which previously failed to parse and turned the endpoint into a 500 on unquoted YAML dates
