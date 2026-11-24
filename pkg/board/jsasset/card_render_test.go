@@ -422,3 +422,47 @@ func TestModeBadgeNamesModeAndEscapes(t *testing.T) {
 		}
 	}
 }
+
+// TestCardConfigGreysTerminalCardsOnGoalAndTopic pins the dimming contract. The
+// task greys through the server's `recently_completed` flag, which only covers
+// the last 8 hours, so its kind must not also grey on status — a second rule
+// there would grey rows the backend deliberately leaves out. The goal and topic
+// responses carry no such flag, so those kinds opt in on their own terminal
+// status. One shared class and one shared predicate, so the Done lane reads the
+// same on all three boards.
+func TestCardConfigGreysTerminalCardsOnGoalAndTopic(t *testing.T) {
+	source := loadAsset(t)
+
+	want := map[string]string{"task": "false", "goal": "true", "topic": "true"}
+	for kind, value := range want {
+		if got := cardEntry(t, source, kind)["greyWhenTerminal"]; got != value {
+			t.Fatalf("%s.greyWhenTerminal = %q, want %q", kind, got, value)
+		}
+	}
+
+	body, err := jsasset.FunctionBody(source, "createCard")
+	if err != nil {
+		t.Fatalf("FunctionBody(createCard): %v", err)
+	}
+	guard := jsasset.CollapseWhitespace(body)
+	for _, want := range []string{
+		"view.recentlyCompleted || (config.greyWhenTerminal && isTerminalStatus(view.status))",
+		"card.classList.add('recently-completed')",
+	} {
+		if !strings.Contains(guard, want) {
+			t.Fatalf("createCard is missing %q", want)
+		}
+	}
+
+	// The status predicate is the ✓ Done chip's own rule rather than a second
+	// copy of it: a card that shows the chip must be the card that greys out.
+	terminal, err := jsasset.FunctionBody(source, "isTerminalStatus")
+	if err != nil {
+		t.Fatalf("FunctionBody(isTerminalStatus): %v", err)
+	}
+	for _, status := range []string{"'completed'", "'aborted'"} {
+		if !strings.Contains(terminal, status) {
+			t.Fatalf("isTerminalStatus no longer covers %s — the grey rule and the ✓ Done chip would diverge", status)
+		}
+	}
+}
