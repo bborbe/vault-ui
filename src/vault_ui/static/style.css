@@ -1139,8 +1139,12 @@ a.obsidian-handoff:hover {
     filter: none;
 }
 
+/* A finished card, dimmed. Every kind carries the `task-card` base class, so
+   this one rule greys a completed task, goal and topic alike; the class is
+   added in createCard (task via the server's `recently_completed` flag, goal
+   and topic via `CARD_CONFIG.greyWhenTerminal`). */
 .task-card.recently-completed {
-    border-left: 4px solid #86efac; /* green-300 — recently completed */
+    border-left: 4px solid #86efac; /* green-300 — completed */
     opacity: 0.55;
 }
 
@@ -1318,12 +1322,6 @@ a.obsidian-handoff:hover {
 
 .goal-card.dragging {
     cursor: grabbing;
-}
-
-/* Completed goal cards: grey out — same visual treatment as recently-completed tasks. */
-[data-status="completed"] .goal-card {
-    opacity: 0.55;
-    border-left: 4px solid #86efac; /* green-300 — completed */
 }
 
 .goal-card .open-in-obsidian {

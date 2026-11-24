@@ -1743,6 +1743,11 @@ const CARD_CONFIG = {
         titleLinkExtraClass: '',
         assignCall: 'assignToMe',
         assigneeClickable: true,
+        // A task greys out through the server's `recently_completed` flag, which
+        // covers only the last 8 hours; a task response carries no terminal
+        // status the card can tier on for older rows, so this kind never greys
+        // on status.
+        greyWhenTerminal: false,
         holdTitle: 'On hold — blocked, not actively worked',
         slots: {
             noteLink: true,
@@ -1773,6 +1778,10 @@ const CARD_CONFIG = {
         titleLinkExtraClass: '',
         assignCall: 'assignGoalToMe',
         assigneeClickable: true,
+        // A goal response carries no `recently_completed`, so a finished goal is
+        // dimmed on its own status instead — the same treatment a recently
+        // completed task gets.
+        greyWhenTerminal: true,
         holdTitle: 'On hold — paused, not actively worked',
         slots: {
             noteLink: true,
@@ -1805,6 +1814,9 @@ const CARD_CONFIG = {
         // "+ Assign to me" link is emitted.
         assignCall: null,
         assigneeClickable: false,
+        // A topic response carries no `recently_completed` either, so a finished
+        // topic greys on its own status — same as a goal.
+        greyWhenTerminal: true,
         holdTitle: 'On hold — paused, not actively worked',
         slots: {
             noteLink: true,
@@ -1956,7 +1968,13 @@ function createCard(kind, item) {
     // tier 3 / null: no class, default appearance.
 
     if (view.upcoming) card.classList.add('upcoming');
-    if (view.recentlyCompleted) card.classList.add('recently-completed');
+    // The dimmed finished card. A task arrives here through the server's 8-hour
+    // `recently_completed` flag; a goal or topic has no such field, so its kind
+    // opts in on the terminal status instead — the same predicate that renders
+    // the ✓ Done chip. The class is shared, so every kind reads identically.
+    if (view.recentlyCompleted || (config.greyWhenTerminal && isTerminalStatus(view.status))) {
+        card.classList.add('recently-completed');
+    }
     if (view.hold) card.classList.add('on-hold');
     if (view.flag) card.classList.add('flagged');
 

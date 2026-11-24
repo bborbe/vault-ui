@@ -30,6 +30,7 @@ non-goal "no monolithic card builder" was reversed by the operator on
 | `titleLinkExtraClass` | Extra class on the title anchor (`''`, `topic-title-link`). |
 | `assignCall` | Function called by the "+ Assign to me" link. Only read when the assignee slot is enabled and the value is non-null; a kind with a null `assignCall` emits no assign control. |
 | `assigneeClickable` | Whether the assignee badge is a filter control (clickable, `active` state, `filterByAssignee` onclick) or plain text. |
+| `greyWhenTerminal` | Whether a card whose `status` is terminal (`completed` / `aborted`) gets the dimmed `recently-completed` class. `false` for task, which greys through the server's 8-hour `recently_completed` flag instead; `true` for goal and topic, whose responses carry no such flag. |
 | `holdTitle` | `title` attribute of the hold badge. |
 
 ## `slots.*`

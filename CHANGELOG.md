@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The goals and topics boards grey out a finished card exactly as the tasks board does — a terminal card (`completed` / `aborted`, the same status that renders the `✓ Done` chip) now carries the shared `recently-completed` class and its dimmed treatment, chosen per kind by a new `CARD_CONFIG.greyWhenTerminal` field (`true` for goal and topic, `false` for task, which keeps its server-side 8-hour `recently_completed` window); the rule the old goal board was supposed to use (`[data-status="completed"] .goal-card`) never matched anything and is deleted
+
 ## v0.115.1
 
 - perf: The page view reads the vault service instead of walking the vault — a render now costs two small reads (`GET /api/v1/pages/{path}` and `.../backlinks`) instead of parsing all 22k markdown files, taking the same page from 14–27 s with 3 of 20 requests failing to about a millisecond against the service endpoints; the temporary index, its 30 s refresh timer, the whole-vault directory scan and the per-request backlink scan are deleted, and the page view keeps no index, reads no file and holds no lock. The rendered backlink set is unchanged (ten real pages, 1149 entries). This supersedes spec 040's AC3 (exactly one `ReadPage` per page) and AC7 (the symlink-escape guard): both the file read and its guard now live in the vault service.
