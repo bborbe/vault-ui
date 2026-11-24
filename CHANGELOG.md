@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.115.0
+
+- feat: The Topics view applies the same `defer_date` visibility rule as the Tasks and Goals views — one shared `deferVisibility` helper now serves all three list paths (the goals copy of the inline switch is gone), `TopicQuery` carries `upcoming_hours` and `TopicResponse` carries `upcoming`, and the frontend sends the window and reads the flag instead of hardcoding it
+- fix: The Goals view's defer rule fires again — `vaultapi.Goal` and `vaultapi.Topic` now carry `defer_date` and the `listop` mapper sets it, so `/api/goals` returns the value it had been dropping (0 of 414 goals carried one); `parseDeferDate` also accepts the vault-api's Go-time string form, which previously failed to parse and turned the endpoint into a 500 on unquoted YAML dates
+
 ## v0.114.2
 
 - fix: The page view is styled — a `.page-view` block gives the rendered page prose typography, heading hierarchy, table and code treatment, and a wikilink colour that is visible on the dark board surface (the renderer was already emitting 21 resolved links and 8 headings on a real goal page, but the sheet carried no page-view rule at all, so links took the browser's default anchor colour on `#1a1a1a` and were invisible)
