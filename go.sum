@@ -40,8 +40,8 @@ github.com/bborbe/validation v1.5.10 h1:46GV49omXf70LW7Xr9PuuO4qc7mtO3fAiCIpCLHw
 github.com/bborbe/validation v1.5.10/go.mod h1:uVdyegllIrztCzFjma0nLJpbAJ7anyaZ5i/7YMexZjg=
 github.com/bborbe/vault-cli v0.197.0 h1:967F4klYWpIwpEHPSVuvK5DvkTqzYU8hdzeUUmVVVEQ=
 github.com/bborbe/vault-cli v0.197.0/go.mod h1:meWAg/EXKWMCmfM3mmc5JYzy7QAAhEThD2rlKY+sQJQ=
-github.com/bborbe/vault-markdown v0.1.0 h1:0kiM3JfluCq7eIYgWTJtqCqBj5qGabq3twk0i9YCMZs=
-github.com/bborbe/vault-markdown v0.1.0/go.mod h1:I/GSym4TgXZaLrORAOR4UysPw3bjsAnL7respWN3UEc=
+github.com/bborbe/vault-markdown v0.1.2 h1:MVDnEid3EmwBWTMkGkygSp5YqN+kyx4Z8lXSq0O9UGA=
+github.com/bborbe/vault-markdown v0.1.2/go.mod h1:I/GSym4TgXZaLrORAOR4UysPw3bjsAnL7respWN3UEc=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

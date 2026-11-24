@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The page view's frontmatter metadata table now renders a wikilink value as a link to its target page, including the unquoted `[[A]] [[B]]` form that previously failed the whole page render with a YAML parse error — `github.com/bborbe/vault-markdown` moves to v0.1.2, which resolves frontmatter wikilinks through the page view's own resolver and quotes an all-wikilink value before parsing
+
 ## v0.115.3
 
 - fix: The goals and topics boards grey out a finished card exactly as the tasks board does — a terminal card (`completed` / `aborted`, the same status that renders the `✓ Done` chip) now carries the shared `recently-completed` class and its dimmed treatment, chosen per kind by a new `CARD_CONFIG.greyWhenTerminal` field (`true` for goal and topic, `false` for task, which keeps its server-side 8-hour `recently_completed` window); the rule the old goal board was supposed to use (`[data-status="completed"] .goal-card`) never matched anything and is deleted
