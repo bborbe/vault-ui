@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.115.4
 
 - fix: The page view's frontmatter metadata table now renders a wikilink value as a link to its target page, including the unquoted `[[A]] [[B]]` form that previously failed the whole page render with a YAML parse error — `github.com/bborbe/vault-markdown` moves to v0.1.2, which resolves frontmatter wikilinks through the page view's own resolver and quotes an all-wikilink value before parsing
 
