@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: The page view's `Exists` reports an unknown vault and an invalid path as `(false, nil)` like a missing page, so `/open` turns all three into a `404` through one path, and an unknown vault is logged once with `glog.Warningf`
+- test: The page view specs read the fixture vault on demand (proving the service caches nothing), assert the released renderer's output verbatim, the document wrapper and its `obsidian://` hand-off, the embed negative control, the backlinks set, and zero reads for an invalid path
+
 ## v0.115.5
 
 - fix: Switching between the tasks, goals and topics views no longer rewrites the operator's status filter — `setView()` reset `currentStatuses` to a per-view default on every tab switch and `updateURL()` persisted that reset, so a filter excluding `next` gained it back on the way to Goals and re-admitted rows the operator had filtered out; the filter now belongs to the operator, and a view-specific default applies only on first load with no `status` parameter

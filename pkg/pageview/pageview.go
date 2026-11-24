@@ -19,6 +19,7 @@ import (
 
 	"github.com/bborbe/errors"
 	markdown "github.com/bborbe/vault-markdown"
+	"github.com/golang/glog"
 
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
@@ -103,7 +104,9 @@ func (s *service) Render(
 }
 
 // Exists resolves the vault and path, then asks the vault service for the page
-// once. A missing page is (false, nil); any other failure is returned.
+// once. Every NotFoundError — an unknown vault, an invalid path, a missing page
+// or a symlink escape — is (false, nil), which the route turns into a 404; any
+// other failure is propagated so the handler can answer 500.
 func (s *service) Exists(
 	ctx context.Context,
 	vaultName string,
@@ -111,19 +114,25 @@ func (s *service) Exists(
 ) (bool, error) {
 	vault, err := s.resolveVault(ctx, vaultName)
 	if err != nil {
-		return false, err
+		return existsResult(err)
 	}
 	if _, _, err := splitPagePath(pagePath); err != nil {
-		return false, err
+		return existsResult(err)
 	}
 	if _, err := s.readPage(ctx, vault, pagePath); err != nil {
-		var notFound NotFoundError
-		if stderrors.As(err, &notFound) {
-			return false, nil
-		}
-		return false, err
+		return existsResult(err)
 	}
 	return true, nil
+}
+
+// existsResult maps a failure to the Exists contract: a NotFoundError is
+// (false, nil), any other error is (false, err).
+func existsResult(err error) (bool, error) {
+	var notFound NotFoundError
+	if stderrors.As(err, &notFound) {
+		return false, nil
+	}
+	return false, err
 }
 
 // readPage asks the vault service for one page. A not-found is mapped to the
@@ -164,6 +173,7 @@ func (s *service) resolveVault(
 			return vault, nil
 		}
 	}
+	glog.Warningf("unknown vault: %s", vaultName)
 	return board.Vault{}, NotFoundError{Message: "Unknown vault: " + vaultName}
 }
 
