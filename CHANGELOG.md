@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.115.5
 
 - fix: Switching between the tasks, goals and topics views no longer rewrites the operator's status filter — `setView()` reset `currentStatuses` to a per-view default on every tab switch and `updateURL()` persisted that reset, so a filter excluding `next` gained it back on the way to Goals and re-admitted rows the operator had filtered out; the filter now belongs to the operator, and a view-specific default applies only on first load with no `status` parameter
 
