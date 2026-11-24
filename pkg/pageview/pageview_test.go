@@ -73,56 +73,57 @@ type testHelper interface {
 // fixtureSource is a PageSource over a fixture vault on disk. It stands in for
 // the vault service: a Page read answers the body plus the link and embed maps
 // the renderer needs, and a Backlinks read answers the inbound set computed over
-// the whole fixture vault.
-type fixtureSource struct {
-	bodies map[string]string
-	byName map[string]string
-}
+// the whole fixture vault. It reads the directory on every call, exactly as the
+// vault service does, so a page created after construction is visible on the
+// next render and a page-view cache would show up as a stale answer.
+type fixtureSource struct{ dir string }
 
-// newFixtureSource walks dir once and records every markdown page by relative
-// path and by bare page name.
+// newFixtureSource returns a PageSource reading the fixture vault in dir.
 func newFixtureSource(tb testHelper, dir string) *fixtureSource {
 	tb.Helper()
-	source := &fixtureSource{
-		bodies: map[string]string{},
-		byName: map[string]string{},
-	}
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+	return &fixtureSource{dir: dir}
+}
+
+// bodies reads every markdown page in the fixture vault, keyed by the
+// vault-relative slash path.
+func (f *fixtureSource) bodies() (map[string]string, error) {
+	bodies := map[string]string{}
+	err := filepath.WalkDir(f.dir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		rel, relErr := filepath.Rel(dir, p)
+		rel, relErr := filepath.Rel(f.dir, p)
 		if relErr != nil {
 			return relErr
 		}
-		rel = filepath.ToSlash(rel)
 		raw, readErr := os.ReadFile(p)
 		if readErr != nil {
 			return readErr
 		}
-		source.bodies[rel] = string(raw)
-		source.byName[strings.TrimSuffix(d.Name(), ".md")] = rel
+		bodies[filepath.ToSlash(rel)] = string(raw)
 		return nil
 	})
-	if err != nil {
-		tb.Fatalf("index fixture vault: %v", err)
-	}
-	return source
+	return bodies, err
 }
 
 func (f *fixtureSource) Page(_ context.Context, _ string, pagePath string) (*vaultapi.Page, error) {
-	body, ok := f.bodies[pagePath]
+	bodies, err := f.bodies()
+	if err != nil {
+		return nil, err
+	}
+	body, ok := bodies[pagePath]
 	if !ok {
 		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
 	}
-	links := make(map[string]string, len(f.byName))
-	embeds := make(map[string]string, len(f.byName))
-	for name, rel := range f.byName {
+	links := make(map[string]string, len(bodies))
+	embeds := make(map[string]string, len(bodies))
+	for rel, content := range bodies {
+		name := strings.TrimSuffix(path.Base(rel), ".md")
 		links[name] = rel
-		embeds[name] = f.bodies[rel]
+		embeds[name] = content
 	}
 	return &vaultapi.Page{
 		Vault:   vaultName,
@@ -139,11 +140,15 @@ func (f *fixtureSource) Backlinks(
 	_ string,
 	pagePath string,
 ) ([]vaultapi.Backlink, error) {
-	if _, ok := f.bodies[pagePath]; !ok {
+	bodies, err := f.bodies()
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := bodies[pagePath]; !ok {
 		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
 	}
 	name := strings.TrimSuffix(path.Base(pagePath), ".md")
-	rels := markdown.Backlinks(f.bodies, name)
+	rels := markdown.Backlinks(bodies, name)
 	out := make([]vaultapi.Backlink, 0, len(rels))
 	for _, rel := range rels {
 		out = append(out, vaultapi.Backlink{
@@ -242,6 +247,84 @@ var _ = Describe("Page view", func() {
 		Entry("uppercase display name", "FIXTURE"),
 	)
 
+	It("renders the body verbatim through the released renderer", func() {
+		dir := newFixture(GinkgoT())
+		service := newService(GinkgoT(), dir)
+		ctx := context.Background()
+
+		// Build the expected body with the same resolver and pages the service
+		// wires, so a change to the body conversion shows up here rather than
+		// only in the library's own suite.
+		page, err := newFixtureSource(GinkgoT(), dir).Page(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		expected, err := markdown.New(
+			markdown.WithResolver(markdown.ResolverFunc(func(target string) (string, bool) {
+				if target == "Alpha" {
+					return pageview.PageURL(vaultName, "Alpha.md"), true
+				}
+				rel, ok := page.Links[target]
+				if !ok {
+					return "", false
+				}
+				return pageview.PageURL(vaultName, rel), true
+			})),
+			markdown.WithPages(markdown.PagesFunc(func(name string) (string, bool) {
+				if name == "Alpha" {
+					return page.Content, true
+				}
+				body, ok := page.Embeds[name]
+				return body, ok
+			})),
+		).Render(ctx, page.Content)
+		Expect(err).NotTo(HaveOccurred())
+
+		got, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring(expected))
+		Expect(got).To(ContainSubstring("<table>"))
+		Expect(got).To(ContainSubstring(`<p class="callout-title">Important Title</p>`))
+	})
+
+	It("sees a page created after the fixture is built on the next render", func() {
+		dir := newFixture(GinkgoT())
+		service := newService(GinkgoT(), dir)
+		ctx := context.Background()
+
+		before, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(before).NotTo(ContainSubstring(`href="/v/private-personal/page/Epsilon.md"`))
+
+		// No cache: a page written after the service was built is a backlink on
+		// the very next render of the page it links.
+		Expect(os.WriteFile(
+			filepath.Join(dir, "Epsilon.md"),
+			[]byte("# Epsilon\n\n[[Alpha]]\n"),
+			0o600,
+		)).To(Succeed())
+
+		after, err := service.Render(ctx, vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(ContainSubstring(`href="/v/private-personal/page/Epsilon.md"`))
+		Expect(after).To(ContainSubstring("Epsilon"))
+	})
+
+	It("wraps the body in the document with the Obsidian hand-off", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		alpha, err := service.Render(context.Background(), vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(alpha).To(ContainSubstring("<!doctype html>"))
+		Expect(alpha).To(ContainSubstring(`<html lang="en">`))
+		Expect(alpha).To(ContainSubstring(`<meta charset="utf-8">`))
+		Expect(alpha).To(ContainSubstring("<title>Alpha</title>"))
+		Expect(alpha).To(ContainSubstring(`<link rel="stylesheet" href="/style.css">`))
+		Expect(alpha).To(ContainSubstring(`<main class="page-view">`))
+		Expect(alpha).To(ContainSubstring("Open in Obsidian"))
+		// The obsidian:// scheme survives html/template: an untyped string would
+		// render as #ZgotmplZ instead.
+		Expect(alpha).To(ContainSubstring("obsidian://open?vault=private-personal"))
+		Expect(alpha).NotTo(ContainSubstring("ZgotmplZ"))
+	})
+
 	It("renders wikilinks and backlinks", func() {
 		service := newService(GinkgoT(), newFixture(GinkgoT()))
 		ctx := context.Background()
@@ -250,6 +333,9 @@ var _ = Describe("Page view", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(alpha).To(ContainSubstring(`<a class="wikilink" href="/v/private-personal/page/Beta.md">`))
 		Expect(alpha).To(ContainSubstring(`href="/v/private-personal/page/Links.md"`))
+		// Only Links links to Alpha: neither Delta nor Gamma does.
+		Expect(alpha).NotTo(ContainSubstring(`href="/v/private-personal/page/Delta.md"`))
+		Expect(alpha).NotTo(ContainSubstring(`href="/v/private-personal/page/Gamma.md"`))
 		Expect(alpha).To(ContainSubstring("<table>"))
 
 		beta, err := service.Render(ctx, vaultName, "Beta.md")
@@ -264,6 +350,33 @@ var _ = Describe("Page view", func() {
 		gamma, err := service.Render(context.Background(), vaultName, "Gamma.md")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gamma).To(ContainSubstring("Beta body text."))
+	})
+
+	It("drops an embed when the renderer has no pages source", func() {
+		dir := newFixture(GinkgoT())
+		service := newService(GinkgoT(), dir)
+		ctx := context.Background()
+
+		gamma, err := service.Render(ctx, vaultName, "Gamma.md")
+		Expect(err).NotTo(HaveOccurred())
+
+		// The negative control: without WithPages the released renderer drops
+		// the embed, so the inlined body above can only come from the service
+		// actually wiring the option.
+		page, err := newFixtureSource(GinkgoT(), dir).Page(ctx, vaultName, "Gamma.md")
+		Expect(err).NotTo(HaveOccurred())
+		withoutPages, err := markdown.New().Render(ctx, page.Content)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(withoutPages).NotTo(ContainSubstring("Beta body text."))
+		Expect(withoutPages).NotTo(Equal(gamma))
+	})
+
+	It("escapes a raw script tag in the page body", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		echo, err := service.Render(context.Background(), vaultName, "Echo.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo).NotTo(ContainSubstring("<script>"))
+		Expect(echo).NotTo(ContainSubstring("</script>"))
 	})
 
 	It("leaves a missing link as plain text", func() {

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- test: The page view's specs now pin the rendered body to the released `vault-markdown` renderer's output verbatim — table and callout title included — and prove the view keeps no cache: a page created after the fixture is built is listed as a backlink on the very next render of the page it links. The fixture source now reads the vault on every call, mirroring the vault service, so a stale answer would fail the spec.
+
 ## v0.115.3
 
 - fix: The goals and topics boards grey out a finished card exactly as the tasks board does — a terminal card (`completed` / `aborted`, the same status that renders the `✓ Done` chip) now carries the shared `recently-completed` class and its dimmed treatment, chosen per kind by a new `CARD_CONFIG.greyWhenTerminal` field (`true` for goal and topic, `false` for task, which keeps its server-side 8-hour `recently_completed` window); the rule the old goal board was supposed to use (`[data-status="completed"] .goal-card`) never matched anything and is deleted
