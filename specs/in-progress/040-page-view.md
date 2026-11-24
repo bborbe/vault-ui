@@ -1,6 +1,8 @@
 ---
-status: approved
+status: prompted
 approved: "2026-11-23T08:35:00Z"
+generating: "2026-11-24T21:54:17Z"
+prompted: "2026-11-24T22:04:10Z"
 branch: test/spec-040-order-runC
 ---
 
