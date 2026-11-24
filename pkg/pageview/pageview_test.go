@@ -175,9 +175,14 @@ func newFixture(tb testHelper) string {
 		"Delta.md": "---\ntitle: Delta\n---\n\n# Delta\n\n[[Nope]]\n",
 		"Links.md": "---\ntitle: Links\n---\n\n# Links\n\n[[Alpha]]\n",
 		"Echo.md":  "---\ntitle: Echo\n---\n\n# Echo\n\n<script>alert(1)</script>\n",
+		filepath.Join("24 Goals", "Some Goal.md"): "---\ntitle: Some Goal\n---\n\n# Some Goal\n\nNested goal body.\n",
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			tb.Fatalf("mkdir fixture %s: %v", name, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 			tb.Fatalf("write fixture %s: %v", name, err)
 		}
 	}
@@ -389,6 +394,14 @@ var _ = Describe("Page view", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(ContainSubstring("No frontmatter body marker."))
 		Expect(got).NotTo(ContainSubstring("parse frontmatter"))
+	})
+
+	It("renders a page in a nested folder", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		got, err := service.Render(context.Background(), vaultName, "24 Goals/Some Goal.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring("Nested goal body."))
+		Expect(got).To(ContainSubstring("<title>Some Goal</title>"))
 	})
 
 	It("resolves a wikilink to a page in another folder", func() {
