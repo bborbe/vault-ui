@@ -186,6 +186,9 @@ func TestPageRouteRendersReleasedRendererOutput(t *testing.T) {
 	if !strings.Contains(body, "<table>") {
 		t.Fatalf("body does not contain a rendered table:\n%s", body)
 	}
+	if strings.Contains(body, "| --- |") {
+		t.Fatalf("body still contains the raw markdown table separator:\n%s", body)
+	}
 	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/html; charset=utf-8" {
 		t.Fatalf("Content-Type = %q", contentType)
 	}

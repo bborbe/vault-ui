@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- feat: A rendered vault page is served over HTTP at `GET /v/{vault}/page/{path}` as `text/html`, and `GET /open?vault=&file=` answers Obsidian's parameters with a `302` to that route so existing links keep working; both routes are GET-only (other verbs get `405`), registered ahead of the static catch-all so the board still serves, and an unknown vault or missing page is a `404`
 - feat: A vault page renders in-process with the released `github.com/bborbe/vault-markdown` renderer; wikilinks, embeds and a backlinks section come from the vault service, every render reads fresh and caches nothing, and spec 040's AC3 (one `ReadPage` per page) and AC7 (the symlink guard) now live in the vault service
 - fix: The page view's `Exists` reports an unknown vault and an invalid path as `(false, nil)` like a missing page, so `/open` turns all three into a `404` through one path, and an unknown vault is logged once with `glog.Warningf`
 - test: The page view specs read the fixture vault on demand (proving the service caches nothing), assert the released renderer's output verbatim, the document wrapper and its `obsidian://` hand-off, the embed negative control, the backlinks set, and zero reads for an invalid path

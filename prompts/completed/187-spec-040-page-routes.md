@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [040-page-view]
+summary: Served the page route and /open compatibility redirect with GET-only handlers registered before the static catch-all, real page-service wiring, full route specs, and a CHANGELOG entry; make precommit exits 0
+execution_id: c0106a5a-d5bf-5667-afc3-692241d88d2e-exec-187-spec-040-page-routes
+dark-factory-version: dev
 created: "2026-11-24T19:36:00Z"
 queued: "2026-11-24T19:46:10Z"
+started: "2026-11-24T19:54:22Z"
+completed: "2026-11-24T20:01:34Z"
 branch: test/spec-040-order-runA
 ---
 
