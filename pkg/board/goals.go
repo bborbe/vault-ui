@@ -115,7 +115,8 @@ func (b *board) goalsForVault(
 	projectsRoot := filepath.Join(b.homeDir, ".claude", "projects")
 
 	// One ListPages for the whole vault, exactly as the topic path reads its
-	// page-derived fields: a goal's `mode:` value is not on the list item.
+	// page-derived fields: neither a goal's `mode:` value nor its `jira:` value
+	// is on the list item's own projection in a form the card can badge.
 	pageFieldsByGoal := b.goalPageFieldsByGoal(vault)
 
 	responses := make([]api.GoalResponse, 0, len(rows))
@@ -123,7 +124,7 @@ func (b *board) goalsForVault(
 		responses = append(responses, b.goalResponse(
 			ctx, vault, row, goalsFolder, projectDir, projectsRoot,
 			registryIDs, seenIDs, resumeIDs, liveIDsUnknown,
-			pageFieldsByGoal[row.item.Name].mode,
+			pageFieldsByGoal[row.item.Name],
 		))
 	}
 	b.attachGoalJumpPanes(ctx, responses)
@@ -177,16 +178,19 @@ func goalSessionID(response api.GoalResponse) string {
 	return *response.ClaudeSessionID
 }
 
-// goalPageFieldsByGoal returns each goal's `mode:` value from the vault-api
-// source, keyed by the page name. The vault-api goal item carries it, so the
-// board no longer reads pages for it.
+// goalPageFieldsByGoal returns each goal's `mode:` and `jira:` values from the
+// vault-api source, keyed by the page name. The vault-api goal item carries both,
+// so the board no longer reads pages for them.
 func (b *board) goalPageFieldsByGoal(vault Vault) map[string]pageKeyFields {
 	byName := map[string]pageKeyFields{}
 	if b.source == nil {
 		return byName
 	}
 	for _, g := range b.source.Goals(vault.VaultName) {
-		byName[g.Title] = pageKeyFields{mode: stringPtrOrNil(g.Mode)}
+		byName[g.Title] = pageKeyFields{
+			mode: stringPtrOrNil(g.Mode),
+			jira: g.Jira,
+		}
 	}
 	return byName
 }
@@ -207,7 +211,7 @@ func (b *board) goalResponse(
 	goalsFolder, projectDir, projectsRoot string,
 	registryIDs, seenIDs, resumeIDs []string,
 	liveIDsUnknown bool,
-	mode *string,
+	fields pageKeyFields,
 ) api.GoalResponse {
 	item := row.item
 
@@ -268,7 +272,8 @@ func (b *board) goalResponse(
 		)),
 		SessionState: sessionStatePtr(ownState),
 		Location:     location,
-		Mode:         mode,
+		Mode:         fields.mode,
+		Jira:         fields.jira,
 	}
 }
 

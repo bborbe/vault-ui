@@ -135,6 +135,11 @@ type Goal struct {
 	// none. The service emits the raw string, so an unquoted YAML date
 	// arrives in Go's time.Time form rather than RFC3339.
 	DeferDate *string `json:"defer_date"`
+	// Jira is the page's own `jira:` value, nil when it carries none. It is
+	// what the goal card badges from; without it the card can only guess the
+	// key from the title, so a goal whose filename does not lead with the key
+	// shows no ticket at all.
+	Jira *string `json:"jira"`
 }
 
 // Topic is one vault-api topic item.
@@ -157,6 +162,10 @@ type Topic struct {
 	// DeferDate is the page's frontmatter defer_date, nil when it carries
 	// none, on the same terms as Goal.DeferDate.
 	DeferDate *string `json:"defer_date"`
+	// Jira is the page's own `jira:` value, on the same terms as Goal.Jira.
+	// No topic page declares one today, so it reads nil everywhere — the field
+	// is carried anyway, because the card's slot is wired to it.
+	Jira *string `json:"jira"`
 }
 
 // OpenQuestion is one item of a task's Open Questions section.

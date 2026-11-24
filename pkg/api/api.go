@@ -124,6 +124,12 @@ type GoalResponse struct {
 	// and null when the page carries none, on the same terms as
 	// TaskResponse.Mode.
 	Mode *string `json:"mode"`
+	// Jira is the goal page's own `jira:` frontmatter value, carried verbatim —
+	// a bare key or a full browse URL — and null when the page carries none, on
+	// the same terms as TaskResponse.Jira. The card badges from it and falls
+	// back to the title's key, so a goal whose filename does not lead with the
+	// key still shows its ticket.
+	Jira *string `json:"jira"`
 }
 
 // TopicResponse is the wire shape of a topic list entry.
