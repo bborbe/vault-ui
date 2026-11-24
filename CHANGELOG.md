@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - feat: The page view renders a vault page in-process through the vault-service seam — `pkg/pageview.Service` reads exactly one page and one backlink set per render (no cache, no whole-vault walk, no file open), renders the body with the released `github.com/bborbe/vault-markdown` v0.1.2 renderer (GFM tables, callouts, inlined embeds and resolving wikilinks), and wraps it in a document that links `/style.css`, keeps the one-click "Open in Obsidian" hand-off and lists backlinks picked up on the next render — including pages created after startup; an unknown vault or invalid path is a `NotFoundError`, and a page body's raw HTML is escaped rather than emitted as executable markup
+- feat: Serve the rendered page over HTTP at `GET /v/{vault}/page/{path}` and keep existing `obsidian://open?vault=…&file=…` links working through `GET /open`, which resolves the vault and file via the page service and redirects (302) to the in-app page URL with each path segment escaped; both routes register ahead of the static catch-all, answer every non-GET with 405 instead of the static 404, render the page as `text/html; charset=utf-8`, and map a missing page or unknown vault to 404 rather than 500
 
 ## v0.115.5
 

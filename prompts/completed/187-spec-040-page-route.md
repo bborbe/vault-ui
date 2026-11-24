@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [040-page-view]
+summary: Verified the existing page route and /open redirect implementation against the contract, added a feat CHANGELOG entry under Unreleased, and confirmed all targeted tests and make precommit exit 0
+execution_id: aa692478-dac4-5bc3-93e4-7cc13386c89c-exec-187-spec-040-page-route
+dark-factory-version: dev
 created: "2026-11-24T22:15:00Z"
 queued: "2026-11-24T21:22:27Z"
+started: "2026-11-24T21:33:24Z"
+completed: "2026-11-24T21:40:11Z"
 branch: test/spec-040-order-runB
 ---
 
