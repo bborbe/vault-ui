@@ -199,17 +199,21 @@ type pageKeyFields struct {
 	started *string
 }
 
-// topicPageFieldsByTopic returns each topic's `mode:` value from the vault-api
-// source, keyed by the page name. The vault-api topic item carries `mode`; it
-// carries no jira or started marker, and no topic page in the vault declares
-// them, so those fields stay nil.
+// topicPageFieldsByTopic returns each topic's `jira:` and `mode:` values from the
+// vault-api source, keyed by the page name. The vault-api topic item carries both.
+// No topic page declares `jira:` today, so it reads nil everywhere — the slot is
+// wired so that a topic which starts tracking an issue renders its badge with no
+// further code change.
 func (b *board) topicPageFieldsByTopic(vault Vault) map[string]pageKeyFields {
 	byName := map[string]pageKeyFields{}
 	if b.source == nil {
 		return byName
 	}
 	for _, t := range b.source.Topics(vault.VaultName) {
-		byName[t.Title] = pageKeyFields{mode: stringPtrOrNil(t.Mode)}
+		byName[t.Title] = pageKeyFields{
+			mode: stringPtrOrNil(t.Mode),
+			jira: t.Jira,
+		}
 	}
 	return byName
 }
