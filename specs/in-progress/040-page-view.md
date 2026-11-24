@@ -1,6 +1,9 @@
 ---
-status: approved
+status: verifying
 approved: "2026-11-23T08:35:00Z"
+generating: "2026-11-24T14:59:01Z"
+prompted: "2026-11-24T15:16:10Z"
+verifying: "2026-11-24T15:17:02Z"
 branch: test/spec-040-order-run2
 ---
 
