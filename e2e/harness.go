@@ -14,15 +14,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/bborbe/errors"
+	markdown "github.com/bborbe/vault-markdown"
 	"github.com/golang/glog"
 )
 
@@ -89,7 +93,135 @@ func stubHandler() http.Handler {
 	mux.HandleFunc("/api/v1/topics", func(w http.ResponseWriter, _ *http.Request) {
 		writeStubJSON(w, stubList("23 Topics"))
 	})
+	// One prefix handler dispatches the page routes. The /backlinks suffix is
+	// checked first because a single greedy page pattern would swallow it.
+	mux.HandleFunc("/api/v1/pages/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/backlinks") {
+			stubBacklinks(w, r)
+			return
+		}
+		stubPage(w, r)
+	})
 	return mux
+}
+
+// stubWikilinkPattern matches a [[target]] or [[target|alias]] wikilink.
+var stubWikilinkPattern = regexp.MustCompile(`\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]`)
+
+// stubEmbedPattern matches a ![[target]] embed that sits on a line of its own.
+var stubEmbedPattern = regexp.MustCompile(`(?m)^\s*!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]\s*$`)
+
+// stubPage answers GET /api/v1/pages/{path} from the fixture vault, computing
+// the link and embed maps the renderer needs.
+func stubPage(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/api/v1/pages/")
+	raw, err := os.ReadFile(filepath.Join(stubRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		writeStubJSON(w, `{"error":"not_found"}`)
+		return
+	}
+	body := string(raw)
+	byName := stubPagesByName()
+	links := map[string]string{}
+	for _, target := range stubMatches(stubWikilinkPattern, body) {
+		if targetRel, ok := byName[target]; ok {
+			links[target] = targetRel
+		}
+	}
+	embeds := map[string]string{}
+	for _, target := range stubMatches(stubEmbedPattern, body) {
+		targetRel, ok := byName[target]
+		if !ok {
+			continue
+		}
+		if embedded, readErr := os.ReadFile(
+			filepath.Join(stubRoot, filepath.FromSlash(targetRel)),
+		); readErr == nil {
+			embeds[target] = string(embedded)
+		}
+	}
+	writeStubJSON(w, mustStubJSON(map[string]any{
+		"vault":   r.URL.Query().Get("vault"),
+		"path":    rel,
+		"name":    strings.TrimSuffix(path.Base(rel), ".md"),
+		"content": body,
+		"links":   links,
+		"embeds":  embeds,
+	}))
+}
+
+// stubBacklinks answers GET /api/v1/pages/{path}/backlinks by computing the
+// inbound set over every markdown page in the fixture vault. The fixture vault
+// is tiny, so a full read per request is correct and cheap here.
+func stubBacklinks(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/pages/"), "/backlinks")
+	if _, err := os.Stat(filepath.Join(stubRoot, filepath.FromSlash(rel))); err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		writeStubJSON(w, `{"error":"not_found"}`)
+		return
+	}
+	name := strings.TrimSuffix(path.Base(rel), ".md")
+	bodies := map[string]string{}
+	for _, pageRel := range stubPagesByName() {
+		raw, err := os.ReadFile(filepath.Join(stubRoot, filepath.FromSlash(pageRel)))
+		if err != nil {
+			continue
+		}
+		bodies[pageRel] = string(raw)
+	}
+	rels := markdown.Backlinks(bodies, name)
+	backlinks := make([]map[string]string, 0, len(rels))
+	for _, backlinkRel := range rels {
+		backlinks = append(backlinks, map[string]string{
+			"path": backlinkRel,
+			"name": strings.TrimSuffix(path.Base(backlinkRel), ".md"),
+		})
+	}
+	writeStubJSON(w, mustStubJSON(map[string]any{
+		"vault":     r.URL.Query().Get("vault"),
+		"path":      rel,
+		"name":      name,
+		"backlinks": backlinks,
+	}))
+}
+
+// stubPagesByName maps every markdown page's bare name to its vault-relative
+// path.
+func stubPagesByName() map[string]string {
+	out := map[string]string{}
+	_ = filepath.WalkDir(stubRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(stubRoot, p)
+		if relErr != nil {
+			return nil
+		}
+		out[strings.TrimSuffix(d.Name(), ".md")] = filepath.ToSlash(rel)
+		return nil
+	})
+	return out
+}
+
+// stubMatches returns the first capture group of every pattern match in body.
+func stubMatches(pattern *regexp.Regexp, body string) []string {
+	matches := pattern.FindAllStringSubmatch(body, -1)
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, match[1])
+	}
+	return out
+}
+
+// mustStubJSON marshals v for a stub response.
+func mustStubJSON(v any) string {
+	body, err := json.Marshal(v)
+	if err != nil {
+		glog.Warningf("stub marshal: %v", err)
+		return `{}`
+	}
+	return string(body)
 }
 
 // stubItem is one fixture page rendered as a vault-api list item. Only the

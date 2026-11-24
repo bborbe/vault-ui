@@ -6,21 +6,23 @@ package handler_test
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
-	"github.com/bborbe/vault-cli/pkg/storage"
 	markdown "github.com/bborbe/vault-markdown"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/pageview"
+	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
@@ -80,11 +82,59 @@ func newPageFixture(t *testing.T) string {
 	return dir
 }
 
+// pageTestSource is a PageSource over the fixture vault. It stands in for the
+// vault service: a page read answers the body plus the link and embed maps the
+// renderer needs, and backlinks are not exercised by these route specs.
+type pageTestSource struct{ dir string }
+
+func (s pageTestSource) Page(
+	_ context.Context,
+	_ string,
+	pagePath string,
+) (*vaultapi.Page, error) {
+	raw, err := os.ReadFile(filepath.Join(s.dir, filepath.FromSlash(pagePath)))
+	if err != nil {
+		return nil, vaultapi.NotFoundError{Message: "page not found: " + pagePath}
+	}
+	links := map[string]string{}
+	embeds := map[string]string{}
+	_ = filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(s.dir, p)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		name := strings.TrimSuffix(d.Name(), ".md")
+		links[name] = rel
+		if body, readErr := os.ReadFile(p); readErr == nil {
+			embeds[name] = string(body)
+		}
+		return nil
+	})
+	return &vaultapi.Page{
+		Vault:   pageTestVault,
+		Path:    pagePath,
+		Name:    strings.TrimSuffix(path.Base(pagePath), ".md"),
+		Content: string(raw),
+		Links:   links,
+		Embeds:  embeds,
+	}, nil
+}
+
+func (s pageTestSource) Backlinks(
+	context.Context, string, string,
+) ([]vaultapi.Backlink, error) {
+	return nil, nil
+}
+
 // newPageTestRouter builds the real router with a real page service over the
 // fixture vault.
 func newPageTestRouter(t *testing.T, vaultDir string) http.Handler {
 	t.Helper()
-	pages := pageview.NewService(pageTestVaults{dir: vaultDir}, storage.NewPageStorage(nil))
+	pages := pageview.NewService(pageTestVaults{dir: vaultDir}, pageTestSource{dir: vaultDir})
 	staticFS := fstest.MapFS{
 		"index.html": {Data: []byte("<html>index</html>")},
 	}
