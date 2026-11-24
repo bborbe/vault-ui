@@ -8,6 +8,7 @@ package e2e
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -86,6 +87,27 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 		Expect(page.URL()).To(ContainSubstring("assignee=e2e"))
 		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
 			Should(Equal(0), "the Goals view renders no task cards")
+	})
+
+	It("keeps the operator's status filter when switching views", func() {
+		// setView() used to reset currentStatuses to a per-view default on every
+		// tab switch, and updateURL() then persisted that reset. A filter that
+		// excluded `next` gained it back on the way to Goals, so goals the
+		// operator had filtered out reappeared in the view they had just chosen.
+		// The filter belongs to the operator, not to the view.
+		page := newPage("/?view=tasks&status=in_progress&status=hold&status=completed")
+		defer func() { _ = page.Close() }()
+
+		want := []string{"in_progress", "hold", "completed"}
+		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
+			Should(BeNumerically(">", 0))
+		Expect(statusParams(page)).To(Equal(want))
+
+		for _, view := range []string{"goals", "topics", "tasks"} {
+			clickView(page, view)
+			Eventually(func() []string { return statusParams(page) }, "5s", "200ms").
+				Should(Equal(want), "switching to %s must not rewrite the status filter", view)
+		}
 	})
 
 	It("lands on the Goals view without fetching /api/tasks first", func() {
@@ -210,6 +232,13 @@ func settledCount(page playwright.Page, sel string) int {
 		return settled
 	}, "20s", "400ms").Should(BeTrue(), "the count of %s never settled above zero", sel)
 	return prev
+}
+
+// statusParams returns the status query parameters in URL order.
+func statusParams(page playwright.Page) []string {
+	parsed, err := url.Parse(page.URL())
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return parsed.Query()["status"]
 }
 
 // clickView clicks a view toggle.

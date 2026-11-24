@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: Switching between the tasks, goals and topics views no longer rewrites the operator's status filter — `setView()` reset `currentStatuses` to a per-view default on every tab switch and `updateURL()` persisted that reset, so a filter excluding `next` gained it back on the way to Goals and re-admitted rows the operator had filtered out; the filter now belongs to the operator, and a view-specific default applies only on first load with no `status` parameter
+
 ## v0.115.4
 
 - fix: The page view's frontmatter metadata table now renders a wikilink value as a link to its target page, including the unquoted `[[A]] [[B]]` form that previously failed the whole page render with a YAML parse error — `github.com/bborbe/vault-markdown` moves to v0.1.2, which resolves frontmatter wikilinks through the page view's own resolver and quotes an all-wikilink value before parsing
