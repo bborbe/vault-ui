@@ -57,6 +57,35 @@ var _ = Describe("Scenario 040: the in-app page view", func() {
 		obsidianHref, err := page.Locator(".obsidian-link").GetAttribute("href")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(obsidianHref).To(HavePrefix("obsidian://open?"))
+
+		// The page must carry its own title, as Obsidian shows it — not start
+		// at the properties table — and the hand-off must read as an icon
+		// beside it, not a labelled button above the body.
+		title := page.Locator(".page-title")
+		titleText, err := title.InnerText()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(titleText).To(Equal("Card Page Fixture"))
+
+		// The sheet's global `header` rule paints the board's top bar and
+		// `@media (max-width: 1500px) header h1` hides its branding; the page
+		// title picked up both and collapsed to a zero-width box at laptop
+		// widths. Assert the box, not just the text.
+		titleBox, err := title.BoundingBox()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(titleBox).NotTo(BeNil())
+		Expect(titleBox.Width).To(BeNumerically(">", 0), "the page title must not be collapsed")
+
+		handoffText, err := page.Locator(".obsidian-link").InnerText()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(handoffText).To(Equal("↗"))
+
+		titleSize, err := title.Evaluate(`el => parseFloat(getComputedStyle(el).fontSize)`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		paragraphSize, err := page.Locator(".page-view p").First().
+			Evaluate(`el => parseFloat(getComputedStyle(el).fontSize)`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(titleSize.(float64)).To(BeNumerically(">", paragraphSize.(float64)),
+			"the page title must render larger than the body")
 	})
 
 	It("navigates to a wikilink's resolved target inside vault-ui", func() {

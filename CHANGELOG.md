@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: The in-app page view shows the page's own title as a heading above its properties, as Obsidian does — the wrapper emitted only a toolbar and the rendered body, so every page opened at its properties table and read as an untitled fragment; the "Open in Obsidian" button becomes an icon beside the title, and `.page-toolbar` is replaced by `.page-header` / `.page-title`
+
 ## v0.115.5
 
 - fix: Switching between the tasks, goals and topics views no longer rewrites the operator's status filter — `setView()` reset `currentStatuses` to a per-view default on every tab switch and `updateURL()` persisted that reset, so a filter excluding `next` gained it back on the way to Goals and re-admitted rows the operator had filtered out; the filter now belongs to the operator, and a view-specific default applies only on first load with no `status` parameter

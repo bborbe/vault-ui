@@ -259,6 +259,20 @@ var _ = Describe("Page view", func() {
 		Expect(beta).NotTo(ContainSubstring(`href="/v/private-personal/page/Delta.md"`))
 	})
 
+	// The page opened at its properties table and read as an untitled
+	// fragment. Obsidian shows the file name as a heading above the
+	// properties, and the hand-off is an icon beside it, not a toolbar.
+	It("renders the page name as the title above the body", func() {
+		service := newService(GinkgoT(), newFixture(GinkgoT()))
+		got, err := service.Render(context.Background(), vaultName, "Alpha.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(ContainSubstring(`<h1 class="page-title">Alpha</h1>`))
+		Expect(got).To(ContainSubstring(`aria-label="Open in Obsidian"`))
+		Expect(got).NotTo(ContainSubstring("page-toolbar"))
+		Expect(strings.Index(got, `<h1 class="page-title">`)).
+			To(BeNumerically("<", strings.Index(got, "<table>")))
+	})
+
 	It("inlines an embedded page", func() {
 		service := newService(GinkgoT(), newFixture(GinkgoT()))
 		gamma, err := service.Render(context.Background(), vaultName, "Gamma.md")
