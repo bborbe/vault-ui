@@ -243,7 +243,10 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 </head>
 <body>
 <main class="page-view">
-<nav class="page-toolbar"><a class="obsidian-link" href="{{.ObsidianURL}}">Open in Obsidian</a></nav>
+<div class="page-header">
+<h1 class="page-title">{{.Title}}</h1>
+<a class="obsidian-link" href="{{.ObsidianURL}}" title="Open in Obsidian" aria-label="Open in Obsidian">&#8599;</a>
+</div>
 {{.Body}}
 <section class="backlinks">
 <h2>Backlinks</h2>

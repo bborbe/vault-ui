@@ -1517,23 +1517,53 @@ a.obsidian-handoff:hover {
     line-height: 1.65;
 }
 
-.page-toolbar {
+/* The page's own title, as Obsidian shows it: the file name as a large
+   heading above the properties, with the Obsidian hand-off reduced to an icon
+   beside it. Without the heading the page opened at its properties table and
+   read as an untitled fragment.
+
+   Deliberately a `div`, not a `header`: this sheet's global `header` rule
+   paints the board's top bar, and `@media (max-width: 1500px) header h1`
+   hides its branding — a `header` element here picked up both, so the title
+   rendered as a 0-width box on every laptop-sized viewport. */
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
     margin-bottom: 1.5rem;
 }
 
-.page-toolbar .obsidian-link {
-    display: inline-block;
-    padding: 0.35rem 0.75rem;
+.page-view .page-title {
+    margin: 0;
+    padding: 0;
+    border-bottom: none;
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #ffffff;
+}
+
+.page-header .obsidian-link {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    margin-top: 0.15rem;
     border: 1px solid #3a3a3a;
     border-radius: 6px;
-    font-size: 0.85rem;
-    color: #7aa2f7;
+    font-size: 0.95rem;
+    line-height: 1;
+    color: #9ca3af;
     text-decoration: none;
 }
 
-.page-toolbar .obsidian-link:hover {
+.page-header .obsidian-link:hover {
     background: #2a2a2a;
-    text-decoration: underline;
+    border-color: #4a4a4a;
+    color: #7aa2f7;
 }
 
 .page-view h1,
