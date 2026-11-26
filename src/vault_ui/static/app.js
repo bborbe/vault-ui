@@ -592,14 +592,22 @@ function selectedVaultNames() {
 // updateNoSourceBanner shows the "no source" marker when a *selected* vault is
 // known unserved (source === false). It reports only on the selection, so a
 // served vault with zero visible rows shows nothing, an unknown source shows
-// nothing, and an unserved vault outside the selection does not raise it.
+// nothing, an unserved vault outside the selection does not raise it, and the
+// all-vaults view raises nothing at all.
 function updateNoSourceBanner() {
     const banner = document.getElementById('vault-no-source');
     if (!banner) return;
 
     const selected = selectedVaultNames();
-    const names = selected === null ? Object.keys(vaultSources) : selected;
-    const unserved = names.filter(name => vaultSources[name] === false);
+    if (selected === null) {
+        // The all-vaults view has no selection to report on: naming every
+        // unserved vault there would raise the marker for vaults the user never
+        // asked about, which is the false positive this function exists to
+        // avoid. A user who wants the verdict picks the vault.
+        banner.classList.add('hidden');
+        return;
+    }
+    const unserved = selected.filter(name => vaultSources[name] === false);
     if (unserved.length === 0) {
         banner.classList.add('hidden');
         return;

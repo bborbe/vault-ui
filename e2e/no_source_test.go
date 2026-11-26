@@ -37,4 +37,19 @@ var _ = Describe("Scenario: no-source marker", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(visible).To(BeFalse(), "a served vault with no rows is not unserved")
 	})
+
+	It("does not raise the marker in the all-vaults view", func() {
+		// The default view has no selection to report on. Marking every unserved
+		// vault there is the false positive this rule exists to prevent, so the
+		// marker must stay hidden even though the fixture config lists one.
+		all := newPage("/")
+		defer func() { _ = all.Close() }()
+		Eventually(func() int {
+			return countOf(all, "#vault-selector-dropdown input[value='fixture']")
+		}, "15s", "200ms").Should(Equal(1), "the board has loaded its vault list")
+
+		visible, err := all.Locator("[data-testid='vault-no-source']").IsVisible()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(visible).To(BeFalse(), "the all-vaults view raises no no-source marker")
+	})
 })
