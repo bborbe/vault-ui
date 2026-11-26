@@ -21,6 +21,7 @@ func sourceFromVault(vaultDir, vaultName, tasksDir, goalsDir, topicsDir string) 
 		readTasks(filepath.Join(vaultDir, tasksDir), vaultName),
 		readGoals(filepath.Join(vaultDir, goalsDir), vaultName),
 		readTopics(filepath.Join(vaultDir, topicsDir), vaultName),
+		nil,
 	)
 }
 

@@ -144,16 +144,49 @@ var _ = Describe("API factory", func() {
 	Describe("CreateAPIHandler", func() {
 		It("serves the read routes", func() {
 			loader, configPath, _ := apiFixture()
-			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil))
+			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil, nil))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/vaults", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
 			Expect(recorder.Body.String()).To(ContainSubstring("personal"))
 		})
 
+		It("serializes the source field for all three coverage states", func() {
+			loader, configPath, _ := apiFixture()
+			cases := []struct {
+				name   string
+				vaults []string
+				want   any
+			}{
+				{"unknown", nil, nil},
+				{"served", []string{"personal"}, true},
+				{"unserved", []string{"other"}, false},
+			}
+			for _, tc := range cases {
+				handler := newTestAPIHandler(
+					loader, configPath,
+					vaultapi.NewSourceFromData(nil, nil, nil, tc.vaults),
+				)
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/vaults", nil))
+				Expect(recorder.Code).To(Equal(http.StatusOK), tc.name)
+
+				var body []map[string]any
+				Expect(json.Unmarshal(recorder.Body.Bytes(), &body)).To(Succeed(), tc.name)
+				Expect(body).To(HaveLen(1), tc.name)
+				value, present := body[0]["source"]
+				Expect(present).To(BeTrue(), "%s: source key must always be emitted", tc.name)
+				if tc.want == nil {
+					Expect(value).To(BeNil(), "%s: source must serialize as null", tc.name)
+				} else {
+					Expect(value).To(Equal(tc.want), tc.name)
+				}
+			}
+		})
+
 		It("serves the frontend at root", func() {
 			loader, configPath, _ := apiFixture()
-			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil))
+			handler := newTestAPIHandler(loader, configPath, vaultapi.NewSourceFromData(nil, nil, nil, nil))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 			Expect(recorder.Code).To(Equal(http.StatusOK))
@@ -165,7 +198,7 @@ var _ = Describe("API factory", func() {
 		It("broadcasts a task update to a connected WebSocket client", func() {
 			loader, configPath, _ := apiFixture()
 			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil)))
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil, nil)))
 			defer server.Close()
 
 			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
@@ -201,7 +234,7 @@ var _ = Describe("API factory", func() {
 		It("broadcasts a goal update to a connected WebSocket client", func() {
 			loader, configPath, _ := apiFixture()
 			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil)))
+			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil, nil)))
 			defer server.Close()
 
 			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"

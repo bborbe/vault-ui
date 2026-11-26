@@ -25,7 +25,7 @@ var _ = Describe("taskSnapshotStore with a pending write", func() {
 		}
 		source := vaultapi.NewSourceFromData(
 			[]vaultapi.Task{{Title: "T", Status: "in_progress", Vault: "vault-a", Flag: true}},
-			nil, nil,
+			nil, nil, nil,
 		)
 		list := vaultapi.NewListOperation(source, vault.VaultName, vault.TasksFolder, "", "")
 		store := newTaskSnapshotStore(taskSnapshotParams{

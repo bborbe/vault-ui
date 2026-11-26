@@ -18,6 +18,12 @@ type VaultResponse struct {
 	VaultPath    string `json:"vault_path"`
 	TasksFolder  string `json:"tasks_folder"`
 	ClaudeScript string `json:"claude_script"`
+	// Source reports whether vault-api serves this vault: true when it appears
+	// in the coverage set, false when the set is known and omits it, and null
+	// when the set is unknown (no poll yet, or a server that predates the
+	// field). It is a pointer precisely so "unknown" is not rendered as
+	// "unserved".
+	Source *bool `json:"source"`
 }
 
 // AssigneesResponse is the distinct assignee set across the selected vaults.

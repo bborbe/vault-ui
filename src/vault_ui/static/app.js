@@ -9,6 +9,10 @@ let currentLiveOnly = false; // "live session" filter — sent as the server-sid
 // Distinct assignees across the selected vaults — sourced from /api/assignees,
 // refreshed on startup and on every vault-selector change. Read by computeAssigneeOptions.
 let availableAssignees = { named: [], hasUnassigned: false };
+// vaultSources maps a vault name to the `source` value GET /api/vaults reports:
+// true (served), false (known unserved), or null/undefined (unknown). It is
+// populated by loadVaults and read by updateNoSourceBanner.
+const vaultSources = {};
 const ALL_STATUSES = ['next', 'in_progress', 'backlog', 'completed', 'hold', 'aborted']; // closed enum, fixed display order
 let tasksCache = {}; // Map of task ID -> task data
 let goalsCache = {}; // Map of goal ID -> goal data (mirrors tasksCache)
@@ -577,6 +581,44 @@ async function loadSourceStatus() {
     }
 }
 
+// selectedVaultNames returns the vaults the current selection covers: null for
+// the all-vaults view, otherwise the explicit selection as an array.
+function selectedVaultNames() {
+    if (currentVault === null) return null;
+    if (Array.isArray(currentVault)) return currentVault;
+    return [currentVault];
+}
+
+// updateNoSourceBanner shows the "no source" marker when a *selected* vault is
+// known unserved (source === false). It reports only on the selection, so a
+// served vault with zero visible rows shows nothing, an unknown source shows
+// nothing, an unserved vault outside the selection does not raise it, and the
+// all-vaults view raises nothing at all.
+function updateNoSourceBanner() {
+    const banner = document.getElementById('vault-no-source');
+    if (!banner) return;
+
+    const selected = selectedVaultNames();
+    if (selected === null) {
+        // The all-vaults view has no selection to report on: naming every
+        // unserved vault there would raise the marker for vaults the user never
+        // asked about, which is the false positive this function exists to
+        // avoid. A user who wants the verdict picks the vault.
+        banner.classList.add('hidden');
+        return;
+    }
+    const unserved = selected.filter(name => vaultSources[name] === false);
+    if (unserved.length === 0) {
+        banner.classList.add('hidden');
+        return;
+    }
+
+    banner.textContent = unserved.length === 1
+        ? `No source for vault "${unserved[0]}" — the board cannot serve it`
+        : `No source for vaults ${unserved.map(name => `"${name}"`).join(', ')} — the board cannot serve them`;
+    banner.classList.remove('hidden');
+}
+
 async function loadVaults() {
     try {
         const response = await fetch('/api/vaults');
@@ -585,6 +627,8 @@ async function loadVaults() {
         }
 
         const vaults = await response.json();
+        Object.keys(vaultSources).forEach(name => delete vaultSources[name]);
+        vaults.forEach(vault => { vaultSources[vault.name] = vault.source; });
         const dropdown = document.getElementById('vault-selector-dropdown');
         dropdown.innerHTML = '';
 
@@ -1314,6 +1358,9 @@ function closeTopicModal() {
 }
 
 async function loadCurrentView() {
+    // The no-source marker belongs to the current selection, so refresh it on
+    // every view load — the same path the selection handlers already drive.
+    updateNoSourceBanner();
     // Single in-flight fetch for the active view only.
     // On initial load with ?view=goals, this is the ONLY fetch issued —
     // /api/tasks is NOT called. (Spec AC#7 evidence:

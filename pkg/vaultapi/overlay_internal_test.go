@@ -121,6 +121,7 @@ var _ = Describe("listOperation with pending writes", func() {
 			[]Task{{Title: "T", Status: "next", Vault: "test"}},
 			[]Goal{{Title: "G", Vault: "test", Flag: true}},
 			[]Topic{{Title: "P", Vault: "test"}},
+			nil,
 		)
 		source.RecordPending("test", KindTask, "T", PendingFields{Assignee: strPtr("ben")})
 		source.RecordPending("test", KindGoal, "G", PendingFields{Flag: boolPtr(false)})

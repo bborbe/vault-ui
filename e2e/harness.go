@@ -275,6 +275,10 @@ func stubList(dir string) string {
 		"total":             len(items),
 		"warnings":          0,
 		"index_age_seconds": 0,
+		// vaults is the coverage set. The stub serves only the "fixture" vault;
+		// the second configured vault is listed but never indexed, so the board
+		// has no source for it — the no-source marker's fixture.
+		"vaults": []string{"fixture"},
 	})
 	if err != nil {
 		glog.Warningf("stub list %s marshal: %v", dir, err)
@@ -629,7 +633,18 @@ Tags: [[%s]]
 // writeConfig writes both config files: vault-ui's own, and the vault-cli one
 // its loader merges. Missing either half fails the load with a message that
 // reads as a harness bug.
+//
+// Two vaults are configured. "fixture" is the vault the stub vault-api serves;
+// "unserved" is listed but never indexed, so the board has no source for it.
+// Both need their tasks folder present on disk, because the loader skips a
+// vault whose tasks folder is missing, and a vault named only in the vault-ui
+// half fails the merge.
 func writeConfig(ctx context.Context, homeDir, vaultPath string) error {
+	unservedPath := filepath.Join(homeDir, "unserved-vault")
+	if err := os.MkdirAll(filepath.Join(unservedPath, "25 Tasks"), 0o750); err != nil {
+		return errors.Wrap(ctx, err, "create unserved vault tasks folder")
+	}
+
 	vaultCLIDir := filepath.Join(homeDir, ".config", "vault-cli")
 	if err := os.MkdirAll(vaultCLIDir, 0o750); err != nil {
 		return errors.Wrap(ctx, err, "create vault-cli config dir")
@@ -642,7 +657,11 @@ vaults:
     tasks_dir: 25 Tasks
     goals_dir: 24 Goals
     topics_dir: 23 Topics
-`, vaultPath)
+  unserved:
+    name: unserved
+    path: %s
+    tasks_dir: 25 Tasks
+`, vaultPath, unservedPath)
 	if err := os.WriteFile(filepath.Join(vaultCLIDir, "config.yaml"), []byte(vaultCLI), 0o600); err != nil {
 		return errors.Wrap(ctx, err, "write vault-cli config")
 	}
@@ -651,7 +670,7 @@ vaults:
 	if err := os.MkdirAll(vaultUIDir, 0o750); err != nil {
 		return errors.Wrap(ctx, err, "create vault-ui config dir")
 	}
-	if err := os.WriteFile(filepath.Join(vaultUIDir, "config.yaml"), []byte("vaults:\n  fixture:\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(vaultUIDir, "config.yaml"), []byte("vaults:\n  fixture:\n  unserved:\n"), 0o600); err != nil {
 		return errors.Wrap(ctx, err, "write vault-ui config")
 	}
 	return nil

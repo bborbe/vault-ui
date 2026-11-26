@@ -20,13 +20,39 @@ func (b *board) ListVaults(ctx context.Context) ([]api.VaultResponse, error) {
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "list vaults")
 	}
+	var indexed []string
+	if b.source != nil {
+		indexed = b.source.IndexedVaults()
+	}
+	// indexedSet stays nil when the coverage set is unknown, so a nil set is
+	// never mistaken for "serves nothing".
+	var indexedSet map[string]bool
+	if indexed != nil {
+		indexedSet = make(map[string]bool, len(indexed))
+		for _, name := range indexed {
+			indexedSet[strings.ToLower(name)] = true
+		}
+	}
+
 	responses := make([]api.VaultResponse, 0, len(vaults))
 	for _, vault := range vaults {
+		var source *bool
+		if indexedSet != nil {
+			// Join on VaultName, never Name: VaultName is the vault-cli/vault-api
+			// identity, and it is what every vault-api row carries as its `vault`
+			// field — the same key the list reads join on. Name is the display
+			// label and is routinely title-cased or aliased (`name: personal`,
+			// `vault_name: private-personal`), so joining on it would report a
+			// served vault as unserved the first time the two diverge.
+			served := indexedSet[strings.ToLower(vault.VaultName)]
+			source = &served
+		}
 		responses = append(responses, api.VaultResponse{
 			Name:         vault.Name,
 			VaultPath:    vault.Path,
 			TasksFolder:  vault.TasksFolder,
 			ClaudeScript: vault.ClaudeScript,
+			Source:       source,
 		})
 	}
 	return responses, nil
