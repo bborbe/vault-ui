@@ -20,13 +20,33 @@ func (b *board) ListVaults(ctx context.Context) ([]api.VaultResponse, error) {
 	if err != nil {
 		return nil, errors.Wrap(ctx, err, "list vaults")
 	}
+	var indexed []string
+	if b.source != nil {
+		indexed = b.source.IndexedVaults()
+	}
+	// indexedSet stays nil when the coverage set is unknown, so a nil set is
+	// never mistaken for "serves nothing".
+	var indexedSet map[string]bool
+	if indexed != nil {
+		indexedSet = make(map[string]bool, len(indexed))
+		for _, name := range indexed {
+			indexedSet[strings.ToLower(name)] = true
+		}
+	}
+
 	responses := make([]api.VaultResponse, 0, len(vaults))
 	for _, vault := range vaults {
+		var source *bool
+		if indexedSet != nil {
+			served := indexedSet[strings.ToLower(vault.Name)]
+			source = &served
+		}
 		responses = append(responses, api.VaultResponse{
 			Name:         vault.Name,
 			VaultPath:    vault.Path,
 			TasksFolder:  vault.TasksFolder,
 			ClaudeScript: vault.ClaudeScript,
+			Source:       source,
 		})
 	}
 	return responses, nil

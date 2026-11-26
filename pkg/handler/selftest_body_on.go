@@ -23,6 +23,7 @@ func selftestDivergeVaultsResponse(resp http.ResponseWriter, items []api.VaultRe
 			"vault_path":    item.VaultPath,
 			"tasks_folder":  item.TasksFolder,
 			"claude_script": item.ClaudeScript,
+			"source":        item.Source,
 		})
 	}
 	writeJSON(resp, http.StatusOK, renamed)

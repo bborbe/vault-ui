@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,11 +41,16 @@ type Source struct {
 	// Refresh callers.
 	refreshMu sync.Mutex
 
-	mu          sync.RWMutex
-	revision    uint64
-	tasks       []Task
-	goals       []Goal
-	topics      []Topic
+	mu       sync.RWMutex
+	revision uint64
+	tasks    []Task
+	goals    []Goal
+	topics   []Topic
+	// vaults is the coverage set from the last successful tasks poll: the
+	// vaults vault-api reported serving. Nil means no coverage claim (no poll
+	// yet, or a server that predates the field); an empty non-nil slice means
+	// it serves nothing.
+	vaults      []string
 	loaded      bool
 	unavailable bool
 	lastHash    [32]byte
@@ -65,13 +71,15 @@ func NewSource(client Client) *Source {
 
 // NewSourceFromData returns a Source primed with fixed data and a non-zero
 // revision, without a client or a poller. It is the test seam: production uses
-// NewSource + Run.
-func NewSourceFromData(tasks []Task, goals []Goal, topics []Topic) *Source {
+// NewSource + Run. vaults is the coverage set: nil means unknown, an empty
+// non-nil slice means the source serves nothing.
+func NewSourceFromData(tasks []Task, goals []Goal, topics []Topic, vaults []string) *Source {
 	return &Source{
 		interval: DefaultPollInterval,
 		tasks:    tasks,
 		goals:    goals,
 		topics:   topics,
+		vaults:   vaults,
 		loaded:   true,
 		revision: 1,
 		lastHash: hashLists(tasks, goals, topics),
@@ -146,12 +154,14 @@ func (s *Source) Refresh(ctx context.Context) error {
 func (s *Source) poll(ctx context.Context) error {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
-	tasks, err := s.client.ListTasks(ctx)
+	envelope, err := s.client.ListTaskEnvelope(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll tasks: %v", err)
 		s.setUnavailable(true)
 		return errors.Wrap(ctx, err, "poll tasks")
 	}
+	tasks := envelope.Items
+	vaults := envelope.Vaults
 	goals, err := s.client.ListGoals(ctx)
 	if err != nil {
 		glog.Warningf("vault-api poll goals: %v", err)
@@ -169,6 +179,7 @@ func (s *Source) poll(ctx context.Context) error {
 	s.mu.Lock()
 	changed := !s.loaded || hash != s.lastHash
 	s.tasks, s.goals, s.topics = tasks, goals, topics
+	s.vaults = vaults
 	s.lastHash = hash
 	s.loaded = true
 	s.unavailable = false
@@ -197,6 +208,15 @@ func (s *Source) Unavailable() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.unavailable
+}
+
+// IndexedVaults returns the vaults vault-api reported serving on the last
+// successful poll, or nil when no poll has landed or the server predates the
+// field. Nil means "no coverage claim" — it must not read as "covers nothing".
+func (s *Source) IndexedVaults() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.vaults)
 }
 
 // Tasks returns the cached tasks for the named vault.

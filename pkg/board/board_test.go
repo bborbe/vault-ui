@@ -406,7 +406,7 @@ func (h *harness) setStatuses(statuses map[string]string) {
 	for name, status := range statuses {
 		tasks = append(tasks, vaultapi.Task{Title: name, Vault: vault.VaultName, Status: status})
 	}
-	h.source = vaultapi.NewSourceFromData(tasks, nil, nil)
+	h.source = vaultapi.NewSourceFromData(tasks, nil, nil, nil)
 	h.build()
 }
 
@@ -440,7 +440,7 @@ func sourceFromPages(pages []*domain.Page) *vaultapi.Source {
 		goals = append(goals, vaultapi.Goal{Title: title, Vault: vault.VaultName, Mode: mode})
 		topics = append(topics, vaultapi.Topic{Title: title, Vault: vault.VaultName, Mode: mode})
 	}
-	return vaultapi.NewSourceFromData(tasks, goals, topics)
+	return vaultapi.NewSourceFromData(tasks, goals, topics, nil)
 }
 
 var _ = Describe("ListVaults", func() {
@@ -453,6 +453,49 @@ var _ = Describe("ListVaults", func() {
 		Expect(responses[0].VaultPath).To(Equal("/vault"))
 		Expect(responses[0].TasksFolder).To(Equal("24 Tasks"))
 		Expect(responses[0].ClaudeScript).To(Equal(""))
+	})
+
+	It("marks a vault the coverage set names as served", func() {
+		h := newHarness()
+		h.source = vaultapi.NewSourceFromData(nil, nil, nil, []string{"personal"})
+		h.build()
+		responses, err := h.board.ListVaults(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Source).NotTo(BeNil())
+		Expect(*responses[0].Source).To(BeTrue())
+	})
+
+	It("marks a vault the coverage set omits as unserved", func() {
+		h := newHarness()
+		h.source = vaultapi.NewSourceFromData(nil, nil, nil, []string{"other"})
+		h.build()
+		responses, err := h.board.ListVaults(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Source).NotTo(BeNil())
+		Expect(*responses[0].Source).To(BeFalse())
+	})
+
+	It("marks every configured vault unserved when the coverage set is empty", func() {
+		h := newHarness()
+		h.source = vaultapi.NewSourceFromData(nil, nil, nil, []string{})
+		h.build()
+		responses, err := h.board.ListVaults(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Source).NotTo(BeNil())
+		Expect(*responses[0].Source).To(BeFalse())
+	})
+
+	It("leaves Source nil when the coverage set is unknown", func() {
+		h := newHarness()
+		h.source = vaultapi.NewSourceFromData(nil, nil, nil, nil)
+		h.build()
+		responses, err := h.board.ListVaults(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Source).To(BeNil())
 	})
 })
 

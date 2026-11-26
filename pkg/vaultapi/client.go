@@ -45,6 +45,10 @@ func ConfigFromEnv() Config {
 type Client interface {
 	// BaseURL is the origin this client reads from, for the startup log line.
 	BaseURL() string
+	// ListTaskEnvelope reads GET /api/v1/tasks and returns the whole envelope,
+	// including the coverage set vault-api reports in `vaults`. ListTasks drops
+	// the envelope; the poll needs it.
+	ListTaskEnvelope(ctx context.Context) (taskList, error)
 	ListTasks(ctx context.Context) ([]Task, error)
 	ListGoals(ctx context.Context) ([]Goal, error)
 	ListTopics(ctx context.Context) ([]Topic, error)
@@ -186,16 +190,25 @@ type taskList struct {
 	Total           int    `json:"total"`
 	Warnings        int    `json:"warnings"`
 	IndexAgeSeconds int    `json:"index_age_seconds"`
+	// Vaults is the coverage set: the vaults vault-api served for this query.
+	// The server's ListResponse[T] is one generic struct, so all three list
+	// envelopes carry it. A list query cannot express coverage — a vault that
+	// is not indexed and one whose rows are all filtered out both answer
+	// items: []. Nil means the server predates the field; an empty slice means
+	// it serves nothing.
+	Vaults []string `json:"vaults"`
 }
 
 // goalList is the GET /api/v1/goals envelope.
 type goalList struct {
-	Items []Goal `json:"items"`
+	Items  []Goal   `json:"items"`
+	Vaults []string `json:"vaults"`
 }
 
 // topicList is the GET /api/v1/topics envelope.
 type topicList struct {
-	Items []Topic `json:"items"`
+	Items  []Topic  `json:"items"`
+	Vaults []string `json:"vaults"`
 }
 
 type client struct {
@@ -215,10 +228,19 @@ func New(cfg Config) Client {
 // BaseURL is the configured origin.
 func (c *client) BaseURL() string { return c.baseURL }
 
-// ListTasks reads GET /api/v1/tasks.
-func (c *client) ListTasks(ctx context.Context) ([]Task, error) {
+// ListTaskEnvelope reads GET /api/v1/tasks and returns the decoded envelope.
+func (c *client) ListTaskEnvelope(ctx context.Context) (taskList, error) {
 	var body taskList
 	if err := c.get(ctx, "/api/v1/tasks", &body); err != nil {
+		return taskList{}, err
+	}
+	return body, nil
+}
+
+// ListTasks reads GET /api/v1/tasks.
+func (c *client) ListTasks(ctx context.Context) ([]Task, error) {
+	body, err := c.ListTaskEnvelope(ctx)
+	if err != nil {
 		return nil, err
 	}
 	return body.Items, nil

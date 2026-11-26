@@ -124,8 +124,8 @@ func TestWriteConfigProducesAConfigTheLoaderAccepts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vaultconfig.Load: %v", err)
 	}
-	if len(config.Vaults) != 1 {
-		t.Fatalf("expected exactly one vault, got %d", len(config.Vaults))
+	if len(config.Vaults) != 2 {
+		t.Fatalf("expected two vaults, got %d", len(config.Vaults))
 	}
 	vault := config.Vaults[0]
 	if vault.Name != "fixture" {
@@ -139,6 +139,14 @@ func TestWriteConfigProducesAConfigTheLoaderAccepts(t *testing.T) {
 	}
 	if vault.TopicsFolder != "23 Topics" {
 		t.Fatalf("expected TopicsFolder %q, got %q", "23 Topics", vault.TopicsFolder)
+	}
+	// The second vault is the one the stub never serves. It must still survive
+	// the merge, so the board can list it and mark it no-source.
+	if config.Vaults[1].Name != "unserved" {
+		t.Fatalf("expected second vault Name %q, got %q", "unserved", config.Vaults[1].Name)
+	}
+	if config.Vaults[1].TasksFolder != "25 Tasks" {
+		t.Fatalf("expected unserved TasksFolder %q, got %q", "25 Tasks", config.Vaults[1].TasksFolder)
 	}
 }
 

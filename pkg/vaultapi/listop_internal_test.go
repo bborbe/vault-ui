@@ -27,6 +27,7 @@ var _ = Describe("listOperation", func() {
 				Priority: 3,
 			},
 		},
+		nil,
 	)
 	op := NewListOperation(source, "test", "25 Tasks", "24 Goals", "23 Topics")
 
