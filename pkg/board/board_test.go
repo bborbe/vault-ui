@@ -319,6 +319,9 @@ type harness struct {
 	source   *vaultapi.Source
 	counter  *listCounter
 	launch   launchregistry.Registry
+	// vaults overrides the configured set build hands the board, so a test can
+	// exercise a vault whose display Name and VaultName differ.
+	vaults []board.Vault
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
@@ -344,6 +347,7 @@ func newHarness(entries ...ops.TaskListItem) *harness {
 		index:    &fakeIndex{},
 		counter:  counter,
 		launch:   launch,
+		vaults:   []board.Vault{vault},
 	}
 	h.build()
 	return h
@@ -380,7 +384,7 @@ func pageWithFrontmatter(
 // fake and rebuild.
 func (h *harness) build() {
 	h.board = board.New(board.Deps{
-		Vaults:   fakeVaults{vaults: []board.Vault{vault}},
+		Vaults:   fakeVaults{vaults: h.vaults},
 		Ops:      fakeOps{list: *h.list, show: *h.show},
 		Launch:   h.launch,
 		Clock:    libtime.CurrentDateTimeGetterFunc(func() libtime.DateTime { return libtime.DateTime(baseTime) }),
@@ -458,6 +462,27 @@ var _ = Describe("ListVaults", func() {
 	It("marks a vault the coverage set names as served", func() {
 		h := newHarness()
 		h.source = vaultapi.NewSourceFromData(nil, nil, nil, []string{"personal"})
+		h.build()
+		responses, err := h.board.ListVaults(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(responses).To(HaveLen(1))
+		Expect(responses[0].Source).NotTo(BeNil())
+		Expect(*responses[0].Source).To(BeTrue())
+	})
+
+	It("joins the coverage set on VaultName, not the display Name", func() {
+		// A vault whose display label and vault-api identity differ — the shape
+		// the live config takes whenever `vault_name:` overrides the key. The
+		// coverage set carries vault-api identities, so joining on Name would
+		// report this served vault as unserved.
+		h := newHarness()
+		h.vaults = []board.Vault{{
+			Name:        "Display Label",
+			VaultName:   "identity",
+			Path:        "/vault",
+			TasksFolder: "24 Tasks",
+		}}
+		h.source = vaultapi.NewSourceFromData(nil, nil, nil, []string{"identity"})
 		h.build()
 		responses, err := h.board.ListVaults(context.Background())
 		Expect(err).NotTo(HaveOccurred())

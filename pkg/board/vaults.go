@@ -38,7 +38,13 @@ func (b *board) ListVaults(ctx context.Context) ([]api.VaultResponse, error) {
 	for _, vault := range vaults {
 		var source *bool
 		if indexedSet != nil {
-			served := indexedSet[strings.ToLower(vault.Name)]
+			// Join on VaultName, never Name: VaultName is the vault-cli/vault-api
+			// identity, and it is what every vault-api row carries as its `vault`
+			// field — the same key the list reads join on. Name is the display
+			// label and is routinely title-cased or aliased (`name: personal`,
+			// `vault_name: private-personal`), so joining on it would report a
+			// served vault as unserved the first time the two diverge.
+			served := indexedSet[strings.ToLower(vault.VaultName)]
 			source = &served
 		}
 		responses = append(responses, api.VaultResponse{
