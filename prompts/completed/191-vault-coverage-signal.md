@@ -7,6 +7,7 @@ created: "2026-11-26T21:15:00Z"
 queued: "2026-11-26T20:15:01Z"
 started: "2026-11-26T20:15:30Z"
 completed: "2026-11-26T20:21:10Z"
+pr-url: https://github.com/bborbe/vault-ui/pull/258
 branch: feat/vault-coverage
 ---
 
