@@ -218,8 +218,9 @@ export function executeCommand(
   );
 }
 
-// subscribeBoard listens for board changes. SSE, not WebSocket: the page never
-// streams data back, and SSE reconnects on its own. Every event is a wake-up
+// subscribeBoard listens for board changes. Server-Sent Events, not a duplex
+// socket: the page never streams data back, and the browser reconnects on its
+// own. Every event is a wake-up
 // ("read the board again") rather than a data frame, so one code path builds
 // the model from the JSON endpoints. jsdom (Vitest) has no EventSource, so the
 // guard is load-bearing rather than defensive noise.
