@@ -18,13 +18,11 @@ import (
 
 	markdown "github.com/bborbe/vault-markdown"
 
-	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
-	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 const pageTestVault = "private-personal"
@@ -139,11 +137,8 @@ func newPageTestRouter(t *testing.T, vaultDir string) http.Handler {
 	staticFS := fstest.MapFS{
 		"index.html": {Data: []byte("<html>index</html>")},
 	}
-	readiness := vaultui.NewReadiness()
-	readiness.SetReady()
-	manager := websocket.NewConnectionManager(websocket.NewMetrics())
 	return handler.CreateHTTPRouter(
-		&fakeBoard{}, &fakeMutations{}, staticFS, readiness, manager, events.NewHub(), pages,
+		&fakeBoard{}, &fakeMutations{}, staticFS, events.NewHub(), pages,
 	)
 }
 

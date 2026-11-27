@@ -216,7 +216,7 @@ func CreateAPIHandler(
 	)
 	pages := pageview.NewServiceWithHolds(vaults, vaultSource.Client(), holds)
 	return handler.CreateHTTPRouter(
-		service, mutationsService, CreateStaticFS(dist), readiness, manager, hub, pages,
+		service, mutationsService, CreateStaticFS(dist), hub, pages,
 	)
 }
 
