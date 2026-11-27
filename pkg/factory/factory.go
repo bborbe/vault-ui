@@ -64,6 +64,8 @@ func CreateOpSet(
 	goalStore := storage.NewGoalStorage(storageConfig)
 	topicStore := storage.NewTopicStorage(storageConfig)
 	dailyStore := storage.NewDailyNoteStorage(storageConfig)
+	topicComplete := ops.NewTopicCompleteOperation(topicStore, goalStore)
+	goalComplete := ops.NewGoalCompleteOperation(goalStore, taskStore, currentDateTime, topicComplete, topicStore)
 	pageStore := storage.NewPageStorage(storageConfig)
 	return vaultui.OpSet{
 		TaskStorage:      taskStore,
@@ -76,12 +78,12 @@ func CreateOpSet(
 		Approve:          ops.NewTaskApproveOperation(taskStore, currentDateTime),
 		Answer:           ops.NewTaskAnswerOperation(taskStore),
 		Defer:            ops.NewDeferOperation(taskStore, dailyStore, currentDateTime),
-		Complete:         ops.NewCompleteOperation(taskStore, dailyStore, currentDateTime, interactionCounter),
+		Complete:         ops.NewCompleteOperation(taskStore, dailyStore, currentDateTime, interactionCounter, goalComplete),
 		GoalSet:          ops.NewGoalSetOperation(goalStore, currentDateTime),
 		GoalClear:        ops.NewGoalClearOperation(goalStore),
 		GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, currentDateTime, uuidGenerator, starter, resumer),
 		GoalDefer:        ops.NewGoalDeferOperation(goalStore, currentDateTime),
-		GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, currentDateTime),
+		GoalComplete:     goalComplete,
 		TopicShow:        ops.NewTopicShowOperation(topicStore),
 		TopicSet:         ops.NewTopicSetOperation(topicStore, currentDateTime),
 		TopicClear:       ops.NewTopicClearOperation(topicStore),

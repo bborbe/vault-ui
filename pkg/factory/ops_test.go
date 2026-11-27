@@ -36,7 +36,7 @@ func tempVault() string {
 		Expect(os.MkdirAll(filepath.Join(vaultDir, dir), 0750)).To(Succeed())
 	}
 	writeFile(vaultDir, taskFile, "---\nstatus: next\npage_type: task\n---\n# Task A\n\nA task.\n")
-	writeFile(vaultDir, goalFile, "---\nstatus: active\npage_type: goal\n---\n# Goal A\n\nA goal.\n")
+	writeFile(vaultDir, goalFile, "---\nstatus: active\npage_type: goal\n---\n# Goal A\n\nA goal.\n\n# Success Criteria\n\n- [x] done\n")
 	writeFile(vaultDir, topicFile, "---\npage_type: topic\n---\n# Topic A\n\nA topic.\n")
 	return vaultDir
 }

@@ -135,7 +135,7 @@ func newHarnessWith(mutate func(*vaultconfig.Vault)) *harness {
 	writeFile(filepath.Join(tasksDir, taskTwoID+".md"),
 		"---\nstatus: in_progress\nclaude_session_id: "+uuidOne+"\n---\n\n# Task Two\n")
 	writeFile(filepath.Join(goalsDir, goalOneID+".md"),
-		"---\nstatus: in_progress\n---\n\n# Goal One\n")
+		"---\nstatus: in_progress\n---\n\n# Goal One\n\n# Success Criteria\n\n- [x] done\n")
 	writeFile(filepath.Join(dir, "23 Topics", topicOneID+".md"),
 		"---\nstatus: in_progress\nphase: execution\n---\n\n# Topic One\n\n## Goals\n")
 	writeFile(filepath.Join(dir, "23 Topics", topicTwoID+".md"),
@@ -240,6 +240,8 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 		dailyStore := storage.NewDailyNoteStorage(storageConfig)
 		publisher := ops.NewEscalationPublisher("", "", nil)
 		clock := libtime.NewCurrentDateTime()
+		topicComplete := ops.NewTopicCompleteOperation(topicStore, goalStore)
+		goalComplete := ops.NewGoalCompleteOperation(goalStore, taskStore, clock, topicComplete, topicStore)
 		return vaultui.OpSet{
 			TaskStorage:      taskStore,
 			GoalStorage:      goalStore,
@@ -251,12 +253,12 @@ func opsFactory(vault vaultconfig.Vault) mutations.OpsFactory {
 			Approve:          ops.NewTaskApproveOperation(taskStore, clock),
 			Answer:           ops.NewTaskAnswerOperation(taskStore),
 			Defer:            ops.NewDeferOperation(taskStore, dailyStore, clock),
-			Complete:         ops.NewCompleteOperation(taskStore, dailyStore, clock, ops.NewInteractionCounter("", "")),
+			Complete:         ops.NewCompleteOperation(taskStore, dailyStore, clock, ops.NewInteractionCounter("", ""), goalComplete),
 			GoalSet:          ops.NewGoalSetOperation(goalStore, clock),
 			GoalClear:        ops.NewGoalClearOperation(goalStore),
 			GoalWorkOn:       ops.NewGoalWorkOnOperation(goalStore, clock, func() string { return uuidTwo }, nil, nil),
 			GoalDefer:        ops.NewGoalDeferOperation(goalStore, clock),
-			GoalComplete:     ops.NewGoalCompleteOperation(goalStore, taskStore, clock),
+			GoalComplete:     goalComplete,
 			TopicSet:         ops.NewTopicSetOperation(topicStore, clock),
 			TopicClear:       ops.NewTopicClearOperation(topicStore),
 			TopicShow:        ops.NewTopicShowOperation(topicStore),
