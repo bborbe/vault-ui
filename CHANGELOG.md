@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- chore: Bump vault-cli to v0.200.7 — topic flags set in the UI now record operator provenance (`flag_set_by` / `flag_set_at`)
+
 ## v0.117.0
 
 - feat: Mark a configured vault the board cannot serve — `GET /api/vaults` now carries a per-vault `source` (`true` served, `false` known-unserved, `null` unknown) read from the `vaults` coverage set vault-api returns on the list envelope, and the tasks view renders a `vault-no-source` marker for a selected unserved vault, so a listed vault with no source no longer reads as a healthy empty board
