@@ -88,6 +88,11 @@ type TaskResponse struct {
 	// disk, and the key is always emitted (no omitempty), so a page declaring no
 	// mode reads back as "mode": null rather than vanishing from the payload.
 	Mode *string `json:"mode"`
+	// HoldReason is why claude-wrapper's flagged tick holds this card instead of
+	// opening it, read from the wrapper's openable endpoint. It is Go-only and
+	// always emitted: null when the wrapper does not hold the row, or when the
+	// wrapper cannot be reached (fail-open — the card simply shows no reason).
+	HoldReason *HoldResponse `json:"hold_reason"`
 }
 
 // GoalResponse is the wire shape of a goal card.
@@ -136,6 +141,9 @@ type GoalResponse struct {
 	// back to the title's key, so a goal whose filename does not lead with the
 	// key still shows its ticket.
 	Jira *string `json:"jira"`
+	// HoldReason is the wrapper's hold reason for the goal, on the same terms as
+	// TaskResponse.HoldReason.
+	HoldReason *HoldResponse `json:"hold_reason"`
 }
 
 // TopicResponse is the wire shape of a topic list entry.
@@ -205,6 +213,33 @@ type TopicResponse struct {
 	// when the topic is not deferred or its defer is in the past. A topic
 	// deferred beyond the window is omitted from the list entirely.
 	Upcoming bool `json:"upcoming"`
+	// HoldReason is the wrapper's hold reason for the topic, on the same terms as
+	// TaskResponse.HoldReason.
+	HoldReason *HoldResponse `json:"hold_reason"`
+}
+
+// HoldResponse is why claude-wrapper's flagged tick holds a row rather than
+// opening it: the wrapper's reason code, a short human label for the badge, and
+// the optional waiting_on detail the wrapper may carry. Every detail field is
+// null (or empty) when the wrapper does not send it.
+type HoldResponse struct {
+	// Reason is the wrapper's reason code verbatim (e.g. "parked-until").
+	Reason string `json:"reason"`
+	// Label is the compact badge text (e.g. "⏰ parked until 14:00").
+	Label string `json:"label"`
+	// Summary is waiting_on.summary — the tooltip / second line.
+	Summary *string `json:"summary"`
+	// Since and Until are waiting_on.since / waiting_on.until (RFC3339).
+	Since *string `json:"since"`
+	Until *string `json:"until"`
+	// CardID is the attention card the row waits on.
+	CardID *string `json:"card_id"`
+	// PRURL is the pull request the row waits on.
+	PRURL *string `json:"pr_url"`
+	// Blockers are the rows the wrapper reports blocking this one; always non-nil.
+	Blockers []string `json:"blockers"`
+	// SessionID is the session the row waits on.
+	SessionID *string `json:"session_id"`
 }
 
 // TopicDetailResponse is the wire shape of a single topic and the work it

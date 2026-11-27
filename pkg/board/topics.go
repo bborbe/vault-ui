@@ -118,11 +118,12 @@ func (b *board) ListTopics(ctx context.Context, query TopicQuery) ([]api.TopicRe
 					projectDir,
 					projectsRoot,
 				)),
-				Jira:     pageFieldsByTopic[item.Name].jira,
-				Mode:     pageFieldsByTopic[item.Name].mode,
-				Blockers: blockers,
-				Blocked:  len(blockers) > 0,
-				Upcoming: upcoming,
+				Jira:       pageFieldsByTopic[item.Name].jira,
+				Mode:       pageFieldsByTopic[item.Name].mode,
+				Blockers:   blockers,
+				Blocked:    len(blockers) > 0,
+				Upcoming:   upcoming,
+				HoldReason: b.holdFor(vault, holdKindTopic, item.Name),
 			})
 		}
 	}

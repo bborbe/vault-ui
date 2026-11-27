@@ -73,6 +73,7 @@ func newTestAPIHandlerWithManager(
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		startWriteQueue(),
 		source,
+		nil,
 	)
 }
 

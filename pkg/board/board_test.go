@@ -23,6 +23,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/openable"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -322,6 +323,8 @@ type harness struct {
 	// vaults overrides the configured set build hands the board, so a test can
 	// exercise a vault whose display Name and VaultName differ.
 	vaults []board.Vault
+	// holds is the claude-wrapper hold lookup; nil leaves every hold_reason null.
+	holds openable.Lookup
 }
 
 func newHarness(entries ...ops.TaskListItem) *harness {
@@ -392,6 +395,7 @@ func (h *harness) build() {
 		Sessions: h.sessions,
 		Index:    h.index,
 		Source:   h.source,
+		Holds:    h.holds,
 	})
 }
 
@@ -1363,6 +1367,7 @@ var _ = Describe("ListTopics", func() {
 			"claude_session_id",
 			"claude_session_started",
 			"flag",
+			"hold_reason",
 			"id",
 			"jira",
 			"jump_pane",

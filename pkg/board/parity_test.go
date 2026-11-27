@@ -57,6 +57,7 @@ var _ = Describe("task-list payload parity", func() {
 			"due_date",
 			"flag",
 			"goals",
+			"hold_reason",
 			"id",
 			"jira",
 			"jump_pane",

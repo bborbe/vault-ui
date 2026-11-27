@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- feat: A flagged card claude-wrapper's flagged tick holds now says why — the board polls the wrapper's `GET /api/1.0/openable` (base URL from `CLAUDE_WRAPPER_URL`, default `http://localhost:18090`, every 20 s, fail-open: a wrapper that is down shows nothing extra), joins held rows to tasks, goals and topics by (vault, kind, name), and serves them as a new always-emitted `hold_reason` field (`reason`, `label`, plus the optional `waiting_on` detail: `summary`, `since`, `until`, `card_id`, `pr_url`, `blockers`, `session_id`); the card renders a compact badge row (`⏸ stalled`, `⏰ parked until 14:00`, `⛔ blocked`, `🔗 waiting on PR`, `● live elsewhere`, …) with the summary as second text and tooltip and a PR link when present, suppressed when the card already shows its own Live or blocked badge; the page view (`/v/<vault>/page/...`) shows the same badge under the title. A held-set change bumps the task-body cache and pushes a `source_changed` frame
+
 ## v0.117.1
 
 - chore: Bump vault-cli to v0.200.7 — topic flags set in the UI now record operator provenance (`flag_set_by` / `flag_set_at`)

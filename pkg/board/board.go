@@ -22,6 +22,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/activity"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/openable"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -128,6 +129,9 @@ type Deps struct {
 	// means those fields are empty (tests only).
 	Source  *vaultapi.Source
 	HomeDir string
+	// Holds supplies claude-wrapper's hold reason for each flagged row. A nil
+	// value means every card carries a null hold (tests, or the feature off).
+	Holds openable.Lookup
 }
 
 // Board is the read-only board service.
@@ -165,6 +169,7 @@ type board struct {
 	panes    PanesResolver
 	source   *vaultapi.Source
 	homeDir  string
+	holds    openable.Lookup
 	snapshot *taskSnapshotStore
 	bodies   *taskBodyCache
 }
@@ -182,6 +187,7 @@ func New(deps Deps) Board {
 		panes:    deps.Panes,
 		source:   deps.Source,
 		homeDir:  deps.HomeDir,
+		holds:    deps.Holds,
 	}
 	b.snapshot = newTaskSnapshotStore(taskSnapshotParams{
 		Build:       b.buildTaskRows,
@@ -251,3 +257,32 @@ type UnknownVaultError struct {
 func (e UnknownVaultError) Error() string {
 	return "Unknown vault: " + e.Vault
 }
+
+// Entity kinds as claude-wrapper's openable endpoint names them.
+const (
+	holdKindTask  = "task"
+	holdKindGoal  = "goal"
+	holdKindTopic = "topic"
+)
+
+// holdFor joins the wrapper's held rows to a board row by (vault, kind, name).
+// The wrapper names a vault by its vault-cli name, which the board carries as
+// VaultName; the display name is tried as well so a vault whose two names
+// differ still joins.
+func (b *board) holdFor(vault Vault, kind, name string) *api.HoldResponse {
+	if b.holds == nil {
+		return nil
+	}
+	if hold := b.holds.Hold(vault.VaultName, kind, name); hold != nil {
+		return hold
+	}
+	if vault.Name != vault.VaultName {
+		return b.holds.Hold(vault.Name, kind, name)
+	}
+	return nil
+}
+
+// holdsSignalName is the pseudo-vault name the held-set generation travels
+// under in a task body's signal vector. The NUL byte keeps it from ever
+// colliding with a configured vault name.
+const holdsSignalName = "\x00openable"

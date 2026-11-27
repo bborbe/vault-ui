@@ -57,9 +57,10 @@ func execute(ctx context.Context) error {
 	writeQueue := factory.CreateWriteQueue()
 	vaultSource := vaultapi.NewSource(vaultapi.New(vaultapi.ConfigFromEnv()))
 	vaultSource.SetOnChange(factory.CreateSourceChangeBroadcaster(manager))
+	holds := factory.CreateHolds(manager)
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, paneResolver, launches, locks, homeDir, readiness, manager,
-		sessionSnapshot, writeQueue, vaultSource,
+		sessionSnapshot, writeQueue, vaultSource, holds,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
@@ -89,6 +90,7 @@ func execute(ctx context.Context) error {
 			loader, manager, sessionState, heartbeatStore, sessionstate.DefaultRescanInterval,
 		),
 		sessionSnapshot.Run,
+		holds.Run,
 		factory.CreateCleanupSweep(
 			loader, configPath, launches, locks, homeDir,
 		),

@@ -20,7 +20,9 @@ import (
 	"github.com/bborbe/errors"
 	markdown "github.com/bborbe/vault-markdown"
 
+	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/openable"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 )
 
@@ -60,12 +62,24 @@ func PageURL(vaultName, pagePath string) string {
 // NewService returns the page-rendering service over the vault set and the
 // vault-service page read seam.
 func NewService(vaults board.VaultsProvider, pages PageSource) Service {
-	return &service{vaults: vaults, pages: pages}
+	return NewServiceWithHolds(vaults, pages, nil)
+}
+
+// NewServiceWithHolds is NewService plus claude-wrapper's hold reasons: a task,
+// goal or topic page the wrapper holds renders the same reason badge its board
+// card shows. A nil holds renders no badge.
+func NewServiceWithHolds(
+	vaults board.VaultsProvider,
+	pages PageSource,
+	holds openable.Lookup,
+) Service {
+	return &service{vaults: vaults, pages: pages, holds: holds}
 }
 
 type service struct {
 	vaults board.VaultsProvider
 	pages  PageSource
+	holds  openable.Lookup
 }
 
 // Render reads the requested page and its backlinks from the vault service and
@@ -79,7 +93,7 @@ func (s *service) Render(
 	if err != nil {
 		return "", err
 	}
-	_, name, err := splitPagePath(pagePath)
+	dir, name, err := splitPagePath(pagePath)
 	if err != nil {
 		return "", err
 	}
@@ -99,7 +113,34 @@ func (s *service) Render(
 	for _, link := range links {
 		backlinks = append(backlinks, link.Path)
 	}
-	return buildDocument(ctx, vault, pagePath, name, rendered, backlinks)
+	return buildDocument(ctx, vault, pagePath, name, rendered, backlinks, s.holdFor(vault, dir, name))
+}
+
+// holdFor resolves the page's kind from the folder it lives in and returns the
+// wrapper's hold for it, or nil for a page outside the task, goal and topic
+// folders or one the wrapper does not hold.
+func (s *service) holdFor(vault board.Vault, dir, name string) *api.HoldResponse {
+	if s.holds == nil {
+		return nil
+	}
+	var kind string
+	switch {
+	case dir != "" && dir == vault.TasksFolder:
+		kind = "task"
+	case dir != "" && dir == vault.GoalsFolder:
+		kind = "goal"
+	case dir != "" && dir == vault.TopicsFolder:
+		kind = "topic"
+	default:
+		return nil
+	}
+	if hold := s.holds.Hold(vault.VaultName, kind, name); hold != nil {
+		return hold
+	}
+	if vault.Name != vault.VaultName {
+		return s.holds.Hold(vault.Name, kind, name)
+	}
+	return nil
 }
 
 // Exists resolves the vault and path, then asks the vault service for the page
@@ -230,6 +271,37 @@ type document struct {
 	ObsidianURL template.URL
 	Body        template.HTML
 	Backlinks   []backlink
+	// Hold is the wrapper's hold reason badge, nil when there is none.
+	Hold *holdBadge
+}
+
+// holdBadge is the page header's rendering of a wrapper hold.
+type holdBadge struct {
+	Reason  string
+	Label   string
+	Title   string
+	Summary string
+	// PRURL is a template.URL only after it is checked to be http(s).
+	PRURL template.URL
+}
+
+// newHoldBadge renders a hold for the page header. The PR link is kept only
+// for an http(s) URL so a hostile value cannot become a script href.
+func newHoldBadge(hold *api.HoldResponse) *holdBadge {
+	if hold == nil {
+		return nil
+	}
+	badge := &holdBadge{Reason: hold.Reason, Label: hold.Label, Title: "held: " + hold.Reason}
+	if hold.Summary != nil {
+		badge.Summary = *hold.Summary
+		badge.Title = *hold.Summary + " (held: " + hold.Reason + ")"
+	}
+	if hold.PRURL != nil {
+		if parsed, err := url.Parse(*hold.PRURL); err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+			badge.PRURL = template.URL(parsed.String()) //#nosec G203 -- scheme checked above
+		}
+	}
+	return badge
 }
 
 // pageTemplate wraps the rendered body in a small document that loads the
@@ -247,7 +319,8 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 <h1 class="page-title">{{.Title}}</h1>
 <a class="obsidian-link" href="{{.ObsidianURL}}" title="Open in Obsidian" aria-label="Open in Obsidian">&#8599;</a>
 </div>
-{{.Body}}
+{{with .Hold}}<div class="page-hold hold-reason" data-reason="{{.Reason}}" title="{{.Title}}"><span class="hold-reason-label">{{.Label}}</span>{{if .Summary}} <span class="hold-reason-summary">{{.Summary}}</span>{{end}}{{if .PRURL}} <a class="hold-reason-pr" href="{{.PRURL}}" target="_blank" rel="noopener">PR</a>{{end}}</div>
+{{end}}{{.Body}}
 <section class="backlinks">
 <h2>Backlinks</h2>
 <ul>
@@ -269,6 +342,7 @@ func buildDocument(
 	name string,
 	rendered string,
 	backlinks []string,
+	hold *api.HoldResponse,
 ) (string, error) {
 	entries := make([]backlink, 0, len(backlinks))
 	for _, rel := range backlinks {
@@ -287,6 +361,7 @@ func buildDocument(
 		ObsidianURL: template.URL(board.ObsidianURL(vault.VaultName, pagePath)),
 		Body:        template.HTML(rendered), //#nosec G203 -- renderer output is trusted HTML
 		Backlinks:   entries,
+		Hold:        newHoldBadge(hold),
 	})
 	if err != nil {
 		return "", errors.Wrap(ctx, err, "render page document")
