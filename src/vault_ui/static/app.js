@@ -2047,6 +2047,13 @@ function createCard(kind, item) {
         ? `<div class="card-blocked">${blockedBadgeHtml(kind, item)}</div>`
         : '';
 
+    // Why claude-wrapper's flagged tick holds this card instead of opening it.
+    // Its own full-width row, like the blocked badge, so a long summary never
+    // competes with the action button. Gated on the session slot: the reason
+    // explains why the card's Resume was not pressed for the operator.
+    const holdReason = config.slots.session ? holdReasonHtml(item) : '';
+    const holdReasonRow = holdReason ? `<div class="card-hold-reason">${holdReason}</div>` : '';
+
     const jiraHtml = config.slots.jira && view.jiraKey && view.jiraUrl
         ? `<div class="card-jira">
              <a href="${view.jiraUrl}" class="jira-badge" target="_blank" title="Open in Jira">
@@ -2103,6 +2110,7 @@ function createCard(kind, item) {
             </h3>
         </div>
         ${blockedHtml}
+        ${holdReasonRow}
         ${jiraHtml}
         <div class="card-footer">
             <div class="card-footer-left">${footerLeft}</div>
@@ -2119,12 +2127,72 @@ function createCard(kind, item) {
         if (modeEl) modeEl.title = modeBadgeTitle(view.mode);
     }
 
+    // The hold tooltip is wrapper-supplied free text, so it is assigned through
+    // the DOM for the same reason as the mode pill's.
+    if (holdReason) {
+        const holdEl = card.querySelector('.hold-reason');
+        if (holdEl) holdEl.title = holdReasonTitle(item.hold_reason);
+    }
+
     if (config.slots.detail) {
         card.querySelector('.topic-detail-btn').addEventListener('click', () => {
             openTopicDetail(item);
         });
     }
     return card;
+}
+
+// holdReasonHtml renders why claude-wrapper's flagged tick holds a card rather
+// than opening it, from the payload's `hold_reason` (null when the wrapper does
+// not hold the row or is down — then nothing renders). Only a flagged, open card
+// shows it: the wrapper only ticks flagged rows, and a closed card has nothing
+// to open. A reason the card already says is suppressed — `not-absent` on a
+// card showing its own Live badge, `blocked` on a card showing its own blocked
+// badge. The label and summary are wrapper text, so both are escaped; the PR
+// link is kept only for an http(s) URL.
+function holdReasonHtml(item) {
+    const hold = item.hold_reason;
+    if (!hold || typeof hold !== 'object' || !item.flag) return '';
+    if (isTerminalStatus(item.status)) return '';
+    if (hold.reason === 'not-absent' && item.session_state === 'live') return '';
+    if (hold.reason === 'blocked' && item.blocked && item.blockers && item.blockers.length) return '';
+    const code = String(hold.reason || '').replace(/[^a-z0-9-]/g, '');
+    const label = `<span class="hold-reason-label">${escapeHtml(hold.label || 'held')}</span>`;
+    const summary = hold.summary
+        ? ` <span class="hold-reason-summary">${escapeHtml(hold.summary)}</span>`
+        : '';
+    const pr = safeHttpUrl(hold.pr_url);
+    const prLink = pr
+        ? ` <a class="hold-reason-pr" href="${escapeHtml(pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR</a>`
+        : '';
+    return `<span class="hold-reason hold-reason-${code}">${label}${summary}${prLink}</span>`;
+}
+
+// The hold badge's tooltip: the wrapper's summary, then the detail fields it
+// may carry, then the raw reason code.
+function holdReasonTitle(hold) {
+    const lines = [];
+    if (hold.summary) lines.push(hold.summary);
+    if (hold.until) lines.push(`until ${hold.until}`);
+    if (hold.since) lines.push(`since ${hold.since}`);
+    if (hold.card_id) lines.push(`card ${hold.card_id}`);
+    if (hold.pr_url) lines.push(hold.pr_url);
+    if (hold.blockers && hold.blockers.length) lines.push(`blocked by ${hold.blockers.join(', ')}`);
+    lines.push(`held by claude-wrapper: ${hold.reason || 'unknown'}`);
+    return lines.join('\n');
+}
+
+// safeHttpUrl returns the URL when it parses with an http or https scheme, so a
+// wrapper-supplied value can never become a javascript: href. '' otherwise.
+function safeHttpUrl(value) {
+    if (typeof value !== 'string' || value === '') return '';
+    try {
+        const parsed = new URL(value);
+        if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return parsed.href;
+    } catch (e) {
+        return '';
+    }
+    return '';
 }
 
 // The flag control, shared by all three card kinds. kind selects the route

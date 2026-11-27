@@ -26,6 +26,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/openable"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/pane"
 	"github.com/bborbe/vault-ui/pkg/queue"
@@ -115,6 +116,20 @@ func CreateHeartbeatStore() heartbeat.Store {
 	return heartbeat.NewStore(os.Getenv("ATTENTION_STORE_URL"), nil)
 }
 
+// CreateHolds returns the claude-wrapper hold-reason store the board badges
+// held flagged cards from. The base URL comes from CLAUDE_WRAPPER_URL,
+// defaulting to openable.DefaultBaseURL (http://localhost:18090). A change in
+// the held set pushes a source_changed frame so an open board re-reads. Its Run
+// must run in main's run group; a wrapper that is down yields no holds, never
+// an error.
+func CreateHolds(manager websocket.ConnectionManager) openable.Holds {
+	return openable.NewHolds(openable.HoldsParams{
+		Client:  openable.NewClient(os.Getenv("CLAUDE_WRAPPER_URL"), nil),
+		Clock:   libtime.NewCurrentDateTime(),
+		Changed: func() { manager.Broadcast(websocket.SourceChangedFrame()) },
+	})
+}
+
 // CreateVaultUIConfigPath resolves vault-ui's config.yaml path, XDG-first.
 func CreateVaultUIConfigPath(homeDir string) string {
 	xdg := filepath.Join(homeDir, ".config", "vault-ui", "config.yaml")
@@ -172,6 +187,7 @@ func CreateAPIHandler(
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
 	vaultSource *vaultapi.Source,
+	holds openable.Lookup,
 ) http.Handler {
 	// The startup serving proof: the board reads from this origin. Required by
 	// DoD2, so it is logged at Info (visible in the launchd StandardErrorPath),
@@ -193,13 +209,14 @@ func CreateAPIHandler(
 		Panes:   paneResolver,
 		Source:  vaultSource,
 		HomeDir: homeDir,
+		Holds:   holds,
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, launches, locks, homeDir,
 		paneResolver, websocket.NewMutationPublisher(manager), writeQueue,
 		vaultSource, vaultSource,
 	)
-	pages := pageview.NewService(vaults, vaultSource.Client())
+	pages := pageview.NewServiceWithHolds(vaults, vaultSource.Client(), holds)
 	return handler.CreateHTTPRouter(
 		service, mutationsService, CreateStaticFS(), readiness, manager, pages,
 	)

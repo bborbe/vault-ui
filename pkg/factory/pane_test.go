@@ -113,7 +113,7 @@ func paneHandler(
 		loader, configPath, paneResolver,
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), homeDir, readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()),
-		sessionSnapshot, startWriteQueue(), source,
+		sessionSnapshot, startWriteQueue(), source, nil,
 	)
 }
 

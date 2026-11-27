@@ -105,7 +105,9 @@ func (b *board) ListTasks(ctx context.Context, query TaskQuery) ([]api.TaskRespo
 			visibleTask.jira = row.jira
 			visibleTask.mode = row.mode
 			visibleTask.openQuestions = row.openQuestions
-			responses = append(responses, b.taskResponse(vault, visibleTask, row.activityDate))
+			response := b.taskResponse(vault, visibleTask, row.activityDate)
+			response.HoldReason = b.holdFor(vault, holdKindTask, row.item.Name)
+			responses = append(responses, response)
 		}
 	}
 
@@ -179,12 +181,18 @@ func (b *board) refreshTaskSnapshots(ctx context.Context, selected []Vault) erro
 // configured vault, so a genuine change in any of them does. It reads the same
 // selection ListTasks makes and performs no vault I/O.
 func (b *board) taskSnapshotSignals(selected []Vault) []VaultSignal {
-	signals := make([]VaultSignal, 0, len(selected))
+	signals := make([]VaultSignal, 0, len(selected)+1)
 	for _, vault := range selected {
 		signals = append(signals, VaultSignal{
 			Name:   vault.Name,
 			Signal: b.snapshot.Signal(vaultapi.NewSnapshotKey(vault.Path, vault.TasksFolder)),
 		})
+	}
+	// The wrapper's held set is not part of any vault's rows, so a change in it
+	// must move the signal vector on its own or a held body would keep serving
+	// the previous hold reasons.
+	if b.holds != nil {
+		signals = append(signals, VaultSignal{Name: holdsSignalName, Signal: b.holds.Generation()})
 	}
 	return signals
 }

@@ -121,11 +121,13 @@ func (b *board) goalsForVault(
 
 	responses := make([]api.GoalResponse, 0, len(rows))
 	for _, row := range rows {
-		responses = append(responses, b.goalResponse(
+		response := b.goalResponse(
 			ctx, vault, row, goalsFolder, projectDir, projectsRoot,
 			registryIDs, seenIDs, resumeIDs, liveIDsUnknown,
 			pageFieldsByGoal[row.item.Name],
-		))
+		)
+		response.HoldReason = b.holdFor(vault, holdKindGoal, row.item.Name)
+		responses = append(responses, response)
 	}
 	b.attachGoalJumpPanes(ctx, responses)
 	return responses, nil
