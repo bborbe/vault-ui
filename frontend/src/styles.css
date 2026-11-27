@@ -27,6 +27,19 @@ body {
   font-size: 13px;
 }
 
+.banner {
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.hidden {
+  display: none;
+}
+
 .err {
   color: var(--err);
 }

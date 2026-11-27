@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   assignToMe,
   fetchGoals,
+  fetchSourceStatus,
   fetchTasks,
   fetchTopics,
+  fetchVaults,
   jumpToPane,
   runSession,
   subscribeBoard,
@@ -11,7 +13,7 @@ import {
 } from "./api";
 import Board from "./components/Board";
 import type { Card as CardModel, CardKind, SortKey } from "./model";
-import type { GoalResponse, TaskResponse, TopicResponse } from "./types";
+import type { GoalResponse, TaskResponse, TopicResponse, VaultResponse } from "./types";
 
 const VIEWS: { kind: CardKind; label: string }[] = [
   { kind: "task", label: "Tasks" },
@@ -31,6 +33,12 @@ export default function App() {
   const [cards, setCards] = useState<CardModel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ kind: CardKind; card: CardModel } | null>(null);
+  const [sourceUnavailable, setSourceUnavailable] = useState(false);
+  const [vaults, setVaults] = useState<VaultResponse[]>([]);
+  // Empty means the all-vaults view, which reports nothing about unserved
+  // vaults — naming every one of them would raise the marker for vaults the
+  // operator never asked about.
+  const [selectedVaults] = useState<string[]>([]);
 
   const load = useCallback(
     (signal?: AbortSignal) => {
@@ -61,6 +69,24 @@ export default function App() {
     };
   }, [load]);
 
+  // The two banners the e2e suite asserts. They are always in the DOM and
+  // toggled by class, exactly as the old page did, so the markers keep their
+  // meaning.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchSourceStatus(controller.signal)
+      .then((status) => setSourceUnavailable(status.unavailable))
+      .catch(() => undefined); // a failing status endpoint is itself an outage; leave the banner as-is
+    fetchVaults(controller.signal)
+      .then(setVaults)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
+  const noSource =
+    selectedVaults.length > 0 &&
+    vaults.some((vault) => selectedVaults.includes(vault.name) && vault.source === false);
+
   const vaultOf = (card: CardModel) => (card as { vault: string }).vault;
 
   const actions = {
@@ -82,6 +108,21 @@ export default function App() {
 
   return (
     <main>
+      <div
+        id="vault-api-unavailable"
+        className={`banner${sourceUnavailable ? "" : " hidden"}`}
+        data-testid="vault-api-unavailable"
+      >
+        vault-api unavailable — showing last-known data
+      </div>
+      <div
+        id="vault-no-source"
+        className={`banner${noSource ? "" : " hidden"}`}
+        data-testid="vault-no-source"
+      >
+        no source for vault
+      </div>
+
       <nav className="view-toggle">
         {VIEWS.map(({ kind, label }) => (
           <button

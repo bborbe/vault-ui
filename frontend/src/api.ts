@@ -109,8 +109,13 @@ export function fetchAssignees(vaults: string[], signal?: AbortSignal) {
   );
 }
 
+// SourceStatus is the vault-api availability verdict the outage banner reads.
+export interface SourceStatus {
+  unavailable: boolean;
+}
+
 export function fetchSourceStatus(signal?: AbortSignal) {
-  return getJSON<Record<string, unknown>>(SOURCE_STATUS_URL, signal);
+  return getJSON<SourceStatus>(SOURCE_STATUS_URL, signal);
 }
 
 export function reloadConfig(signal?: AbortSignal) {
