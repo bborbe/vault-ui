@@ -103,6 +103,9 @@ export default function App() {
   const [now, setNow] = useState(() => new Date());
 
   const pending = useRef(new Map<string, { fields: Record<string, unknown>; until: number }>());
+  // Captured before any effect rewrites the address bar, so the persisted
+  // vault selection is still restored on a bare load.
+  const initialSearch = useRef(window.location.search);
   const toastID = useRef(0);
   const dialogResolve = useRef<((value: unknown) => void) | null>(null);
   const restored = useRef(false);
@@ -195,7 +198,7 @@ export default function App() {
   const refreshVaults = useCallback(async () => {
     const list = await api.fetchVaults();
     setVaults(list);
-    if (!restored.current && window.location.search === "") {
+    if (!restored.current && initialSearch.current === "") {
       restored.current = true;
       const restoredVaults = restoreVaults(
         storage(),

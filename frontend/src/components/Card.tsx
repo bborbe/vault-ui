@@ -2,7 +2,6 @@ import type { HoldResponse } from "../types";
 import type { Card as CardModel, CardKind } from "../model";
 import {
   CARD_CONFIG,
-  cardKey,
   formatActivityAge,
   isTerminal,
   jiraBadge,
@@ -82,8 +81,11 @@ export default function Card({
     .filter(Boolean)
     .join(" ");
 
+  // The data attribute carries the item's own id, not the vault-qualified
+  // board key: the blocker resolver compares it against a page name, and the
+  // old page set the same plain value.
   const dataAttrs: Record<string, string> = {
-    [`data-${config.idDataset.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`]: cardKey(kind, card),
+    [`data-${config.idDataset.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`]: (card as { id: string }).id,
   };
   if (config.kindDataset !== null) dataAttrs["data-kind"] = config.kindDataset;
   if (config.vaultDataset) dataAttrs["data-vault"] = (card as { vault: string }).vault;
