@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.117.1
 
 - chore: Bump vault-cli to v0.200.7 — topic flags set in the UI now record operator provenance (`flag_set_by` / `flag_set_at`)
 
