@@ -33,6 +33,12 @@ func NewEventsHandler(hub *events.Hub, heartbeat time.Duration) http.Handler {
 		resp.Header().Set("Content-Type", "text/event-stream")
 		resp.Header().Set("Cache-Control", "no-cache")
 		resp.Header().Set("Connection", "keep-alive")
+		// The server's WriteTimeout is an absolute per-request deadline, so a
+		// long-lived stream would be truncated mid-response and the browser
+		// would log ERR_INCOMPLETE_CHUNKED_ENCODING. Clear the deadline for
+		// this response only; the heartbeat still detects a dead peer. An
+		// unsupported writer (the test recorder) simply keeps its own deadline.
+		_ = http.NewResponseController(resp).SetWriteDeadline(time.Time{})
 		resp.WriteHeader(http.StatusOK)
 
 		// The first event tells the client the stream is live, so it does not

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing/fstest"
 
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
@@ -76,7 +77,16 @@ func newTestAPIHandlerWithManager(
 		startWriteQueue(),
 		source,
 		nil,
+		testDist(),
 	)
+}
+
+// testDist is a minimal frontend tree. The served bytes are not what these
+// specs assert; the router only needs a readable FS.
+func testDist() fs.FS {
+	return fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")},
+	}
 }
 
 func apiFixture() (config.Loader, string, string) {
@@ -132,15 +142,11 @@ var _ = Describe("API factory", func() {
 	})
 
 	Describe("CreateStaticFS", func() {
-		It("serves the frozen frontend tree", func() {
-			staticFS := factory.CreateStaticFS()
+		It("serves the tree it is given, rooted at the dist directory", func() {
+			staticFS := factory.CreateStaticFS(testDist())
 			content, err := fs.ReadFile(staticFS, "index.html")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("<html"))
-			_, err = fs.ReadFile(staticFS, "app.js")
-			Expect(err).NotTo(HaveOccurred())
-			_, err = fs.ReadFile(staticFS, "style.css")
-			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 

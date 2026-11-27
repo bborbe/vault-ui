@@ -38,7 +38,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
 	"github.com/bborbe/vault-ui/pkg/vaultconfig"
 	"github.com/bborbe/vault-ui/pkg/websocket"
-	staticui "github.com/bborbe/vault-ui/src/vault_ui"
 )
 
 // defaultAPIListen is the production API listen address.
@@ -161,15 +160,11 @@ func CreateAdminListen() string {
 	return defaultAdminListen
 }
 
-// CreateStaticFS returns the embedded frozen frontend tree, rooted at the
-// static directory.
-func CreateStaticFS() fs.FS {
-	sub, err := fs.Sub(staticui.FS, "static")
-	if err != nil {
-		// Unreachable: the embed tree is fixed at build time.
-		panic(err)
-	}
-	return sub
+// CreateStaticFS names the seam where the frontend tree enters the server. The
+// caller passes the embedded build (rooted at the dist directory) so the
+// served page and the shipped assets are always the same bytes.
+func CreateStaticFS(dist fs.FS) fs.FS {
+	return dist
 }
 
 // CreateAPIHandler builds the :8000 API router. locks is the process-wide
@@ -190,6 +185,7 @@ func CreateAPIHandler(
 	writeQueue queue.Queue,
 	vaultSource *vaultapi.Source,
 	holds openable.Lookup,
+	dist fs.FS,
 ) http.Handler {
 	// The startup serving proof: the board reads from this origin. Required by
 	// DoD2, so it is logged at Info (visible in the launchd StandardErrorPath),
@@ -220,7 +216,7 @@ func CreateAPIHandler(
 	)
 	pages := pageview.NewServiceWithHolds(vaults, vaultSource.Client(), holds)
 	return handler.CreateHTTPRouter(
-		service, mutationsService, CreateStaticFS(), readiness, manager, hub, pages,
+		service, mutationsService, CreateStaticFS(dist), readiness, manager, hub, pages,
 	)
 }
 

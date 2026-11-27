@@ -14,6 +14,22 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// numberOf normalises a Playwright Evaluate result: an integral value arrives
+// as an int and a fractional one as a float64, and the comparison is the point,
+// not the Go type.
+func numberOf(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
 // Scenario 040 verifies the in-app page view end to end: a card opens the page
 // inside vault-ui, the page renders as HTML, the Obsidian hand-off survives,
 // and a wikilink navigates to its resolved target. Each assertion is on the
@@ -84,7 +100,7 @@ var _ = Describe("Scenario 040: the in-app page view", func() {
 		paragraphSize, err := page.Locator(".page-view p").First().
 			Evaluate(`el => parseFloat(getComputedStyle(el).fontSize)`, nil)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(titleSize.(float64)).To(BeNumerically(">", paragraphSize.(float64)),
+		Expect(numberOf(titleSize)).To(BeNumerically(">", numberOf(paragraphSize)),
 			"the page title must render larger than the body")
 	})
 
@@ -192,7 +208,7 @@ var _ = Describe("Scenario 040: the in-app page view", func() {
 		Expect(err).NotTo(HaveOccurred())
 		bodySize, err := paragraph.Evaluate(`el => parseFloat(getComputedStyle(el).fontSize)`, nil)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(headingSize.(float64)).To(BeNumerically(">", bodySize.(float64)),
+		Expect(numberOf(headingSize)).To(BeNumerically(">", numberOf(bodySize)),
 			"a heading must not render at body size")
 	})
 })

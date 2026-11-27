@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mxschmitt/playwright-go"
 	. "github.com/onsi/ginkgo/v2"
@@ -158,7 +159,7 @@ var _ = Describe("Scenario 001: the three views, their filters, and the URL", fu
 })
 
 var _ = Describe("Scenario 001: the console", func() {
-	It("stays clean across two poll intervals", func() {
+	It("stays clean across a live-update window", func(ctx SpecContext) {
 		// Built by hand rather than via newPage so the response handler is
 		// registered before the first navigation — a handler attached after
 		// Goto misses the very requests it exists to catch.
@@ -169,8 +170,8 @@ var _ = Describe("Scenario 001: the console", func() {
 		var mu sync.Mutex
 		var serverFailures []string
 		var consoleErrors []string
-		// A render exception inside loadTasks' try is CAUGHT — it reaches
-		// showToast plus console.error, never pageerror. Without this handler
+		// A render exception inside a fetch handler is CAUGHT — it reaches the
+		// toast path plus console.error, never pageerror. Without this handler
 		// the assertion would pass on exactly the failure the gate exists for.
 		page.OnConsole(func(msg playwright.ConsoleMessage) {
 			if msg.Type() == "error" {
@@ -193,11 +194,30 @@ var _ = Describe("Scenario 001: the console", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		// The poll interval is 60 s. Waiting past two of them is what stops a
-		// poll-loop exception hiding behind a window where the poll never ran.
-		Eventually(func() int {
-			return pollTicks(page)
-		}, "150s", "5s").Should(BeNumerically(">=", 2))
+		Eventually(func() int { return countOf(page, ".task-card") }, "15s", "500ms").
+			Should(BeNumerically(">", 0))
+
+		// The live stream reports itself connected by dropping `disconnected`
+		// from the status dot. The old spec waited for two 60 s poll ticks; the
+		// poll loop is gone, so the window is anchored on the stream instead.
+		Eventually(func() string {
+			class, err := page.Locator("#ws-status").GetAttribute("class")
+			Expect(err).NotTo(HaveOccurred())
+			return class
+		}, "15s", "200ms").ShouldNot(ContainSubstring("disconnected"),
+			"the SSE stream must connect")
+
+		// Hold the window open across three 15 s heartbeats so a stream error or
+		// a reconnect lands inside it.
+		time.Sleep(45 * time.Second)
+
+		// Positive control: a live event still reaches the board during that
+		// window. Without it, a stream that silently died would pass the
+		// cleanliness assertions above.
+		before := settledCount(page, ".task-card")
+		Expect(writeFixtureTask(ctx, vaultPath, "Arrived During The Console Walk")).To(Succeed())
+		Eventually(func() int { return countOf(page, ".task-card") }, "30s", "1s").
+			Should(BeNumerically(">", before), "a live event must still re-read the board")
 
 		errs, err := page.PageErrors()
 		Expect(err).NotTo(HaveOccurred())
@@ -246,19 +266,4 @@ func clickView(page playwright.Page, view string) {
 	ExpectWithOffset(1,
 		page.Locator(".view-toggle-btn[data-view='"+view+"']").First().Click(),
 	).To(Succeed())
-}
-
-// pollTicks counts the poll loop's own console line.
-func pollTicks(page playwright.Page) int {
-	messages, err := page.ConsoleMessages()
-	if err != nil {
-		return 0
-	}
-	ticks := 0
-	for _, message := range messages {
-		if strings.Contains(message.Text(), "Polling for updates") {
-			ticks++
-		}
-	}
-	return ticks
 }

@@ -1,56 +1,76 @@
-import type { Card as CardModel, CardKind } from "../model";
-import { PHASE_LABELS, UNKNOWN_COLUMN, columnFor, columnsFor, sortCards, type SortKey } from "../model";
+import { useState } from "react";
+import type { Card as CardModel, CardKind, SortKey } from "../model";
+import { PHASE_LABELS, UNKNOWN_COLUMN, bucketCards, columnsFor } from "../model";
 import Card, { type CardActions } from "./Card";
 
-// Board renders the columns and their cards. The `data-phase` attribute and the
-// `.view-toggle-btn[data-view]` buttons are the e2e suite's contract.
+// Board renders the columns and their cards. The `data-phase` attribute, the
+// `.kanban-column` / `.cards` structure and the `.view-toggle-btn[data-view]`
+// buttons are the e2e suite's contract and the old stylesheet's selectors.
 export default function Board({
   kind,
   cards,
   sort,
   actions,
   now,
+  starting,
+  activeAssignees,
+  onDropPhase,
 }: {
   kind: CardKind;
   cards: CardModel[];
   sort: SortKey;
   actions: CardActions;
   now: Date;
+  starting: Set<string>;
+  activeAssignees: string[];
+  onDropPhase: (taskID: string, phase: string) => void;
 }) {
-  const columns = columnsFor();
-  const byColumn = new Map<string, CardModel[]>();
-  for (const column of columns) byColumn.set(column, []);
-  for (const card of cards) {
-    const column = columnFor(kind, (card as { phase?: string }).phase);
-    const bucket = byColumn.get(column);
-    // A card whose phase is outside the known set still has to be visible, so
-    // it lands in the unknown column rather than disappearing.
-    (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
-  }
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const { byColumn } = bucketCards(kind, cards, sort);
+  const columns = columnsFor(kind);
 
   return (
-    <div className="board">
+    <div className="kanban-board">
       {columns.map((column) => {
-        const columnCards = sortCards(byColumn.get(column) ?? [], sort);
-        // The unknown column is hidden whenever it holds nothing.
+        const columnCards = byColumn.get(column) ?? [];
+        // The "—" lane exists only for goals and topics that carry no phase,
+        // and stays hidden while it holds nothing.
         const hidden = column === UNKNOWN_COLUMN && columnCards.length === 0;
         return (
-          <section
+          <div
             key={column}
             className={`kanban-column${hidden ? " hidden" : ""}`}
             data-phase={column}
           >
-            <h2>{PHASE_LABELS[column] ?? column}</h2>
-            {columnCards.map((card) => (
-              <Card
-                key={`${kind}:${(card as { vault?: string }).vault ?? ""}:${(card as { id: string }).id}`}
-                kind={kind}
-                card={card}
-                actions={actions}
-                now={now}
-              />
-            ))}
-          </section>
+            <h2 data-column-header={column}>{PHASE_LABELS[column] ?? column}</h2>
+            <div
+              className={`cards${dragOver === column ? " drag-over" : ""}`}
+              id={`cards-${column}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragOver(column);
+              }}
+              onDragLeave={() => setDragOver((current) => (current === column ? null : current))}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragOver(null);
+                const taskID = event.dataTransfer.getData("text/plain");
+                if (taskID) onDropPhase(taskID, column);
+              }}
+            >
+              {columnCards.map((card) => (
+                <Card
+                  key={`${kind}:${(card as { vault?: string }).vault ?? ""}:${(card as { id: string }).id}`}
+                  kind={kind}
+                  card={card}
+                  actions={actions}
+                  now={now}
+                  starting={starting}
+                  activeAssignees={activeAssignees}
+                />
+              ))}
+            </div>
+          </div>
         );
       })}
     </div>

@@ -1,207 +1,1767 @@
-/* The house palette, declared once at the root. Do not invent colours and do
-   not adopt a component library's tokens unmapped. The status colours carry
-   meaning — success, caution, failure — never decoration. */
-:root {
-  color-scheme: dark;
-  --bg: #111418;
-  --panel: #1a1f26;
-  --border: #2a3038;
-  --text: #e8edf2;
-  --muted: #8b95a3;
-  --accent: #4f8cff;
-  --ok: #38c172;
-  --warn: #d08b5b;
-  --err: #e55b5b;
+/* vault-ui Kanban Board Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
 }
 
 body {
-  margin: 0;
-  padding: 24px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
 }
 
-.subtitle {
-  color: var(--muted);
-  font-size: 13px;
+.app {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
-.banner {
-  border: 1px solid var(--warn);
-  color: var(--warn);
-  border-radius: 6px;
-  padding: 6px 10px;
-  margin-bottom: 12px;
-  font-size: 13px;
+header {
+    background: #2a2a2a;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #3a3a3a;
 }
 
-.hidden {
-  display: none;
+h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
 }
 
-.err {
-  color: var(--err);
+.header-controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
 }
 
-.view-toggle {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+.vault-selector {
+    position: relative;
+    min-width: 150px;
+    font-size: 0.9rem;
 }
 
-.view-toggle-btn {
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
+.vault-selector-toggle {
+    width: 100%;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
 }
 
-.view-toggle-btn.active {
-  border-color: var(--accent);
-  color: var(--accent);
+.vault-selector-toggle:hover {
+    background: #4a4a4a;
 }
 
-.board {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+.vault-selector-toggle:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+.vault-selector-arrow {
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.vault-selector-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    background: #2a2a2a;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 100;
+}
+
+.vault-selector-dropdown.hidden {
+    display: none;
+}
+
+.vault-selector-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    color: #e0e0e0;
+}
+
+.vault-selector-item:hover {
+    background: #3a3a3a;
+}
+
+.vault-selector-item.checked {
+    background: #333a44;
+}
+
+.vault-selector-item input[type="checkbox"] {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.vault-selector-item label {
+    flex: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.vault-only-btn {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.vault-selector-item:hover .vault-only-btn {
+    opacity: 1;
+}
+
+.vault-only-btn:hover {
+    background: #4a4a4a;
+    color: #e0e0e0;
+}
+
+.vault-selector-separator {
+    border: none;
+    border-bottom: 1px solid #3a3a3a;
+    margin: 0;
+}
+
+.status-selector {
+    position: relative;
+    min-width: 180px;
+    font-size: 0.9rem;
+}
+
+.status-selector-toggle {
+    width: 100%;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.status-selector-toggle:hover {
+    background: #4a4a4a;
+}
+
+.status-selector-toggle:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+.status-selector-arrow {
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.status-selector-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    background: #2a2a2a;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 100;
+}
+
+.status-selector-dropdown.hidden {
+    display: none;
+}
+
+.status-selector-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    color: #e0e0e0;
+}
+
+.status-selector-item:hover {
+    background: #3a3a3a;
+}
+
+.status-selector-item.checked {
+    background: #333a44;
+}
+
+.status-selector-item input[type="checkbox"] {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.status-selector-item label {
+    flex: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.status-selector-separator {
+    border: none;
+    border-bottom: 1px solid #3a3a3a;
+    margin: 0;
+}
+
+.assignee-selector {
+    position: relative;
+    min-width: 180px;
+    font-size: 0.9rem;
+}
+
+.assignee-selector-toggle {
+    width: 100%;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+#upcoming-window, #sort-select {
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+#upcoming-window:hover, #sort-select:hover {
+    background: #4a4a4a;
+}
+
+#upcoming-window:focus, #sort-select:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+.assignee-selector-toggle:hover {
+    background: #4a4a4a;
+}
+
+.assignee-selector-toggle:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+.assignee-selector-arrow {
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.assignee-selector-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    background: #2a2a2a;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 100;
+}
+
+.assignee-selector-dropdown.hidden {
+    display: none;
+}
+
+.assignee-selector-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    color: #e0e0e0;
+}
+
+.assignee-selector-item:hover {
+    background: #3a3a3a;
+}
+
+.assignee-selector-item.checked {
+    background: #333a44;
+}
+
+.assignee-selector-item input[type="checkbox"] {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.assignee-selector-item label {
+    flex: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.assignee-selector-separator {
+    border: none;
+    border-bottom: 1px solid #3a3a3a;
+    margin: 0;
+}
+
+.ws-status {
+    font-size: 1.2rem;
+    color: #4caf50;
+    cursor: default;
+    transition: color 0.3s ease;
+}
+
+.ws-status.disconnected {
+    color: #f44336;
+}
+
+#refresh-btn {
+    background: #3a3a3a;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+#refresh-btn:hover {
+    background: #4a4a4a;
+}
+
+.kanban-board {
+    display: flex;
+    gap: 0.5rem;
+    padding: 1rem;
+    flex: 1;
+    overflow-x: auto;
+    overflow-y: hidden;
 }
 
 .kanban-column {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 250px;
+    max-height: 100%;
+    background: #2a2a2a;
+    border-radius: 8px;
+    padding: 0.2rem;
 }
-
 .kanban-column.hidden {
-  display: none;
+    display: none;
+}
+.kanban-column h2 {
+    padding: 0.5rem;
 }
 
 .kanban-column h2 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
+    margin-bottom: 0.75rem;
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid;
 }
 
-.task-card,
-.goal-card,
-.topic-card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
-  border-radius: 6px;
-  padding: 8px;
-  margin-bottom: 8px;
-  font-size: 13px;
+.kanban-column[data-phase="todo"] h2 {
+    border-color: #94a3b8;
 }
 
-.task-card.urgency-0,
-.goal-card.urgency-0,
-.topic-card.urgency-0 {
-  border-left-color: var(--err);
+.kanban-column[data-phase="planning"] h2 {
+    border-color: #60a5fa;
 }
 
-.task-card.urgency-1,
-.goal-card.urgency-1,
-.topic-card.urgency-1 {
-  border-left-color: var(--warn);
+.kanban-column[data-phase="in_progress"] h2 {
+    border-color: #a78bfa;
 }
 
-.task-card header,
-.goal-card header,
-.topic-card header {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  justify-content: space-between;
+.kanban-column[data-phase="ai_review"] h2 {
+    border-color: #fbbf24;
+}
+
+.kanban-column[data-phase="human_review"] h2 {
+    border-color: #f97316;
+}
+
+.kanban-column[data-phase="done"] h2 {
+    border-color: #34d399;
+}
+
+.cards {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0rem;
+    border-radius: 4px;
+    transition: background 0.2s, border 0.2s;
+}
+
+/* Custom scrollbar styling */
+.cards::-webkit-scrollbar {
+    width: 8px;
+}
+
+.cards::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.cards::-webkit-scrollbar-thumb {
+    background: #4a4a4a;
+    border-radius: 4px;
+}
+
+.cards::-webkit-scrollbar-thumb:hover {
+    background: #5a5a5a;
+}
+
+.task-card {
+    background: #3a3a3a;
+    border-radius: 6px;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid #4a4a4a;
+    cursor: grab;
+    transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    position: relative;
+}
+
+.task-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.task-card.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* The footer itself wraps. Without this, a wide action (e.g. the
+   "Starting... 0:00" badge) claims its intrinsic width first and squeezes
+   .card-footer-left into a narrow column, which then shreds its badges across
+   four rows (flag / jira / assignee+priority / activity-age) while the action
+   sits vertically centred against all of them. With wrapping, the action drops
+   to its own right-aligned row and the badges get the full card width. Cards
+   that already fit on one line are unchanged - wrap only engages on overflow. */
+.card-footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.375rem 0.5rem;
+    padding-top: 0;
+}
+
+.card-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem 0.5rem;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* The "blocked by" badge row — its own line between the title and the footer, so
+   a long blocker name gets the full card width instead of competing with the
+   action button. In .card-footer-left it did: .card-footer is flex + nowrap and
+   .card-footer-left had no min-width:0, so a long name pinned the row at its
+   max-content width and pushed ▶ Start past the card edge, clipped. */
+.card-blocked {
+    display: flex;
+    padding-top: 0.25rem;
+}
+
+/* Jira key on its own line above the badge row. It is by far the widest badge
+   (~84px for "BRO-21953"), so leaving it in .card-footer-left was what pushed
+   the action onto a second row on every Jira-backed card. On its own line the
+   remaining badges + action fit one row, the same shape a non-Jira card has. */
+.card-jira {
+    display: flex;
+    padding-top: 0.125rem;
+    padding-bottom: 0.125rem;
+}
+
+.cards.drag-over {
+    background: rgba(96, 165, 250, 0.1);
+    border: 2px dashed #60a5fa;
+}
+
+.task-title {
+    font-size: 0.875rem;
+    line-height: 1.3;
+    font-weight: 400;
+    margin-bottom: 0.5rem;
 }
 
 .task-title-link {
-  color: var(--text);
-  text-decoration: none;
-  flex: 1;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    text-decoration: none;
+    color: #e0e0e0;
+    transition: color 0.2s;
 }
 
 .task-title-link:hover {
-  color: var(--accent);
+    color: #60a5fa;
 }
 
-.menu-btn,
-.flag-btn,
-.start-btn,
-.jump-btn {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  cursor: pointer;
+.jira-badge {
+    display: grid;
+    grid-auto-flow: column;
+    align-items: center;
+    justify-content: start;
+    gap: 4px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: #96999e;
+    text-decoration: none;
+    padding: 0;
+    transition: color 0.2s;
+    max-width: fit-content;
+    box-sizing: border-box;
+}
+
+.jira-badge:hover {
+    color: #669df1;
+}
+
+.jira-badge span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.jira-icon {
+    font-size: 0.875rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.assignee-badge {
+    display: grid;
+    grid-auto-flow: column;
+    align-items: center;
+    justify-content: start;
+    gap: 4px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: #96999e;
+    padding: 0;
+    max-width: fit-content;
+    box-sizing: border-box;
+}
+
+.goal-meta {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: #96999e;
+    margin: 4px 0 0 0;
+}
+
+.assignee-badge span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.assignee-badge.clickable {
+    cursor: pointer;
+    transition: opacity 0.2s, background-color 0.2s;
+}
+
+.assignee-badge.clickable:hover {
+    opacity: 0.8;
+    background-color: rgba(100, 100, 255, 0.15);
+}
+
+.assignee-badge.clickable.active {
+    background-color: rgba(100, 100, 255, 0.3);
+    font-weight: 600;
+}
+
+.assignee-icon {
+    font-size: 0.875rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.assign-to-me-link {
+    display: inline-block;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: #96999e;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.assign-to-me-link:hover {
+    color: #4a5568;
+    text-decoration: underline;
+}
+
+/* Last word of the title + the arrow, kept on one line so the arrow can never
+   be orphaned onto a line of its own. */
+.title-tail {
+    white-space: nowrap;
+}
+
+.obsidian-icon {
+    font-size: 0.875rem;
+    color: #9ca3af;
+    margin-left: 0.25rem;
+    flex-shrink: 0;
+}
+
+/* Once the title links to the in-app page, the hand-off arrow becomes its own
+   anchor beside it. It keeps the icon's look rather than the link's. */
+a.obsidian-handoff {
+    text-decoration: none;
+    color: #9ca3af;
+}
+
+a.obsidian-handoff:hover {
+    color: #6b7280;
+}
+
+.project-badge {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-bottom: 0.75rem;
+    font-family: monospace;
+}
+
+.task-description {
+    font-size: 0.875rem;
+    color: #9ca3af;
+    line-height: 1.4;
+}
+
+.task-badge {
+    display: inline-block;
+    background: #4a4a4a;
+    border: 1px solid #5a5a5a;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: capitalize;
+    width: fit-content;
+}
+
+.task-timestamp {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.card-actions {
+    display: flex;
+    gap: 0.375rem;
+    align-items: center;
+    flex: 0 0 auto;
+    /* Keeps the action right-aligned on its own row once .card-footer wraps. */
+    margin-left: auto;
 }
 
 .start-btn {
-  color: var(--ok);
+    background: #d4e157;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    color: #1a1a1a;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
-.jump-btn {
-  color: var(--accent);
+.start-btn:hover {
+    background: #c0ca33;
 }
 
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 6px 0;
+.start-btn:active {
+    background: #afb42b;
 }
 
-.badge {
-  font-size: 11px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 6px;
+.resume-btn {
+    background: #4fc3f7;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    color: #1a1a1a;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
+.resume-btn:hover {
+    background: #29b6f6;
+}
+
+.resume-btn:active {
+    background: #03a9f4;
+}
+
+/* Live session (transcript < ~5 min) — replaces the Resume button: the launch
+   path refuses a second resume, so the card shows a green badge instead.
+   The badge is itself the take-over affordance (discreet, no separate button):
+   click opens the confirm dialog that ends the running turn (SIGTERM via the
+   ps --resume match) so Resume works again. Pointer cursor + hover shade
+   signal the click; in-flight work is lost on confirm (stated in the dialog). */
 .live-badge {
-  color: var(--ok);
-  border-color: var(--ok);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #bbf7d0;             /* green-200 */
+    background: #15803d;        /* green-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: pointer;
 }
 
-.blocked-badge {
-  color: var(--err);
-  border-color: var(--err);
+.live-badge:hover {
+    background: #16a34a;        /* green-600 */
+    outline: 1px solid #bbf7d0; /* green-200 */
 }
 
-.flag-badge {
-  color: var(--warn);
-  border-color: var(--warn);
+.live-badge:active {
+    background: #15803d;        /* green-700 */
 }
 
+.live-badge:focus-visible {
+    outline: 2px solid #bbf7d0; /* green-200 */
+    outline-offset: 1px;
+}
+
+/* Jump control — a sibling of the live badge on a live task card. The pane is
+   resolved when the control is clicked, not when the card is drawn, so the
+   control is offered on live session state alone. The badge states a fact and
+   ends the session when clicked; this offers the non-destructive move to that
+   pane, so it is drawn lighter than the badge and never changes the badge's
+   own box. */
+.jump-btn {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    color: #bbf7d0;             /* green-200 */
+    background: transparent;
+    border: 1px solid #15803d;  /* green-700 */
+    padding: 0 6px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.jump-btn:hover {
+    background: #15803d;        /* green-700 */
+}
+
+.jump-btn:focus-visible {
+    outline: 2px solid #bbf7d0; /* green-200 */
+    outline-offset: 1px;
+}
+
+/* Starting card (launch turn in flight) — the badge itself is the take-over
+   affordance, mirroring the live badge. Blue, not green: the turn is in flight
+   but the card is not a resumable session yet. */
+.starting-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #bfdbfe;             /* blue-200 */
+    background: #1d4ed8;        /* blue-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.starting-badge:hover {
+    background: #2563eb;        /* blue-600 */
+    outline: 1px solid #bfdbfe; /* blue-200 */
+}
+
+.starting-badge:focus-visible {
+    outline: 2px solid #bfdbfe; /* blue-200 */
+    outline-offset: 1px;
+}
+
+/* Indeterminate session (id set, no transcript found) — cannot prove it dead,
+   so Resume is disabled with an amber tint and an explanatory tooltip. */
+.resume-btn.indeterminate {
+    background: #fcd34d;        /* amber-300 */
+    color: #78350f;             /* amber-900 */
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+.resume-btn.indeterminate:hover {
+    background: #fcd34d;
+}
+
+.menu-btn {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    background: transparent;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+    z-index: 1;
+}
+
+.menu-btn:hover {
+    background: #4a4a4a;
+    color: #e0e0e0;
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: #2a2a2a;
+    padding: 2rem;
+    border-radius: 8px;
+    max-width: 500px;
+    width: 90%;
+    border: 1px solid #3a3a3a;
+}
+
+.modal-content h2 {
+    margin-bottom: 1rem;
+    font-size: 1.25rem;
+}
+
+.modal-content p {
+    margin: 0.5rem 0;
+}
+
+.modal-content code {
+    display: inline-block;
+    background: #1a1a1a;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    margin: 0.25rem 0;
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 0.9rem;
+    /* Single click selects the entire content (UUID, command, task title) — no
+       overflow into surrounding "Session ID:" / "Task:" labels. */
+    user-select: all;
+    -webkit-user-select: all;
+}
+
+.modal-content .command-block {
+    display: block;
+    background: #1a1a1a;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin: 0.5rem 0;
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 0.85rem;
+    word-break: break-all;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    user-select: all;
+    -webkit-user-select: all;
+}
+
+.modal-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+}
+
+.modal-buttons button {
+    flex: 1;
+    padding: 0.6rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/* Close-out reason modal form controls */
+#reason-risk-prompt {
+    color: #9ca3af;
+    font-size: 0.9rem;
+}
+
+.reason-form label {
+    display: block;
+    margin: 0.75rem 0 0.25rem;
+    color: #9ca3af;
+    font-size: 0.9rem;
+}
+
+.reason-form textarea,
+.reason-form input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 0.5rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+
+.reason-form textarea {
+    resize: vertical;
+    min-height: 3.5rem;
+}
+
+#reason-confirm-btn {
+    background: #c0392b;
+    color: white;
+}
+
+#reason-confirm-btn:hover {
+    background: #a93226;
+}
+
+#reason-confirm-btn:disabled {
+    background: #3a3a3a;
+    color: #6b7280;
+    cursor: not-allowed;
+}
+
+#reason-cancel-btn {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+#reason-cancel-btn:hover {
+    background: #4a4a4a;
+}
+
+#copy-btn {
+    background: #60a5fa;
+    color: white;
+}
+
+#copy-btn:hover {
+    background: #3b82f6;
+}
+
+#close-btn {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+#close-btn:hover {
+    background: #4a4a4a;
+}
+
+/* Loading state */
+.loading {
+    text-align: center;
+    padding: 2rem;
+    color: #9ca3af;
+}
+
+/* Task menu dropdown */
 .task-menu {
-  position: absolute;
-  z-index: 10;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+    background: #2a2a2a;
+    border: 1px solid #4a4a4a;
+    border-radius: 6px;
+    padding: 0.5rem 0;
+    min-width: 160px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
 }
 
-.task-menu button {
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  text-align: left;
-  padding: 4px 8px;
-  cursor: pointer;
+.task-menu-item {
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+    transition: background 0.2s;
 }
+
+.task-menu-item:hover:not(.disabled):not(.header) {
+    background: #3a3a3a;
+}
+
+.task-menu-item.header {
+    font-weight: 600;
+    cursor: default;
+    color: #9ca3af;
+    font-size: 0.85rem;
+    padding: 0.4rem 1rem;
+}
+
+.task-menu-item.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Spinner animation */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Urgency left-border indicators */
+.task-card.urgency-overdue {
+    border-left: 4px solid #f87171; /* red-400 — overdue */
+}
+
+.task-card.urgency-today {
+    border-left: 4px solid #fbbf24; /* amber-400 — due today */
+}
+
+.task-card.urgency-scheduled {
+    border-left: 4px solid #60a5fa; /* blue-400 — planned/scheduled */
+}
+
+.task-card.upcoming {
+    border-left: 4px solid #9ca3af; /* gray-400 — upcoming/deferred */
+    opacity: 0.55;
+}
+
+/* Flagged (picked for today) — amber ring + slightly lighter fill so it reads
+   as the day's focus even when the card also carries an urgency left-border. */
+.task-card.flagged {
+    border: 2px solid #fbbf24; /* amber-400 */
+    background: #424242;
+}
+
+.flag-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    /* Tight horizontal padding: this row is width-critical, and every px here
+       is a px that can push the action badge onto a second row. */
+    padding: 0 0.125rem;
+    opacity: 0.6;
+    filter: grayscale(1);
+    align-self: center;
+}
+
+.flag-btn.flagged {
+    opacity: 1;
+    filter: none;
+}
+
+/* A finished card, dimmed. Every kind carries the `task-card` base class, so
+   this one rule greys a completed task, goal and topic alike; the class is
+   added in createCard (task via the server's `recently_completed` flag, goal
+   and topic via `CARD_CONFIG.greyWhenTerminal`). */
+.task-card.recently-completed {
+    border-left: 4px solid #86efac; /* green-300 — completed */
+    opacity: 0.55;
+}
+
+.task-card.on-hold {
+    border-left: 4px solid #a78bfa; /* violet-400 — on hold / blocked, not actively worked */
+    opacity: 0.6;
+}
+
+.hold-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #ede9fe;             /* violet-100 */
+    background: #6d28d9;        /* violet-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+}
+
+/* "done" chip — a finished card with no session to resume. Muted green, so it
+   reads as delivered rather than actionable; the session button never renders
+   Start on a terminal card (isTerminalStatus in app.js). */
+.done-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #dcfce7;             /* green-100 */
+    background: #15803d;        /* green-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+    cursor: default;
+}
+
+/* "blocked by X" badge — the dependency-graph affordance. Amber (distinct from
+   the violet hold badge) so the two are never confused; clickable, and the
+   click jumps to the blocker's card on the same board. */
+.blocked-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.03em;
+    color: #fef3c7;             /* amber-100 */
+    background: #b45309;        /* amber-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    /* Sits in .card-blocked, its own full-width row. `nowrap` + ellipsis keeps
+       the pill on one line and truncates rather than overflowing the card when
+       the label names several blockers; the full text stays in the title. */
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.blocked-badge.clickable:hover {
+    opacity: 0.85;
+    background-color: #92400e;  /* amber-800 */
+}
+
+/* The blocker card after a blocked-badge click — a bright amber outline that
+   reads clearly even over .task-card.on-hold (whose opacity is reduced). */
+.blocked-target {
+    outline: 3px solid #f59e0b; /* amber-500 */
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35);
+}
+
+/* Compact priority chip (P<N>) in the card footer meta row — muted, replaces the
+   old standalone "Priority: N" line. */
+.priority-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.02em;
+    color: #cbd5e1;             /* slate-300 */
+    background: #334155;        /* slate-700 */
+    padding: 1px 6px;
+    border-radius: 999px;
+    max-width: fit-content;
+    white-space: nowrap;
+}
+
+/* The execution-mode pill. `mode:` is free-form on disk, so an unrecognised
+   value can be arbitrarily long; without a max-width it pins .card-footer-left
+   at its max-content width and pushes the action button past the card edge
+   (observed 2026-09-11 on a 298px card, recorded in createCard). Narrower than
+   .blocked-badge's 100% because this pill shares the footer row with the
+   action button. */
+.mode-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.02em;
+    color: #a5b4fc;             /* indigo-300 */
+    background: #3730a3;        /* indigo-800 */
+    padding: 1px 6px;
+    border-radius: 999px;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Time since anything last happened on the card. Deliberately plain text, not a
+   chip — it is ambient context, and should lose against the badges beside it. */
+.activity-age {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    line-height: 1rem;
+    color: #64748b;             /* slate-500 */
+    white-space: nowrap;
+}
+
+/* View toggle (Tasks / Goals) */
+.view-toggle {
+    display: inline-flex;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #2a2a2a;
+}
+
+.view-toggle-btn {
+    background: transparent;
+    color: #9ca3af;
+    border: none;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.view-toggle-btn:hover {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+.view-toggle-btn.active {
+    background: #3a3a3a;
+    color: #e0e0e0;
+    font-weight: 600;
+}
+
+.view-toggle-btn:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: -2px;
+}
+
+.goal-card {
+    /* Goal cards are draggable across status columns — drop flips the goal's
+       status via the backend. Title link still opens in Obsidian; no Start
+       button (no Claude session for goals). */
+    cursor: grab;
+}
+
+.goal-card.dragging {
+    cursor: grabbing;
+}
+
+.goal-card .open-in-obsidian {
+    display: inline-block;
+    color: #60a5fa;
+    text-decoration: none;
+    font-size: 0.85rem;
+    padding: 0.25rem 0;
+}
+
+.goal-card .open-in-obsidian:hover {
+    text-decoration: underline;
+}
+
+/* groupBy selector (Phase / Status) */
+.groupby-select,
+#groupby-select {
+    background: #2a2a2a;
+    color: #9ca3af;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+#groupby-select:hover {
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+#groupby-select:focus {
+    outline: 2px solid #60a5fa;
+    outline-offset: -2px;
+}
+
+/* "—" column for goals and topics that carry no phase */
+.kanban-column[data-phase="unknown"] h2 {
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* Narrow viewports (laptops): declutter the header by hiding the least-used
+   chrome so the selectors + board columns get the width. The "Vault UI" title
+   is pure branding and the Upcoming window is a rarely-toggled setting, so both
+   are the safe first things to drop. Tunable breakpoint. */
+@media (max-width: 1500px) {
+    header h1 {
+        display: none;
+    }
+    #upcoming-window, #sort-select {
+        display: none;
+    }
+}
+
+/* Topics view — a topic card, and the modal showing the work it tracks. */
+/* Opens the tracked-work detail. The title carries the Obsidian link, exactly
+   as it does on a task or goal card, so the two affordances stay parallel —
+   this button is the topic card's only addition to that shared pair. */
+.topic-detail-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.topic-detail-btn:hover {
+    opacity: 1;
+}
+
+#topic-modal .modal-content {
+    max-width: 640px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* The topic's own status beside its name. The card carries it too, but the
+   detail view is where the operator lands after clicking through, and the
+   status is the first thing they want about the topic. */
+.topic-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.topic-modal-header h2 {
+    margin: 0;
+}
+
+.topic-modal-header .status-badge {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    border: 1px solid #374151;
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+    white-space: nowrap;
+}
+
+/* `.hidden` is scoped per-component in this sheet, not a global utility. */
+.topic-modal-header .status-badge.hidden {
+    display: none;
+}
+
+#topic-modal h3 {
+    margin: 1rem 0 0.4rem;
+    font-size: 0.95rem;
+    color: #d1d5db;
+}
+
+.topic-entries {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.topic-entries li {
+    padding: 0.2rem 0;
+    font-size: 0.9rem;
+}
+
+.topic-entries a {
+    color: #60a5fa;
+    text-decoration: none;
+}
+
+.topic-entries a:hover {
+    text-decoration: underline;
+}
+
+.topic-empty {
+    color: #6b7280;
+    font-size: 0.85rem;
+    margin: 0.3rem 0;
+}
+
+/* "Live session" toolbar filter — matches the sibling selects */
+#live-session-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: #3a3a3a;
+    border: 1px solid #4a4a4a;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    user-select: none;
+}
+
+#live-session-label:hover {
+    background: #4a4a4a;
+}
+
+#live-session-label input {
+    cursor: pointer;
+    margin: 0;
+}
+
+.banner {
+    background: #7a1f1f;
+    color: #fff;
+    padding: 8px 16px;
+    text-align: center;
+    font-weight: 600;
+}
+
+/* Every other `.hidden` in this sheet is compound (`.x-dropdown.hidden`), so the
+   banner needs its own rule — without it the class does nothing and the banner
+   is permanently on screen. */
+.banner.hidden {
+    display: none;
+}
+
+/* Page view — the rendered vault page (`pkg/pageview`).
+
+   Everything here is scoped under `.page-view`, so no board selector changes
+   meaning. The `*` reset at the top of this sheet zeroes every margin, and
+   `body` is a dark board surface: without this block a page renders as one
+   undifferentiated block whose links take the browser's default anchor colour
+   on #1a1a1a — present in the DOM, invisible on screen. The renderer already
+   emits headings, lists, tables, code and resolved wikilinks; this block is
+   what makes them legible. */
+.page-view {
+    max-width: 52rem;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    font-size: 0.95rem;
+    line-height: 1.65;
+}
+
+/* The page's own title, as Obsidian shows it: the file name as a large
+   heading above the properties, with the Obsidian hand-off reduced to an icon
+   beside it. Without the heading the page opened at its properties table and
+   read as an untitled fragment.
+
+   Deliberately a `div`, not a `header`: this sheet's global `header` rule
+   paints the board's top bar, and `@media (max-width: 1500px) header h1`
+   hides its branding — a `header` element here picked up both, so the title
+   rendered as a 0-width box on every laptop-sized viewport. */
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.page-view .page-title {
+    margin: 0;
+    padding: 0;
+    border-bottom: none;
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #ffffff;
+}
+
+.page-header .obsidian-link {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    margin-top: 0.15rem;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    line-height: 1;
+    color: #9ca3af;
+    text-decoration: none;
+}
+
+.page-header .obsidian-link:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+    color: #7aa2f7;
+}
+
+/* claude-wrapper's hold reason — why the flagged tick did not open this card.
+   Its own full-width row on a card (like .card-blocked); one line with an
+   ellipsis, the full detail in the title. Slate rather than amber so it never
+   reads as the blocked badge. */
+.card-hold-reason {
+    display: flex;
+    padding-top: 0.25rem;
+    min-width: 0;
+}
+
+.hold-reason {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    font-size: 0.7rem;
+    line-height: 1rem;
+    color: #e2e8f0;             /* slate-200 */
+    background: #334155;        /* slate-700 */
+    padding: 1px 7px;
+    border-radius: 999px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.hold-reason-label {
+    flex-shrink: 0;
+    font-weight: 600;
+}
+
+.hold-reason-summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #cbd5e1;             /* slate-300 */
+}
+
+.hold-reason-pr {
+    flex-shrink: 0;
+    color: #7aa2f7;
+    text-decoration: underline;
+}
+
+.page-hold {
+    margin: -1rem 0 1.5rem;
+    font-size: 0.85rem;
+    padding: 2px 10px;
+    white-space: normal;
+}
+
+.page-view h1,
+.page-view h2,
+.page-view h3,
+.page-view h4 {
+    font-weight: 600;
+    line-height: 1.3;
+    color: #ffffff;
+}
+
+.page-view h1 {
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid #3a3a3a;
+    font-size: 1.5rem;
+}
+
+.page-view h2 {
+    margin: 1.6rem 0 0.6rem;
+    font-size: 1.2rem;
+}
+
+.page-view h3 {
+    margin: 1.3rem 0 0.5rem;
+    font-size: 1.05rem;
+}
+
+.page-view h4 {
+    margin: 1.1rem 0 0.4rem;
+    font-size: 1rem;
+}
+
+.page-view p {
+    margin: 0 0 0.9rem;
+}
+
+.page-view ul,
+.page-view ol {
+    margin: 0 0 0.9rem;
+    padding-left: 1.4rem;
+}
+
+.page-view li {
+    margin-bottom: 0.35rem;
+}
+
+/* A resolved wikilink and a plain markdown link are the same thing to a reader;
+   both must read as links against the dark body, which the default anchor
+   colour does not. */
+.page-view a,
+.page-view a.wikilink {
+    color: #7aa2f7;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.page-view a:hover,
+.page-view a.wikilink:hover {
+    color: #a8c7fa;
+}
+
+/* An unresolved wikilink is emitted as `span.wikilink.missing` — it has no
+   target, so it must not borrow the link colour and read as navigation that
+   silently does nothing. */
+.page-view span.wikilink.missing {
+    color: #e0a04a;
+    text-decoration: underline dotted;
+}
+
+.page-view code {
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background: #2a2a2a;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+}
+
+.page-view pre {
+    margin: 0 0 1rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    background: #2a2a2a;
+    overflow-x: auto;
+}
+
+.page-view pre code {
+    padding: 0;
+    background: none;
+}
+
+.page-view table {
+    width: 100%;
+    margin: 0 0 1rem;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.page-view th,
+.page-view td {
+    padding: 0.45rem 0.65rem;
+    border: 1px solid #3a3a3a;
+    text-align: left;
+    vertical-align: top;
+}
+
+.page-view th {
+    background: #2a2a2a;
+    color: #ffffff;
+}
+
+.page-view blockquote {
+    margin: 0 0 1rem;
+    padding-left: 1rem;
+    border-left: 3px solid #3a3a3a;
+    color: #b0b0b0;
+}
+
+.page-view hr {
+    margin: 1.5rem 0;
+    border: none;
+    border-top: 1px solid #3a3a3a;
+}
+
+.page-view .backlinks {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #3a3a3a;
+}
+
+.page-view .backlinks h2 {
+    margin-bottom: 0.6rem;
+    font-size: 1rem;
+}
+
+/* Toast host — the old page injected these at runtime; the React build ships them. */
+.toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #333;
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 6px;
+    z-index: 10000;
+    font-size: 14px;
+    opacity: 1;
+    transition: opacity 0.4s ease;
+}
+.toast.error { background: #c0392b; }

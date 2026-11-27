@@ -3,7 +3,11 @@
 // it down. Components read the model this module returns.
 import type {
   AssigneesResponse,
+  AssignResponse,
   GoalResponse,
+  PhaseUpdateResponse,
+  SessionResponse,
+  StatusUpdateResponse,
   TaskResponse,
   TopicDetailResponse,
   TopicResponse,
@@ -46,10 +50,22 @@ function queryString(query: BoardQuery): string {
   return encoded === "" ? "" : `?${encoded}`;
 }
 
+// ApiError carries the HTTP status so a caller can tell a 409 take-over apart
+// from a real failure.
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
-    throw new Error(`GET ${url} failed: ${response.status}`);
+    throw new ApiError(`GET ${url} failed: ${response.status}`, response.status);
   }
   return (await response.json()) as T;
 }
@@ -67,7 +83,7 @@ async function sendJSON<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`${method} ${url} failed: ${response.status}`);
+    throw new ApiError(`${method} ${url} failed: ${response.status}`, response.status);
   }
   // A 204 carries no body; callers that expect one use a route that returns it.
   if (response.status === 204) {
@@ -128,11 +144,20 @@ function sessionURL(kind: "tasks" | "goals" | "topics", id: string, action: stri
 }
 
 export function assignToMe(kind: "tasks" | "goals", id: string, vault: string) {
-  return sendJSON<unknown>("PATCH", sessionURL(kind, id, "assign-to-me", vault));
+  return sendJSON<AssignResponse>("PATCH", sessionURL(kind, id, "assign-to-me", vault));
 }
 
-export function updatePhase(taskID: string, phase: string, vault: string) {
-  return sendJSON<unknown>("PATCH", sessionURL("tasks", taskID, "phase", vault), { phase });
+export function updatePhase(
+  taskID: string,
+  phase: string,
+  vault: string,
+  answers?: { index: number; answer: string }[],
+) {
+  return sendJSON<PhaseUpdateResponse>(
+    "PATCH",
+    sessionURL("tasks", taskID, "phase", vault),
+    answers && answers.length > 0 ? { phase, answers } : { phase },
+  );
 }
 
 export function updateFlag(
@@ -141,7 +166,10 @@ export function updateFlag(
   flag: boolean,
   vault: string,
 ) {
-  return sendJSON<unknown>("PATCH", sessionURL(kind, id, "flag", vault), { kind: kind.slice(0, -1), flag });
+  return sendJSON<{ flag: boolean }>("PATCH", sessionURL(kind, id, "flag", vault), {
+    kind: kind.slice(0, -1),
+    flag,
+  });
 }
 
 export function updateStatus(
@@ -151,15 +179,18 @@ export function updateStatus(
   vault: string,
   extra?: { reason?: string; gate_successor?: string },
 ) {
-  return sendJSON<unknown>("PATCH", sessionURL(kind, id, "status", vault), { status, ...extra });
+  return sendJSON<StatusUpdateResponse>("PATCH", sessionURL(kind, id, "status", vault), {
+    status,
+    ...extra,
+  });
 }
 
 export function runSession(kind: "tasks" | "goals" | "topics", id: string, vault: string) {
-  return sendJSON<unknown>("POST", sessionURL(kind, id, "run", vault));
+  return sendJSON<SessionResponse>("POST", sessionURL(kind, id, "run", vault));
 }
 
 export function takeOverSession(kind: "tasks" | "goals" | "topics", id: string, vault: string) {
-  return sendJSON<unknown>("POST", sessionURL(kind, id, "take-over", vault));
+  return sendJSON<SessionResponse>("POST", sessionURL(kind, id, "take-over", vault));
 }
 
 export function jumpToPane(kind: "tasks" | "goals" | "topics", id: string, vault: string) {
@@ -171,7 +202,7 @@ export function clearSession(kind: "tasks" | "goals", id: string, vault: string)
 }
 
 export function resumeCommand(taskID: string, vault: string, signal?: AbortSignal) {
-  return getJSON<{ command: string }>(sessionURL("tasks", taskID, "resume-command", vault), signal);
+  return getJSON<SessionResponse>(sessionURL("tasks", taskID, "resume-command", vault), signal);
 }
 
 export function executeCommand(
@@ -180,7 +211,7 @@ export function executeCommand(
   command: string,
   vault: string,
 ) {
-  return sendJSON<unknown>(
+  return sendJSON<SessionResponse>(
     "POST",
     sessionURL(kind, id, "execute-command", vault),
     { command },
@@ -188,13 +219,28 @@ export function executeCommand(
 }
 
 // subscribeBoard listens for board changes. SSE, not WebSocket: the page never
-// streams data back, and SSE reconnects on its own. jsdom (Vitest) has no
-// EventSource, so the guard is load-bearing rather than defensive noise.
-export function subscribeBoard(onChange: () => void): () => void {
+// streams data back, and SSE reconnects on its own. Every event is a wake-up
+// ("read the board again") rather than a data frame, so one code path builds
+// the model from the JSON endpoints. jsdom (Vitest) has no EventSource, so the
+// guard is load-bearing rather than defensive noise.
+export function subscribeBoard(
+  onChange: () => void,
+  onStatus?: (connected: boolean) => void,
+): () => void {
   if (typeof EventSource === "undefined") {
     return () => undefined;
   }
   const source = new EventSource(EVENTS_URL);
+  let hasOpened = false;
   source.addEventListener("board", onChange);
+  source.addEventListener("open", () => {
+    onStatus?.(true);
+    // Events emitted while the stream was down are never replayed, so a
+    // reconnect re-reads the board. The first connect is skipped: the initial
+    // load has just fetched the same data.
+    if (hasOpened) onChange();
+    hasOpened = true;
+  });
+  source.addEventListener("error", () => onStatus?.(false));
   return () => source.close();
 }
