@@ -1,0 +1,32 @@
+/* The house palette, declared once at the root. Do not invent colours and do
+   not adopt a component library's tokens unmapped. The status colours carry
+   meaning — success, caution, failure — never decoration. */
+:root {
+  color-scheme: dark;
+  --bg: #111418;
+  --panel: #1a1f26;
+  --border: #2a3038;
+  --text: #e8edf2;
+  --muted: #8b95a3;
+  --accent: #4f8cff;
+  --ok: #38c172;
+  --warn: #d08b5b;
+  --err: #e55b5b;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.err {
+  color: var(--err);
+}
