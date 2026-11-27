@@ -1,46 +1,129 @@
-import { useEffect, useState } from "react";
-import { fetchTasks, subscribeBoard } from "./api";
-import type { TaskResponse } from "./types";
+import { useCallback, useEffect, useState } from "react";
+import {
+  assignToMe,
+  fetchGoals,
+  fetchTasks,
+  fetchTopics,
+  jumpToPane,
+  runSession,
+  subscribeBoard,
+  updateFlag,
+} from "./api";
+import Board from "./components/Board";
+import type { Card as CardModel, CardKind, SortKey } from "./model";
+import type { GoalResponse, TaskResponse, TopicResponse } from "./types";
 
-// App is the scaffold shell: it proves the transport seam, the SSE subscription
-// and the error path end to end. The board itself lands view by view on top of
-// this, against the parity checklist in the owning task.
+const VIEWS: { kind: CardKind; label: string }[] = [
+  { kind: "task", label: "Tasks" },
+  { kind: "goal", label: "Goals" },
+  { kind: "topic", label: "Topics" },
+];
+
+const FETCHERS = {
+  task: fetchTasks,
+  goal: fetchGoals,
+  topic: fetchTopics,
+} as const;
+
 export default function App() {
-  const [tasks, setTasks] = useState<TaskResponse[] | null>(null);
+  const [view, setView] = useState<CardKind>("task");
+  const [sort] = useState<SortKey>("default");
+  const [cards, setCards] = useState<CardModel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ kind: CardKind; card: CardModel } | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const load = () =>
-      fetchTasks({}, controller.signal)
+  const load = useCallback(
+    (signal?: AbortSignal) => {
+      const fetcher = FETCHERS[view] as (
+        query: Record<string, never>,
+        signal?: AbortSignal,
+      ) => Promise<CardModel[]>;
+      return fetcher({}, signal)
         .then((next) => {
-          setTasks(next);
+          setCards(next);
           setError(null);
         })
         .catch((err: Error) => {
           if (err.name !== "AbortError") setError(err.message);
         });
-    load();
-    const unsubscribe = subscribeBoard(load);
+    },
+    [view],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCards(null);
+    void load(controller.signal);
+    const unsubscribe = subscribeBoard(() => void load(controller.signal));
     return () => {
       unsubscribe();
       controller.abort();
     };
-  }, []);
+  }, [load]);
 
-  if (error) {
-    return <p className="err">Could not read /api/tasks: {error}</p>;
-  }
-  if (!tasks) {
-    return <p className="subtitle">Loading…</p>;
-  }
+  const vaultOf = (card: CardModel) => (card as { vault: string }).vault;
+
+  const actions = {
+    onRun: (kind: CardKind, card: CardModel) => {
+      const route = kind === "task" ? "tasks" : kind === "goal" ? "goals" : "topics";
+      void runSession(route, (card as { id: string }).id, vaultOf(card)).then(() => load());
+    },
+    onJump: (kind: CardKind, card: CardModel) => {
+      const route = kind === "task" ? "tasks" : kind === "goal" ? "goals" : "topics";
+      void jumpToPane(route, (card as { id: string }).id, vaultOf(card));
+    },
+    onFlag: (kind: CardKind, card: CardModel) => {
+      const route = kind === "task" ? "tasks" : kind === "goal" ? "goals" : "topics";
+      const next = !(card as { flag?: boolean }).flag;
+      void updateFlag(route, (card as { id: string }).id, next, vaultOf(card)).then(() => load());
+    },
+    onMenu: (kind: CardKind, card: CardModel) => setMenu({ kind, card }),
+  };
+
   return (
-    <ul>
-      {tasks.map((task) => (
-        <li key={task.id} className="task-card" data-task-id={task.title}>
-          {task.title}
-        </li>
-      ))}
-    </ul>
+    <main>
+      <nav className="view-toggle">
+        {VIEWS.map(({ kind, label }) => (
+          <button
+            key={kind}
+            type="button"
+            className={`view-toggle-btn${view === kind ? " active" : ""}`}
+            data-view={kind}
+            aria-selected={view === kind}
+            onClick={() => setView(kind)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {menu && (
+        <div className="task-menu" role="menu">
+          <button
+            type="button"
+            onClick={() => {
+              void assignToMe(menu.kind === "goal" ? "goals" : "tasks", (menu.card as { id: string }).id, vaultOf(menu.card))
+                .then(() => load());
+              setMenu(null);
+            }}
+          >
+            Assign to me
+          </button>
+          <button type="button" onClick={() => setMenu(null)}>
+            Close
+          </button>
+        </div>
+      )}
+
+      {error && <p className="err">Could not read the board: {error}</p>}
+      {!error && !cards && <p className="subtitle">Loading…</p>}
+      {!error && cards && (
+        <Board kind={view} cards={cards} sort={sort} actions={actions} now={new Date()} />
+      )}
+    </main>
   );
 }
+
+// The generated types are imported for the fetcher cast; keep the reference so a
+// type-only import is not flagged as unused by noUnusedLocals.
+export type BoardTypes = TaskResponse | GoalResponse | TopicResponse;

@@ -27,6 +27,6 @@ describe("App", () => {
   it("shows an error instead of a blank page when the API fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     render(<App />);
-    expect(await screen.findByText(/Could not read \/api\/tasks/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not read the board/)).toBeInTheDocument();
   });
 });
