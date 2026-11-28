@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/mutations"
@@ -234,7 +235,7 @@ func newQueuedFixture() *queuedFixture {
 		"style.css":  {Data: []byte("body{}")},
 	}
 	f.router = handler.CreateHTTPRouter(
-		&fakeBoard{}, service, staticFS, readiness, f.manager, newStubPageService(),
+		&fakeBoard{}, service, staticFS, readiness, f.manager, events.NewHub(), newStubPageService(),
 	)
 	return f
 }
