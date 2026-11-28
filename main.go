@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"io/fs"
 	"os"
 
 	"github.com/bborbe/errors"
@@ -62,9 +63,15 @@ func execute(ctx context.Context) error {
 	vaultSource := vaultapi.NewSource(vaultapi.New(vaultapi.ConfigFromEnv()))
 	vaultSource.SetOnChange(factory.CreateSourceChangeBroadcaster(manager))
 	holds := factory.CreateHolds(manager)
+	// The embedded React build is the served page; `make build` refreshes it
+	// before the binary is linked, so the bytes are always the current build.
+	dist, err := fs.Sub(frontendDist, "frontend/dist")
+	if err != nil {
+		return errors.Wrap(ctx, err, "root frontend dist")
+	}
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, paneResolver, launches, locks, homeDir, readiness, manager,
-		hub, sessionSnapshot, writeQueue, vaultSource, holds,
+		hub, sessionSnapshot, writeQueue, vaultSource, holds, dist,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
