@@ -188,8 +188,9 @@ export interface BucketedCards {
 
 // bucketCards places every card in its column. Order within a column is
 // active → upcoming → recently completed → hold: a parked item sinks below
-// everything else, so the Done column reads completed → held rather than
-// held → completed even when its defer_date is in the future.
+// everything else. A held card is never placed in Done at all — a parked task
+// is work awaiting a start, not finished work — so a held card whose phase is
+// `done` falls back to Todo.
 export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): BucketedCards {
   const byColumn = new Map<string, Card[]>();
   for (const column of columnsFor(kind)) byColumn.set(column, []);
@@ -214,12 +215,13 @@ export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): Bucke
     }
   }
 
+  const place = (card: Card, column: string) => {
+    const bucket = byColumn.get(column);
+    (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
+  };
+
   const push = (cards: Card[]) => {
-    for (const card of cards) {
-      const column = columnFor(kind, (card as { phase?: string }).phase);
-      const bucket = byColumn.get(column);
-      (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
-    }
+    for (const card of cards) place(card, columnFor(kind, (card as { phase?: string }).phase));
   };
 
   // Sort each group on its own, then distribute in group order: a column must
@@ -230,10 +232,13 @@ export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): Bucke
   // finished outranks a parked one.
   byColumn.set("done", [...byColumn.get("done")!, ...sortCards(pinned, sort, kind)]);
 
-  // Held cards are the last group in every column, so a parked card never
-  // outranks a card that just finished. Flag-first ordering still applies
-  // inside the held group.
-  push(sortCards(hold, sort, kind));
+  // Held cards are the last group in every column, and never land in Done: a
+  // held card whose phase is `done` falls back to Todo. Flag-first ordering
+  // still applies inside the held group.
+  for (const card of sortCards(hold, sort, kind)) {
+    const column = columnFor(kind, (card as { phase?: string }).phase);
+    place(card, column === "done" ? "todo" : column);
+  }
   return { byColumn, pinned };
 }
 

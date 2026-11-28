@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- fix: keep held cards at the bottom of every column — `bucketCards` distributed the held group before the `recently_completed` cards were appended to Done, so the Done column read held → completed and a parked card outranked one that had just finished; held is now the last group in every column, and flag-first ordering still applies inside it
+- fix: keep held cards out of the Done column — a held card is parked work awaiting a start, not finished work, so `bucketCards` never places one in Done: a held card whose phase is `done` falls back to Todo. Held cards also sink to the last group in every other column, below the `recently_completed` cards that previously sorted under them, and flag-first ordering still applies inside the held group
 
 ## v0.120.1
 
