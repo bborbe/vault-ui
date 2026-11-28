@@ -159,8 +159,15 @@ export default function App() {
 
   // loadView fetches only the active view's endpoint, so a deep link to
   // ?view=goals never touches /api/tasks.
+  //
+  // Every call takes a sequence number and drops its result if a newer load
+  // started meanwhile. An SSE wake-up fires a load with no AbortSignal, so
+  // without this a slow response for the old filters could land on top of the
+  // cards a newer filter already produced.
+  const loadSeq = useRef(0);
   const loadView = useCallback(
     async (signal?: AbortSignal) => {
+      const seq = ++loadSeq.current;
       const viewKind = VIEW_KIND[state.view];
       try {
         const query = buildQuery(state);
@@ -178,13 +185,17 @@ export default function App() {
                   matchesAssignee(state.assignees, card as TopicResponse),
               )
             : list;
+        if (seq !== loadSeq.current) return;
         setCards(mergePending(viewKind, filtered as CardModel[]));
         setError(null);
       } catch (err) {
-        if ((err as Error).name !== "AbortError") setError((err as Error).message);
+        if (seq === loadSeq.current && (err as Error).name !== "AbortError") {
+          setError((err as Error).message);
+        }
       }
       try {
         const status = await api.fetchSourceStatus(signal);
+        if (seq !== loadSeq.current) return;
         setSourceUnavailable(status.unavailable);
       } catch {
         // A failing status endpoint is itself an outage; leave the banner as-is.
@@ -453,15 +464,23 @@ export default function App() {
     [],
   );
 
+  // The id of the topic whose detail is being shown; cleared on close so an
+  // in-flight detail response cannot reopen the modal.
+  const openTopicID = useRef<string | null>(null);
   const openTopic = useCallback(
     async (viewKind: CardKind, card: CardModel) => {
       if (viewKind !== "topic") return;
       const topicCard = card as TopicResponse;
+      // The detail fetch outlives the modal: closing it must not be undone by
+      // a response that was already in flight, so the open id is the token.
+      openTopicID.current = topicCard.id;
       setTopic({ topic: topicCard, detail: null, error: null });
       try {
         const detail = await api.fetchTopicDetail(topicCard.id, topicCard.vault);
+        if (openTopicID.current !== topicCard.id) return;
         setTopic({ topic: topicCard, detail, error: null });
       } catch (err) {
+        if (openTopicID.current !== topicCard.id) return;
         setTopic({ topic: topicCard, detail: null, error: (err as Error).message });
       }
     },
@@ -666,7 +685,10 @@ export default function App() {
     .filter((vault) => state.vaults.includes(vault.name) && vault.source === false)
     .map((vault) => vault.name);
 
-  const closeTopic = useCallback(() => setTopic(null), []);
+  const closeTopic = useCallback(() => {
+    openTopicID.current = null;
+    setTopic(null);
+  }, []);
 
   return (
     <>
