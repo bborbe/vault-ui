@@ -23,7 +23,13 @@ var _ = Describe("Main", func() {
 })
 
 func TestSuite(t *testing.T) {
-	time.Local = time.UTC
+	// Deliberately no `time.Local = time.UTC` here. That assignment writes a
+	// package-level variable, and the runtime's timer goroutines read the same
+	// variable through time.Now() (via time.sendTime) whenever a timer fires — so it
+	// races the moment a timer lands during suite setup. The root suite has no
+	// time-dependent assertion (its only spec compiles the binary), so it needs no
+	// fixed zone. Suites that DO assert on local time should pin it via TZ=UTC in the
+	// test environment rather than by writing this variable at runtime.
 	format.TruncatedDiff = false
 	RegisterFailHandler(Fail)
 	suiteConfig, reporterConfig := GinkgoConfiguration()
