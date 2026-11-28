@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.119.0
 
 - feat: Serve the board from the React build and remove the old frontend — `factory.CreateStaticFS` takes the embedded `frontend/dist` that `main.go` roots from `assets.go`, so `GET /` is the Vite build; `src/vault_ui/` (page, `app.js`, `static_embed.go`) and `pkg/board/jsasset` (28 tests that parsed `app.js`) are deleted, `/ws` and the 60 s poll loop go with them, and the stylesheet moves to `frontend/src/styles.css` unchanged apart from the toast rules. Live updates are SSE-only; the Go/Playwright suite stays the parity oracle and keeps its class hooks
 - feat: Serve board live updates over SSE at `GET /api/events` — `pkg/events` is a non-blocking wake-up hub, and `factory.CreateNotifyingManager` decorates the websocket manager so its existing `Broadcast` choke point also wakes the hub, so an event fires on exactly the changes the WebSocket carried with no interface or mock change. The handler emits an initial `board` event and a `: ping` heartbeat every 15 s, and clears its own write deadline (`http.ResponseController.SetWriteDeadline`) because the server's 30 s `WriteTimeout` is an absolute per-request deadline and truncated the stream mid-response. `/ws` stays until the old frontend goes
