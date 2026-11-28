@@ -366,7 +366,11 @@ function HoldReasonRow({
     return null;
   }
   const blockers = hold.blockers ?? [];
-  if (hold.reason === "blocked" && blockers.length > 0) return null;
+  // Suppression reads the card's own blockers, not the wrapper's: the card
+  // already renders a `.card-blocked` row naming them, so repeating them here
+  // would say it twice. The legacy page suppressed off `item.blockers` too.
+  const cardBlockers = (card as { blockers?: string[] }).blockers ?? [];
+  if (hold.reason === "blocked" && cardBlockers.length > 0) return null;
 
   const code = String(hold.reason || "").replace(/[^a-z0-9-]/g, "");
   const lines: string[] = [];

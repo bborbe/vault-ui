@@ -109,6 +109,11 @@ export default function App() {
   const toastID = useRef(0);
   const dialogResolve = useRef<((value: unknown) => void) | null>(null);
   const restored = useRef(false);
+  // Set once the first vault fetch has had its chance to restore the persisted
+  // selection. Until then the persist effect must stay quiet: it runs on mount
+  // with an empty selection and would otherwise write [] over the stored one
+  // before the async restore can read it.
+  const hydrated = useRef(false);
 
   const kind = VIEW_KIND[state.view];
 
@@ -210,6 +215,7 @@ export default function App() {
         );
       }
     }
+    hydrated.current = true;
   }, []);
 
   // Bootstrap: vaults and the source-status banner. Vaults gate the persisted
@@ -255,7 +261,7 @@ export default function App() {
   useEffect(() => {
     const search = buildSearch(state);
     window.history.replaceState({}, "", search === "" ? window.location.pathname : search);
-    persistVaults(storage(), state.vaults);
+    if (hydrated.current) persistVaults(storage(), state.vaults);
     const store = storage();
     if (store) store.setItem("upcomingHours", String(state.upcomingHours));
   }, [state]);
