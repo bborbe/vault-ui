@@ -95,8 +95,13 @@ export function SessionModal({
 }
 
 function statusStyle(session: SessionResponse): CSSProperties {
-  if (session.success === undefined) return { display: "none" };
-  return session.success
+  // The wire field is `*bool` in pkg/api, so "no outcome" arrives as JSON
+  // `null`, not as an absent key — tygo renders it optional, which hides that.
+  // Testing only for undefined let a null through and painted the failure
+  // banner on a command that never ran.
+  const success = (session as { success?: boolean | null }).success;
+  if (success === undefined || success === null) return { display: "none" };
+  return success
     ? { display: "block", padding: 8, borderRadius: 4, marginBottom: 12, background: "#d4edda", color: "#155724" }
     : { display: "block", padding: 8, borderRadius: 4, marginBottom: 12, background: "#f8d7da", color: "#721c24" };
 }
