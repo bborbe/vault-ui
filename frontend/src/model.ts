@@ -214,13 +214,17 @@ export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): Bucke
     }
   }
 
+  const push = (cards: Card[]) => {
+    for (const card of cards) {
+      const column = columnFor(kind, (card as { phase?: string }).phase);
+      const bucket = byColumn.get(column);
+      (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
+    }
+  };
+
   // Sort each group on its own, then distribute in group order: a column must
   // read active → upcoming, and a per-column re-sort would undo that.
-  for (const card of [...sortCards(active, sort, kind), ...sortCards(upcoming, sort, kind)]) {
-    const column = columnFor(kind, (card as { phase?: string }).phase);
-    const bucket = byColumn.get(column);
-    (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
-  }
+  push([...sortCards(active, sort, kind), ...sortCards(upcoming, sort, kind)]);
 
   // Recently completed go to Done above anything held: a card that just
   // finished outranks a parked one.
@@ -229,11 +233,7 @@ export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): Bucke
   // Held cards are the last group in every column, so a parked card never
   // outranks a card that just finished. Flag-first ordering still applies
   // inside the held group.
-  for (const card of sortCards(hold, sort, kind)) {
-    const column = columnFor(kind, (card as { phase?: string }).phase);
-    const bucket = byColumn.get(column);
-    (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
-  }
+  push(sortCards(hold, sort, kind));
   return { byColumn, pinned };
 }
 
