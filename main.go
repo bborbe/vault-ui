@@ -12,6 +12,7 @@ import (
 	"github.com/bborbe/run"
 	"github.com/golang/glog"
 
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/fdlimit"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
@@ -50,7 +51,10 @@ func execute(ctx context.Context) error {
 	// the cleanup sweep's re-bind write must share it to share the critical
 	// section.
 	locks := sessionlock.NewRegistry()
-	manager := factory.CreateConnectionManager()
+	hub := events.NewHub()
+	// The SSE hub must see every broadcast, so the manager is wrapped before it
+	// is handed to anything that publishes.
+	manager := factory.CreateNotifyingManager(factory.CreateConnectionManager(), hub)
 	sessionState := factory.CreateSessionState()
 	sessionSnapshot := factory.CreateSessionSnapshot(sessionState)
 	heartbeatStore := factory.CreateHeartbeatStore()
@@ -60,7 +64,7 @@ func execute(ctx context.Context) error {
 	holds := factory.CreateHolds(manager)
 	apiHandler := factory.CreateAPIHandler(
 		loader, configPath, paneResolver, launches, locks, homeDir, readiness, manager,
-		sessionSnapshot, writeQueue, vaultSource, holds,
+		hub, sessionSnapshot, writeQueue, vaultSource, holds,
 	)
 
 	limit, err := fdlimit.Raise(ctx)
