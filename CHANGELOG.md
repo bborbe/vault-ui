@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- fix: stop the root TestSuite racing on `time.Local` — `TestSuite` assigned `time.Local = time.UTC`, a write to a package-level variable that the runtime's timer goroutines read through `time.Now()` (via `time.sendTime`), so a timer landing during suite setup produced `WARNING: DATA RACE` with that write as the culprit and `time.Now`/`time.sendTime` as the victim. The root suite's only spec compiles the binary and asserts nothing about local time, so the assignment is dropped; suites that do need a fixed zone should pin `TZ=UTC` in the test environment instead of writing the variable at runtime
 - fix: keep held cards out of the Done column — a held card is parked work awaiting a start, not finished work, so `bucketCards` never places one in Done: a held card whose phase is `done` falls back to Todo. Held cards also sink to the last group in every other column, below the `recently_completed` cards that previously sorted under them, and flag-first ordering still applies inside the held group
 
 ## v0.120.1
