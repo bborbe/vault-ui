@@ -73,7 +73,10 @@ write's own change and publishes its own frame — the echo.
 ## Failure and revert
 
 A write that fails (or panics) publishes one `write_failed` frame and performs
-none of the success side-effects. Its fields are:
+none of the success side-effects. The frame reaches the board on the
+`/api/events` Server-Sent Events stream as a typed event — `event: write_failed`,
+with the frame's JSON as its `data` line — next to the payload-free `board`
+wake-ups. Its fields are:
 
 - `type` — `write_failed`.
 - `task_id` — the **item id**; the key is `task_id` for goals too, like watcher

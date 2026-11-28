@@ -3,8 +3,10 @@ import type { Card } from "./model";
 import {
   UNKNOWN_COLUMN,
   bucketCards,
+  cardKey,
   columnFor,
   extractJira,
+  itemKey,
   matchesAssignee,
   pageUrlFromObsidianUrl,
   priorityValue,
@@ -195,5 +197,18 @@ describe("parseSearch / buildSearch", () => {
   it("always emits the view and the sort", () => {
     expect(buildSearch(parseSearch("", 8))).toContain("view=tasks");
     expect(buildSearch(parseSearch("", 8))).toContain("sort=default");
+  });
+});
+
+describe("itemKey", () => {
+  it("addresses the same entry cardKey does, for every kind", () => {
+    const card = { id: "Task A", vault: "private-personal" } as unknown as Card;
+    expect(itemKey("task", "private-personal", "Task A")).toBe(cardKey("task", card));
+    expect(itemKey("goal", "private-personal", "Task A")).toBe(cardKey("goal", card));
+    expect(itemKey("topic", "private-personal", "Task A")).toBe(cardKey("topic", card));
+  });
+
+  it("keeps topics vault-qualified", () => {
+    expect(itemKey("topic", "a", "T")).not.toBe(itemKey("topic", "b", "T"));
   });
 });

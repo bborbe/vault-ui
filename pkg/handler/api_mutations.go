@@ -60,7 +60,8 @@ func decodeBody(resp http.ResponseWriter, req *http.Request, dst any) bool {
 // approval.
 //
 // It is a shape check, not the operation's own bound: an index naming no item
-// in the task stays the operation's refusal, surfaced as a write_failed frame.
+// in the task stays the operation's refusal, surfaced as a write_failed event
+// on the /api/events stream.
 func validateAnswers(resp http.ResponseWriter, answers []domain.OpenAnswer) bool {
 	seen := make(map[int]bool, len(answers))
 	for position, answer := range answers {

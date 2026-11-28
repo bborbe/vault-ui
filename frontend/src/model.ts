@@ -239,6 +239,12 @@ export function cardKey(kind: CardKind, card: Card): string {
   return (card as TaskResponse).id;
 }
 
+// itemKey is cardKey for an item named only by kind, vault and id — the shape a
+// write_failed event carries — so it addresses the same pending entry.
+export function itemKey(kind: CardKind, vault: string, id: string): string {
+  return cardKey(kind, { id, vault } as unknown as Card);
+}
+
 export function cardTitle(card: Card): string {
   return (card as TaskResponse).title;
 }

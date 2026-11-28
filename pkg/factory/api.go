@@ -27,6 +27,7 @@ import (
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
+	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/openable"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/pane"
@@ -211,7 +212,7 @@ func CreateAPIHandler(
 	})
 	mutationsService := CreateMutationService(
 		loader, configPath, launches, locks, homeDir,
-		paneResolver, websocket.NewMutationPublisher(manager), writeQueue,
+		paneResolver, CreateMutationPublisher(manager, hub), writeQueue,
 		vaultSource, vaultSource,
 	)
 	pages := pageview.NewServiceWithHolds(vaults, vaultSource.Client(), holds)
@@ -242,6 +243,39 @@ type notifyingManager struct {
 func (n *notifyingManager) Broadcast(payload []byte) {
 	n.ConnectionManager.Broadcast(payload)
 	n.hub.Notify()
+}
+
+// CreateMutationPublisher returns the publisher the mutation service announces
+// write outcomes through. Updates go through the websocket publisher, whose
+// Broadcast wakes the SSE stream via the notifying manager. A refused write
+// additionally goes out as a typed write_failed event on the SSE stream: it
+// leaves the file unchanged, so a wake-up alone would never tell the board to
+// drop the value it rendered from the 202.
+func CreateMutationPublisher(
+	manager websocket.ConnectionManager,
+	hub *events.Hub,
+) mutations.EventPublisher {
+	return &streamingMutationPublisher{
+		MutationPublisher: websocket.NewMutationPublisher(manager),
+		hub:               hub,
+	}
+}
+
+type streamingMutationPublisher struct {
+	websocket.MutationPublisher
+	hub *events.Hub
+}
+
+// PublishWriteFailed broadcasts the write_failed frame and sends the same
+// payload to the SSE subscribers as a write_failed event.
+func (p *streamingMutationPublisher) PublishWriteFailed(
+	ctx context.Context, vault, itemKind, itemID, reason string,
+) {
+	p.MutationPublisher.PublishWriteFailed(ctx, vault, itemKind, itemID, reason)
+	p.hub.Publish(events.Event{
+		Name: events.WriteFailedEvent,
+		Data: websocket.WriteFailedFrame(vault, itemKind, itemID, reason),
+	})
 }
 
 // CreateWriteQueue returns the process-wide per-vault write queue. Its

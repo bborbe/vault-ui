@@ -93,3 +93,68 @@ func TestNotifyCoalescesWhenTheSubscriberIsBusy(t *testing.T) {
 		t.Fatalf("expected exactly one pending notification, got %d", len(notifications))
 	}
 }
+
+func TestPublishDeliversTheTypedEvent(t *testing.T) {
+	hub := events.NewHub()
+	typed, unsubscribe := hub.SubscribeEvents()
+	defer unsubscribe()
+
+	hub.Publish(events.Event{Name: events.WriteFailedEvent, Data: []byte(`{"task_id":"A"}`)})
+
+	select {
+	case event := <-typed:
+		if event.Name != events.WriteFailedEvent || string(event.Data) != `{"task_id":"A"}` {
+			t.Fatalf("unexpected event %q %q", event.Name, event.Data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Publish did not reach the event subscriber")
+	}
+}
+
+func TestPublishDoesNotCoalesceDistinctEvents(t *testing.T) {
+	hub := events.NewHub()
+	typed, unsubscribe := hub.SubscribeEvents()
+	defer unsubscribe()
+
+	// Two refused writes are two pieces of news; unlike Notify, both must be
+	// held for the subscriber.
+	hub.Publish(events.Event{Name: events.WriteFailedEvent, Data: []byte(`{"task_id":"A"}`)})
+	hub.Publish(events.Event{Name: events.WriteFailedEvent, Data: []byte(`{"task_id":"B"}`)})
+
+	if !waitFor(t, func() bool { return len(typed) == 2 }) {
+		t.Fatalf("expected two pending events, got %d", len(typed))
+	}
+}
+
+func TestPublishNeverBlocksOnAFullSubscriber(t *testing.T) {
+	hub := events.NewHub()
+	_, unsubscribe := hub.SubscribeEvents()
+	defer unsubscribe()
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			hub.Publish(events.Event{Name: events.WriteFailedEvent, Data: []byte(`{}`)})
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Publish blocked on a subscriber that never reads")
+	}
+}
+
+func TestPublishDoesNotWakeBoardSubscribers(t *testing.T) {
+	hub := events.NewHub()
+	notifications, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+
+	hub.Publish(events.Event{Name: events.WriteFailedEvent, Data: []byte(`{}`)})
+
+	select {
+	case <-notifications:
+		t.Fatal("a typed event must not emit a board wake-up")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

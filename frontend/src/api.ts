@@ -218,15 +218,29 @@ export function executeCommand(
   );
 }
 
+// WriteFailure is the payload of a `write_failed` event: a queued write the
+// server answered 202 for and the vault then refused. task_id is the item id
+// for every kind.
+export interface WriteFailure {
+  type: "write_failed";
+  task_id: string;
+  item_kind: "task" | "goal" | "topic";
+  vault: string;
+  reason: string;
+}
+
 // subscribeBoard listens for board changes. Server-Sent Events, not a duplex
 // socket: the page never streams data back, and the browser reconnects on its
-// own. Every event is a wake-up
+// own. A `board` event is a wake-up
 // ("read the board again") rather than a data frame, so one code path builds
-// the model from the JSON endpoints. jsdom (Vitest) has no EventSource, so the
-// guard is load-bearing rather than defensive noise.
+// the model from the JSON endpoints. The one data-carrying event is
+// `write_failed`: a refused write leaves the file unchanged, so a re-read alone
+// would keep showing the optimistic value. jsdom (Vitest) has no EventSource,
+// so the guard is load-bearing rather than defensive noise.
 export function subscribeBoard(
   onChange: () => void,
   onStatus?: (connected: boolean) => void,
+  onWriteFailed?: (failure: WriteFailure) => void,
 ): () => void {
   if (typeof EventSource === "undefined") {
     return () => undefined;
@@ -234,6 +248,15 @@ export function subscribeBoard(
   const source = new EventSource(EVENTS_URL);
   let hasOpened = false;
   source.addEventListener("board", onChange);
+  source.addEventListener("write_failed", (event) => {
+    let failure: WriteFailure;
+    try {
+      failure = JSON.parse((event as MessageEvent<string>).data) as WriteFailure;
+    } catch {
+      return;
+    }
+    onWriteFailed?.(failure);
+  });
   source.addEventListener("open", () => {
     onStatus?.(true);
     // Events emitted while the stream was down are never replayed, so a

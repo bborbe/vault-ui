@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: report a refused queued write to the board over SSE again — a backward phase drop no longer shows a false success for 30 s. `factory.CreateMutationPublisher` sends each `write_failed` frame to `/api/events` as a typed `event: write_failed` (the frame JSON as `data`; `board` stays a payload-free wake-up), and the React board drops that item's pending overlay, re-reads and shows an error toast with the reason; a refusal that arrives before its own 202 is handled cancels that 202's optimistic value
+
 ## v0.120.0
 
 - feat: Serve the board from the React build and remove the old frontend — `factory.CreateStaticFS` takes the embedded `frontend/dist` that `main.go` roots from `assets.go`, so `GET /` is the Vite build; `src/vault_ui/` (page, `app.js`, `static_embed.go`) and `pkg/board/jsasset` (28 tests that parsed `app.js`) are deleted, `/ws` and the 60 s poll loop go with them, and the stylesheet moves to `frontend/src/styles.css` unchanged apart from the toast rules. Live updates are SSE-only; the Go/Playwright suite stays the parity oracle and keeps its class hooks
