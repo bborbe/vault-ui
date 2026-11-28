@@ -166,6 +166,36 @@ describe("bucketCards", () => {
     );
     expect(byColumn.get("todo")!.map((c) => c.id)).toEqual(["active", "upcoming", "hold"]);
   });
+
+  it("keeps held cards below recently completed ones in done", () => {
+    const { byColumn } = bucketCards(
+      "task",
+      [
+        { id: "hold", title: "h", phase: "done", flag: false, priority: 1, status: "hold" } as never,
+        { id: "pinned", title: "p", phase: "done", flag: false, priority: 1, recently_completed: true } as never,
+        { id: "active", title: "a", phase: "done", flag: false, priority: 1 } as never,
+      ],
+      "default",
+    );
+    expect(byColumn.get("done")!.map((c) => c.id)).toEqual(["active", "pinned", "hold"]);
+  });
+
+  it("keeps flag-first ordering inside the held group", () => {
+    const { byColumn } = bucketCards(
+      "task",
+      [
+        { id: "held-unflagged", title: "hu", phase: "done", flag: false, priority: 1, status: "hold" } as never,
+        { id: "held-flagged", title: "hf", phase: "done", flag: true, priority: 9, status: "hold" } as never,
+        { id: "pinned", title: "p", phase: "done", flag: false, priority: 1, recently_completed: true } as never,
+      ],
+      "default",
+    );
+    expect(byColumn.get("done")!.map((c) => c.id)).toEqual([
+      "pinned",
+      "held-flagged",
+      "held-unflagged",
+    ]);
+  });
 });
 
 describe("parseSearch / buildSearch", () => {

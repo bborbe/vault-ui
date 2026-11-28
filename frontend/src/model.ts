@@ -187,8 +187,9 @@ export interface BucketedCards {
 }
 
 // bucketCards places every card in its column. Order within a column is
-// active → upcoming → hold, so a parked item sinks even when its defer_date is
-// in the future; recently completed tasks are pinned to the bottom of Done.
+// active → upcoming → recently completed → hold: a parked item sinks below
+// everything else, so the Done column reads completed → held rather than
+// held → completed even when its defer_date is in the future.
 export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): BucketedCards {
   const byColumn = new Map<string, Card[]>();
   for (const column of columnsFor(kind)) byColumn.set(column, []);
@@ -214,19 +215,25 @@ export function bucketCards(kind: CardKind, cards: Card[], sort: SortKey): Bucke
   }
 
   // Sort each group on its own, then distribute in group order: a column must
-  // read active → upcoming → hold, and a per-column re-sort would undo that.
-  for (const card of [
-    ...sortCards(active, sort, kind),
-    ...sortCards(upcoming, sort, kind),
-    ...sortCards(hold, sort, kind),
-  ]) {
+  // read active → upcoming, and a per-column re-sort would undo that.
+  for (const card of [...sortCards(active, sort, kind), ...sortCards(upcoming, sort, kind)]) {
     const column = columnFor(kind, (card as { phase?: string }).phase);
     const bucket = byColumn.get(column);
     (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
   }
 
-  // Recently completed always go to Done, at the very bottom.
+  // Recently completed go to Done above anything held: a card that just
+  // finished outranks a parked one.
   byColumn.set("done", [...byColumn.get("done")!, ...sortCards(pinned, sort, kind)]);
+
+  // Held cards are the last group in every column, so a parked card never
+  // outranks a card that just finished. Flag-first ordering still applies
+  // inside the held group.
+  for (const card of sortCards(hold, sort, kind)) {
+    const column = columnFor(kind, (card as { phase?: string }).phase);
+    const bucket = byColumn.get(column);
+    (bucket ?? byColumn.get(UNKNOWN_COLUMN)!).push(card);
+  }
   return { byColumn, pinned };
 }
 
