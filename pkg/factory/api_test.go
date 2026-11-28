@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
 	"github.com/bborbe/vault-ui/pkg/queue"
@@ -70,6 +71,7 @@ func newTestAPIHandlerWithManager(
 	return factory.CreateAPIHandler(
 		loader, configPath, factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), tempDir(), readiness, manager,
+		events.NewHub(),
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		startWriteQueue(),
 		source,

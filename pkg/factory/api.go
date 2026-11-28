@@ -23,6 +23,7 @@ import (
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
@@ -184,6 +185,7 @@ func CreateAPIHandler(
 	homeDir string,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
+	hub *events.Hub,
 	sessionSnapshot sessionsnapshot.Snapshot,
 	writeQueue queue.Queue,
 	vaultSource *vaultapi.Source,
@@ -218,8 +220,32 @@ func CreateAPIHandler(
 	)
 	pages := pageview.NewServiceWithHolds(vaults, vaultSource.Client(), holds)
 	return handler.CreateHTTPRouter(
-		service, mutationsService, CreateStaticFS(), readiness, manager, pages,
+		service, mutationsService, CreateStaticFS(), readiness, manager, hub, pages,
 	)
+}
+
+// CreateNotifyingManager wraps the websocket manager so every broadcast also
+// wakes the SSE hub. Broadcast is the single choke point both change paths
+// already go through — the vault-api source-change callback and the mutation
+// publisher — so the stream fires on exactly the events the WebSocket does,
+// without touching the manager interface or its generated mocks.
+func CreateNotifyingManager(
+	manager websocket.ConnectionManager,
+	hub *events.Hub,
+) websocket.ConnectionManager {
+	return &notifyingManager{ConnectionManager: manager, hub: hub}
+}
+
+type notifyingManager struct {
+	websocket.ConnectionManager
+	hub *events.Hub
+}
+
+// Broadcast fans the frame out to the websocket clients and wakes the SSE
+// subscribers.
+func (n *notifyingManager) Broadcast(payload []byte) {
+	n.ConnectionManager.Broadcast(payload)
+	n.hub.Notify()
 }
 
 // CreateWriteQueue returns the process-wide per-vault write queue. Its

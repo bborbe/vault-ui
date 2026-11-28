@@ -20,6 +20,7 @@ import (
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
@@ -142,7 +143,7 @@ func newPageTestRouter(t *testing.T, vaultDir string) http.Handler {
 	readiness.SetReady()
 	manager := websocket.NewConnectionManager(websocket.NewMetrics())
 	return handler.CreateHTTPRouter(
-		&fakeBoard{}, &fakeMutations{}, staticFS, readiness, manager, pages,
+		&fakeBoard{}, &fakeMutations{}, staticFS, readiness, manager, events.NewHub(), pages,
 	)
 }
 
