@@ -16,7 +16,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/events"
@@ -24,7 +23,6 @@ import (
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/vaultapi"
-	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 // stubVaultsProvider returns no vaults; the page routes are not exercised by
@@ -129,11 +127,8 @@ func newRouterWithMutations(fake *fakeBoard, m mutations.Service) http.Handler {
 		"app.js":     {Data: []byte("console.log('app')")},
 		"style.css":  {Data: []byte("body{}")},
 	}
-	readiness := vaultui.NewReadiness()
-	readiness.SetReady()
-	manager := websocket.NewConnectionManager(websocket.NewMetrics())
 	return handler.CreateHTTPRouter(
-		fake, m, staticFS, readiness, manager, events.NewHub(), newStubPageService(),
+		fake, m, staticFS, events.NewHub(), newStubPageService(),
 	)
 }
 

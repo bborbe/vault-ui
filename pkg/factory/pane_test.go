@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"testing/fstest"
 
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
@@ -116,6 +117,7 @@ func paneHandler(
 		websocket.NewConnectionManager(websocket.NewMetrics()),
 		events.NewHub(),
 		sessionSnapshot, startWriteQueue(), source, nil,
+		fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")}},
 	)
 }
 

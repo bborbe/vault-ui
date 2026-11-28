@@ -5,18 +5,21 @@
 package factory_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"testing/fstest"
 
 	"github.com/bborbe/vault-cli/mocks"
 	"github.com/bborbe/vault-cli/pkg/config"
-	gws "github.com/gorilla/websocket"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -36,7 +39,8 @@ func newTestAPIHandler(
 	loader config.Loader, configPath string, source *vaultapi.Source,
 ) http.Handler {
 	return newTestAPIHandlerWithManager(
-		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()), source,
+		loader, configPath, websocket.NewConnectionManager(websocket.NewMetrics()),
+		events.NewHub(), source,
 	)
 }
 
@@ -64,6 +68,7 @@ func newTestAPIHandlerWithManager(
 	loader config.Loader,
 	configPath string,
 	manager websocket.ConnectionManager,
+	hub *events.Hub,
 	source *vaultapi.Source,
 ) http.Handler {
 	readiness := vaultui.NewReadiness()
@@ -71,12 +76,21 @@ func newTestAPIHandlerWithManager(
 	return factory.CreateAPIHandler(
 		loader, configPath, factory.CreatePaneResolver(tempDir()),
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), tempDir(), readiness, manager,
-		events.NewHub(),
+		hub,
 		factory.CreateSessionSnapshot(factory.CreateSessionState()),
 		startWriteQueue(),
 		source,
 		nil,
+		testDist(),
 	)
+}
+
+// testDist is a minimal frontend tree. The served bytes are not what these
+// specs assert; the router only needs a readable FS.
+func testDist() fs.FS {
+	return fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")},
+	}
 }
 
 func apiFixture() (config.Loader, string, string) {
@@ -132,15 +146,11 @@ var _ = Describe("API factory", func() {
 	})
 
 	Describe("CreateStaticFS", func() {
-		It("serves the frozen frontend tree", func() {
-			staticFS := factory.CreateStaticFS()
+		It("serves the tree it is given, rooted at the dist directory", func() {
+			staticFS := factory.CreateStaticFS(testDist())
 			content, err := fs.ReadFile(staticFS, "index.html")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("<html"))
-			_, err = fs.ReadFile(staticFS, "app.js")
-			Expect(err).NotTo(HaveOccurred())
-			_, err = fs.ReadFile(staticFS, "style.css")
-			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
@@ -198,17 +208,32 @@ var _ = Describe("API factory", func() {
 	})
 
 	Describe("mutating-route publisher wiring", func() {
-		It("broadcasts a task update to a connected WebSocket client", func() {
+		It("wakes the SSE stream after a mutation", func() {
 			loader, configPath, _ := apiFixture()
-			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil, nil)))
+			hub := events.NewHub()
+			// The notifying manager is the production wiring: every Broadcast
+			// also wakes the hub, and the stream is the only live transport.
+			manager := factory.CreateNotifyingManager(
+				websocket.NewConnectionManager(websocket.NewMetrics()), hub,
+			)
+			server := httptest.NewServer(newTestAPIHandlerWithManager(
+				loader, configPath, manager, hub,
+				vaultapi.NewSourceFromData(nil, nil, nil, nil),
+			))
 			defer server.Close()
 
-			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
-			conn, _, err := gws.DefaultDialer.Dial(wsURL, nil)
+			stream, err := http.Get(server.URL + "/api/events")
 			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = conn.Close() }()
-			Eventually(manager.Count).Should(Equal(1))
+			defer func() { _ = stream.Body.Close() }()
+			Expect(stream.StatusCode).To(Equal(http.StatusOK))
+			Expect(stream.Header.Get("Content-Type")).To(Equal("text/event-stream"))
+
+			// Count board events on the stream. The initial event proves the
+			// stream is live; a second one after the mutation proves the
+			// publisher reached the hub.
+			events := &eventCounter{}
+			go events.consume(stream.Body)
+			Eventually(events.count, "5s").Should(BeNumerically(">=", 1))
 
 			req, err := http.NewRequest(
 				http.MethodPatch,
@@ -222,52 +247,8 @@ var _ = Describe("API factory", func() {
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
 
-			_, message, err := conn.ReadMessage()
-			Expect(err).NotTo(HaveOccurred())
-			var frame map[string]string
-			Expect(json.Unmarshal(message, &frame)).To(Succeed())
-			Expect(frame).To(Equal(map[string]string{
-				"type":      "task_updated",
-				"task_id":   "Task A",
-				"item_kind": "task",
-				"vault":     "personal",
-			}))
-		})
-
-		It("broadcasts a goal update to a connected WebSocket client", func() {
-			loader, configPath, _ := apiFixture()
-			manager := websocket.NewConnectionManager(websocket.NewMetrics())
-			server := httptest.NewServer(newTestAPIHandlerWithManager(loader, configPath, manager, vaultapi.NewSourceFromData(nil, nil, nil, nil)))
-			defer server.Close()
-
-			wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
-			conn, _, err := gws.DefaultDialer.Dial(wsURL, nil)
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = conn.Close() }()
-			Eventually(manager.Count).Should(Equal(1))
-
-			req, err := http.NewRequest(
-				http.MethodPatch,
-				server.URL+"/api/goals/Goal%20A/status?vault=personal",
-				strings.NewReader(`{"status":"hold"}`),
-			)
-			Expect(err).NotTo(HaveOccurred())
-			req.Header.Set("Content-Type", "application/json")
-			resp, err := http.DefaultClient.Do(req)
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = resp.Body.Close() }()
-			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
-
-			_, message, err := conn.ReadMessage()
-			Expect(err).NotTo(HaveOccurred())
-			var frame map[string]string
-			Expect(json.Unmarshal(message, &frame)).To(Succeed())
-			Expect(frame).To(Equal(map[string]string{
-				"type":      "goal_updated",
-				"goal_id":   "Goal A",
-				"item_kind": "goal",
-				"vault":     "personal",
-			}))
+			Eventually(events.count, "5s").Should(BeNumerically(">=", 2),
+				"a mutation must wake the stream")
 		})
 	})
 
@@ -282,6 +263,30 @@ var _ = Describe("API factory", func() {
 		})
 	})
 })
+
+// eventCounter counts `event: board` lines on an SSE stream. The stream is
+// read from its own goroutine, so the count is mutex-guarded.
+type eventCounter struct {
+	mu    sync.Mutex
+	board int
+}
+
+func (c *eventCounter) consume(body io.Reader) {
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		if scanner.Text() == "event: board" {
+			c.mu.Lock()
+			c.board++
+			c.mu.Unlock()
+		}
+	}
+}
+
+func (c *eventCounter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.board
+}
 
 var _ = Describe("vault-cli pin", func() {
 	It("requires v0.200.7 and never replaces it", func() {

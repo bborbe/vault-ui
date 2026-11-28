@@ -227,15 +227,13 @@ func newQueuedFixture() *queuedFixture {
 		HomeDir:   GinkgoT().TempDir(),
 	})
 
-	readiness := vaultui.NewReadiness()
-	readiness.SetReady()
 	staticFS := fstest.MapFS{
 		"index.html": {Data: []byte("<html>index</html>")},
 		"app.js":     {Data: []byte("console.log('app')")},
 		"style.css":  {Data: []byte("body{}")},
 	}
 	f.router = handler.CreateHTTPRouter(
-		&fakeBoard{}, service, staticFS, readiness, f.manager, events.NewHub(), newStubPageService(),
+		&fakeBoard{}, service, staticFS, events.NewHub(), newStubPageService(),
 	)
 	return f
 }

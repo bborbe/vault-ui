@@ -10,25 +10,21 @@ import (
 
 	"github.com/gorilla/mux"
 
-	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
 	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageview"
-	"github.com/bborbe/vault-ui/pkg/websocket"
 )
 
 // CreateHTTPRouter builds the :8000 API router: the read routes under /api/,
-// the mutating routes under /api/, the WebSocket at /ws, then the static tree
-// at /. Path cleaning is disabled so a traversal request reaches the static
-// handler and is refused with the same 404 the Python backend returns, instead
-// of a mux 301 redirect.
+// the mutating routes under /api/, the Server-Sent Events stream at
+// /api/events, then the static tree at /. Path cleaning is disabled so a
+// traversal request reaches the static handler and is refused with the same 404
+// the Python backend returns, instead of a mux 301 redirect.
 func CreateHTTPRouter(
 	b board.Board,
 	m mutations.Service,
 	staticFS fs.FS,
-	readiness vaultui.Readiness,
-	manager websocket.ConnectionManager,
 	hub *events.Hub,
 	pages pageview.Service,
 ) http.Handler {
@@ -93,9 +89,6 @@ func CreateHTTPRouter(
 
 	router.Methods(http.MethodGet).Path("/api/events").
 		Handler(NewEventsHandler(hub, DefaultEventsHeartbeat))
-
-	router.Methods(http.MethodGet).Path("/ws").
-		Handler(NewWebSocketHandler(readiness, manager))
 
 	// The page routes are registered without a method restriction so a non-GET
 	// request is refused by the handler with 405 rather than swallowed by the

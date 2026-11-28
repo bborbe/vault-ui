@@ -1749,3 +1749,19 @@ a.obsidian-handoff:hover {
     margin-bottom: 0.6rem;
     font-size: 1rem;
 }
+
+/* Toast host — the old page injected these at runtime; the React build ships them. */
+.toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #333;
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 6px;
+    z-index: 10000;
+    font-size: 14px;
+    opacity: 1;
+    transition: opacity 0.4s ease;
+}
+.toast.error { background: #c0392b; }
