@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.120.0
 
 - feat: Serve the board from the React build and remove the old frontend — `factory.CreateStaticFS` takes the embedded `frontend/dist` that `main.go` roots from `assets.go`, so `GET /` is the Vite build; `src/vault_ui/` (page, `app.js`, `static_embed.go`) and `pkg/board/jsasset` (28 tests that parsed `app.js`) are deleted, `/ws` and the 60 s poll loop go with them, and the stylesheet moves to `frontend/src/styles.css` unchanged apart from the toast rules. Live updates are SSE-only; the Go/Playwright suite stays the parity oracle and keeps its class hooks
 - feat: Wire the board together in `App` — the per-view fetch (a Goals deep link never loads `/api/tasks`), URL and `localStorage` state with the legacy `selectedVault` migration, drag-to-phase with the Planning approval dialog, the lifecycle menu and its confirmations, optimistic writes with a pending overlay that reconciles against each read, the topic detail modal, the source banners and the toasts
