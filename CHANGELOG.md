@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- feat: Port the board's model, filter state and transport seam to TypeScript — `model.ts` carries the column vocabulary (a phase-less goal or topic falls to the unknown column), flag-first sorting, priority normalisation, urgency tiers, Jira extraction, the Obsidian→in-app page URL conversion and per-bucket card distribution; `state.ts` parses and rebuilds the URL and persists the vault selection; `api.ts` becomes the single transport seam over all 20 routes, with `ApiError` carrying the HTTP status and `subscribeBoard` wrapping the SSE stream. Pure logic only — nothing renders yet
 - feat: Add the React frontend scaffold — `frontend/` (React 18, TypeScript strict, Vite 6, Vitest 5), `tygo.yaml` with `make types` generating `frontend/src/types.ts` from `pkg/api`, `assets.go` embedding `frontend/dist` via `go:embed`, and `make precommit` now running `test-frontend`. Nothing is served from it yet: `CreateStaticFS` still returns the old static tree, so the board is unchanged
 
 ## v0.118.0
