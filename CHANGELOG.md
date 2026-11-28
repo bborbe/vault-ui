@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- fix: stop the root TestSuite racing on `time.Local` — `TestSuite` assigned `time.Local = time.UTC`, a write to a package-level variable that the runtime's timer goroutines read through `time.Now()` (via `time.sendTime`), so a timer landing during suite setup produced `WARNING: DATA RACE` with that write as the culprit and `time.Now`/`time.sendTime` as the victim. The root suite's only spec compiles the binary and asserts nothing about local time, so the assignment is dropped; suites that do need a fixed zone should pin `TZ=UTC` in the test environment instead of writing the variable at runtime
+
 ## v0.120.1
 
 - fix: report a refused queued write to the board over SSE again — a backward phase drop no longer shows a false success for 30 s. `factory.CreateMutationPublisher` sends each `write_failed` frame to `/api/events` as a typed `event: write_failed` (the frame JSON as `data`; `board` stays a payload-free wake-up), and the React board drops that item's pending overlay, re-reads and shows an error toast with the reason; a refusal that arrives before its own 202 is handled cancels that 202's optimistic value
