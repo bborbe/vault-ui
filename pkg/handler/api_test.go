@@ -19,6 +19,7 @@ import (
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/api"
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/handler"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageview"
@@ -131,7 +132,9 @@ func newRouterWithMutations(fake *fakeBoard, m mutations.Service) http.Handler {
 	readiness := vaultui.NewReadiness()
 	readiness.SetReady()
 	manager := websocket.NewConnectionManager(websocket.NewMetrics())
-	return handler.CreateHTTPRouter(fake, m, staticFS, readiness, manager, newStubPageService())
+	return handler.CreateHTTPRouter(
+		fake, m, staticFS, readiness, manager, events.NewHub(), newStubPageService(),
+	)
 }
 
 func doGet(router http.Handler, target string) *httptest.ResponseRecorder {

@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/factory"
 	"github.com/bborbe/vault-ui/pkg/heartbeat"
 	"github.com/bborbe/vault-ui/pkg/launchregistry"
@@ -113,6 +114,7 @@ func paneHandler(
 		loader, configPath, paneResolver,
 		launchregistry.NewRegistry(), sessionlock.NewRegistry(), homeDir, readiness,
 		websocket.NewConnectionManager(websocket.NewMetrics()),
+		events.NewHub(),
 		sessionSnapshot, startWriteQueue(), source, nil,
 	)
 }

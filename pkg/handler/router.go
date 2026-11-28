@@ -12,6 +12,7 @@ import (
 
 	vaultui "github.com/bborbe/vault-ui/pkg"
 	"github.com/bborbe/vault-ui/pkg/board"
+	"github.com/bborbe/vault-ui/pkg/events"
 	"github.com/bborbe/vault-ui/pkg/mutations"
 	"github.com/bborbe/vault-ui/pkg/pageview"
 	"github.com/bborbe/vault-ui/pkg/websocket"
@@ -28,6 +29,7 @@ func CreateHTTPRouter(
 	staticFS fs.FS,
 	readiness vaultui.Readiness,
 	manager websocket.ConnectionManager,
+	hub *events.Hub,
 	pages pageview.Service,
 ) http.Handler {
 	router := mux.NewRouter()
@@ -88,6 +90,9 @@ func CreateHTTPRouter(
 	router.Methods(http.MethodPatch).Path("/api/tasks/{task_id}/session").
 		Handler(NewSetTaskSessionHandler(m))
 	router.Methods(http.MethodPost).Path("/api/config/reload").Handler(NewConfigReloadHandler(m))
+
+	router.Methods(http.MethodGet).Path("/api/events").
+		Handler(NewEventsHandler(hub, DefaultEventsHeartbeat))
 
 	router.Methods(http.MethodGet).Path("/ws").
 		Handler(NewWebSocketHandler(readiness, manager))
