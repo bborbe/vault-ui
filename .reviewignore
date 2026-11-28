@@ -9,3 +9,11 @@ specs/
 # counterfeiter-generated mocks — machine-written, so no reviewer reads them
 # line by line. 50 of 58 sibling repos already skip these.
 mocks/
+
+# npm's resolved dependency tree — machine-written, reproducible from
+# package.json, and it would otherwise dominate every frontend diff.
+frontend/package-lock.json
+
+# tygo-generated from pkg/api (make types) — same rule as the counterfeiter
+# mocks above: generated, never hand-edited.
+frontend/src/types.ts

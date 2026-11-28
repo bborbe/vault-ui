@@ -1,5 +1,7 @@
 # Development targets
 
+include tools.env
+
 # github.com/bborbe/vault-markdown is public and fetches anonymously, but
 # proxy.golang.org and sum.golang.org still serve cached "not found" results
 # for it from when the repo was private. Fetch this one path straight from
@@ -9,8 +11,29 @@
 # returns 200.
 export GOPRIVATE ?= github.com/bborbe/vault-markdown
 
+FRONTEND_DIR ?= frontend
+
+.PHONY: frontend
+frontend:
+	cd $(FRONTEND_DIR) && npm ci && npm run build
+
+# types first: tsc imports ./types, which tygo generates.
+.PHONY: types
+types:
+	go run github.com/gzuidhof/tygo@$(TYGO_VERSION) generate
+
+.PHONY: test-frontend
+test-frontend:
+	cd $(FRONTEND_DIR) && npm ci && npm test
+
+# The fleet's Go scanners do not see the npm dependency tree, so it gets its own
+# gate. Fails on a high or critical advisory.
+.PHONY: check-frontend
+check-frontend:
+	cd $(FRONTEND_DIR) && npm ci && npm audit --audit-level=high
+
 .PHONY: build
-build:
+build: types frontend
 	mkdir -p $(HOME)/Documents/workspaces/go/bin
 	go build -buildvcs=false -o $(HOME)/Documents/workspaces/go/bin/vault-ui .
 
@@ -27,7 +50,7 @@ test:
 	go test -race ./...
 
 .PHONY: precommit
-precommit: format vet test
+precommit: format vet test test-frontend
 
 .PHONY: run
 run: build

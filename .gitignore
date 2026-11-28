@@ -5,6 +5,12 @@ config.yaml
 /build/
 /bin/
 
+# Frontend build output. The directory must exist for go:embed to compile, so
+# its .gitkeep is committed and everything else is ignored.
+/frontend/dist/*
+!/frontend/dist/.gitkeep
+/frontend/node_modules/
+
 /CLAUDE.md
 /.claude
 /.mcp-auth-*
