@@ -63,6 +63,8 @@ PLAYWRIGHT_GO_VERSION := v0.6201.1
 # The suite binds its own API and admin ports (VAULT_UI_LISTEN and
 # VAULT_UI_ADMIN_LISTEN), so it runs alongside the live board and never stops it.
 .PHONY: e2e
-e2e:
+# frontend first: the suite drives the binary, which serves the embedded
+# frontend/dist, so a stale build would test the previous bundle.
+e2e: frontend
 	go run $(PLAYWRIGHT_GO_MODULE)/cmd/playwright@$(PLAYWRIGHT_GO_VERSION) install chromium
 	go test -mod=mod -tags e2e -count=1 -timeout 15m ./e2e/
