@@ -18,7 +18,7 @@ import {
 import type { CardActions } from "./components/Card";
 import Toolbar from "./components/Toolbar";
 import type { Card as CardModel, CardKind, SortKey } from "./model";
-import { cardKey, matchesAssignee, matchesStatus, routeFor } from "./model";
+import { cardKey, itemKey, matchesAssignee, matchesStatus, routeFor } from "./model";
 import type { BoardState } from "./state";
 import {
   buildSearch,
@@ -46,6 +46,11 @@ const TASK_PHASES = [
   "human_review",
   "done",
 ];
+
+// How long a refusal that arrived before its own 202 was handled still cancels
+// that 202's optimistic value. The two normally land milliseconds apart; the
+// bound keeps a refusal from another tab from swallowing a later write here.
+const REFUSAL_RACE_MS = 5000;
 
 const VIEW_KIND: Record<BoardState["view"], CardKind> = {
   tasks: "task",
@@ -103,6 +108,10 @@ export default function App() {
   const [now, setNow] = useState(() => new Date());
 
   const pending = useRef(new Map<string, { fields: Record<string, unknown>; until: number }>());
+  // A refusal can reach the stream before the 202 that queued the write has
+  // been handled here, so there is no pending entry yet to drop. The refusal is
+  // remembered by key and the 202's optimistic value is then discarded.
+  const refused = useRef(new Map<string, number>());
   // Captured before any effect rewrites the address bar, so the persisted
   // vault selection is still restored on a bare load.
   const initialSearch = useRef(window.location.search);
@@ -258,15 +267,23 @@ export default function App() {
     return () => controller.abort();
   }, [loadView]);
 
-  // Live updates: every event is a wake-up, so one code path builds the model.
+  // Live updates: a board event is a wake-up, so one code path builds the
+  // model. A write_failed event drops the refused write's pending overlay
+  // before the re-read, so the card returns to the value the file still holds.
   useEffect(() => {
     return api.subscribeBoard(
       () => {
         void loadRef.current();
       },
       setConnected,
+      (failure) => {
+        const key = itemKey(failure.item_kind, failure.vault, failure.task_id);
+        if (!pending.current.delete(key)) refused.current.set(key, Date.now());
+        addToast(`Write failed: ${failure.reason}`, true);
+        void loadRef.current();
+      },
     );
-  }, []);
+  }, [addToast]);
 
   // Keep the address bar and the persisted controls in step with the state.
   useEffect(() => {
@@ -285,6 +302,11 @@ export default function App() {
   // overlay until a read confirms it.
   const optimistic = useCallback((viewKind: CardKind, card: CardModel, fields: Record<string, unknown>) => {
     const key = cardKey(viewKind, card);
+    const refusedAt = refused.current.get(key);
+    refused.current.delete(key);
+    // The write this 202 queued was already refused: render nothing, the card
+    // keeps the value the file still holds.
+    if (refusedAt !== undefined && Date.now() - refusedAt < REFUSAL_RACE_MS) return;
     pending.current.set(key, { fields, until: Date.now() + 30000 });
     setCards((current) =>
       current

@@ -250,6 +250,56 @@ var _ = Describe("API factory", func() {
 			Eventually(events.count, "5s").Should(BeNumerically(">=", 2),
 				"a mutation must wake the stream")
 		})
+
+		It("streams a write_failed event when vault-cli refuses a queued write", func() {
+			loader, configPath, vaultDir := apiFixture()
+			// execution → planning on an in_progress task is a phase regression
+			// vault-cli refuses without --force, after the route answered 202.
+			writeFile(vaultDir, "24 Tasks/Task B.md",
+				"---\nstatus: in_progress\nphase: execution\n---\n# Task B\n")
+			hub := events.NewHub()
+			manager := factory.CreateNotifyingManager(
+				websocket.NewConnectionManager(websocket.NewMetrics()), hub,
+			)
+			server := httptest.NewServer(newTestAPIHandlerWithManager(
+				loader, configPath, manager, hub,
+				vaultapi.NewSourceFromData(nil, nil, nil, nil),
+			))
+			defer server.Close()
+
+			stream, err := http.Get(server.URL + "/api/events")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = stream.Body.Close() }()
+			lines := &lineRecorder{}
+			go lines.consume(stream.Body)
+			Eventually(lines.text, "5s").Should(ContainSubstring("event: board"))
+
+			req, err := http.NewRequest(
+				http.MethodPatch,
+				server.URL+"/api/tasks/Task%20B/phase?vault=personal",
+				strings.NewReader(`{"phase":"planning"}`),
+			)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+			Eventually(lines.text, "5s").Should(ContainSubstring("event: write_failed\ndata: "))
+			payload := lines.dataAfter("event: write_failed")
+			var frame map[string]string
+			Expect(json.Unmarshal([]byte(payload), &frame)).To(Succeed(), payload)
+			Expect(frame).To(HaveKeyWithValue("type", "write_failed"))
+			Expect(frame).To(HaveKeyWithValue("task_id", "Task B"))
+			Expect(frame).To(HaveKeyWithValue("item_kind", "task"))
+			Expect(frame).To(HaveKeyWithValue("vault", "personal"))
+			Expect(frame["reason"]).To(ContainSubstring("refusing"))
+
+			content, err := os.ReadFile(filepath.Join(vaultDir, "24 Tasks", "Task B.md"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(content)).To(ContainSubstring("phase: execution"))
+		})
 	})
 
 	Describe("CreateAPIServer", func() {
@@ -286,6 +336,39 @@ func (c *eventCounter) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.board
+}
+
+// lineRecorder keeps every line of an SSE stream, read from its own goroutine.
+type lineRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *lineRecorder) consume(body io.Reader) {
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		r.mu.Lock()
+		r.lines = append(r.lines, scanner.Text())
+		r.mu.Unlock()
+	}
+}
+
+func (r *lineRecorder) text() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.Join(r.lines, "\n")
+}
+
+// dataAfter returns the data field of the first event line equal to event.
+func (r *lineRecorder) dataAfter(event string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, line := range r.lines {
+		if line == event && i+1 < len(r.lines) {
+			return strings.TrimPrefix(r.lines[i+1], "data: ")
+		}
+	}
+	return ""
 }
 
 var _ = Describe("vault-cli pin", func() {

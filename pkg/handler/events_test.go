@@ -148,3 +148,41 @@ func TestEventsHandlerSendsHeartbeatComments(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestEventsHandlerStreamsTypedEventsWithTheirPayload(t *testing.T) {
+	hub := events.NewHub()
+	eventsHandler := handler.NewEventsHandler(hub, time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+	recorder := newStreamRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		eventsHandler.ServeHTTP(recorder, req)
+		close(done)
+	}()
+	waitForEventCount(t, recorder, 1)
+
+	hub.Publish(events.Event{
+		Name: events.WriteFailedEvent,
+		Data: []byte(`{"type":"write_failed","task_id":"Task A"}`),
+	})
+
+	want := "event: write_failed\ndata: {\"type\":\"write_failed\",\"task_id\":\"Task A\"}\n\n"
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(recorder.bodyString(), want) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(recorder.bodyString(), want) {
+		t.Fatalf("expected %q on the stream, got %q", want, recorder.bodyString())
+	}
+	// A typed event is not a board wake-up.
+	if got := recorder.boardEvents(); got != 1 {
+		t.Fatalf("a typed event must not emit a board event, got %d", got)
+	}
+
+	cancel()
+	<-done
+}
