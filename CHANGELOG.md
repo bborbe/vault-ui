@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.120.1
 
 - fix: report a refused queued write to the board over SSE again — a backward phase drop no longer shows a false success for 30 s. `factory.CreateMutationPublisher` sends each `write_failed` frame to `/api/events` as a typed `event: write_failed` (the frame JSON as `data`; `board` stays a payload-free wake-up), and the React board drops that item's pending overlay, re-reads and shows an error toast with the reason; a refusal that arrives before its own 202 is handled cancels that 202's optimistic value
 
