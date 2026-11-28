@@ -55,7 +55,11 @@ export default function Board({
                 event.preventDefault();
                 setDragOver(null);
                 const taskID = event.dataTransfer.getData("text/plain");
-                if (taskID) onDropPhase(taskID, column);
+                // Only a card this board is showing may move: a stale or
+                // foreign drag must not PATCH an id the user cannot see.
+                if (!taskID) return;
+                if (!cards.some((card) => (card as { id: string }).id === taskID)) return;
+                onDropPhase(taskID, column);
               }}
             >
               {columnCards.map((card) => (
